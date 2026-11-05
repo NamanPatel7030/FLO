@@ -262,6 +262,10 @@ export interface ClaudeEvent {
   at: string;
   /** user has seen/acknowledged it */
   seen: boolean;
+  /** macOS bundle id of the app running the session (com.microsoft.VSCode, com.apple.Terminal…) */
+  appBundle?: string;
+  /** $TERM_PROGRAM of the session */
+  terminal?: string;
 }
 
 export interface ClaudeHookStatus {
@@ -295,6 +299,8 @@ export const EV = {
   modelProgress: "flo://model-progress",
   toast: "flo://toast",
   claude: "flo://claude",
+  /** backend cursor tracking for the island: {inside: boolean} */
+  hover: "flo://hover",
 } as const;
 
 /**
@@ -324,4 +330,5 @@ export const EV = {
  *  list_claude_events({limit}) -> ClaudeEvent[]   mark_claude_seen({id?})  (no id = all)
  *  claude_hook_status() -> ClaudeHookStatus
  *  install_claude_hook() -> ClaudeHookStatus      uninstall_claude_hook() -> ClaudeHookStatus
+ *  open_claude_session({id}) -> string   — focus the editor/terminal running that session (marks seen)
  */

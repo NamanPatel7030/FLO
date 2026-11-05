@@ -107,6 +107,7 @@ export const api = {
 
   listClaudeEvents: (limit = 50) => call<ClaudeEvent[]>("list_claude_events", { limit }),
   markClaudeSeen: (id?: string) => call<void>("mark_claude_seen", { id }),
+  openClaudeSession: (id: string) => call<string>("open_claude_session", { id }),
   claudeHookStatus: () => call<ClaudeHookStatus>("claude_hook_status"),
   installClaudeHook: () => call<ClaudeHookStatus>("install_claude_hook"),
   uninstallClaudeHook: () => call<ClaudeHookStatus>("uninstall_claude_hook"),

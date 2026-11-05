@@ -305,6 +305,28 @@ pub fn mark_claude_seen(st: State<Shared>, id: Option<String>) -> R<()> {
     st.db.mark_claude_seen(id.as_deref()).map_err(e)
 }
 
+/// Bring the app where the Claude session runs to the front (editor → its project folder).
+#[tauri::command]
+pub fn open_claude_session(app: tauri::AppHandle, st: State<Shared>, id: String) -> R<String> {
+    let ev = st.db.list_claude_events(200).map_err(e)?.into_iter().find(|x| x.id == id).ok_or("session not found")?;
+    let _ = st.db.mark_claude_seen(Some(&id));
+    match claude::open_target(ev.app_bundle.as_deref(), ev.terminal.as_deref()) {
+        Some((bundle, folder)) => {
+            platform::open_bundle(&bundle, if folder && !ev.cwd.is_empty() { Some(ev.cwd.as_str()) } else { None }).map_err(e)?;
+            Ok(bundle)
+        }
+        None => {
+            // unknown launcher (older event): reveal the project folder instead
+            if !ev.cwd.is_empty() {
+                let _ = tauri_plugin_opener::reveal_item_in_dir(&ev.cwd);
+            } else {
+                crate::show_dashboard(&app, Some("home"));
+            }
+            Ok(String::new())
+        }
+    }
+}
+
 #[tauri::command]
 pub fn claude_hook_status(st: State<Shared>) -> ClaudeHookStatus {
     claude::status(st.inner())

@@ -222,10 +222,20 @@ export default function Island() {
 
   const dismissClaude = useCallback((seen: boolean) => {
     setClaudeQueue((q) => {
-      if (seen && q[0]) api.markClaudeSeen(q[0].id);
+      // "Open" jumps to the editor / terminal where the session runs (and marks it seen)
+      if (seen && q[0]) api.openClaudeSession(q[0].id).catch(() => api.markClaudeSeen(q[0].id));
       return q.slice(1);
     });
   }, []);
+
+  // Hover: the island is a non-activating panel, so DOM mouseleave is unreliable while another
+  // app is active. The backend tracks the cursor and tells us; peek also auto-closes after 4 s.
+  useEffect(() => on<{ inside: boolean }>(EV.hover, (e) => setHover(e.inside)), []);
+  useEffect(() => {
+    if (!hover) return;
+    const t = setTimeout(() => setHover(false), 4000);
+    return () => clearTimeout(t);
+  }, [hover]);
 
   if (!geo) return null;
 

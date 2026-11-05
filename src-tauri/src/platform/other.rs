@@ -10,6 +10,7 @@ pub fn start_hotkeys(_cb: HotkeyCallback) {}
 pub fn frontmost_app() -> FrontApp { FrontApp::default() }
 pub fn activate_app(_pid: i32) {}
 pub fn open_app(_name: &str) -> Result<()> { bail!("unsupported OS") }
+pub fn open_bundle(_b: &str, _p: Option<&str>) -> Result<()> { bail!("unsupported OS") }
 pub fn island_geometry() -> IslandGeometry {
     IslandGeometry { platform: "linux".into(), has_notch: false, notch_width: 64.0, notch_height: 64.0, screen_width: 0.0 }
 }

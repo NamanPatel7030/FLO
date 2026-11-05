@@ -116,7 +116,8 @@ function ClaudeRow({ e }: { e: ClaudeEvent }) {
       layout
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      onClick={() => !e.seen && api.markClaudeSeen(e.id)}
+      onClick={() => api.openClaudeSession(e.id).catch(() => api.markClaudeSeen(e.id))}
+      title="Open where this Claude session is running"
       className="flex items-start gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-[var(--glass)]"
     >
       <span className="relative mt-1.5 flex h-2 w-2 shrink-0">

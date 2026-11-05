@@ -156,6 +156,27 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The island is a non-activating panel, so its web view doesn't get mouse-exit events while
+/// another app is active. Track the cursor here and tell the island when it enters/leaves.
+fn spawn_hover_tracker(app: AppHandle, st: Shared) {
+    tauri::async_runtime::spawn(async move {
+        let mut inside = false;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(if inside { 80 } else { 150 })).await;
+            let Some(w) = app.get_webview_window("island") else { continue };
+            let (Ok(cur), Ok(pos), Ok(size)) = (app.cursor_position(), w.outer_position(), w.outer_size()) else { continue };
+            let now = cur.x >= pos.x as f64
+                && cur.x <= (pos.x + size.width as i32) as f64
+                && cur.y >= pos.y as f64
+                && cur.y <= (pos.y + size.height as i32) as f64;
+            if now != inside {
+                inside = now;
+                st.emit(model::ev::HOVER, serde_json::json!({ "inside": inside }));
+            }
+        }
+    });
+}
+
 fn start_hotkeys(st: Shared) {
     platform::start_hotkeys(Box::new(move |ev| {
         let st = st.clone();
@@ -231,6 +252,7 @@ pub fn run() {
             commands::install_claude_hook,
             commands::uninstall_claude_hook,
             commands::restart_app,
+            commands::open_claude_session,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -263,7 +285,9 @@ pub fn run() {
             build_tray(&handle, st.clone())?;
             start_hotkeys(st.clone());
             attention::spawn(st.clone());
+            claude::refresh_if_installed(&st);
             claude::spawn_listener(st.clone());
+            spawn_hover_tracker(handle.clone(), st.clone());
             stt::spawn_idle_unloader(st.whisper.clone());
             Ok(())
         })

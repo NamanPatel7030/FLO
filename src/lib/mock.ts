@@ -598,6 +598,12 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       });
       mockEmit(EV.claude, null);
       return null;
+    case "open_claude_session": {
+      const ev = claudeEvents.find((e) => e.id === args.id);
+      if (ev) ev.seen = true;
+      mockEmit(EV.claude, null);
+      return ev?.appBundle ?? "com.microsoft.VSCode";
+    }
     case "claude_hook_status":
       return { ...hook };
     case "install_claude_hook":

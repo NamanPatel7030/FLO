@@ -62,6 +62,13 @@ pub fn activate_app(_pid: i32) {
     // Island window is non-activating on Windows; nothing to restore.
 }
 
+pub fn open_bundle(_bundle: &str, path: Option<&str>) -> Result<()> {
+    if let Some(p) = path {
+        std::process::Command::new("explorer").arg(p).status()?;
+    }
+    Ok(())
+}
+
 pub fn open_app(name: &str) -> Result<()> {
     std::process::Command::new("cmd").args(["/C", "start", "", name]).status()?;
     Ok(())

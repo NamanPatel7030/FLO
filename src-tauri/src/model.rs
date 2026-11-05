@@ -369,6 +369,12 @@ pub struct ClaudeEvent {
     pub message: String,
     pub at: String,
     pub seen: bool,
+    /// macOS bundle id of the app that launched Claude Code (e.g. com.microsoft.VSCode)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_bundle: Option<String>,
+    /// $TERM_PROGRAM of the session (vscode, iTerm.app, Apple_Terminal, WarpTerminal, ghostty…)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -392,6 +398,7 @@ pub mod ev {
     pub const MODEL_PROGRESS: &str = "flo://model-progress";
     pub const TOAST: &str = "flo://toast";
     pub const CLAUDE: &str = "flo://claude";
+    pub const HOVER: &str = "flo://hover";
 }
 
 #[cfg(test)]

@@ -68,6 +68,13 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status);
             "#,
         )?;
+        // additive migrations (ignore "duplicate column")
+        for sql in [
+            "ALTER TABLE claude_events ADD COLUMN app_bundle TEXT",
+            "ALTER TABLE claude_events ADD COLUMN terminal TEXT",
+        ] {
+            let _ = conn.execute(sql, []);
+        }
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -301,15 +308,15 @@ impl Db {
     // ── claude events ───────────────────────────────────────────────────────
     pub fn insert_claude_event(&self, e: &ClaudeEvent) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO claude_events VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![e.id, e.kind, e.session_id, e.project, e.cwd, e.message, e.at, e.seen as i32],
+            "INSERT INTO claude_events (id,kind,session_id,project,cwd,message,at,seen,app_bundle,terminal) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![e.id, e.kind, e.session_id, e.project, e.cwd, e.message, e.at, e.seen as i32, e.app_bundle, e.terminal],
         )?;
         Ok(())
     }
 
     pub fn list_claude_events(&self, limit: u32) -> Result<Vec<ClaudeEvent>> {
         let c = self.conn.lock();
-        let mut st = c.prepare("SELECT * FROM claude_events ORDER BY at DESC LIMIT ?1")?;
+        let mut st = c.prepare("SELECT id,kind,session_id,project,cwd,message,at,seen,app_bundle,terminal FROM claude_events ORDER BY at DESC LIMIT ?1")?;
         let rows = st
             .query_map([limit], |r| {
                 Ok(ClaudeEvent {
@@ -321,6 +328,8 @@ impl Db {
                     message: r.get(5)?,
                     at: r.get(6)?,
                     seen: r.get::<_, i32>(7)? != 0,
+                    app_bundle: r.get(8)?,
+                    terminal: r.get(9)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -599,8 +608,11 @@ mod tests {
             message: "Done".into(),
             at: now(),
             seen: false,
+            app_bundle: Some("com.microsoft.VSCode".into()),
+            terminal: Some("vscode".into()),
         };
         db.insert_claude_event(&e).unwrap();
+        assert_eq!(db.list_claude_events(1).unwrap()[0].app_bundle.as_deref(), Some("com.microsoft.VSCode"));
         db.mark_claude_seen(None).unwrap();
         assert!(db.list_claude_events(10).unwrap()[0].seen);
     }

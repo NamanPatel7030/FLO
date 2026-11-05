@@ -19,10 +19,44 @@ const HOOK_EVENTS: &[&str] = &["Stop", "Notification"];
 
 // ── pure helpers ────────────────────────────────────────────────────────────
 
+/// The hook also reports which app launched Claude Code ($__CFBundleIdentifier, set by macOS
+/// for GUI-launched apps' child processes) and $TERM_PROGRAM, so "Open" can jump back to it.
 pub fn hook_command(port: u16, token: &str) -> String {
     format!(
-        "curl -s -m 2 -X POST -H \"Content-Type: application/json\" --data-binary @- \"http://127.0.0.1:{port}/claude/hook?token={token}&src={MARKER}\" >/dev/null 2>&1 || exit 0"
+        "curl -s -m 2 -X POST -H \"Content-Type: application/json\" --data-binary @- \"http://127.0.0.1:{port}/claude/hook?token={token}&src={MARKER}&bundle=${{__CFBundleIdentifier:-}}&term=${{TERM_PROGRAM:-}}\" >/dev/null 2>&1 || exit 0"
     )
+}
+
+fn safe_ident(s: &str) -> Option<String> {
+    let s = s.trim();
+    (!s.is_empty() && s.len() < 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))).then(|| s.to_string())
+}
+
+/// Which app to bring forward for a session: (bundle id, open the cwd folder in it?).
+pub fn open_target(bundle: Option<&str>, terminal: Option<&str>) -> Option<(String, bool)> {
+    const EDITORS: &[&str] = &[
+        "com.microsoft.VSCode",
+        "com.microsoft.VSCodeInsiders",
+        "com.todesktop.230313mzl4w4u92", // Cursor
+        "com.exafunction.windsurf",
+        "dev.zed.Zed",
+        "com.vscodium",
+    ];
+    let from_term = |t: &str| -> Option<&'static str> {
+        Some(match t {
+            "vscode" => "com.microsoft.VSCode",
+            "iTerm.app" => "com.googlecode.iterm2",
+            "Apple_Terminal" => "com.apple.Terminal",
+            "WarpTerminal" => "dev.warp.Warp-Stable",
+            "ghostty" => "com.mitchellh.ghostty",
+            "WezTerm" => "com.github.wez.wezterm",
+            "tmux" | "screen" => return None,
+            _ => return None,
+        })
+    };
+    let b = bundle.and_then(safe_ident).or_else(|| terminal.and_then(from_term).map(String::from))?;
+    let is_editor = EDITORS.iter().any(|e| e.eq_ignore_ascii_case(&b)) || b.to_lowercase().contains("jetbrains");
+    Some((b, is_editor))
 }
 
 fn is_ours(entry: &Value) -> bool {
@@ -103,6 +137,10 @@ pub fn headline(msg: &str) -> String {
 }
 
 pub fn parse_hook(body: &Value, transcript: Option<&str>) -> ClaudeEvent {
+    parse_hook_from(body, transcript, None, None)
+}
+
+pub fn parse_hook_from(body: &Value, transcript: Option<&str>, bundle: Option<String>, terminal: Option<String>) -> ClaudeEvent {
     let name = body["hook_event_name"].as_str().unwrap_or("Stop");
     let kind = match name {
         "Notification" => "notification",
@@ -124,6 +162,8 @@ pub fn parse_hook(body: &Value, transcript: Option<&str>) -> ClaudeEvent {
         message,
         at: chrono::Local::now().to_rfc3339(),
         seen: false,
+        app_bundle: bundle.as_deref().and_then(safe_ident),
+        terminal: terminal.as_deref().and_then(safe_ident),
     }
 }
 
@@ -210,6 +250,24 @@ fn safe_transcript(path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&data[start..]).to_string())
 }
 
+/// Re-write an installed hook so it uses the current command format.
+pub fn refresh_if_installed(st: &Shared) {
+    let cmd = match secrets::hook_token() {
+        Ok(t) => hook_command(st.claude_port, &t),
+        Err(_) => return,
+    };
+    for d in config_dirs() {
+        let f = d.join("settings.json");
+        let v = read_json(&f);
+        if has_hooks(&v) {
+            let fresh = add_hooks(v.clone(), &cmd);
+            if fresh != v {
+                let _ = write_json(&f, &fresh);
+            }
+        }
+    }
+}
+
 pub fn spawn_listener(st: Shared) {
     let token = match secrets::hook_token() {
         Ok(t) => t,
@@ -234,10 +292,10 @@ pub fn spawn_listener(st: Shared) {
             for mut req in server.incoming_requests() {
                 let url = req.url().to_string();
                 let ok_path = url.starts_with("/claude/hook");
-                let ok_token = url::Url::parse(&format!("http://x{url}"))
-                    .ok()
-                    .map(|u| u.query_pairs().any(|(k, v)| k == "token" && v == token.as_str()))
-                    .unwrap_or(false);
+                let parsed = url::Url::parse(&format!("http://x{url}")).ok();
+                let q = |name: &str| parsed.as_ref().and_then(|u| u.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.to_string()));
+                let ok_token = q("token").as_deref() == Some(token.as_str());
+                let (bundle, term) = (q("bundle"), q("term"));
                 if req.method() != &tiny_http::Method::Post || !ok_path || !ok_token {
                     let _ = req.respond(tiny_http::Response::from_string("forbidden").with_status_code(403));
                     continue;
@@ -247,7 +305,7 @@ pub fn spawn_listener(st: Shared) {
                 let _ = req.respond(tiny_http::Response::from_string("ok"));
                 let v: Value = serde_json::from_str(&body).unwrap_or(json!({}));
                 let transcript = v["transcript_path"].as_str().and_then(safe_transcript);
-                let ev = parse_hook(&v, transcript.as_deref());
+                let ev = parse_hook_from(&v, transcript.as_deref(), bundle, term);
                 if ev.kind == "subagent_stop" {
                     continue; // too noisy for reminders
                 }
@@ -332,6 +390,16 @@ mod tests {
         let e = parse_hook(&n, None);
         assert_eq!(e.kind, "notification");
         assert_eq!(e.message, "Claude needs permission");
+    }
+
+    #[test]
+    fn open_targets() {
+        assert_eq!(open_target(Some("com.microsoft.VSCode"), Some("vscode")), Some(("com.microsoft.VSCode".into(), true)));
+        assert_eq!(open_target(None, Some("iTerm.app")), Some(("com.googlecode.iterm2".into(), false)));
+        assert_eq!(open_target(Some(""), Some("Apple_Terminal")), Some(("com.apple.Terminal".into(), false)));
+        assert_eq!(open_target(Some("bad; rm -rf"), None), None);
+        assert_eq!(open_target(None, None), None);
+        assert!(hook_command(1, "t").contains("bundle=${__CFBundleIdentifier:-}"));
     }
 
     #[test]

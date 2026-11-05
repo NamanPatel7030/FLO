@@ -150,6 +150,19 @@ pub fn activate_app(pid: i32) {
     }
 }
 
+/// `open -b <bundle> [path]` — activates the app; with a folder, editors focus that project window.
+pub fn open_bundle(bundle: &str, path: Option<&str>) -> Result<()> {
+    let mut c = std::process::Command::new("open");
+    c.arg("-b").arg(bundle);
+    if let Some(p) = path {
+        c.arg(p);
+    }
+    if !c.status()?.success() {
+        return Err(anyhow!("couldn't open {bundle}"));
+    }
+    Ok(())
+}
+
 pub fn open_app(name: &str) -> Result<()> {
     let st = std::process::Command::new("open").arg("-a").arg(name).status()?;
     if !st.success() {
