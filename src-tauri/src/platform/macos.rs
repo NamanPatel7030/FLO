@@ -1,0 +1,286 @@
+//! macOS: CGEventTap (Fn), CGEvent paste, NSWorkspace, notch geometry, NSWindow level, Vision OCR.
+#![allow(unexpected_cfgs)]
+use super::{FrontApp, HotkeyCallback};
+use crate::hotkey::Machine;
+use crate::model::{IslandGeometry, Permissions};
+use anyhow::{anyhow, Result};
+use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+use core_graphics::event::{
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+};
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
+use objc2::{class, msg_send};
+use objc2_foundation::{NSArray, NSEdgeInsets, NSRect, NSString};
+use std::ffi::c_void;
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+#[link(name = "Vision", kind = "framework")]
+extern "C" {}
+#[link(name = "AVFoundation", kind = "framework")]
+extern "C" {}
+
+const KEY_V: u16 = 9;
+const KEY_C: u16 = 8;
+
+fn post_cmd_key(code: u16) -> Result<()> {
+    let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| anyhow!("event source"))?;
+    let down = CGEvent::new_keyboard_event(src.clone(), code, true).map_err(|_| anyhow!("key event"))?;
+    down.set_flags(CGEventFlags::CGEventFlagCommand);
+    let up = CGEvent::new_keyboard_event(src, code, false).map_err(|_| anyhow!("key event"))?;
+    up.set_flags(CGEventFlags::CGEventFlagCommand);
+    down.post(CGEventTapLocation::HID);
+    up.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+pub fn send_paste_shortcut() -> Result<()> {
+    post_cmd_key(KEY_V)
+}
+
+pub fn send_copy_shortcut() -> Result<()> {
+    post_cmd_key(KEY_C)
+}
+
+/// Global push-to-talk listener on its own CFRunLoop thread.
+pub fn start_hotkeys(cb: HotkeyCallback) {
+    std::thread::Builder::new()
+        .name("flo-hotkey".into())
+        .spawn(move || {
+            let machine = parking_lot::Mutex::new(Machine::default());
+            let tap = CGEventTap::new(
+                CGEventTapLocation::Session,
+                CGEventTapPlacement::HeadInsertEventTap,
+                CGEventTapOptions::ListenOnly,
+                vec![CGEventType::FlagsChanged],
+                move |_proxy, _ty, event| {
+                    let f = event.get_flags();
+                    let fn_down = f.contains(CGEventFlags::CGEventFlagSecondaryFn);
+                    let ctrl = f.contains(CGEventFlags::CGEventFlagControl);
+                    let ev = machine.lock().update(fn_down, ctrl);
+                    if let Some(ev) = ev {
+                        cb(ev);
+                    }
+                    None
+                },
+            );
+            match tap {
+                Ok(tap) => unsafe {
+                    let src = tap.mach_port.create_runloop_source(0).expect("runloop source");
+                    CFRunLoop::get_current().add_source(&src, kCFRunLoopCommonModes);
+                    tap.enable();
+                    log::info!("Fn hotkey listener running");
+                    CFRunLoop::run_current();
+                },
+                Err(_) => log::error!("Could not create event tap — grant Accessibility permission and restart Flo Flow."),
+            }
+        })
+        .ok();
+}
+
+pub fn frontmost_app() -> FrontApp {
+    unsafe {
+        let ws: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let app: *mut AnyObject = msg_send![ws, frontmostApplication];
+        if app.is_null() {
+            return FrontApp::default();
+        }
+        let name: *mut NSString = msg_send![app, localizedName];
+        let pid: i32 = msg_send![app, processIdentifier];
+        FrontApp { name: if name.is_null() { String::new() } else { (*name).to_string() }, pid }
+    }
+}
+
+pub fn activate_app(pid: i32) {
+    if pid <= 0 || pid as u32 == std::process::id() {
+        return;
+    }
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
+        if !app.is_null() {
+            let _: bool = msg_send![app, activateWithOptions: 2usize];
+        }
+    }
+}
+
+pub fn open_app(name: &str) -> Result<()> {
+    let st = std::process::Command::new("open").arg("-a").arg(name).status()?;
+    if !st.success() {
+        return Err(anyhow!("Couldn't find an app named \"{name}\""));
+    }
+    Ok(())
+}
+
+/// Must run on the main thread.
+pub fn island_geometry() -> IslandGeometry {
+    unsafe {
+        let screens: *mut NSArray<AnyObject> = msg_send![class!(NSScreen), screens];
+        let count: usize = if screens.is_null() { 0 } else { msg_send![screens, count] };
+        if count == 0 {
+            return IslandGeometry { platform: "macos".into(), has_notch: false, notch_width: 200.0, notch_height: 32.0, screen_width: 1440.0 };
+        }
+        // screens[0] is the one with the menu bar
+        let s: *mut AnyObject = msg_send![screens, objectAtIndex: 0usize];
+        let frame: NSRect = msg_send![s, frame];
+        let insets: NSEdgeInsets = msg_send![s, safeAreaInsets];
+        let has_notch = insets.top > 0.0;
+        let (notch_w, notch_h) = if has_notch {
+            let left: NSRect = msg_send![s, auxiliaryTopLeftArea];
+            let right: NSRect = msg_send![s, auxiliaryTopRightArea];
+            (frame.size.width - left.size.width - right.size.width, insets.top)
+        } else {
+            // menu bar height on non-notched displays
+            let visible: NSRect = msg_send![s, visibleFrame];
+            let mb = (frame.size.height - visible.size.height - visible.origin.y + frame.origin.y).max(24.0);
+            (200.0, mb)
+        };
+        IslandGeometry { platform: "macos".into(), has_notch, notch_width: notch_w, notch_height: notch_h, screen_width: frame.size.width }
+    }
+}
+
+/// Float the island above the menu bar, on every Space, never in Cmd-Tab. Main thread only.
+pub fn configure_island(ns_window: *mut c_void) {
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let w = ns_window as *mut AnyObject;
+        let _: () = msg_send![w, setLevel: 27isize]; // > NSMainMenuWindowLevel (24)
+        let behavior: usize = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8); // allSpaces|stationary|ignoresCycle|fullScreenAux
+        let _: () = msg_send![w, setCollectionBehavior: behavior];
+        let _: () = msg_send![w, setHasShadow: false];
+        let _: () = msg_send![w, setMovable: false];
+    }
+}
+
+/// Top-left origin (logical px) for the island so it hangs from the notch.
+pub fn island_position(geo: &IslandGeometry, width: f64, _height: f64) -> (f64, f64) {
+    ((geo.screen_width - width) / 2.0, 0.0)
+}
+
+pub fn permissions() -> Permissions {
+    let mic = unsafe {
+        let media = NSString::from_str("soun");
+        let st: isize = msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media];
+        st == 3
+    };
+    Permissions { microphone: mic, accessibility: unsafe { AXIsProcessTrusted() }, screen: unsafe { CGPreflightScreenCaptureAccess() } }
+}
+
+pub fn request_microphone() {
+    unsafe {
+        let media = NSString::from_str("soun");
+        let st: isize = msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media];
+        if st == 0 {
+            // NotDetermined → opening the mic triggers the system prompt
+            if let Ok(r) = crate::audio::Recorder::start(|_| {}) {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                let _ = r.stop();
+            }
+        }
+    }
+}
+
+pub fn open_permission_settings(kind: &str) {
+    let pane = match kind {
+        "accessibility" => "Privacy_Accessibility",
+        "screen" => {
+            unsafe { CGRequestScreenCaptureAccess() };
+            "Privacy_ScreenCapture"
+        }
+        "microphone" => {
+            request_microphone();
+            "Privacy_Microphone"
+        }
+        _ => "Privacy",
+    };
+    let _ = std::process::Command::new("open")
+        .arg(format!("x-apple.systempreferences:com.apple.preference.security?{pane}"))
+        .status();
+}
+
+/// Set "Press 🌐 key to: Do Nothing" so holding Fn doesn't open emoji/dictation.
+pub fn fix_fn_key() -> Result<String> {
+    let st = std::process::Command::new("defaults")
+        .args(["write", "com.apple.HIToolbox", "AppleFnUsageType", "-int", "0"])
+        .status()?;
+    if !st.success() {
+        return Err(anyhow!("couldn't update the Globe key setting"));
+    }
+    Ok("Globe/Fn key set to “Do Nothing”. If the emoji picker still appears, log out and back in once.".into())
+}
+
+/// On-device OCR with Apple Vision. `rgba` is width*height*4 bytes.
+pub fn ocr(rgba: &[u8], width: u32, height: u32) -> Option<String> {
+    use core_graphics::base::{kCGImageAlphaPremultipliedLast, kCGRenderingIntentDefault};
+    use core_graphics::color_space::CGColorSpace;
+    use core_graphics::data_provider::CGDataProvider;
+    use core_graphics::image::CGImage;
+    use foreign_types::ForeignType;
+
+    let provider = CGDataProvider::from_buffer(std::sync::Arc::new(rgba.to_vec()));
+    let img = CGImage::new(
+        width as usize,
+        height as usize,
+        8,
+        32,
+        width as usize * 4,
+        &CGColorSpace::create_device_rgb(),
+        kCGImageAlphaPremultipliedLast,
+        &provider,
+        false,
+        kCGRenderingIntentDefault,
+    );
+    unsafe {
+        let handler: *mut AnyObject = msg_send![class!(VNImageRequestHandler), alloc];
+        let empty: Retained<AnyObject> = msg_send![class!(NSDictionary), dictionary];
+        let handler: *mut AnyObject = msg_send![handler, initWithCGImage: img.as_ptr() as *mut c_void, options: &*empty];
+        if handler.is_null() {
+            return None;
+        }
+        let req: *mut AnyObject = msg_send![class!(VNRecognizeTextRequest), new];
+        let _: () = msg_send![req, setRecognitionLevel: 0isize]; // accurate
+        let _: () = msg_send![req, setUsesLanguageCorrection: true];
+        let _: () = msg_send![req, setAutomaticallyDetectsLanguage: true];
+        let reqs: Retained<AnyObject> = msg_send![class!(NSArray), arrayWithObject: req];
+        let mut err: *mut AnyObject = std::ptr::null_mut();
+        let ok: bool = msg_send![handler, performRequests: &*reqs, error: &mut err];
+        let mut out = String::new();
+        if ok {
+            let results: *mut AnyObject = msg_send![req, results];
+            if !results.is_null() {
+                let n: usize = msg_send![results, count];
+                for i in 0..n {
+                    let obs: *mut AnyObject = msg_send![results, objectAtIndex: i];
+                    let cands: *mut AnyObject = msg_send![obs, topCandidates: 1usize];
+                    let cn: usize = if cands.is_null() { 0 } else { msg_send![cands, count] };
+                    if cn > 0 {
+                        let c: *mut AnyObject = msg_send![cands, objectAtIndex: 0usize];
+                        let s: *mut NSString = msg_send![c, string];
+                        if !s.is_null() {
+                            out.push_str(&(*s).to_string());
+                            out.push('\n');
+                        }
+                    }
+                }
+            }
+        }
+        let _: () = msg_send![req, release];
+        let _: () = msg_send![handler, release];
+        if out.trim().is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+}
+
+pub fn has_native_ocr() -> bool {
+    true
+}

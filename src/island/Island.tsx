@@ -1,0 +1,304 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react";
+import { api, isTauri, on } from "../lib/api";
+import { islandSize, type IslandVariant } from "../lib/format";
+import { EV, type AssistantResponse, type ClaudeEvent, type IslandGeometry, type MeetingEvent, type Mode, type Phase, type StateEvent } from "../lib/types";
+import { IslandContent } from "./IslandContent";
+import { runDemo } from "./demo";
+
+export interface MeetingInfo {
+  live: boolean;
+  noteId?: string;
+  startedAt: number;
+  lastLine?: string;
+  summary?: string;
+}
+
+const SPRING = { type: "spring", stiffness: 420, damping: 34, mass: 0.9 } as const;
+const COLLAPSE_MS = 520;
+
+export default function Island() {
+  const [geo, setGeo] = useState<IslandGeometry | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [mode, setMode] = useState<Mode>("dictation");
+  const [message, setMessage] = useState<string | undefined>();
+  const [card, setCard] = useState<AssistantResponse | null>(null);
+  const [claudeQueue, setClaudeQueue] = useState<ClaudeEvent[]>([]);
+  const [meeting, setMeeting] = useState<MeetingInfo>({ live: false, startedAt: 0 });
+  const [meetingOpen, setMeetingOpen] = useState(false);
+  const [hover, setHover] = useState(false);
+  const reduce = useReducedMotion();
+
+  useEffect(() => {
+    api.getIslandGeometry().then(setGeo);
+  }, []);
+
+  // ── backend events ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const offs = [
+      on<StateEvent>(EV.state, (e) => {
+        setPhase(e.phase);
+        setMode(e.mode);
+        setMessage(e.message);
+        if (e.mode === "meeting" && e.phase === "listening")
+          setMeeting((m) => (m.live ? m : { live: true, startedAt: Date.now() }));
+        if (e.phase === "listening" && e.mode !== "meeting") setCard(null);
+      }),
+      on<AssistantResponse>(EV.assistant, (r) => setCard(r)),
+      on<ClaudeEvent | null>(EV.claude, (e) => {
+        if (e && e.id) setClaudeQueue((q) => (q.some((x) => x.id === e.id) ? q : [...q, e]));
+      }),
+      on<MeetingEvent>(EV.meeting, (e) => {
+        if (!e.live) {
+          setMeeting({ live: false, startedAt: 0 });
+          setMeetingOpen(false);
+          return;
+        }
+        setMeeting((m) => ({
+          live: true,
+          noteId: e.noteId,
+          startedAt: m.live ? m.startedAt : Date.now() - e.elapsedSec * 1000,
+          lastLine: e.segment?.text ?? m.lastLine,
+          summary: e.summary ?? m.summary,
+        }));
+      }),
+    ];
+    return () => offs.forEach((f) => f());
+  }, []);
+
+  // demo driver (browser only, ?demo=1)
+  useEffect(() => {
+    const demo = new URLSearchParams(location.search).get("demo");
+    if (!isTauri && demo) return runDemo(demo, { setHover, setMeetingOpen });
+  }, []);
+
+  // ── target variant ──────────────────────────────────────────────────────
+  const target: IslandVariant = useMemo(() => {
+    if (mode !== "meeting" && phase === "listening") return "listening";
+    if (phase === "transcribing" || phase === "thinking") return "working";
+    if (phase === "done" || phase === "error") return "done";
+    if (card) return "card";
+    if (claudeQueue.length) return "claude";
+    if (meeting.live) return meetingOpen ? "meetingExpanded" : "meeting";
+    if (hover) return "peek";
+    return "collapsed";
+  }, [phase, mode, card, claudeQueue.length, meeting.live, meetingOpen, hover]);
+
+  const cardContent = card ? { replyChars: card.reply.length, results: card.results.length } : undefined;
+
+  // ── resize protocol: grow window first, animate, shrink window after ────
+  const [shown, setShown] = useState<IslandVariant>("collapsed");
+  const winSize = useRef<{ width: number; height: number } | null>(null);
+  const shrinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!geo) return;
+    const next = islandSize(target, geo, cardContent);
+    const cur = winSize.current ?? next;
+    const union = { width: Math.max(cur.width, next.width), height: Math.max(cur.height, next.height) };
+    if (shrinkTimer.current) clearTimeout(shrinkTimer.current);
+    const grow = !winSize.current || union.width !== cur.width || union.height !== cur.height;
+    const apply = () => {
+      setShown(target);
+      shrinkTimer.current = setTimeout(
+        () => {
+          if (winSize.current?.width !== next.width || winSize.current?.height !== next.height) {
+            winSize.current = next;
+            api.islandResize(next.width, next.height);
+          }
+        },
+        reduce ? 0 : COLLAPSE_MS,
+      );
+    };
+    if (grow) {
+      winSize.current = union;
+      api.islandResize(union.width, union.height).finally(apply);
+    } else apply();
+  }, [target, geo, reduce, cardContent?.replyChars, cardContent?.results]);
+
+  // auto-dismiss assistant card after 8s (paused while hovered)
+  useEffect(() => {
+    if (!card || hover) return;
+    const t = setTimeout(() => setCard(null), 8000);
+    return () => clearTimeout(t);
+  }, [card, hover]);
+
+  // auto-collapse claude reminder after 10s
+  const headClaude = claudeQueue[0];
+  useEffect(() => {
+    if (!headClaude || hover) return;
+    const t = setTimeout(() => setClaudeQueue((q) => q.slice(1)), 10000);
+    return () => clearTimeout(t);
+  }, [headClaude, hover]);
+
+  // Esc: cancel / dismiss
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (phase === "listening" && mode !== "meeting") api.cancelSession();
+      else if (card) setCard(null);
+      else if (headClaude) setClaudeQueue((q) => q.slice(1));
+      else setMeetingOpen(false);
+    };
+    const onBlur = () => setCard(null);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [phase, mode, card, headClaude]);
+
+  const dismissClaude = useCallback((seen: boolean) => {
+    setClaudeQueue((q) => {
+      if (seen && q[0]) api.markClaudeSeen(q[0].id);
+      return q.slice(1);
+    });
+  }, []);
+
+  if (!geo) return null;
+
+  const notch = geo.platform === "macos" && geo.hasNotch;
+  const size = islandSize(shown, geo, cardContent);
+  const collapsed = shown === "collapsed";
+  const EAR = 10;
+  const stage = !isTauri; // browser preview: draw a fake desktop behind
+  const win = winSize.current ?? size;
+
+  // pill geometry
+  const pill = notch
+    ? { width: collapsed ? size.width : size.width - EAR * 2, height: size.height }
+    : { width: size.width - 24, height: size.height - 24 };
+  const bigCard = shown === "card" || shown === "claude" || shown === "meetingExpanded" || shown === "peek";
+  const radius = notch
+    ? collapsed
+      ? "0 0 10px 10px"
+      : bigCard
+        ? "0 0 26px 26px"
+        : `0 0 ${Math.min(20, size.height / 2)}px ${Math.min(20, size.height / 2)}px`
+    : bigCard
+      ? "24px"
+      : "999px";
+
+  const island = (
+    <div
+      className="relative"
+      style={{
+        width: stage ? win.width : "100vw",
+        height: stage ? win.height : "100vh",
+        display: "flex",
+        justifyContent: notch ? "center" : "flex-end",
+        alignItems: notch ? "flex-start" : "flex-end",
+        padding: notch ? 0 : 12,
+        boxSizing: "border-box",
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <motion.div
+        layout
+        initial={false}
+        animate={{ width: pill.width, height: pill.height, borderRadius: radius }}
+        transition={SPRING}
+        className={notch ? "relative bg-black text-white" : "relative text-white"}
+        style={
+          notch
+            ? { overflow: "visible" }
+            : {
+                background: "rgba(18,18,26,0.72)",
+                backdropFilter: "blur(28px) saturate(180%)",
+                WebkitBackdropFilter: "blur(28px) saturate(180%)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 32px -8px rgba(0,0,0,0.6)",
+                overflow: "hidden",
+              }
+        }
+      >
+        {notch && !collapsed && <Ears size={EAR} />}
+        <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: radius }}>
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.div
+              key={shown + (shown === "claude" ? headClaude?.id : "")}
+              className="absolute inset-0"
+              initial={{ opacity: 0, filter: "blur(6px)", scale: 0.96 }}
+              animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
+              exit={{ opacity: 0, filter: "blur(6px)", scale: 0.96 }}
+              transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+            >
+              <IslandContent
+                variant={shown}
+                notch={notch}
+                geo={geo}
+                phase={phase}
+                mode={mode}
+                message={message}
+                card={card}
+                claude={headClaude}
+                claudeMore={Math.max(0, claudeQueue.length - 1)}
+                meeting={meeting}
+                onCloseCard={() => setCard(null)}
+                onClaude={dismissClaude}
+                onToggleMeeting={() => setMeetingOpen((v) => !v)}
+              />
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </motion.div>
+    </div>
+  );
+
+  return (
+    <MotionConfig reducedMotion="user">
+      {stage ? <Stage notch={notch}>{island}</Stage> : island}
+    </MotionConfig>
+  );
+}
+
+/** Concave "ears" that blend the expanded island into the menu bar edge. */
+function Ears({ size }: { size: number }) {
+  const ear = (side: "left" | "right") => (
+    <div
+      className="absolute top-0"
+      style={{
+        [side]: -size,
+        width: size,
+        height: size,
+        background: `radial-gradient(circle at ${side === "left" ? "0 100%" : "100% 100%"}, transparent ${size - 0.5}px, #000 ${size}px)`,
+      }}
+    />
+  );
+  return (
+    <>
+      {ear("left")}
+      {ear("right")}
+    </>
+  );
+}
+
+/** Browser-only preview stage: fake wallpaper + menu bar, so the island is visible. */
+function Stage({ notch, children }: { notch: boolean; children: React.ReactNode }) {
+  return (
+    <div
+      className="fixed inset-0 overflow-hidden"
+      style={{
+        background:
+          "radial-gradient(1200px 600px at 20% 10%, #4c1d95 0%, transparent 60%), radial-gradient(900px 700px at 90% 80%, #0e7490 0%, transparent 55%), linear-gradient(160deg,#1e1b4b,#0f172a)",
+      }}
+    >
+      {notch ? (
+        <>
+          <div className="absolute inset-x-0 top-0 h-8 text-[13px] text-white/85 flex items-center justify-between px-4" style={{ background: "rgba(20,20,30,0.35)", backdropFilter: "blur(20px)" }}>
+            <span className="font-semibold"> Flo Flow</span>
+            <span>Wed 5 Nov 12:41</span>
+          </div>
+          <div className="absolute left-1/2 top-0 -translate-x-1/2 z-10">{children}</div>
+        </>
+      ) : (
+        <>
+          <div className="absolute inset-x-0 bottom-0 h-12" style={{ background: "rgba(20,20,30,0.6)", backdropFilter: "blur(20px)" }} />
+          <div className="absolute right-0 bottom-12 z-10">{children}</div>
+        </>
+      )}
+    </div>
+  );
+}

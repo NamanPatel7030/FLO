@@ -1,0 +1,80 @@
+//! Shared application state + event helpers.
+use crate::audio::Recorder;
+use crate::db::Db;
+use crate::egress::Egress;
+use crate::model::*;
+use crate::platform::FrontApp;
+use crate::stt::LocalWhisper;
+use parking_lot::{Mutex, RwLock};
+use serde::Serialize;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::Arc;
+use std::time::Instant;
+use tauri::{AppHandle, Emitter};
+
+pub struct ActiveSession {
+    pub mode: Mode,
+    pub recorder: Recorder,
+    pub front: FrontApp,
+    pub selection: Option<String>,
+    pub started: Instant,
+    /// OCR text of the focused window, captured in the background (assistant only)
+    pub screen: Option<tauri::async_runtime::JoinHandle<Option<String>>>,
+}
+
+pub struct MeetingHandle {
+    pub note_id: String,
+    pub stop: Arc<AtomicBool>,
+    pub task: tauri::async_runtime::JoinHandle<()>,
+}
+
+pub struct AppState {
+    pub app: AppHandle,
+    pub data_dir: PathBuf,
+    pub models_dir: PathBuf,
+    pub db: Db,
+    pub settings: RwLock<Settings>,
+    pub egress: Egress,
+    pub whisper: Arc<LocalWhisper>,
+    pub session: Mutex<Option<ActiveSession>>,
+    pub meeting: Mutex<Option<MeetingHandle>>,
+    pub attention: Mutex<AttentionStatus>,
+    pub attention_paused: AtomicBool,
+    pub attention_captures: AtomicU32,
+    pub claude_listening: AtomicBool,
+    pub claude_port: u16,
+    /// last non-Flo frontmost app (so island clicks still paste into the right app)
+    pub last_front: Mutex<FrontApp>,
+}
+
+pub type Shared = Arc<AppState>;
+
+impl AppState {
+    pub fn emit<T: Serialize + Clone>(&self, event: &str, payload: T) {
+        let _ = self.app.emit(event, payload);
+    }
+
+    pub fn state(&self, phase: Phase, mode: Mode, message: Option<String>) {
+        self.emit(ev::STATE, StateEvent { phase, mode, message });
+    }
+
+    pub fn toast(&self, kind: &str, text: impl Into<String>) {
+        self.emit(ev::TOAST, ToastEvent { kind: kind.into(), text: text.into() });
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.settings.read().clone()
+    }
+
+    /// Frontmost app, ignoring Flo itself.
+    pub fn target_app(&self) -> FrontApp {
+        let f = crate::platform::frontmost_app();
+        if f.pid > 0 && f.pid as u32 != std::process::id() && !f.name.is_empty() {
+            *self.last_front.lock() = f.clone();
+            f
+        } else {
+            self.last_front.lock().clone()
+        }
+    }
+}

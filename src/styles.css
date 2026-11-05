@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  --color-accent-1: #8b5cf6;
+  --color-accent-2: #06b6d4;
+  --color-claude: #d97757;
+}
+
+/* ── design tokens (dark-first) ─────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+  --bg: #0b0b12;
+  --fg: #f4f4f7;
+  --fg-muted: rgb(244 244 247 / 0.62);
+  --fg-faint: rgb(244 244 247 / 0.38);
+  --glass: rgb(255 255 255 / 0.055);
+  --glass-strong: rgb(255 255 255 / 0.09);
+  --glass-hover: rgb(255 255 255 / 0.12);
+  --border: rgb(255 255 255 / 0.09);
+  --border-strong: rgb(255 255 255 / 0.16);
+  --highlight: rgb(255 255 255 / 0.08);
+  --shadow: 0 10px 40px -12px rgb(0 0 0 / 0.55);
+  --chart-grid: rgb(255 255 255 / 0.07);
+  --chart-axis: rgb(244 244 247 / 0.45);
+  --s1: #a78bfa;
+  --s2: #22d3ee;
+  --s3: #f59e0b;
+  --s4: #34d399;
+  --s5: #f472b6;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #eef0f6;
+    --fg: #14141c;
+    --fg-muted: rgb(20 20 28 / 0.64);
+    --fg-faint: rgb(20 20 28 / 0.42);
+    --glass: rgb(255 255 255 / 0.55);
+    --glass-strong: rgb(255 255 255 / 0.72);
+    --glass-hover: rgb(255 255 255 / 0.85);
+    --border: rgb(20 20 40 / 0.08);
+    --border-strong: rgb(20 20 40 / 0.14);
+    --highlight: rgb(255 255 255 / 0.9);
+    --shadow: 0 10px 40px -16px rgb(40 30 90 / 0.25);
+    --chart-grid: rgb(20 20 40 / 0.07);
+    --chart-axis: rgb(20 20 28 / 0.5);
+    --s1: #7c3aed;
+    --s2: #0891b2;
+    --s3: #d97706;
+    --s4: #059669;
+    --s5: #db2777;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+/* Inside Tauri the window is transparent with native vibrancy → let it show */
+html.tauri body {
+  background: transparent;
+}
+html.island,
+html.island body,
+html.island #root {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ── glass primitives ───────────────────────────────────────────────────── */
+@utility glass {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  box-shadow:
+    inset 0 1px 0 0 var(--highlight),
+    var(--shadow);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+@utility glass-strong {
+  background: var(--glass-strong);
+  border: 1px solid var(--border-strong);
+  box-shadow: inset 0 1px 0 0 var(--highlight);
+  backdrop-filter: blur(30px) saturate(170%);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+}
+@utility text-muted {
+  color: var(--fg-muted);
+}
+@utility text-faint {
+  color: var(--fg-faint);
+}
+@utility border-subtle {
+  border-color: var(--border);
+}
+@utility accent-gradient {
+  background-image: linear-gradient(120deg, #8b5cf6 0%, #6366f1 45%, #06b6d4 100%);
+}
+@utility accent-text {
+  background-image: linear-gradient(120deg, #a78bfa, #22d3ee);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* shimmering text for "thinking" */
+.shimmer {
+  background: linear-gradient(90deg, rgb(255 255 255 / 0.45) 0%, #fff 40%, #c4b5fd 50%, #67e8f9 60%, rgb(255 255 255 / 0.45) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.6s linear infinite;
+}
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+.noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

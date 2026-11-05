@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Flo Flow listens only while you hold the Fn key or record meeting notes. Audio is transcribed on this Mac.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Flo Flow can open apps for you when you ask the assistant.</string>
+</dict>
+</plist>

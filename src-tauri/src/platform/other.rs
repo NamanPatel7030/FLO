@@ -1,0 +1,22 @@
+//! Fallback for unsupported OSes (Linux): compile-only stubs.
+use super::{FrontApp, HotkeyCallback};
+use crate::model::{IslandGeometry, Permissions};
+use anyhow::{bail, Result};
+use std::ffi::c_void;
+
+pub fn send_paste_shortcut() -> Result<()> { bail!("unsupported OS") }
+pub fn send_copy_shortcut() -> Result<()> { bail!("unsupported OS") }
+pub fn start_hotkeys(_cb: HotkeyCallback) {}
+pub fn frontmost_app() -> FrontApp { FrontApp::default() }
+pub fn activate_app(_pid: i32) {}
+pub fn open_app(_name: &str) -> Result<()> { bail!("unsupported OS") }
+pub fn island_geometry() -> IslandGeometry {
+    IslandGeometry { platform: "linux".into(), has_notch: false, notch_width: 64.0, notch_height: 64.0, screen_width: 0.0 }
+}
+pub fn configure_island(_w: *mut c_void) {}
+pub fn island_position(_g: &IslandGeometry, _w: f64, _h: f64) -> (f64, f64) { (0.0, 0.0) }
+pub fn permissions() -> Permissions { Permissions { microphone: true, accessibility: true, screen: true } }
+pub fn open_permission_settings(_kind: &str) {}
+pub fn fix_fn_key() -> Result<String> { Ok(String::new()) }
+pub fn ocr(_rgba: &[u8], _w: u32, _h: u32) -> Option<String> { None }
+pub fn has_native_ocr() -> bool { false }

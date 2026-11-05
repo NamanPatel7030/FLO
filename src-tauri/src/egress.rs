@@ -1,0 +1,209 @@
+//! Egress guard: the ONLY way Flo Flow talks to the network.
+//!
+//! * localhost (Ollama / LM Studio) — always allowed
+//! * known BYOK providers — only when the calling feature is allowed to use cloud
+//! * model hub (Hugging Face) — only for model downloads
+//! * anything else — denied
+//!
+//! Every attempt (allowed or not) is recorded in an in-memory log shown in Settings → Privacy.
+use crate::model::NetworkLogEntry;
+use anyhow::{bail, Result};
+use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostClass {
+    Local,
+    Provider,
+    ModelHub,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Stt,
+    Cleanup,
+    Assistant,
+    Meeting,
+    Attention,
+    ModelDownload,
+    Test,
+}
+
+impl Purpose {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Purpose::Stt => "speech-to-text",
+            Purpose::Cleanup => "dictation cleanup",
+            Purpose::Assistant => "assistant",
+            Purpose::Meeting => "meeting notes",
+            Purpose::Attention => "attention",
+            Purpose::ModelDownload => "model download",
+            Purpose::Test => "connection test",
+        }
+    }
+}
+
+const PROVIDER_HOSTS: &[&str] = &[
+    "api.openai.com",
+    "api.anthropic.com",
+    "generativelanguage.googleapis.com",
+    "api.groq.com",
+    "openrouter.ai",
+];
+
+pub fn classify_host(host: &str) -> HostClass {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    if h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]" {
+        return HostClass::Local;
+    }
+    if PROVIDER_HOSTS.contains(&h.as_str()) {
+        return HostClass::Provider;
+    }
+    if h == "huggingface.co" || h.ends_with(".huggingface.co") || h == "hf.co" || h.ends_with(".hf.co") {
+        return HostClass::ModelHub;
+    }
+    HostClass::Unknown
+}
+
+pub fn is_allowed(host: &str, purpose: Purpose, cloud_allowed: bool) -> bool {
+    match classify_host(host) {
+        HostClass::Local => true,
+        HostClass::Provider => cloud_allowed && purpose != Purpose::ModelDownload,
+        HostClass::ModelHub => purpose == Purpose::ModelDownload,
+        HostClass::Unknown => false,
+    }
+}
+
+fn host_of(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+        .unwrap_or_default()
+}
+
+const LOG_CAP: usize = 500;
+
+#[derive(Clone)]
+pub struct Egress {
+    log: Arc<Mutex<VecDeque<NetworkLogEntry>>>,
+}
+
+impl Default for Egress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Egress {
+    pub fn new() -> Self {
+        Self { log: Arc::new(Mutex::new(VecDeque::new())) }
+    }
+
+    fn push(&self, host: &str, purpose: Purpose, allowed: bool, bytes: u64) {
+        let mut log = self.log.lock();
+        if log.len() >= LOG_CAP {
+            log.pop_front();
+        }
+        log.push_back(NetworkLogEntry {
+            at: chrono::Local::now().to_rfc3339(),
+            host: host.to_string(),
+            purpose: purpose.as_str().to_string(),
+            allowed,
+            bytes,
+        });
+    }
+
+    /// Validate a URL before a request. Logs denials.
+    pub fn check(&self, url: &str, purpose: Purpose, cloud_allowed: bool) -> Result<()> {
+        let host = host_of(url);
+        if host.is_empty() {
+            self.push(url, purpose, false, 0);
+            bail!("Blocked: invalid URL");
+        }
+        if !is_allowed(&host, purpose, cloud_allowed) {
+            self.push(&host, purpose, false, 0);
+            match classify_host(&host) {
+                HostClass::Provider => bail!(
+                    "Blocked by privacy settings: {} may not use cloud providers. Enable it in Settings → Privacy, or use a local model.",
+                    purpose.as_str()
+                ),
+                _ => bail!("Blocked: {host} is not an allowed host"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Record a completed request (bytes sent+received).
+    pub fn record(&self, url: &str, purpose: Purpose, bytes: u64) {
+        self.push(&host_of(url), purpose, true, bytes);
+    }
+
+    pub fn entries(&self) -> Vec<NetworkLogEntry> {
+        self.log.lock().iter().rev().cloned().collect()
+    }
+
+    /// HTTP client whose redirects are re-checked against the policy.
+    pub fn client(&self, purpose: Purpose, cloud_allowed: bool) -> reqwest::Client {
+        let me = self.clone();
+        let policy = reqwest::redirect::Policy::custom(move |attempt| {
+            let host = attempt.url().host_str().unwrap_or_default().to_string();
+            if attempt.previous().len() > 8 {
+                attempt.error("too many redirects")
+            } else if is_allowed(&host, purpose, cloud_allowed) {
+                attempt.follow()
+            } else {
+                me.push(&host, purpose, false, 0);
+                attempt.stop()
+            }
+        });
+        reqwest::Client::builder()
+            .redirect(policy)
+            .user_agent("FloFlow/0.1")
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("http client")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn localhost_always_allowed() {
+        assert!(is_allowed("127.0.0.1", Purpose::Attention, false));
+        assert!(is_allowed("localhost", Purpose::Assistant, false));
+    }
+
+    #[test]
+    fn providers_need_cloud_opt_in() {
+        assert!(!is_allowed("api.openai.com", Purpose::Assistant, false));
+        assert!(is_allowed("api.openai.com", Purpose::Assistant, true));
+        assert!(!is_allowed("api.anthropic.com", Purpose::ModelDownload, true));
+    }
+
+    #[test]
+    fn model_hub_only_for_downloads() {
+        assert!(is_allowed("huggingface.co", Purpose::ModelDownload, false));
+        assert!(is_allowed("cdn-lfs-us-1.hf.co", Purpose::ModelDownload, false));
+        assert!(!is_allowed("huggingface.co", Purpose::Assistant, true));
+    }
+
+    #[test]
+    fn unknown_hosts_denied_and_logged() {
+        let e = Egress::new();
+        assert!(e.check("https://api.segment.io/v1/track", Purpose::Test, true).is_err());
+        assert!(e.check("https://evil.example.com", Purpose::Assistant, true).is_err());
+        let log = e.entries();
+        assert_eq!(log.len(), 2);
+        assert!(log.iter().all(|l| !l.allowed));
+    }
+
+    #[test]
+    fn lookalike_hosts_denied() {
+        assert_eq!(classify_host("api.openai.com.evil.io"), HostClass::Unknown);
+        assert_eq!(classify_host("nothuggingface.co"), HostClass::Unknown);
+    }
+}
