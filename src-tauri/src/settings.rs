@@ -33,6 +33,10 @@ pub fn migrate(s: &mut Settings) -> bool {
         s.meeting_detection = true;
         s.learn_corrections = true;
     }
+    if s.settings_version < 4 {
+        // anyone upgrading already set Flo up — don't show the first-run wizard
+        s.onboarded = true;
+    }
     s.settings_version = crate::model::SETTINGS_VERSION;
     true
 }
@@ -46,7 +50,7 @@ pub fn save(data_dir: &Path, s: &Settings) -> Result<()> {
 }
 
 pub fn is_cloud_llm(provider: &str) -> bool {
-    matches!(provider, "openai" | "anthropic" | "gemini" | "groq" | "openrouter")
+    matches!(provider, "openai" | "anthropic" | "gemini" | "groq" | "openrouter" | "minimax" | "qwen" | "ollama_cloud")
 }
 
 #[cfg(test)]
@@ -76,11 +80,14 @@ mod tests {
         assert!(!migrate(&mut s));
         assert!(!s.assistant_cloud_allowed);
         assert_eq!((s.hotkey_dictation.as_str(), s.hotkey_assistant.as_str()), ("ctrl", "fn"));
+        assert!(s.onboarded); // upgraded installs skip the wizard
+        assert!(!Settings::default().onboarded); // fresh installs see it
     }
 
     #[test]
     fn cloud_detection() {
         assert!(is_cloud_llm("anthropic"));
+        assert!(is_cloud_llm("minimax") && is_cloud_llm("qwen") && is_cloud_llm("ollama_cloud"));
         assert!(!is_cloud_llm("ollama"));
     }
 }

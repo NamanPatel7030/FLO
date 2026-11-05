@@ -41,6 +41,14 @@ pub fn delete_api_key(provider: String) -> R<()> {
     secrets::delete_api_key(&provider).map_err(e)
 }
 
+/// Model names for a provider (live list when reachable, curated fallback otherwise).
+#[tauri::command]
+pub async fn provider_models(st: State<'_, Shared>, provider: String) -> R<Vec<String>> {
+    let s = st.settings();
+    let cfg = llm::LlmConfig { provider, model: String::new(), local_url: s.local_llm_url.clone() };
+    Ok(llm::list_models(&st.egress, &cfg).await)
+}
+
 #[tauri::command]
 pub async fn test_llm(st: State<'_, Shared>) -> R<String> {
     let s = st.settings();

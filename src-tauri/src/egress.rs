@@ -54,6 +54,11 @@ const PROVIDER_HOSTS: &[&str] = &[
     "api.groq.com",
     "openrouter.ai",
     "slack.com",
+    "api.minimax.io",
+    "api.minimaxi.com",
+    "dashscope-intl.aliyuncs.com",
+    "dashscope.aliyuncs.com",
+    "ollama.com",
 ];
 
 pub fn classify_host(host: &str) -> HostClass {

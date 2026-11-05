@@ -30,7 +30,7 @@ pub enum Phase {
     Error,
 }
 
-pub const SETTINGS_VERSION: u32 = 3;
+pub const SETTINGS_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -45,6 +45,8 @@ pub struct Settings {
     pub system_prompt: String,
     /// turn unanswered Slack DMs / mentions into to-dos (when a Slack token is saved)
     pub slack_sync: bool,
+    /// first-run setup wizard completed
+    pub onboarded: bool,
     pub stt_provider: String,
     pub stt_model: String,
     pub language: String,
@@ -73,6 +75,7 @@ impl Default for Settings {
             learn_corrections: true,
             system_prompt: String::new(),
             slack_sync: true,
+            onboarded: false,
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),
             language: "auto".into(),

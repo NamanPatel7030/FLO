@@ -56,6 +56,9 @@ pub fn default_model(provider: &str) -> &'static str {
         "groq" => "openai/gpt-oss-120b",
         "openrouter" => "anthropic/claude-haiku-5-5",
         "lmstudio" => "local-model",
+        "minimax" => "MiniMax-M2",
+        "qwen" => "qwen-plus",
+        "ollama_cloud" => "gpt-oss:120b",
         _ => "qwen3:8b",
     }
 }
@@ -65,6 +68,9 @@ fn openai_base(cfg: &LlmConfig) -> Result<String> {
         "openai" => "https://api.openai.com/v1".into(),
         "groq" => "https://api.groq.com/openai/v1".into(),
         "openrouter" => "https://openrouter.ai/api/v1".into(),
+        "minimax" => "https://api.minimax.io/v1".into(),
+        "qwen" => "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".into(),
+        "ollama_cloud" => "https://ollama.com/v1".into(),
         "ollama" => format!("{}/v1", cfg.local_url.trim_end_matches('/')),
         "lmstudio" => {
             let u = if cfg.local_url.contains("11434") || cfg.local_url.is_empty() { "http://127.0.0.1:1234".to_string() } else { cfg.local_url.clone() };
@@ -82,6 +88,78 @@ async fn key_for(provider: &str) -> Result<Option<String>> {
         .await?
         .map(Some)
         .ok_or_else(|| anyhow!("No API key for {provider}. Add it in Settings → AI."))
+}
+
+/// Curated fallback model names per provider (shown when the live list can't be fetched).
+pub fn suggested_models(provider: &str) -> Vec<&'static str> {
+    match provider {
+        "openai" => vec!["gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-4.1-mini"],
+        "anthropic" => vec!["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+        "gemini" => vec!["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
+        "groq" => vec!["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "qwen/qwen3-32b"],
+        "openrouter" => vec!["anthropic/claude-haiku-5-5", "openai/gpt-5-mini", "google/gemini-2.5-flash", "qwen/qwen3-235b-a22b"],
+        "minimax" => vec!["MiniMax-M2", "MiniMax-Text-01"],
+        "qwen" => vec!["qwen-plus", "qwen-max", "qwen-turbo", "qwen3-coder-plus"],
+        "ollama_cloud" => vec!["gpt-oss:120b", "gpt-oss:20b", "qwen3-coder:480b", "deepseek-v3.1:671b"],
+        "ollama" => vec!["qwen3:8b", "llama3.2:3b", "gemma3:4b"],
+        _ => vec![],
+    }
+}
+
+/// Live model list from the provider (`GET /models` — no tokens used). Falls back to suggestions.
+pub async fn list_models(egress: &Egress, cfg: &LlmConfig) -> Vec<String> {
+    let fallback = || suggested_models(&cfg.provider).into_iter().map(String::from).collect::<Vec<_>>();
+    let (url, auth): (String, Option<(&str, String)>) = match cfg.provider.as_str() {
+        "ollama" => (format!("{}/api/tags", cfg.local_url.trim_end_matches('/')), None),
+        "anthropic" => match key_for("anthropic").await {
+            Ok(Some(k)) => ("https://api.anthropic.com/v1/models?limit=100".into(), Some(("x-api-key", k))),
+            _ => return fallback(),
+        },
+        "gemini" => match key_for("gemini").await {
+            Ok(Some(k)) => ("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100".into(), Some(("x-goog-api-key", k))),
+            _ => return fallback(),
+        },
+        "none" | "" => return vec![],
+        p => {
+            let Ok(base) = openai_base(cfg) else { return fallback() };
+            let key = key_for(p).await.ok().flatten();
+            (format!("{base}/models"), key.map(|k| ("authorization", format!("Bearer {k}"))))
+        }
+    };
+    if egress.check(&url, Purpose::Test, true).is_err() {
+        return fallback();
+    }
+    let mut req = egress.client(Purpose::Test, true).get(&url).timeout(Duration::from_secs(6));
+    if let Some((h, v)) = auth {
+        req = req.header(h, v);
+    }
+    if cfg.provider == "anthropic" {
+        req = req.header("anthropic-version", "2026-10-21");
+    }
+    let Ok(resp) = req.send().await else { return fallback() };
+    let Ok(v) = resp.json::<Value>().await else { return fallback() };
+    let mut names: Vec<String> = if let Some(models) = v["models"].as_array() {
+        // ollama /api/tags or gemini
+        models
+            .iter()
+            .filter_map(|m| m["name"].as_str())
+            .map(|n| n.trim_start_matches("models/").to_string())
+            .filter(|n| !n.contains("embedding") && !n.contains("aqa"))
+            .collect()
+    } else {
+        v["data"].as_array().cloned().unwrap_or_default().iter().filter_map(|m| m["id"].as_str().map(String::from)).collect()
+    };
+    names.retain(|n| {
+        let l = n.to_lowercase();
+        !(l.contains("embed") || l.contains("whisper") || l.contains("tts") || l.contains("dall-e") || l.contains("moderation") || l.contains("image") || l.contains("audio"))
+    });
+    names.sort();
+    names.dedup();
+    if names.is_empty() {
+        fallback()
+    } else {
+        names
+    }
 }
 
 pub async fn chat(egress: &Egress, cfg: &LlmConfig, req: ChatRequest<'_>) -> Result<String> {
@@ -254,6 +332,26 @@ async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_cloud_provider_has_suggestions() {
+        for p in ["openai", "anthropic", "gemini", "groq", "openrouter", "minimax", "qwen", "ollama_cloud", "ollama"] {
+            assert!(!suggested_models(p).is_empty(), "{p}");
+            assert_eq!(suggested_models(p)[0], default_model(p).max(suggested_models(p)[0]).min(suggested_models(p)[0]));
+        }
+    }
+
+    #[test]
+    fn new_provider_bases() {
+        let mk = |p: &str| LlmConfig { provider: p.into(), model: String::new(), local_url: String::new() };
+        assert_eq!(openai_base(&mk("minimax")).unwrap(), "https://api.minimax.io/v1");
+        assert_eq!(openai_base(&mk("qwen")).unwrap(), "https://dashscope-intl.aliyuncs.com/compatible-mode/v1");
+        assert_eq!(openai_base(&mk("ollama_cloud")).unwrap(), "https://ollama.com/v1");
+        for p in ["minimax", "qwen", "ollama_cloud"] {
+            let host = url::Url::parse(&openai_base(&mk(p)).unwrap()).unwrap().host_str().unwrap().to_string();
+            assert!(crate::egress::is_allowed(&host, crate::egress::Purpose::Assistant, true), "{host}");
+        }
+    }
 
     #[test]
     fn local_bases() {

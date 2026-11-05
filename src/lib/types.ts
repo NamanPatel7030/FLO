@@ -24,10 +24,14 @@ export type LlmProvider =
   | "anthropic"
   | "gemini"
   | "groq"
-  | "openrouter";
+  | "openrouter"
+  | "minimax"
+  | "qwen"
+  /** Ollama's hosted models (ollama.com, API key) — local Ollama is "ollama" */
+  | "ollama_cloud";
 
 /** Providers whose API key lives in the OS keychain. */
-export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter" | "slack";
+export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter" | "slack" | "minimax" | "qwen" | "ollama_cloud";
 
 /** Modifier combo for push-to-talk (macOS). Any other key pressed while holding cancels. */
 export type HotkeyCombo = "fn" | "ctrl" | "alt" | "fn+ctrl" | "ctrl+alt" | "cmd+alt" | "fn+shift";
@@ -46,6 +50,8 @@ export interface Settings {
   systemPrompt: string;
   /** turn unanswered Slack DMs / mentions into to-dos (when connected) */
   slackSync: boolean;
+  /** first-run setup wizard completed */
+  onboarded: boolean;
   sttProvider: SttProvider;
   /** local: model id e.g. "large-v3-turbo-q5_0"; cloud: model name e.g. "whisper-large-v3-turbo" */
   sttModel: string;
@@ -414,6 +420,7 @@ export const EV = {
 /**
  * Tauri commands (snake_case names, camelCase args):
  *  get_settings() -> Settings            save_settings({settings})
+ *  provider_models({provider}) -> string[]  (live /models list incl. local Ollama pulls; curated fallback)
  *  set_api_key({provider,key})           has_api_key({provider}) -> bool
  *  delete_api_key({provider})            test_llm() -> string
  *  get_island_geometry() -> IslandGeometry

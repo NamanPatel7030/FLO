@@ -177,6 +177,7 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
     tauri::async_runtime::spawn(async move {
         let mut inside = false;
         let mut last: (f64, f64) = (f64::NAN, f64::NAN);
+        let mut outside_streak = 0u8;
         loop {
             // idle: 5 Hz; over the island: ~12 Hz
             tokio::time::sleep(std::time::Duration::from_millis(if inside { 80 } else { 200 })).await;
@@ -196,7 +197,21 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
                 }
             };
             let Some((x, y, ww, wh)) = sample else { continue };
-            let now = x >= 0.0 && x <= ww && y >= 0.0 && y <= wh;
+            // hysteresis: enter on the exact frame; leave only when ≥8px outside for 2 samples in a row,
+            // so a window resize under a resting cursor can never toggle the menu open/closed
+            let strictly_in = x >= 0.0 && x <= ww && y >= 0.0 && y <= wh;
+            let near = x >= -8.0 && x <= ww + 8.0 && y >= -8.0 && y <= wh + 8.0;
+            let now = if inside {
+                if near {
+                    outside_streak = 0;
+                    true
+                } else {
+                    outside_streak += 1;
+                    outside_streak < 2
+                }
+            } else {
+                strictly_in
+            };
             if now {
                 // cx: offset from the window's horizontal centre — stable while the island resizes
                 let cx = x - ww / 2.0;
@@ -272,6 +287,7 @@ pub fn run() {
             commands::has_api_key,
             commands::delete_api_key,
             commands::test_llm,
+            commands::provider_models,
             commands::get_island_geometry,
             commands::island_resize,
             commands::open_dashboard,
@@ -339,8 +355,9 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let models_dir = data_dir.join("models");
             let settings = settings::load(&data_dir);
-            let key = secrets::db_key().map_err(|e| anyhow::anyhow!("Keychain unavailable: {e}"))?;
-            let db = db::Db::open(&data_dir.join("flo.db"), Some(&key))?;
+            let db_path = data_dir.join("flo.db");
+            let key = secrets::db_key(&data_dir, db_path.exists()).map_err(|e| anyhow::anyhow!("Keychain unavailable: {e}"))?;
+            let db = db::Db::open(&db_path, Some(&key))?;
             db.close_stale_live_notes()?;
             let st: Shared = Arc::new(AppState {
                 app: handle.clone(),

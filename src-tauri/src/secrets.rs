@@ -2,7 +2,7 @@
 use anyhow::{bail, Result};
 
 const SERVICE: &str = "com.flo.flow";
-pub const PROVIDERS: &[&str] = &["openai", "anthropic", "gemini", "groq", "openrouter", "slack"];
+pub const PROVIDERS: &[&str] = &["openai", "anthropic", "gemini", "groq", "openrouter", "slack", "minimax", "qwen", "ollama_cloud"];
 
 fn entry(name: &str) -> Result<keyring::Entry> {
     Ok(keyring::Entry::new(SERVICE, name)?)
@@ -58,31 +58,77 @@ pub fn delete_api_key(provider: &str) -> Result<()> {
     }
 }
 
+fn random_hex32() -> String {
+    use rand::RngCore;
+    let mut b = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut b);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn write_private(path: &std::path::Path, s: &str) -> Result<()> {
+    std::fs::write(path, s)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// 32-byte hex key for SQLCipher; created on first run.
-pub fn db_key() -> Result<String> {
-    let e = entry("db-key")?;
-    match e.get_password() {
+///
+/// Keychain first. A private key file (`.dbkey`, 0600) is used only when it already exists, or —
+/// for a fresh install on a machine with no keychain service at all (CI, headless Linux) — created.
+/// It never replaces an existing key, so a temporary keychain hiccup can't orphan the database.
+pub fn db_key(data_dir: &std::path::Path, db_exists: bool) -> Result<String> {
+    let file = data_dir.join(".dbkey");
+    if let Ok(k) = std::fs::read_to_string(&file) {
+        if k.trim().len() == 64 {
+            return Ok(k.trim().to_string());
+        }
+    }
+    match entry("db-key").and_then(|e| match e.get_password() {
         Ok(k) if k.len() == 64 => Ok(k),
-        _ => {
-            use rand::RngCore;
-            let mut b = [0u8; 32];
-            rand::thread_rng().fill_bytes(&mut b);
-            let k: String = b.iter().map(|x| format!("{x:02x}")).collect();
+        Ok(_) | Err(keyring::Error::NoEntry) => {
+            let k = random_hex32();
             e.set_password(&k)?;
             Ok(k)
         }
+        Err(err) => Err(err.into()),
+    }) {
+        Ok(k) => Ok(k),
+        Err(err) if !db_exists => {
+            log::warn!("no keychain ({err}); using a private key file for the new database");
+            let k = random_hex32();
+            write_private(&file, &k)?;
+            Ok(k)
+        }
+        Err(err) => Err(err),
     }
 }
 
+static HOOK_TOKEN: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
+
 /// Random token used to authenticate Claude Code hook calls to the local listener.
+/// Falls back to an in-memory token if there's no keychain (hooks then refresh on start).
 pub fn hook_token() -> Result<String> {
-    let e = entry("claude-hook-token")?;
-    match e.get_password() {
+    if let Some(t) = HOOK_TOKEN.lock().clone() {
+        return Ok(t);
+    }
+    let t = match entry("claude-hook-token").and_then(|e| match e.get_password() {
         Ok(k) if !k.is_empty() => Ok(k),
         _ => {
             let k = uuid::Uuid::new_v4().simple().to_string();
             e.set_password(&k)?;
             Ok(k)
         }
-    }
+    }) {
+        Ok(t) => t,
+        Err(err) => {
+            log::warn!("no keychain for hook token ({err}); using a session token");
+            uuid::Uuid::new_v4().simple().to_string()
+        }
+    };
+    *HOOK_TOKEN.lock() = Some(t.clone());
+    Ok(t)
 }

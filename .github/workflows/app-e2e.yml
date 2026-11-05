@@ -1,0 +1,62 @@
+name: app-e2e
+
+# Drives the REAL Flo app (Rust backend + system webview) with tauri-driver on Linux and Windows.
+# (macOS has no WebDriver for WKWebView; there the --selftest/--diag modes + Playwright cover it.)
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  app-e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Linux deps (webview, WebDriver, virtual display)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libasound2-dev libssl-dev libdbus-1-dev libxtst-dev libx11-dev cmake clang xvfb
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Edge WebDriver (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          echo "$PWD" >> $env:GITHUB_PATH
+
+      - run: npm ci
+
+      - name: Build app (no installer)
+        run: npx tauri build --no-bundle
+
+      - name: Run real-app e2e (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a sh -c 'tauri-driver & sleep 2; node tests/app-e2e/run.mjs src-tauri/target/release/flo-flow'
+
+      - name: Run real-app e2e (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Process -NoNewWindow tauri-driver
+          Start-Sleep -Seconds 3
+          node tests/app-e2e/run.mjs src-tauri/target/release/flo-flow.exe
