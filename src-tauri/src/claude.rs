@@ -435,7 +435,8 @@ pub fn spawn_listener(st: Shared) {
             st.claude_listening.store(true, Ordering::SeqCst);
             for mut req in server.incoming_requests() {
                 let url = req.url().to_string();
-                let ok_path = url.starts_with("/claude/hook");
+                let is_agent = url.starts_with("/agent/event");
+                let ok_path = url.starts_with("/claude/hook") || is_agent;
                 let parsed = url::Url::parse(&format!("http://x{url}")).ok();
                 let q = |name: &str| parsed.as_ref().and_then(|u| u.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.to_string()));
                 let ok_token = q("token").as_deref() == Some(token.as_str());
@@ -452,9 +453,17 @@ pub fn spawn_listener(st: Shared) {
                 let _ = req.as_reader().take(1024 * 1024).read_to_string(&mut body);
                 let _ = req.respond(tiny_http::Response::from_string("ok"));
                 let v: Value = serde_json::from_str(&body).unwrap_or(json!({}));
-                let transcript = v["transcript_path"].as_str().and_then(safe_transcript);
-                let ev = parse_hook_from(&v, transcript.as_deref(), bundle, term);
-                let Some(status) = session_status(&ev) else { continue };
+                let (ev, status) = if is_agent {
+                    // Codex / Cursor / any tool
+                    let Some((mut ev, status)) = crate::agents::parse_agent(&q("source").unwrap_or_default(), q("event").as_deref(), &v) else { continue };
+                    ev.app_bundle = bundle;
+                    (ev, status)
+                } else {
+                    let transcript = v["transcript_path"].as_str().and_then(safe_transcript);
+                    let ev = parse_hook_from(&v, transcript.as_deref(), bundle, term);
+                    let Some(status) = session_status(&ev) else { continue };
+                    (ev, status)
+                };
                 if let Err(e) = st.db.apply_claude_event(&ev, status) {
                     log::error!("claude session: {e}");
                 }

@@ -113,6 +113,15 @@ pub fn detect_call_app() -> String {
     "Google Meet".into()
 }
 
+/// Global cursor position in points (top-left origin) — a single cheap CoreGraphics call,
+/// safe off the main thread (no Tauri/AppKit round-trip).
+pub fn cursor_location() -> Option<(f64, f64)> {
+    let src = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+    let ev = CGEvent::new(src).ok()?;
+    let p = ev.location();
+    Some((p.x, p.y))
+}
+
 /// Pointing-hand cursor while over the island (main thread only).
 pub fn set_pointer_cursor() {
     unsafe {

@@ -399,6 +399,13 @@ impl Db {
                     app_bundle: r.get(6)?,
                     terminal: r.get(7)?,
                     transcript_path: r.get(8)?,
+                    source: {
+                        let id: String = r.get(0)?;
+                        match id.split_once(':') {
+                            Some((p, _)) if !p.is_empty() && !p.contains('/') => p.to_string(),
+                            _ => "claude".to_string(),
+                        }
+                    },
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

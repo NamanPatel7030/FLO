@@ -424,6 +424,64 @@ pub fn accept_correction(st: State<Shared>, heard: String, corrected: String) ->
     st.db.add_dictionary(&heard, Some(&corrected)).map_err(e)
 }
 
+// ── integrations (Claude Code, Codex, Cursor, webhook) + Slack ───────────────
+#[tauri::command]
+pub fn list_integrations(st: State<Shared>) -> Vec<crate::agents::Integration> {
+    crate::agents::list(st.inner())
+}
+
+#[tauri::command]
+pub fn install_integration(st: State<Shared>, id: String) -> R<Vec<crate::agents::Integration>> {
+    crate::agents::install(st.inner(), &id).map_err(e)?;
+    Ok(crate::agents::list(st.inner()))
+}
+
+#[tauri::command]
+pub fn uninstall_integration(st: State<Shared>, id: String) -> R<Vec<crate::agents::Integration>> {
+    crate::agents::uninstall(st.inner(), &id).map_err(e)?;
+    Ok(crate::agents::list(st.inner()))
+}
+
+/// Save + verify a Slack user token. Returns "Name · workspace".
+#[tauri::command]
+pub async fn slack_connect(st: State<'_, Shared>, token: String) -> R<String> {
+    let token = token.trim().to_string();
+    if !token.starts_with("xoxp-") {
+        return Err("Use a Slack *user* token (starts with xoxp-).".into());
+    }
+    secrets::set_api_key("slack", &token).map_err(e)?;
+    crate::slack::test(st.inner()).await.map_err(|err| {
+        let _ = secrets::delete_api_key("slack");
+        err.to_string()
+    })
+}
+
+#[tauri::command]
+pub async fn slack_status(st: State<'_, Shared>) -> R<Option<String>> {
+    if secrets::get_api_key_async("slack").await.map_err(e)?.is_none() {
+        return Ok(None);
+    }
+    crate::slack::test(st.inner()).await.map(Some).map_err(e)
+}
+
+#[tauri::command]
+pub fn slack_disconnect() -> R<()> {
+    secrets::delete_api_key("slack").map_err(e)
+}
+
+#[tauri::command]
+pub async fn slack_sync_now(st: State<'_, Shared>) -> R<usize> {
+    crate::slack::sync(st.inner()).await.map_err(e)
+}
+
+/// Confirm / cancel a staged action (e.g. a Slack message the assistant drafted).
+#[tauri::command]
+pub async fn confirm_action(st: State<'_, Shared>, id: String, approve: bool) -> R<String> {
+    let r = crate::slack::confirm(st.inner(), &id, approve).await.map_err(e)?;
+    st.toast("success", r.clone());
+    Ok(r)
+}
+
 #[tauri::command]
 pub fn claude_hook_status(st: State<Shared>) -> ClaudeHookStatus {
     claude::status(st.inner())

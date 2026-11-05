@@ -229,6 +229,7 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
             platform::open_app(name)?;
             Ok(format!("Opened {name}"))
         }
+        AssistantAction::SlackSend { to, text: body } => crate::slack::propose_send(st, to, body).await,
         AssistantAction::InsertText { text: body } => {
             platform::activate_app(front.pid);
             let b = body.clone();

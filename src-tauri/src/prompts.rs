@@ -35,6 +35,7 @@ Available actions (use exact field names):
 {{"type":"open_url","url":"https://..."}}
 {{"type":"open_app","name":"<macOS/Windows app name>"}}
 {{"type":"insert_text","text":"<text to type into the focused app; if the user selected text and asked to rewrite it, this REPLACES the selection>"}}
+{{"type":"slack_send","to":"<teammate name or #channel>","text":"<message>"}}  (user confirms before it is sent)
 
 Rules:
 - Only take actions the user asked for. Questions about status → answer from the context, no actions.

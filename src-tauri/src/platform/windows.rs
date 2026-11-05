@@ -82,6 +82,9 @@ pub fn detect_call_app() -> String {
     "a call".into()
 }
 pub fn set_pointer_cursor() {}
+pub fn cursor_location() -> Option<(f64, f64)> {
+    None
+}
 pub fn focused_text() -> Option<(usize, String)> {
     None
 }

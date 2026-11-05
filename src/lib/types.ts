@@ -27,7 +27,7 @@ export type LlmProvider =
   | "openrouter";
 
 /** Providers whose API key lives in the OS keychain. */
-export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter";
+export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter" | "slack";
 
 /** Modifier combo for push-to-talk (macOS). Any other key pressed while holding cancels. */
 export type HotkeyCombo = "fn" | "ctrl" | "alt" | "fn+ctrl" | "ctrl+alt" | "cmd+alt" | "fn+shift";
@@ -44,6 +44,8 @@ export interface Settings {
   /** your own instructions (tone, who you are, how to reply) — added to assistant + meeting prompts;
    *  also to dictation cleanup when ≤ 300 chars */
   systemPrompt: string;
+  /** turn unanswered Slack DMs / mentions into to-dos (when connected) */
+  slackSync: boolean;
   sttProvider: SttProvider;
   /** local: model id e.g. "large-v3-turbo-q5_0"; cloud: model name e.g. "whisper-large-v3-turbo" */
   sttModel: string;
@@ -108,7 +110,9 @@ export type AssistantAction =
   | { type: "stop_meeting" }
   | { type: "open_url"; url: string }
   | { type: "open_app"; name: string }
-  | { type: "insert_text"; text: string };
+  | { type: "insert_text"; text: string }
+  /** staged — the user confirms in the notch (flo://confirm) before sending */
+  | { type: "slack_send"; to: string; text: string };
 
 export interface AssistantResponse {
   id: string;
@@ -320,6 +324,27 @@ export interface ClaudeSession {
   message: string;
   updatedAt: string;
   appBundle?: string;
+  /** which agent: "claude" | "codex" | "cursor" | any webhook source name */
+  source: string;
+}
+
+/** A connectable tool (Claude Code, Codex CLI, Cursor, generic webhook). */
+export interface Integration {
+  id: string;
+  name: string;
+  /** the tool's config folder exists on this machine */
+  available: boolean;
+  installed: boolean;
+  configPath: string;
+  note: string;
+}
+
+/** Something Flo wants you to approve before it happens (e.g. send a Slack message). */
+export interface ConfirmEvent {
+  id: string;
+  kind: "slack";
+  title: string;
+  body: string;
 }
 
 /** Flo noticed you corrected a word it typed. */
@@ -382,6 +407,8 @@ export const EV = {
   claudeSessions: "flo://claude-sessions",
   correction: "flo://correction",
   meetingDetected: "flo://meeting-detected",
+  /** payload: ConfirmEvent — show Send / Cancel; answer with confirm_action */
+  confirm: "flo://confirm",
 } as const;
 
 /**
@@ -416,6 +443,9 @@ export const EV = {
  *  open_claude_by_session({sessionId}) -> string  — focus its window; removes it from the tray unless still working
  *  dismiss_claude_session({sessionId})
  *  accept_correction({heard, corrected}) -> DictionaryEntry
+ *  list_integrations() -> Integration[]   install_integration({id}) / uninstall_integration({id}) -> Integration[]
+ *  slack_connect({token}) -> string ("Name · workspace")   slack_status() -> string|null   slack_disconnect()
+ *  slack_sync_now() -> number (to-dos added)   confirm_action({id, approve}) -> string
  *  list_context_docs() -> ContextDoc[]          get_context_doc({id}) -> {doc: ContextDoc, content: string}
  *  add_context_doc({title, content}) -> ContextDoc   (frontend reads .md/.txt files via FileReader)
  *  update_context_doc({id, title?, enabled?, pinned?, content?})   delete_context_doc({id})

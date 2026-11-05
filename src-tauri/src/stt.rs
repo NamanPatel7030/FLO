@@ -86,7 +86,7 @@ pub fn is_hallucination(text: &str, seconds: f32) -> bool {
 }
 
 /// Free the model's RAM (~0.6–1.6 GB) after this long without dictation.
-const IDLE_UNLOAD_SECS: u64 = 600;
+const IDLE_UNLOAD_SECS: u64 = 180;
 
 pub fn spawn_idle_unloader(w: Arc<LocalWhisper>) {
     tauri::async_runtime::spawn(async move {

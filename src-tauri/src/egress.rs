@@ -29,6 +29,7 @@ pub enum Purpose {
     Attention,
     ModelDownload,
     Test,
+    Slack,
 }
 
 impl Purpose {
@@ -41,6 +42,7 @@ impl Purpose {
             Purpose::Attention => "attention",
             Purpose::ModelDownload => "model download",
             Purpose::Test => "connection test",
+            Purpose::Slack => "slack",
         }
     }
 }
@@ -51,6 +53,7 @@ const PROVIDER_HOSTS: &[&str] = &[
     "generativelanguage.googleapis.com",
     "api.groq.com",
     "openrouter.ai",
+    "slack.com",
 ];
 
 pub fn classify_host(host: &str) -> HostClass {

@@ -125,6 +125,21 @@ pub fn parse(query: &str) -> Option<Intent> {
             });
         }
     }
+    // ask another AI with the question pre-filled
+    for (p, name, url) in [
+        ("ask chatgpt ", "ChatGPT", "https://chatgpt.com/?q="),
+        ("ask chat gpt ", "ChatGPT", "https://chatgpt.com/?q="),
+        ("ask gpt ", "ChatGPT", "https://chatgpt.com/?q="),
+        ("ask claude ", "Claude", "https://claude.ai/new?q="),
+        ("ask perplexity ", "Perplexity", "https://www.perplexity.ai/search?q="),
+    ] {
+        if let Some(what) = q.strip_prefix(p) {
+            let what = what.trim_start_matches("about ").trim_start_matches("to ").trim();
+            if !what.is_empty() {
+                return Some(Intent { reply: format!("Asking {name}"), action: AssistantAction::OpenUrl { url: format!("{url}{}", enc(what)) } });
+            }
+        }
+    }
     // web search
     for p in ["google ", "search for ", "search ", "look up ", "web search "] {
         if let Some(what) = q.strip_prefix(p) {
@@ -184,6 +199,16 @@ mod tests {
             act("play lofi beats on youtube"),
             Some(AssistantAction::OpenUrl { url: "https://www.youtube.com/results?search_query=lofi+beats".into() })
         );
+    }
+
+    #[test]
+    fn asks_other_ais() {
+        assert_eq!(
+            act("ask ChatGPT how to center a div"),
+            Some(AssistantAction::OpenUrl { url: "https://chatgpt.com/?q=how+to+center+a+div".into() })
+        );
+        assert_eq!(act("ask claude about rust lifetimes"), Some(AssistantAction::OpenUrl { url: "https://claude.ai/new?q=rust+lifetimes".into() }));
+        assert!(matches!(act("ask perplexity best laptops 2026"), Some(AssistantAction::OpenUrl { .. })));
     }
 
     #[test]

@@ -43,6 +43,8 @@ pub struct Settings {
     pub meeting_detection: bool,
     pub learn_corrections: bool,
     pub system_prompt: String,
+    /// turn unanswered Slack DMs / mentions into to-dos (when a Slack token is saved)
+    pub slack_sync: bool,
     pub stt_provider: String,
     pub stt_model: String,
     pub language: String,
@@ -70,6 +72,7 @@ impl Default for Settings {
             meeting_detection: true,
             learn_corrections: true,
             system_prompt: String::new(),
+            slack_sync: true,
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),
             language: "auto".into(),
@@ -166,6 +169,11 @@ pub enum AssistantAction {
         name: String,
     },
     InsertText {
+        text: String,
+    },
+    /// staged only — the user confirms in the notch before anything is sent
+    SlackSend {
+        to: String,
         text: String,
     },
 }
@@ -417,6 +425,9 @@ pub struct ClaudeSession {
     pub terminal: Option<String>,
     #[serde(skip)]
     pub transcript_path: Option<String>,
+    /// claude | codex | cursor | <webhook source>
+    #[serde(default)]
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -1,4 +1,5 @@
 //! Flo — your assistant: local-first voice dictation, assistant, meeting notes, attention → to-dos.
+mod agents;
 mod assistant;
 mod attention;
 mod audio;
@@ -20,6 +21,7 @@ mod secrets;
 mod session;
 mod selftest;
 mod settings;
+mod slack;
 mod state;
 mod stt;
 mod text;
@@ -35,6 +37,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 static GEOMETRY: Mutex<Option<IslandGeometry>> = Mutex::new(None);
+/// island frame in logical points (x, y, w, h), kept in sync by place_island
+static ISLAND_RECT: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
 
 /// Must be called on the main thread on macOS.
 fn compute_geometry() -> IslandGeometry {
@@ -64,12 +68,14 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
         });
         let (x, y) = platform::island_position(&geo, width, height);
         w.set_position(LogicalPosition::new(x, y))?;
+        *ISLAND_RECT.lock() = Some((x, y, width, height));
     } else if let Some(m) = w.primary_monitor()? {
         let scale = m.scale_factor();
         let wa = m.work_area();
         let x = (wa.position.x as f64 + wa.size.width as f64) / scale - width - 16.0;
         let y = (wa.position.y as f64 + wa.size.height as f64) / scale - height - 16.0;
         w.set_position(LogicalPosition::new(x, y))?;
+        *ISLAND_RECT.lock() = Some((x, y, width, height));
     }
     Ok(())
 }
@@ -172,18 +178,28 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
         let mut inside = false;
         let mut last: (f64, f64) = (f64::NAN, f64::NAN);
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(if inside { 80 } else { 150 })).await;
-            let Some(w) = app.get_webview_window("island") else { continue };
-            let (Ok(cur), Ok(pos), Ok(size)) = (app.cursor_position(), w.outer_position(), w.outer_size()) else { continue };
-            let now = cur.x >= pos.x as f64
-                && cur.x <= (pos.x + size.width as i32) as f64
-                && cur.y >= pos.y as f64
-                && cur.y <= (pos.y + size.height as i32) as f64;
+            // idle: 5 Hz; over the island: ~12 Hz
+            tokio::time::sleep(std::time::Duration::from_millis(if inside { 80 } else { 200 })).await;
+            // fast path (macOS): CoreGraphics cursor + cached island rect, all in logical points
+            let sample = match (platform::cursor_location(), *ISLAND_RECT.lock()) {
+                (Some((cx_, cy_)), Some((rx, ry, rw, rh))) => Some((cx_ - rx, cy_ - ry, rw, rh)),
+                _ => {
+                    let Some(w) = app.get_webview_window("island") else { continue };
+                    let (Ok(cur), Ok(pos), Ok(size)) = (app.cursor_position(), w.outer_position(), w.outer_size()) else { continue };
+                    let scale = w.scale_factor().unwrap_or(1.0);
+                    Some((
+                        (cur.x - pos.x as f64) / scale,
+                        (cur.y - pos.y as f64) / scale,
+                        size.width as f64 / scale,
+                        size.height as f64 / scale,
+                    ))
+                }
+            };
+            let Some((x, y, ww, wh)) = sample else { continue };
+            let now = x >= 0.0 && x <= ww && y >= 0.0 && y <= wh;
             if now {
-                let scale = w.scale_factor().unwrap_or(1.0);
-                let (x, y) = ((cur.x - pos.x as f64) / scale, (cur.y - pos.y as f64) / scale);
                 // cx: offset from the window's horizontal centre — stable while the island resizes
-                let cx = (cur.x - (pos.x as f64 + size.width as f64 / 2.0)) / scale;
+                let cx = x - ww / 2.0;
                 // only send real movement (no re-render storm while the cursor rests)
                 if !inside || (cx - last.0).abs() >= 1.0 || (y - last.1).abs() >= 1.0 {
                     last = (cx, y);
@@ -303,6 +319,14 @@ pub fn run() {
             commands::open_claude_by_session,
             commands::dismiss_claude_session,
             commands::accept_correction,
+            commands::list_integrations,
+            commands::install_integration,
+            commands::uninstall_integration,
+            commands::slack_connect,
+            commands::slack_status,
+            commands::slack_disconnect,
+            commands::slack_sync_now,
+            commands::confirm_action,
             commands::list_context_docs,
             commands::get_context_doc,
             commands::add_context_doc,
@@ -346,6 +370,7 @@ pub fn run() {
             }
             start_hotkeys(st.clone());
             meeting_detect::spawn(st.clone());
+            slack::spawn(st.clone());
             attention::spawn(st.clone());
             claude::refresh_if_installed(&st);
             claude::spawn_listener(st.clone());
