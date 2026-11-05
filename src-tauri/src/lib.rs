@@ -129,8 +129,10 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
     let meeting = MenuItem::with_id(app, "meeting", "Start / stop meeting notes", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause / resume Attention", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Flo", true, None::<&str>)?;
+    let maker = MenuItem::with_id(app, "maker", "Made by Naman ↗", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&open, &meeting, &pause, &sep, &quit])?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&open, &meeting, &pause, &sep, &maker, &sep2, &quit])?;
     let mut tray = TrayIconBuilder::with_id("flo").menu(&menu).tooltip("Flo · your assistant").show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
@@ -152,6 +154,9 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
             let p = !st.attention_paused.load(Ordering::SeqCst);
             st.attention_paused.store(p, Ordering::SeqCst);
             st.toast("info", if p { "Attention paused" } else { "Attention resumed" });
+        }
+        "maker" => {
+            let _ = tauri_plugin_opener::open_url("https://hellonaman.com", None::<&str>);
         }
         "quit" => app.exit(0),
         _ => {}

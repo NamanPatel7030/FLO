@@ -110,7 +110,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
         let action = if stopping { seg.flush() } else { seg.push(slice_ms.max(1), audio::rms(&slice)) };
 
         match action {
-            Action::Partial if local => {
+            Action::Partial if local && !stopping => {
                 if let Ok(t) = session::transcribe_with_prompt(&st, pending.clone(), &last_text).await {
                     if !t.trim().is_empty() {
                         st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: None, elapsed_sec: elapsed, live: true, partial: Some(t) });
@@ -126,11 +126,14 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
                         let segm = MeetingSegment { t: seg_start, text: t };
                         if let Ok(Some(mut n)) = st.db.get_note(&note_id) {
                             n.transcript.push(segm.clone());
+                            if stop.load(Ordering::SeqCst) {
+                                n.live = false; // never resurrect a stopped meeting (checked at write time)
+                            }
                             n.duration_sec = elapsed;
                             let _ = st.db.upsert_note(&n);
                         }
                         segs_since_summary += 1;
-                        st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: Some(segm), summary: None, elapsed_sec: elapsed, live: true, partial: Some(String::new()) });
+                        st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: Some(segm), summary: None, elapsed_sec: elapsed, live: !stopping, partial: Some(String::new()) });
                     }
                     Ok(_) => {}
                     Err(e) => {
