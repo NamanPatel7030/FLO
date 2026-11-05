@@ -74,6 +74,9 @@ pub fn running_dev_app() -> Option<String> {
 pub fn open_app_path(_app: &str, _path: Option<&str>) -> Result<()> {
     Ok(())
 }
+pub fn focus_session_window(_app: &str, _names: &[String]) -> Result<String> {
+    Ok(String::new())
+}
 pub fn open_bundle(_bundle: &str, path: Option<&str>) -> Result<()> {
     if let Some(p) = path {
         std::process::Command::new("explorer").arg(p).status()?;

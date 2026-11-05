@@ -323,27 +323,23 @@ pub fn mark_claude_seen(st: State<Shared>, id: Option<String>) -> R<()> {
 
 /// Bring the app where the Claude session runs to the front (editor → its project folder).
 #[tauri::command]
-pub fn open_claude_session(app: tauri::AppHandle, st: State<Shared>, id: String) -> R<String> {
+pub async fn open_claude_session(app: tauri::AppHandle, st: State<'_, Shared>, id: String) -> R<String> {
     let ev = st.db.list_claude_events(200).map_err(e)?.into_iter().find(|x| x.id == id).ok_or("session not found")?;
     let _ = st.db.mark_claude_seen(Some(&id));
-    let folder_of = |editor: bool| if editor && !ev.cwd.is_empty() { Some(ev.cwd.as_str()) } else { None };
+    st.emit(ev::CLAUDE, serde_json::Value::Null);
     let target = claude::open_target(ev.app_bundle.as_deref(), ev.terminal.as_deref())
-        // unknown launcher (older events): use the editor/terminal that's running — never Finder
-        .or_else(|| platform::running_dev_app().map(|a| { let ed = claude::is_editor(&a); (a, ed) }));
-    match target {
-        Some((app_id, editor)) => {
-            if app_id.starts_with('/') {
-                platform::open_app_path(&app_id, folder_of(editor)).map_err(e)?;
-            } else {
-                platform::open_bundle(&app_id, folder_of(editor)).map_err(e)?;
-            }
-            Ok(app_id)
-        }
-        None => {
-            crate::show_dashboard(&app, Some("home"));
-            Ok(String::new())
-        }
-    }
+        // unknown launcher (older events): the editor/terminal that's running — never Finder
+        .or_else(|| platform::running_dev_app().map(|a| (a, false)));
+    let Some((app_id, _)) = target else {
+        crate::show_dashboard(&app, Some("home"));
+        return Ok(String::new());
+    };
+    let names = claude::window_name_candidates(&ev.cwd);
+    // focus the EXISTING window running this session; never open a new one
+    tauri::async_runtime::spawn_blocking(move || platform::focus_session_window(&app_id, &names))
+        .await
+        .map_err(e)?
+        .map_err(e)
 }
 
 #[tauri::command]

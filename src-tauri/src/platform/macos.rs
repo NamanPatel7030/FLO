@@ -306,6 +306,34 @@ pub fn running_dev_app() -> Option<String> {
     }).map(|s| s.to_string())
 }
 
+fn hs_cli() -> Option<&'static str> {
+    ["/opt/homebrew/bin/hs", "/usr/local/bin/hs"].into_iter().find(|p| std::path::Path::new(p).exists())
+}
+
+/// Focus the app's existing window for this session (Hammerspoon if available), otherwise just
+/// bring the app forward. Never opens a new window.
+pub fn focus_session_window(app: &str, names: &[String]) -> Result<String> {
+    if let Some(hs) = hs_cli() {
+        let script = crate::claude::hammerspoon_focus_script(app, names);
+        if let Ok(out) = std::process::Command::new(hs).args(["-t", "6", "-c", &script]).output() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            if out.status.success() {
+                if let Some(last) = text.lines().rev().find(|l| !l.starts_with("-- ")) {
+                    return Ok(last.trim().to_string());
+                }
+            }
+            log::warn!("hammerspoon focus failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+    // no Hammerspoon: activate the app only (no folder → no new window)
+    if app.starts_with('/') {
+        open_app_path(app, None)?;
+    } else {
+        open_bundle(app, None)?;
+    }
+    Ok("activated".into())
+}
+
 /// `open -a <app path> [folder]`
 pub fn open_app_path(app: &str, path: Option<&str>) -> Result<()> {
     let mut c = std::process::Command::new("open");

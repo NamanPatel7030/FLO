@@ -36,6 +36,87 @@ fn safe_ident(s: &str) -> Option<String> {
     (!s.is_empty() && s.len() < 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))).then(|| s.to_string())
 }
 
+/// Folder names to look for in window titles: the session dir and its parents, nearest first.
+/// e.g. /Users/p/Flo/.claude/worktrees/flo-mvp → [flo-mvp, worktrees, .claude, Flo, p]
+pub fn window_name_candidates(cwd: &str) -> Vec<String> {
+    let mut out = vec![];
+    let mut p = Path::new(cwd);
+    while let Some(name) = p.file_name() {
+        let n = name.to_string_lossy().to_string();
+        if !n.is_empty() && !out.contains(&n) {
+            out.push(n);
+        }
+        if out.len() >= 6 {
+            break;
+        }
+        match p.parent() {
+            Some(pp) => p = pp,
+            None => break,
+        }
+    }
+    out
+}
+
+fn lua_str(s: &str) -> String {
+    let mut o = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '\\' => o.push_str("\\\\"),
+            '"' => o.push_str("\\\""),
+            '\n' | '\r' => o.push(' '),
+            c if (c as u32) < 0x20 => {}
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// Hammerspoon Lua: pick the app's existing window whose title best matches the session folder
+/// (VS Code titles look like "file — Workspace"), un-minimize + focus it. Never opens a window.
+pub fn hammerspoon_focus_script(app: &str, names: &[String]) -> String {
+    let list = names.iter().map(|n| lua_str(n)).collect::<Vec<_>>().join(",");
+    format!(
+        r#"local target = {app}
+local names = {{{list}}}
+local bid = target
+if target:sub(1,1) == "/" then
+  local info = hs.application.infoForBundlePath(target)
+  bid = info and info.CFBundleIdentifier or target
+end
+local a = hs.application.get(bid)
+if not a then
+  if target:sub(1,1) == "/" then hs.application.launchOrFocus(target) else hs.application.launchOrFocusByBundleID(bid) end
+  return "launched"
+end
+local best, bestScore = nil, 0
+for _, w in ipairs(a:allWindows()) do
+  local t = w:title() or ""
+  local score = 0
+  for seg in (t .. " — "):gmatch("(.-) — ") do
+    for i, n in ipairs(names) do
+      if seg == n then score = math.max(score, 100 - i * 10) end
+    end
+  end
+  if score == 0 then
+    for i, n in ipairs(names) do
+      if #n > 2 and t:find(n, 1, true) then score = math.max(score, 40 - i * 5) end
+    end
+  end
+  if score > 0 and t:lower():find("claude", 1, true) then score = score + 5 end
+  if score > bestScore then best, bestScore = w, score end
+end
+if best then
+  best:unminimize()
+  best:focus()
+  return "focused:" .. (best:title() or "")
+end
+a:activate()
+return "activated""#,
+        app = lua_str(app)
+    )
+}
+
 /// Is this app (bundle id or .app path) a code editor that should open the project folder?
 pub fn is_editor(app: &str) -> bool {
     let a = app.to_lowercase();
@@ -406,6 +487,24 @@ mod tests {
         let e = parse_hook(&n, None);
         assert_eq!(e.kind, "notification");
         assert_eq!(e.message, "Claude needs permission");
+    }
+
+    #[test]
+    fn window_names_nearest_first() {
+        assert_eq!(
+            window_name_candidates("/Users/p/Flo/.claude/worktrees/flo-mvp"),
+            vec!["flo-mvp", "worktrees", ".claude", "Flo", "p", "Users"]
+        );
+        assert!(window_name_candidates("").is_empty());
+    }
+
+    #[test]
+    fn focus_script_escapes_and_targets() {
+        let s = hammerspoon_focus_script("/Applications/Visual Studio Code.app", &["a\"b".into(), "Flo".into()]);
+        assert!(s.contains(r#"local target = "/Applications/Visual Studio Code.app""#));
+        assert!(s.contains(r#"{"a\"b","Flo"}"#));
+        assert!(s.contains("best:focus()"));
+        assert!(!s.contains("open -a"));
     }
 
     #[test]

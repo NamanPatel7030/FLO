@@ -22,6 +22,9 @@ pub fn running_dev_app() -> Option<String> {
 pub fn open_app_path(_app: &str, _path: Option<&str>) -> Result<()> {
     Ok(())
 }
+pub fn focus_session_window(_app: &str, _names: &[String]) -> Result<String> {
+    Ok(String::new())
+}
 pub fn open_bundle(_b: &str, _p: Option<&str>) -> Result<()> { bail!("unsupported OS") }
 pub fn island_geometry() -> IslandGeometry {
     IslandGeometry { platform: "linux".into(), has_notch: false, notch_width: 64.0, notch_height: 64.0, screen_width: 0.0 }
