@@ -271,10 +271,29 @@ pub fn parse_hook_from(body: &Value, transcript: Option<&str>, bundle: Option<St
         project,
         cwd,
         message,
-        at: chrono::Local::now().to_rfc3339(),
+        at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
         seen: false,
         app_bundle: bundle.as_deref().and_then(safe_ident),
         terminal: terminal.as_deref().and_then(safe_ident),
+        transcript_path: body["transcript_path"].as_str().filter(|p| p.ends_with(".jsonl")).map(String::from),
+    }
+}
+
+/// Seconds a "working" session's transcript may stay untouched before we call it finished.
+pub const WORKING_IDLE_SECS: u64 = 150;
+
+/// Sessions marked "working" whose transcript has gone quiet are actually done (a Stop event can be
+/// missed — e.g. Flo restarting, or background sessions reporting under another id).
+pub fn settle_idle_sessions(st: &Shared) {
+    let Ok(list) = st.db.list_claude_sessions() else { return };
+    for s in list.into_iter().filter(|s| s.status == "working") {
+        let Some(path) = s.transcript_path.as_deref() else { continue };
+        let Ok(meta) = std::fs::metadata(path) else { continue };
+        let quiet = meta.modified().ok().and_then(|m| m.elapsed().ok()).map(|d| d.as_secs() >= WORKING_IDLE_SECS).unwrap_or(false);
+        if quiet {
+            let last = safe_transcript(path).and_then(|t| last_assistant_text(&t)).map(|m| headline(&m)).unwrap_or_default();
+            let _ = st.db.settle_claude_session(&s.session_id, &last);
+        }
     }
 }
 
@@ -362,6 +381,7 @@ fn safe_transcript(path: &str) -> Option<String> {
 }
 
 pub fn emit_sessions(st: &Shared) {
+    settle_idle_sessions(st);
     if let Ok(list) = st.db.list_claude_sessions() {
         st.emit(ev::CLAUDE_SESSIONS, list);
     }
@@ -456,6 +476,12 @@ pub fn spawn_listener(st: Shared) {
         let mut reminded: HashSet<String> = HashSet::new();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            // working → done when the transcript went quiet (missed Stop events)
+            let before = st2.db.list_claude_sessions().unwrap_or_default();
+            settle_idle_sessions(&st2);
+            if st2.db.list_claude_sessions().unwrap_or_default() != before {
+                emit_sessions(&st2);
+            }
             let Ok(events) = st2.db.list_claude_events(20) else { continue };
             let cutoff = (chrono::Local::now() - chrono::Duration::minutes(10)).to_rfc3339();
             let day_ago = (chrono::Local::now() - chrono::Duration::hours(12)).to_rfc3339();

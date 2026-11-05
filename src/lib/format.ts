@@ -25,8 +25,13 @@ export function formatNumber(n: number): string {
   return String(Math.round(n));
 }
 
+/** Parse backend timestamps safely: WebKit can misread >3 fractional-second digits. */
+export function parseTime(iso: string): number {
+  return new Date(iso.replace(/(\.\d{3})\d+/, "$1")).getTime();
+}
+
 export function relativeTime(iso: string, now: number = Date.now()): string {
-  const diff = Math.max(0, (now - new Date(iso).getTime()) / 1000);
+  const diff = Math.max(0, (now - parseTime(iso)) / 1000);
   if (diff < 60) return "just now";
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -34,7 +39,7 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
 }
 
 export function timeOfDay(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(parseTime(iso)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 export function greeting(hour: number): string {

@@ -344,6 +344,7 @@ pub async fn open_claude_session(app: tauri::AppHandle, st: State<'_, Shared>, i
 
 #[tauri::command]
 pub fn list_claude_sessions(st: State<Shared>) -> R<Vec<ClaudeSession>> {
+    claude::settle_idle_sessions(st.inner());
     st.db.list_claude_sessions().map_err(e)
 }
 

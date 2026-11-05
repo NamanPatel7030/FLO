@@ -391,6 +391,9 @@ pub struct ClaudeEvent {
     /// $TERM_PROGRAM of the session (vscode, iTerm.app, Apple_Terminal, WarpTerminal, ghostty…)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<String>,
+    /// Claude Code transcript (JSONL) — used to tell "still working" from "finished"
+    #[serde(skip)]
+    pub transcript_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -407,6 +410,8 @@ pub struct ClaudeSession {
     pub app_bundle: Option<String>,
     #[serde(skip)]
     pub terminal: Option<String>,
+    #[serde(skip)]
+    pub transcript_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

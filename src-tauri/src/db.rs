@@ -13,8 +13,9 @@ pub struct Db {
 
 const PROJECT_COLORS: &[&str] = &["#8b5cf6", "#06b6d4", "#f59e0b", "#10b981", "#ec4899", "#3b82f6", "#ef4444"];
 
+/// Millisecond precision: every JS engine (incl. WebKit) parses this reliably.
 fn now() -> String {
-    Local::now().to_rfc3339()
+    Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
 }
 
 pub fn new_id() -> String {
@@ -76,6 +77,7 @@ impl Db {
         for sql in [
             "ALTER TABLE claude_events ADD COLUMN app_bundle TEXT",
             "ALTER TABLE claude_events ADD COLUMN terminal TEXT",
+            "ALTER TABLE claude_sessions ADD COLUMN transcript TEXT",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -334,6 +336,7 @@ impl Db {
                     seen: r.get::<_, i32>(7)? != 0,
                     app_bundle: r.get(8)?,
                     terminal: r.get(9)?,
+                    transcript_path: None,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -359,12 +362,13 @@ impl Db {
             }
             Some(st) => {
                 c.execute(
-                    "INSERT INTO claude_sessions (session_id,project,cwd,status,message,updated_at,app_bundle,terminal,dismissed)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)
+                    "INSERT INTO claude_sessions (session_id,project,cwd,status,message,updated_at,app_bundle,terminal,dismissed,transcript)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0,?9)
                      ON CONFLICT(session_id) DO UPDATE SET project=?2, cwd=?3, status=?4,
                        message=CASE WHEN ?5='' THEN message ELSE ?5 END, updated_at=?6,
-                       app_bundle=COALESCE(?7, app_bundle), terminal=COALESCE(?8, terminal), dismissed=0",
-                    params![e.session_id, e.project, e.cwd, st, e.message, e.at, e.app_bundle, e.terminal],
+                       app_bundle=COALESCE(?7, app_bundle), terminal=COALESCE(?8, terminal), dismissed=0,
+                       transcript=COALESCE(?9, transcript)",
+                    params![e.session_id, e.project, e.cwd, st, e.message, e.at, e.app_bundle, e.terminal, e.transcript_path],
                 )?;
             }
         }
@@ -377,7 +381,7 @@ impl Db {
         let c = self.conn.lock();
         c.execute("DELETE FROM claude_sessions WHERE updated_at < ?1", [&cutoff])?;
         let mut st = c.prepare(
-            "SELECT session_id,project,cwd,status,message,updated_at,app_bundle,terminal FROM claude_sessions
+            "SELECT session_id,project,cwd,status,message,updated_at,app_bundle,terminal,transcript FROM claude_sessions
              WHERE dismissed=0 ORDER BY updated_at DESC LIMIT 20",
         )?;
         let rows = st
@@ -391,10 +395,21 @@ impl Db {
                     updated_at: r.get(5)?,
                     app_bundle: r.get(6)?,
                     terminal: r.get(7)?,
+                    transcript_path: r.get(8)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Mark a "working" session finished (no Stop event arrived but its transcript went quiet).
+    pub fn settle_claude_session(&self, id: &str, message: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE claude_sessions SET status='done', message=CASE WHEN ?2='' THEN message ELSE ?2 END, updated_at=?3
+             WHERE session_id=?1 AND status='working'",
+            params![id, message, now()],
+        )?;
+        Ok(())
     }
 
     pub fn get_claude_session(&self, id: &str) -> Result<Option<ClaudeSession>> {
@@ -671,6 +686,7 @@ mod tests {
             seen: false,
             app_bundle: Some("com.microsoft.VSCode".into()),
             terminal: Some("vscode".into()),
+            transcript_path: None,
         };
         db.insert_claude_event(&e).unwrap();
         assert_eq!(db.list_claude_events(1).unwrap()[0].app_bundle.as_deref(), Some("com.microsoft.VSCode"));
@@ -692,6 +708,7 @@ mod tests {
             seen: false,
             app_bundle: Some("/Applications/Visual Studio Code.app".into()),
             terminal: None,
+            transcript_path: None,
         };
         db.apply_claude_event(&e, Some("working")).unwrap();
         e.message = "Built it".into();
@@ -707,6 +724,19 @@ mod tests {
         assert_eq!(db.list_claude_sessions().unwrap().len(), 1);
         db.apply_claude_event(&e, None).unwrap(); // SessionEnd
         assert!(db.list_claude_sessions().unwrap().is_empty());
+        // settle: a working session with a quiet transcript becomes done
+        db.apply_claude_event(&e, Some("working")).unwrap();
+        db.settle_claude_session("s1", "All tests pass").unwrap();
+        let s = db.list_claude_sessions().unwrap();
+        assert_eq!((s[0].status.as_str(), s[0].message.as_str()), ("done", "All tests pass"));
+    }
+
+    #[test]
+    fn timestamps_are_millisecond_rfc3339() {
+        let t = now();
+        // e.g. 2026-11-05T14:50:12.345+05:30 — 3 fractional digits
+        let frac = t.split('.').nth(1).unwrap();
+        assert!(frac.len() >= 3 && frac[..3].chars().all(|c| c.is_ascii_digit()) && !frac[3..4].chars().all(|c| c.is_ascii_digit()));
     }
 
     #[test]

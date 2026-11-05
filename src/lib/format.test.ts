@@ -9,6 +9,7 @@ import {
   groupTodos,
   groupByDay,
   islandSize,
+  parseTime,
   isStuck,
   claudeStatusLabel,
   formatHotkey,
@@ -291,5 +292,15 @@ describe("isStuck (island watchdog)", () => {
   it("meetings and idle are never stuck", () => {
     expect(isStuck("listening", "meeting", 600000, 600000)).toBe(false);
     expect(isStuck("idle", "dictation", 600000, 600000)).toBe(false);
+  });
+});
+
+
+describe("parseTime", () => {
+  it("handles nanosecond and offset timestamps from the backend", () => {
+    const a = parseTime("2026-11-05T14:50:00.123456789+05:30");
+    const b = Date.UTC(2026, 10, 5, 9, 20, 0, 123);
+    expect(a).toBe(b);
+    expect(parseTime("2026-11-05T09:20:00.123Z")).toBe(b);
   });
 });
