@@ -47,6 +47,10 @@ pub struct Settings {
     pub slack_sync: bool,
     /// first-run setup wizard completed
     pub onboarded: bool,
+    /// Flo account server (sign-in only)
+    pub account_url: String,
+    /// cached signed-in user (offline start)
+    pub account_user: Option<AccountUser>,
     pub stt_provider: String,
     pub stt_model: String,
     pub language: String,
@@ -76,6 +80,8 @@ impl Default for Settings {
             system_prompt: String::new(),
             slack_sync: true,
             onboarded: false,
+            account_url: option_env!("FLO_ACCOUNT_URL").unwrap_or("http://localhost:3000").to_string(),
+            account_user: None,
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),
             language: "auto".into(),
@@ -450,6 +456,16 @@ pub struct ClaudeSession {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AccountUser {
+    pub id: String,
+    pub email: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextDoc {
     pub id: String,
@@ -501,6 +517,7 @@ pub mod ev {
     pub const CLAUDE_SESSIONS: &str = "flo://claude-sessions";
     pub const CORRECTION: &str = "flo://correction";
     pub const MEETING_DETECTED: &str = "flo://meeting-detected";
+    pub const ACCOUNT: &str = "flo://account";
 }
 
 #[cfg(test)]

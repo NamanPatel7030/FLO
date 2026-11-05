@@ -20,6 +20,9 @@ pub fn get_settings(st: State<Shared>) -> Settings {
 #[tauri::command]
 pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
     settings::save(&st.data_dir, &settings).map_err(e)?;
+    if let Some(h) = url::Url::parse(&settings.account_url).ok().and_then(|u| u.host_str().map(String::from)) {
+        st.egress.allow_account_host(&h);
+    }
     platform::set_hotkeys(crate::hotkey::HotkeyConfig::from_strings(&settings.hotkey_dictation, &settings.hotkey_assistant));
     *st.settings.write() = settings;
     Ok(())
@@ -351,6 +354,37 @@ pub fn repair_permissions(app: tauri::AppHandle) -> R<()> {
         }
     }
     app.restart();
+}
+
+// ── account (sign-in only) ─────────────────────────────────────────────────
+#[tauri::command]
+pub async fn account_status(st: State<'_, Shared>) -> R<crate::account::AccountStatus> {
+    crate::account::allow_host(st.inner());
+    Ok(crate::account::status(st.inner()).await)
+}
+
+#[tauri::command]
+pub async fn account_login(st: State<'_, Shared>, email: String, password: String) -> R<AccountUser> {
+    crate::account::allow_host(st.inner());
+    crate::account::login(st.inner(), &email, &password).await.map_err(e)
+}
+
+#[tauri::command]
+pub fn account_google_start(st: State<Shared>) -> R<serde_json::Value> {
+    crate::account::allow_host(st.inner());
+    let state = crate::account::google_start(st.inner()).map_err(e)?;
+    Ok(serde_json::json!({ "state": state }))
+}
+
+#[tauri::command]
+pub async fn account_exchange(st: State<'_, Shared>, code: String, state: Option<String>) -> R<AccountUser> {
+    crate::account::allow_host(st.inner());
+    crate::account::exchange(st.inner(), &code, state.as_deref()).await.map_err(e)
+}
+
+#[tauri::command]
+pub fn account_logout(st: State<Shared>) -> R<()> {
+    crate::account::logout(st.inner()).map_err(e)
 }
 
 #[tauri::command]

@@ -75,6 +75,23 @@ fn write_private(path: &std::path::Path, s: &str) -> Result<()> {
     Ok(())
 }
 
+/// Generic named secret in the keychain (e.g. the account token).
+pub fn set_secret(name: &str, value: &str) -> Result<()> {
+    entry(name)?.set_password(value)?;
+    Ok(())
+}
+
+pub fn get_secret(name: &str) -> Option<String> {
+    entry(name).ok()?.get_password().ok().filter(|s| !s.is_empty())
+}
+
+pub fn delete_secret(name: &str) -> Result<()> {
+    match entry(name)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// 32-byte hex key for SQLCipher; created on first run.
 ///
 /// Keychain first. A private key file (`.dbkey`, 0600) is used only when it already exists, or —

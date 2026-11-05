@@ -1,4 +1,5 @@
 //! Flo — your assistant: local-first voice dictation, assistant, meeting notes, attention → to-dos.
+mod account;
 mod agents;
 mod assistant;
 mod attention;
@@ -280,6 +281,7 @@ pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
@@ -331,6 +333,11 @@ pub fn run() {
             commands::install_claude_hook,
             commands::uninstall_claude_hook,
             commands::restart_app,
+            commands::account_status,
+            commands::account_login,
+            commands::account_google_start,
+            commands::account_exchange,
+            commands::account_logout,
             commands::repair_permissions,
             commands::open_claude_session,
             commands::list_claude_sessions,
@@ -375,12 +382,26 @@ pub fn run() {
                 attention_paused: AtomicBool::new(false),
                 ptt_down: AtomicBool::new(false),
                 lock_pending: AtomicBool::new(false),
+                signed_in: AtomicBool::new(false),
                 attention_captures: AtomicU32::new(0),
                 claude_listening: AtomicBool::new(false),
                 claude_port: claude::PORT,
                 last_front: Mutex::new(Default::default()),
             });
             app.manage(st.clone());
+            account::allow_host(&st);
+            st.signed_in.store(account::cached_signed_in(&st), std::sync::atomic::Ordering::SeqCst);
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                let _ = app.deep_link().register_all();
+                let st_dl = st.clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        account::handle_deep_link(st_dl.clone(), url.to_string());
+                    }
+                });
+            }
             create_island(&handle)?;
             build_tray(&handle, st.clone())?;
             {

@@ -58,6 +58,8 @@ pub struct AppState {
     pub ptt_down: AtomicBool,
     /// Space arrived before the session finished starting
     pub lock_pending: AtomicBool,
+    /// signed in to a Flo account (gates dictation / assistant)
+    pub signed_in: AtomicBool,
     pub attention_captures: AtomicU32,
     pub claude_listening: AtomicBool,
     pub claude_port: u16,

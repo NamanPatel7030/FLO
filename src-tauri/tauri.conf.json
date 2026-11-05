@@ -23,17 +23,28 @@
         "transparent": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "windowEffects": { "effects": ["sidebar", "mica"], "state": "active" }
+        "windowEffects": {
+          "effects": [
+            "sidebar",
+            "mica"
+          ],
+          "state": "active"
+        }
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "Flo — your assistant. Voice dictation, assistant, meeting notes and to-dos.",
-    "macOS": { "minimumSystemVersion": "13.0", "signingIdentity": "-" },
+    "shortDescription": "Flo \u2014 your assistant. Voice dictation, assistant, meeting notes and to-dos.",
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "-"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,5 +52,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "flo"
+        ]
+      }
+    }
   }
 }

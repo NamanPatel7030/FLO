@@ -52,6 +52,10 @@ export interface Settings {
   slackSync: boolean;
   /** first-run setup wizard completed */
   onboarded: boolean;
+  /** Flo account server (sign-in only; data stays on the Mac) */
+  accountUrl: string;
+  /** cached signed-in user (offline start) */
+  accountUser?: AccountUser | null;
   sttProvider: SttProvider;
   /** local: model id e.g. "large-v3-turbo-q5_0"; cloud: model name e.g. "whisper-large-v3-turbo" */
   sttModel: string;
@@ -400,6 +404,21 @@ export interface ContextDoc {
   preview: string;
 }
 
+export interface AccountUser {
+  id: string;
+  email: string;
+  name: string;
+  image?: string;
+}
+
+export interface AccountStatus {
+  signedIn: boolean;
+  user?: AccountUser;
+  accountUrl: string;
+  /** token cached but the account server is unreachable */
+  offline: boolean;
+}
+
 /** Event names (Rust emits these to all windows) */
 export const EV = {
   state: "flo://state",
@@ -421,6 +440,8 @@ export const EV = {
   meetingDetected: "flo://meeting-detected",
   /** payload: ConfirmEvent — show Send / Cancel; answer with confirm_action */
   confirm: "flo://confirm",
+  /** payload: {signedIn, user?} — e.g. after Google sign-in completes via flo:// deep link */
+  account: "flo://account",
 } as const;
 
 /**
@@ -460,6 +481,9 @@ export const EV = {
  *  open_claude_by_session({sessionId}) -> string  — focus its window; removes it from the tray unless still working
  *  dismiss_claude_session({sessionId})
  *  accept_correction({heard, corrected}) -> DictionaryEntry
+ *  account_status() -> AccountStatus    account_login({email,password}) -> AccountUser
+ *  account_google_start() -> {state} (opens browser)   account_exchange({code, state?}) -> AccountUser
+ *  account_logout()      — sessions refuse to start while signed out ("Sign in to Flo…")
  *  list_integrations() -> Integration[]   install_integration({id}) / uninstall_integration({id}) -> Integration[]
  *  slack_connect({token}) -> string ("Name · workspace")   slack_status() -> string|null   slack_disconnect()
  *  slack_sync_now() -> number (to-dos added)   confirm_action({id, approve}) -> string

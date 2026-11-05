@@ -2,6 +2,14 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Flo Flow windows",
-  "windows": ["main", "island"],
-  "permissions": ["core:default", "core:window:allow-start-dragging", "opener:default"]
+  "windows": [
+    "main",
+    "island"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "opener:default",
+    "deep-link:default"
+  ]
 }

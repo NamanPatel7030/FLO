@@ -30,6 +30,7 @@ pub enum Purpose {
     ModelDownload,
     Test,
     Slack,
+    Account,
 }
 
 impl Purpose {
@@ -43,6 +44,7 @@ impl Purpose {
             Purpose::ModelDownload => "model download",
             Purpose::Test => "connection test",
             Purpose::Slack => "slack",
+            Purpose::Account => "account sign-in",
         }
     }
 }
@@ -96,6 +98,8 @@ const LOG_CAP: usize = 500;
 #[derive(Clone)]
 pub struct Egress {
     log: Arc<Mutex<VecDeque<NetworkLogEntry>>>,
+    /// the one account server host (Purpose::Account only)
+    account_host: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for Egress {
@@ -106,7 +110,7 @@ impl Default for Egress {
 
 impl Egress {
     pub fn new() -> Self {
-        Self { log: Arc::new(Mutex::new(VecDeque::new())) }
+        Self { log: Arc::new(Mutex::new(VecDeque::new())), account_host: Arc::new(Mutex::new(None)) }
     }
 
     fn push(&self, host: &str, purpose: Purpose, allowed: bool, bytes: u64) {
@@ -134,9 +138,20 @@ impl Egress {
         self.push_full(&host_of(url), purpose, true, bytes, tokens_in, tokens_out);
     }
 
+    pub fn allow_account_host(&self, host: &str) {
+        *self.account_host.lock() = Some(host.to_ascii_lowercase());
+    }
+
+    fn is_account_host(&self, host: &str, purpose: Purpose) -> bool {
+        purpose == Purpose::Account && self.account_host.lock().as_deref() == Some(host.to_ascii_lowercase().as_str())
+    }
+
     /// Validate a URL before a request. Logs denials.
     pub fn check(&self, url: &str, purpose: Purpose, cloud_allowed: bool) -> Result<()> {
         let host = host_of(url);
+        if self.is_account_host(&host, purpose) {
+            return Ok(());
+        }
         if host.is_empty() {
             self.push(url, purpose, false, 0);
             bail!("Blocked: invalid URL");
@@ -170,7 +185,7 @@ impl Egress {
             let host = attempt.url().host_str().unwrap_or_default().to_string();
             if attempt.previous().len() > 8 {
                 attempt.error("too many redirects")
-            } else if is_allowed(&host, purpose, cloud_allowed) {
+            } else if is_allowed(&host, purpose, cloud_allowed) || me.is_account_host(&host, purpose) {
                 attempt.follow()
             } else {
                 me.push(&host, purpose, false, 0);
@@ -218,6 +233,16 @@ mod tests {
         let log = e.entries();
         assert_eq!(log.len(), 2);
         assert!(log.iter().all(|l| !l.allowed));
+    }
+
+    #[test]
+    fn account_host_only_for_account_purpose() {
+        let e = Egress::new();
+        assert!(e.check("https://flo.example.com/api/app/me", Purpose::Account, true).is_err());
+        e.allow_account_host("flo.example.com");
+        assert!(e.check("https://flo.example.com/api/app/me", Purpose::Account, true).is_ok());
+        assert!(e.check("https://flo.example.com/x", Purpose::Assistant, true).is_err());
+        assert!(e.check("https://evil.example.com/x", Purpose::Account, true).is_err());
     }
 
     #[test]

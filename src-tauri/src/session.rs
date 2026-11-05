@@ -31,6 +31,10 @@ pub fn lock(st: &Shared, mode: Mode) {
 /// `via_hotkey`: started by holding a key → if the key is already up when we're ready
 /// (quick tap released during the ~300 ms start), cancel instead of recording forever.
 pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
+    if !st.signed_in.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::show_dashboard(&st.app, None);
+        return Err(anyhow!("Sign in to Flo to start dictating."));
+    }
     let mut guard = st.session.lock();
     if guard.is_some() {
         return Ok(());
