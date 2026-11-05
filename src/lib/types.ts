@@ -41,6 +41,9 @@ export interface Settings {
   meetingDetection: boolean;
   /** watch for your fixes after a paste and suggest dictionary entries */
   learnCorrections: boolean;
+  /** your own instructions (tone, who you are, how to reply) — added to assistant + meeting prompts;
+   *  also to dictation cleanup when ≤ 300 chars */
+  systemPrompt: string;
   sttProvider: SttProvider;
   /** local: model id e.g. "large-v3-turbo-q5_0"; cloud: model name e.g. "whisper-large-v3-turbo" */
   sttModel: string;
@@ -129,6 +132,8 @@ export interface MeetingEvent {
   summary?: string;
   elapsedSec: number;
   live: boolean;
+  /** live, still-changing line while someone is talking (cleared/replaced by the next segment) */
+  partial?: string;
 }
 
 export interface ModelProgressEvent {
@@ -338,6 +343,24 @@ export interface HoverEvent {
   inside: boolean;
   x?: number;
   y?: number;
+  /** x offset from the island window's horizontal centre (stable while the window resizes) */
+  cx?: number;
+}
+
+/** A document in the local context library (uploaded .md/.txt or pasted). */
+export interface ContextDoc {
+  id: string;
+  title: string;
+  chars: number;
+  /** rough token estimate (chars / 4) */
+  tokens: number;
+  /** used by the assistant (relevant chunks only) */
+  enabled: boolean;
+  /** always included (keep pinned docs short) */
+  pinned: boolean;
+  createdAt: string;
+  /** first ~160 chars */
+  preview: string;
 }
 
 /** Event names (Rust emits these to all windows) */
@@ -393,5 +416,8 @@ export const EV = {
  *  open_claude_by_session({sessionId}) -> string  — focus its window; removes it from the tray unless still working
  *  dismiss_claude_session({sessionId})
  *  accept_correction({heard, corrected}) -> DictionaryEntry
+ *  list_context_docs() -> ContextDoc[]          get_context_doc({id}) -> {doc: ContextDoc, content: string}
+ *  add_context_doc({title, content}) -> ContextDoc   (frontend reads .md/.txt files via FileReader)
+ *  update_context_doc({id, title?, enabled?, pinned?, content?})   delete_context_doc({id})
  *  open_claude_session({id}) -> string   — focus the editor/terminal running that session (marks seen)
  */

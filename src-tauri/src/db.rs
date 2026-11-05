@@ -66,6 +66,9 @@ impl Db {
               session_id TEXT PRIMARY KEY, project TEXT NOT NULL, cwd TEXT NOT NULL, status TEXT NOT NULL,
               message TEXT NOT NULL, updated_at TEXT NOT NULL, app_bundle TEXT, terminal TEXT,
               dismissed INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS context_docs(
+              id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+              pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS attention_snapshots(
               window_key TEXT PRIMARY KEY, app TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS assistant_log(id TEXT PRIMARY KEY, created_at TEXT NOT NULL, json TEXT NOT NULL);
@@ -421,6 +424,74 @@ impl Db {
         Ok(())
     }
 
+    // ── context library ─────────────────────────────────────────────────────
+    pub fn add_context_doc(&self, title: &str, content: &str) -> Result<ContextDoc> {
+        let id = new_id();
+        let title = if title.trim().is_empty() { crate::text::truncate_chars(content.lines().next().unwrap_or("Context"), 60) } else { title.trim().to_string() };
+        self.conn.lock().execute(
+            "INSERT INTO context_docs (id,title,content,enabled,pinned,created_at) VALUES (?1,?2,?3,1,0,?4)",
+            params![id, title, content, now()],
+        )?;
+        Ok(self.list_context_docs()?.into_iter().find(|d| d.id == id).expect("inserted"))
+    }
+
+    pub fn list_context_docs(&self) -> Result<Vec<ContextDoc>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT id,title,content,enabled,pinned,created_at FROM context_docs ORDER BY pinned DESC, created_at DESC")?;
+        let rows = st
+            .query_map([], |r| {
+                let content: String = r.get(2)?;
+                let chars = content.chars().count() as u64;
+                Ok(ContextDoc {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    chars,
+                    tokens: chars.div_ceil(4),
+                    enabled: r.get::<_, i32>(3)? != 0,
+                    pinned: r.get::<_, i32>(4)? != 0,
+                    created_at: r.get(5)?,
+                    preview: crate::text::truncate_chars(&content.split_whitespace().collect::<Vec<_>>().join(" "), 160),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_context_content(&self, id: &str) -> Result<Option<String>> {
+        let c = self.conn.lock();
+        Ok(c.query_row("SELECT content FROM context_docs WHERE id=?1", [id], |r| r.get(0)).optional()?)
+    }
+
+    /// (title, content, pinned) of every enabled doc.
+    pub fn enabled_context(&self) -> Result<Vec<(String, String, bool)>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT title,content,pinned FROM context_docs WHERE enabled=1 ORDER BY pinned DESC, created_at DESC")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i32>(2)? != 0)))?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn update_context_doc(&self, id: &str, title: Option<&str>, enabled: Option<bool>, pinned: Option<bool>, content: Option<&str>) -> Result<()> {
+        let c = self.conn.lock();
+        if let Some(t) = title {
+            c.execute("UPDATE context_docs SET title=?2 WHERE id=?1", params![id, t])?;
+        }
+        if let Some(e) = enabled {
+            c.execute("UPDATE context_docs SET enabled=?2 WHERE id=?1", params![id, e as i32])?;
+        }
+        if let Some(p) = pinned {
+            c.execute("UPDATE context_docs SET pinned=?2 WHERE id=?1", params![id, p as i32])?;
+        }
+        if let Some(t) = content {
+            c.execute("UPDATE context_docs SET content=?2 WHERE id=?1", params![id, t])?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_context_doc(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute("DELETE FROM context_docs WHERE id=?1", [id])?;
+        Ok(())
+    }
+
     // ── attention ───────────────────────────────────────────────────────────
     pub fn last_snapshot(&self, key: &str) -> Result<Option<String>> {
         let c = self.conn.lock();
@@ -729,6 +800,21 @@ mod tests {
         db.settle_claude_session("s1", "All tests pass").unwrap();
         let s = db.list_claude_sessions().unwrap();
         assert_eq!((s[0].status.as_str(), s[0].message.as_str()), ("done", "All tests pass"));
+    }
+
+    #[test]
+    fn context_library_crud() {
+        let db = Db::open_in_memory().unwrap();
+        let d = db.add_context_doc("", "# About me\nI'm Naman, I reply briefly and warmly.").unwrap();
+        assert_eq!(d.title, "# About me");
+        assert!(d.enabled && !d.pinned && d.tokens > 0);
+        db.update_context_doc(&d.id, Some("About me"), None, Some(true), None).unwrap();
+        db.add_context_doc("Off", "ignored").map(|o| db.update_context_doc(&o.id, None, Some(false), None, None)).unwrap().unwrap();
+        let en = db.enabled_context().unwrap();
+        assert_eq!(en.len(), 1);
+        assert_eq!((en[0].0.as_str(), en[0].2), ("About me", true));
+        db.delete_context_doc(&d.id).unwrap();
+        assert!(db.enabled_context().unwrap().is_empty());
     }
 
     #[test]

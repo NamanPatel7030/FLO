@@ -124,7 +124,7 @@ pub fn open_permission_settings(kind: &str) {
 }
 
 pub fn fix_fn_key() -> Result<String> {
-    Ok("Not needed on Windows — hold Right Ctrl to dictate, Right Alt for the assistant.".into())
+    Ok("Not needed on Windows. Hold Right Ctrl to dictate, Right Alt for the assistant.".into())
 }
 
 pub fn ocr(_rgba: &[u8], _w: u32, _h: u32) -> Option<String> {

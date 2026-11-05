@@ -124,7 +124,7 @@ impl LocalWhisper {
     pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
         use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
         if !model_file.exists() {
-            bail!("Speech model not downloaded yet — open Settings → Voice and download it.");
+            bail!("Speech model not downloaded yet. Open Settings → Voice and download it.");
         }
         *self.last_used.lock() = Some(std::time::Instant::now());
         let key = model_file.to_string_lossy().to_string();

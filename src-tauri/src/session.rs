@@ -126,16 +126,16 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     let duration_ms = started.elapsed().as_millis() as u64;
     let samples = tokio::task::spawn_blocking(move || recorder.stop()).await?;
     if audio::rms(&samples) < 0.003 {
-        return Err(anyhow!("I didn't hear anything — check the microphone in System Settings → Sound."));
+        return Err(anyhow!("I didn't hear anything. Check the microphone in System Settings → Sound."));
     }
     st.state(Phase::Transcribing, mode, None);
     let t0 = Instant::now();
     let raw = tokio::time::timeout(std::time::Duration::from_secs(60), transcribe(st, samples.clone()))
         .await
-        .map_err(|_| anyhow!("Transcription took too long — try a smaller speech model in Settings → Voice."))??;
+        .map_err(|_| anyhow!("Transcription took too long. Try a smaller speech model in Settings → Voice."))??;
     let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
     if stt::is_hallucination(&raw, secs) {
-        return Err(anyhow!("Didn't catch that — try speaking a bit longer."));
+        return Err(anyhow!("Didn't catch that. Try speaking a bit longer."));
     }
     st.emit(ev::TRANSCRIPT, TranscriptEvent { text: raw.clone(), is_final: false });
 
@@ -185,9 +185,20 @@ fn save(st: &Shared, mode: Mode, app: &str, raw: &str, final_text: &str, duratio
 
 /// STT with the configured provider. Personal dictionary words are passed as a prompt hint.
 pub async fn transcribe(st: &Shared, samples: Vec<f32>) -> Result<String> {
+    transcribe_with_prompt(st, samples, "").await
+}
+
+/// Same, with extra context (e.g. the previous sentence in a meeting) for better continuity.
+pub async fn transcribe_with_prompt(st: &Shared, samples: Vec<f32>, context: &str) -> Result<String> {
     let s = st.settings();
     let vocab: Vec<String> = st.db.list_dictionary().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
-    let prompt = vocab.join(", ");
+    let mut prompt = vocab.join(", ");
+    if !context.trim().is_empty() {
+        if !prompt.is_empty() {
+            prompt.push_str(". ");
+        }
+        prompt.push_str(context.trim());
+    }
     if s.stt_provider == "local" {
         let path = stt::model_path(&st.models_dir, &s.stt_model).ok_or_else(|| anyhow!("Unknown speech model {}", s.stt_model))?;
         let w = st.whisper.clone();
@@ -199,7 +210,7 @@ pub async fn transcribe(st: &Shared, samples: Vec<f32>) -> Result<String> {
         let samples = audio::trim_silence(&samples);
         let key = crate::secrets::get_api_key_async(&s.stt_provider)
             .await?
-            .ok_or_else(|| anyhow!("No API key for {} — add it in Settings → AI.", s.stt_provider))?;
+            .ok_or_else(|| anyhow!("No API key for {}. Add it in Settings → AI.", s.stt_provider))?;
         stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &s.language, &prompt).await
     }
 }
@@ -220,7 +231,12 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
         return text::basic_cleanup(&base);
     }
     let vocab: Vec<String> = st.db.list_dictionary().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
-    let system = prompts::cleanup_system(app, &vocab);
+    let mut system = prompts::cleanup_system(app, &vocab);
+    // short personal style notes ride along; long ones would cost tokens on every dictation
+    let sp = s.system_prompt.trim();
+    if !sp.is_empty() && sp.len() <= 300 {
+        system.push_str(&format!(" Style: {sp}"));
+    }
     let req = ChatRequest {
         system: &system,
         user: &base,
@@ -233,7 +249,7 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
     };
     match tokio::time::timeout(std::time::Duration::from_secs(8), llm::chat(&st.egress, &cfg, req)).await {
         Ok(Ok(out)) => {
-            let out = text::apply_dictionary(&text::strip_llm_wrapping(&out), &dict);
+            let out = text::strip_ai_dashes(&text::apply_dictionary(&text::strip_llm_wrapping(&out), &dict));
             // guard against the model answering instead of cleaning
             let (a, b) = (text::word_count(&base) as f32, text::word_count(&out) as f32);
             if out.is_empty() || b > a * 1.8 + 8.0 {

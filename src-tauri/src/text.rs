@@ -299,6 +299,102 @@ pub fn detect_corrections(pasted: &str, before: &str, after: &str) -> Vec<(Strin
     out
 }
 
+/// Split a document into ~`size`-char chunks on paragraph/line boundaries.
+pub fn chunk_text(s: &str, size: usize) -> Vec<String> {
+    let mut out = vec![];
+    let mut cur = String::new();
+    for para in s.split("\n\n") {
+        let para = para.trim();
+        if para.is_empty() {
+            continue;
+        }
+        if !cur.is_empty() && cur.len() + para.len() + 2 > size {
+            out.push(std::mem::take(&mut cur));
+        }
+        if para.len() > size {
+            // long paragraph: split by lines / hard cut
+            for line in para.lines() {
+                if cur.len() + line.len() + 1 > size && !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                let mut l = line;
+                while l.len() > size {
+                    let cut = l.char_indices().map(|(i, _)| i).take_while(|i| *i <= size).last().unwrap_or(size);
+                    out.push(l[..cut].to_string());
+                    l = &l[cut..];
+                }
+                if !cur.is_empty() {
+                    cur.push('\n');
+                }
+                cur.push_str(l);
+            }
+        } else {
+            if !cur.is_empty() {
+                cur.push_str("\n\n");
+            }
+            cur.push_str(para);
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Pick context for a query without sending everything: pinned docs (trimmed) first, then the
+/// highest-scoring chunks by keyword overlap, within `budget` chars total.
+pub fn select_context(query: &str, docs: &[(String, String, bool)], budget: usize) -> String {
+    let q = tokens(query);
+    let mut out = String::new();
+    let mut used = 0usize;
+    for (title, content, pinned) in docs.iter().filter(|d| d.2) {
+        let _ = pinned;
+        let piece = truncate_chars(content.trim(), 1200.min(budget.saturating_sub(used)));
+        if piece.len() < 20 {
+            continue;
+        }
+        used += piece.len();
+        out.push_str(&format!("[{title}]\n{piece}\n\n"));
+    }
+    if q.is_empty() || used >= budget {
+        return out.trim_end().to_string();
+    }
+    let mut scored: Vec<(f64, &str, String)> = vec![];
+    for (title, content, pinned) in docs {
+        if *pinned {
+            continue;
+        }
+        for ch in chunk_text(content, 700) {
+            let ct = tokens(&ch);
+            let hits = q.iter().filter(|w| ct.contains(*w)).count() as f64;
+            if hits == 0.0 {
+                continue;
+            }
+            let score = hits / (q.len() as f64).sqrt() + 0.2 * (tokens(title).intersection(&q).count() as f64);
+            scored.push((score, title.as_str(), ch));
+        }
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, title, ch) in scored.into_iter().take(4) {
+        if used + ch.len() > budget {
+            break;
+        }
+        used += ch.len();
+        out.push_str(&format!("[{title}]\n{ch}\n\n"));
+    }
+    out.trim_end().to_string()
+}
+
+/// Replace em/en dashes (an "AI-written" tell) with plain punctuation.
+pub fn strip_ai_dashes(s: &str) -> String {
+    let mut t = s.replace(" — ", ", ").replace(" – ", ", ").replace("—", ", ").replace(" -- ", ", ");
+    t = t.replace("–", "-");
+    while t.contains(",,") {
+        t = t.replace(",,", ",");
+    }
+    t.replace(" ,", ",")
+}
+
 /// Does this transcript need LLM cleanup, or is the free local pass good enough?
 /// LLM only for: fillers/self-corrections, spoken formatting, or long dictation.
 pub fn needs_llm_cleanup(raw: &str) -> bool {
@@ -439,6 +535,36 @@ mod tests {
     fn levenshtein_basics() {
         assert_eq!(levenshtein("tory", "tauri"), 3);
         assert_eq!(levenshtein("", "ab"), 2);
+    }
+
+    #[test]
+    fn chunks_on_paragraphs_within_size() {
+        let doc = format!("{}\n\n{}\n\n{}", "a ".repeat(200), "b ".repeat(200), "c ".repeat(500));
+        let ch = chunk_text(&doc, 700);
+        assert!(ch.len() >= 3);
+        assert!(ch.iter().all(|c| c.len() <= 700));
+    }
+
+    #[test]
+    fn selects_only_relevant_context_within_budget() {
+        let docs = vec![
+            ("About me".to_string(), "I'm Naman. Keep replies short and warm.".to_string(), true),
+            ("Apollo notes".to_string(), "Apollo launch: deck due Friday. Rahul owns the invoice.".to_string(), false),
+            ("Recipes".to_string(), "Biryani needs saffron and patience.".to_string(), false),
+        ];
+        let c = select_context("reply to Rahul about the Apollo invoice", &docs, 2500);
+        assert!(c.contains("About me")); // pinned always
+        assert!(c.contains("Rahul owns the invoice"));
+        assert!(!c.contains("Biryani")); // irrelevant → not sent
+        assert!(select_context("x", &docs, 10).len() <= 200);
+    }
+
+    #[test]
+    fn removes_ai_dashes() {
+        assert_eq!(strip_ai_dashes("Ship it — today."), "Ship it, today.");
+        assert_eq!(strip_ai_dashes("pages 3–5"), "pages 3-5");
+        assert_eq!(strip_ai_dashes("well—maybe"), "well, maybe");
+        assert_eq!(strip_ai_dashes("no dashes here"), "no dashes here");
     }
 
     #[test]

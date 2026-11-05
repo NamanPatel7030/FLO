@@ -370,6 +370,50 @@ pub fn dismiss_claude_session(st: State<Shared>, session_id: String) -> R<()> {
     Ok(())
 }
 
+// ── context library ─────────────────────────────────────────────────────────
+const MAX_CONTEXT_CHARS: usize = 400_000;
+
+#[tauri::command]
+pub fn list_context_docs(st: State<Shared>) -> R<Vec<ContextDoc>> {
+    st.db.list_context_docs().map_err(e)
+}
+
+#[tauri::command]
+pub fn get_context_doc(st: State<Shared>, id: String) -> R<serde_json::Value> {
+    let doc = st.db.list_context_docs().map_err(e)?.into_iter().find(|d| d.id == id).ok_or("not found")?;
+    let content = st.db.get_context_content(&id).map_err(e)?.unwrap_or_default();
+    Ok(serde_json::json!({ "doc": doc, "content": content }))
+}
+
+#[tauri::command]
+pub fn add_context_doc(st: State<Shared>, title: String, content: String) -> R<ContextDoc> {
+    let content = content.replace("\r\n", "\n");
+    if content.trim().is_empty() {
+        return Err("That file is empty".into());
+    }
+    if content.len() > MAX_CONTEXT_CHARS {
+        return Err(format!("Too large ({} KB). Keep context files under 400 KB.", content.len() / 1024));
+    }
+    st.db.add_context_doc(&title, &content).map_err(e)
+}
+
+#[tauri::command]
+pub fn update_context_doc(
+    st: State<Shared>,
+    id: String,
+    title: Option<String>,
+    enabled: Option<bool>,
+    pinned: Option<bool>,
+    content: Option<String>,
+) -> R<()> {
+    st.db.update_context_doc(&id, title.as_deref(), enabled, pinned, content.as_deref()).map_err(e)
+}
+
+#[tauri::command]
+pub fn delete_context_doc(st: State<Shared>, id: String) -> R<()> {
+    st.db.delete_context_doc(&id).map_err(e)
+}
+
 /// "Save to dictionary" from a correction card.
 #[tauri::command]
 pub fn accept_correction(st: State<Shared>, heard: String, corrected: String) -> R<DictionaryEntry> {

@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const CHUNK_SECS: u64 = 10;
 const SUMMARY_EVERY_SECS: u64 = 120;
 /// final pass sends the whole transcript only below this size; above it, summary + tail
 const FULL_TRANSCRIPT_MAX_CHARS: usize = 12_000;
@@ -45,7 +44,7 @@ pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> R
     let task = tauri::async_runtime::spawn(run_loop(st.clone(), note.id.clone(), recorder, stop.clone()));
     *st.meeting.lock() = Some(MeetingHandle { note_id: note.id.clone(), stop, task });
     st.emit(ev::NOTES, ());
-    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: 0.0, live: true });
+    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: 0.0, live: true, partial: None });
     st.state(Phase::Listening, Mode::Meeting, Some(note.title.clone()));
     Ok(note)
 }
@@ -68,7 +67,7 @@ pub async fn stop(st: Shared) -> Result<Note> {
     note.live = false;
     st.db.upsert_note(&note)?;
     st.emit(ev::NOTES, ());
-    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: note.duration_sec, live: false });
+    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: note.duration_sec, live: false, partial: None });
     st.state(Phase::Thinking, Mode::Meeting, Some("Writing summary…".into()));
     let st2 = st.clone();
     tauri::async_runtime::spawn(async move {
@@ -79,20 +78,22 @@ pub async fn stop(st: Shared) -> Result<Note> {
 }
 
 async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<AtomicBool>) {
+    use crate::livetx::{Action, Segmenter, SLICE_MS};
     let started = Instant::now();
-    let mut chunk_start = 0.0f64;
+    let mut seg_start = 0.0f64;
     let mut last_summary = Instant::now();
     let mut segs_since_summary = 0;
     let mut summarized_upto = 0usize; // transcript segments already folded into the summary
     let recorder = Arc::new(parking_lot::Mutex::new(Some(recorder)));
+    let mut seg = Segmenter::default();
+    let mut pending: Vec<f32> = Vec::new();
+    let mut last_text = String::new(); // context prompt for the next segment
+    // live previews only with on-device STT (cloud previews would cost per call)
+    let local = st.settings().stt_provider == "local";
     loop {
-        // wait for the next chunk boundary (or stop)
-        let deadline = Instant::now() + Duration::from_secs(CHUNK_SECS);
-        while Instant::now() < deadline && !stop.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
+        tokio::time::sleep(Duration::from_millis(SLICE_MS)).await;
         let stopping = stop.load(Ordering::SeqCst);
-        let samples = {
+        let slice = {
             let mut g = recorder.lock();
             if stopping {
                 g.take().map(|r| r.stop()).unwrap_or_default()
@@ -101,26 +102,46 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
             }
         };
         let elapsed = started.elapsed().as_secs_f64();
-        if audio::rms(&samples) > 0.004 {
-            match session::transcribe(&st, samples.clone()).await {
-                Ok(t) if !stt::is_hallucination(&t, samples.len() as f32 / audio::TARGET_RATE as f32) => {
-                    let seg = MeetingSegment { t: chunk_start, text: t };
-                    if let Ok(Some(mut n)) = st.db.get_note(&note_id) {
-                        n.transcript.push(seg.clone());
-                        n.duration_sec = elapsed;
-                        let _ = st.db.upsert_note(&n);
+        if pending.is_empty() {
+            seg_start = (elapsed - slice.len() as f64 / audio::TARGET_RATE as f64).max(0.0);
+        }
+        pending.extend_from_slice(&slice);
+        let slice_ms = (slice.len() as u64 * 1000) / audio::TARGET_RATE as u64;
+        let action = if stopping { seg.flush() } else { seg.push(slice_ms.max(1), audio::rms(&slice)) };
+
+        match action {
+            Action::Partial if local => {
+                if let Ok(t) = session::transcribe_with_prompt(&st, pending.clone(), &last_text).await {
+                    if !t.trim().is_empty() {
+                        st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: None, elapsed_sec: elapsed, live: true, partial: Some(t) });
                     }
-                    segs_since_summary += 1;
-                    st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: Some(seg), summary: None, elapsed_sec: elapsed, live: true });
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    log::warn!("meeting chunk STT failed: {e}");
-                    st.toast("error", format!("Meeting transcription: {e}"));
                 }
             }
+            Action::Final => {
+                let audio_secs = pending.len() as f32 / audio::TARGET_RATE as f32;
+                let samples = std::mem::take(&mut pending);
+                match session::transcribe_with_prompt(&st, samples, &last_text).await {
+                    Ok(t) if !stt::is_hallucination(&t, audio_secs) => {
+                        last_text = text::truncate_chars(&t, 200);
+                        let segm = MeetingSegment { t: seg_start, text: t };
+                        if let Ok(Some(mut n)) = st.db.get_note(&note_id) {
+                            n.transcript.push(segm.clone());
+                            n.duration_sec = elapsed;
+                            let _ = st.db.upsert_note(&n);
+                        }
+                        segs_since_summary += 1;
+                        st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: Some(segm), summary: None, elapsed_sec: elapsed, live: true, partial: Some(String::new()) });
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("meeting segment STT failed: {e}");
+                        st.toast("error", format!("Meeting transcription: {e}"));
+                    }
+                }
+            }
+            Action::Discard => pending.clear(),
+            _ => {}
         }
-        chunk_start = elapsed;
 
         if stopping {
             finalize(&st, &note_id, elapsed).await;
@@ -133,7 +154,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
                     n.summary = sum.summary.clone();
                     let _ = st.db.upsert_note(&n);
                 }
-                st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: Some(sum.summary), elapsed_sec: elapsed, live: true });
+                st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: Some(sum.summary), elapsed_sec: elapsed, live: true, partial: None });
             }
             last_summary = Instant::now();
             segs_since_summary = 0;
@@ -187,7 +208,10 @@ async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u
     if !cfgl.is_configured() {
         return None;
     }
-    let system = prompts::meeting_summary_system(final_pass);
+    let mut system = prompts::meeting_summary_system(final_pass);
+    if !s.system_prompt.trim().is_empty() {
+        system.push_str(&format!("\nUser's instructions: {}", text::truncate_chars(s.system_prompt.trim(), 1000)));
+    }
     let body = user.to_string();
     let req = ChatRequest {
         system: &system,
@@ -199,7 +223,12 @@ async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u
         max_tokens,
     };
     match llm::chat(&st.egress, &cfgl, req).await {
-        Ok(raw) => Some(prompts::parse_summary(&raw)),
+        Ok(raw) => {
+            let mut p = prompts::parse_summary(&raw);
+            p.summary = text::strip_ai_dashes(&p.summary);
+            p.action_items = p.action_items.iter().map(|a| text::strip_ai_dashes(a)).collect();
+            Some(p)
+        }
         Err(e) => {
             log::warn!("meeting summary failed: {e}");
             if final_pass {
@@ -236,7 +265,7 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
     }
     let _ = st.db.upsert_note(&n);
     st.emit(ev::NOTES, ());
-    st.emit(ev::MEETING, MeetingEvent { note_id: n.id.clone(), segment: None, summary: Some(n.summary.clone()), elapsed_sec: elapsed, live: false });
+    st.emit(ev::MEETING, MeetingEvent { note_id: n.id.clone(), segment: None, summary: Some(n.summary.clone()), elapsed_sec: elapsed, live: false, partial: None });
     st.toast("success", format!("Notes ready: {}", n.title));
 }
 

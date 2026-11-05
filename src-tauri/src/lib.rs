@@ -9,6 +9,7 @@ mod db;
 mod egress;
 mod hotkey;
 mod intents;
+mod livetx;
 mod llm;
 mod meeting;
 mod meeting_detect;
@@ -130,7 +131,7 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit Flo", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&open, &meeting, &pause, &sep, &quit])?;
-    let mut tray = TrayIconBuilder::with_id("flo").menu(&menu).tooltip("Flo — your assistant").show_menu_on_left_click(true);
+    let mut tray = TrayIconBuilder::with_id("flo").menu(&menu).tooltip("Flo · your assistant").show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -164,6 +165,7 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
 fn spawn_hover_tracker(app: AppHandle, st: Shared) {
     tauri::async_runtime::spawn(async move {
         let mut inside = false;
+        let mut last: (f64, f64) = (f64::NAN, f64::NAN);
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(if inside { 80 } else { 150 })).await;
             let Some(w) = app.get_webview_window("island") else { continue };
@@ -175,9 +177,16 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
             if now {
                 let scale = w.scale_factor().unwrap_or(1.0);
                 let (x, y) = ((cur.x - pos.x as f64) / scale, (cur.y - pos.y as f64) / scale);
-                st.emit(model::ev::HOVER, serde_json::json!({ "inside": true, "x": x, "y": y }));
+                // cx: offset from the window's horizontal centre — stable while the island resizes
+                let cx = (cur.x - (pos.x as f64 + size.width as f64 / 2.0)) / scale;
+                // only send real movement (no re-render storm while the cursor rests)
+                if !inside || (cx - last.0).abs() >= 1.0 || (y - last.1).abs() >= 1.0 {
+                    last = (cx, y);
+                    st.emit(model::ev::HOVER, serde_json::json!({ "inside": true, "x": x, "y": y, "cx": cx }));
+                }
                 let _ = app.run_on_main_thread(platform::set_pointer_cursor);
             } else if inside {
+                last = (f64::NAN, f64::NAN);
                 st.emit(model::ev::HOVER, serde_json::json!({ "inside": false }));
             }
             inside = now;
@@ -289,6 +298,11 @@ pub fn run() {
             commands::open_claude_by_session,
             commands::dismiss_claude_session,
             commands::accept_correction,
+            commands::list_context_docs,
+            commands::get_context_doc,
+            commands::add_context_doc,
+            commands::update_context_doc,
+            commands::delete_context_doc,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

@@ -8,10 +8,17 @@ use crate::state::Shared;
 use crate::{db, meeting, prompts, settings as cfg, text};
 use anyhow::{anyhow, Result};
 
-pub fn build_context(st: &Shared, selection: Option<&str>, front: &FrontApp, screen: Option<&str>) -> String {
+pub fn build_context(st: &Shared, query: &str, selection: Option<&str>, front: &FrontApp, screen: Option<&str>) -> String {
     let s = st.settings();
     let now = chrono::Local::now();
     let mut c = format!("Today: {} ({})\n", now.format("%Y-%m-%d %H:%M"), now.format("%A"));
+    // user's knowledge base: pinned docs + only the chunks relevant to this request
+    if let Ok(docs) = st.db.enabled_context() {
+        let picked = text::select_context(&format!("{query} {}", selection.unwrap_or("")), &docs, 2500);
+        if !picked.is_empty() {
+            c.push_str(&format!("\nUser's context notes (use when relevant):\n{picked}\n\n"));
+        }
+    }
     if !s.user_name.is_empty() {
         c.push_str(&format!("User: {}\n", s.user_name));
     }
@@ -25,7 +32,7 @@ pub fn build_context(st: &Shared, selection: Option<&str>, front: &FrontApp, scr
         c.push_str("(none yet)\n");
     }
     for p in &projects {
-        c.push_str(&format!("- {} [{}]{}\n", p.name, p.status, p.description.as_deref().map(|d| format!(" — {d}")).unwrap_or_default()));
+        c.push_str(&format!("- {} [{}]{}\n", p.name, p.status, p.description.as_deref().map(|d| format!(": {d}")).unwrap_or_default()));
         for t in todos.iter().filter(|t| t.project_id.as_deref() == Some(&p.id) && t.status == "open").take(8) {
             c.push_str(&format!("    • {}{}\n", t.title, t.due.as_deref().map(|d| format!(" (due {d})")).unwrap_or_default()));
         }
@@ -83,8 +90,11 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
     }
     // screen OCR is the largest prompt cost — only include it when the request is about the screen
     let screen = screen.filter(|_| text::wants_screen_context(query));
-    let context = build_context(st, selection.as_deref(), front, screen.as_deref());
-    let system = prompts::assistant_system(&context);
+    let context = build_context(st, query, selection.as_deref(), front, screen.as_deref());
+    let mut system = prompts::assistant_system(&context);
+    if !s.system_prompt.trim().is_empty() {
+        system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));
+    }
     let raw = llm::chat(
         &st.egress,
         &cfgl,
@@ -106,7 +116,8 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
             e
         }
     })?;
-    let parsed = prompts::parse_assistant(&raw);
+    let mut parsed = prompts::parse_assistant(&raw);
+    parsed.reply = text::strip_ai_dashes(&parsed.reply);
     let mut results = vec![];
     for a in &parsed.actions {
         match execute(st, a, front, selection.is_some()).await {
@@ -204,7 +215,7 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
         }
         AssistantAction::StopMeeting => {
             let n = meeting::stop(st.clone()).await?;
-            Ok(format!("Stopped “{}” — summary ready", n.title))
+            Ok(format!("Stopped “{}”, summary ready", n.title))
         }
         AssistantAction::OpenUrl { url } => {
             let u = url::Url::parse(url)?;

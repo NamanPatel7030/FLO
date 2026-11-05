@@ -42,6 +42,7 @@ pub struct Settings {
     pub hotkey_assistant: String,
     pub meeting_detection: bool,
     pub learn_corrections: bool,
+    pub system_prompt: String,
     pub stt_provider: String,
     pub stt_model: String,
     pub language: String,
@@ -68,6 +69,7 @@ impl Default for Settings {
             hotkey_assistant: "fn".into(),
             meeting_detection: true,
             learn_corrections: true,
+            system_prompt: String::new(),
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),
             language: "auto".into(),
@@ -195,6 +197,9 @@ pub struct MeetingEvent {
     pub summary: Option<String>,
     pub elapsed_sec: f64,
     pub live: bool,
+    /// live, still-changing line (replaced by the next partial or a final segment)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -412,6 +417,19 @@ pub struct ClaudeSession {
     pub terminal: Option<String>,
     #[serde(skip)]
     pub transcript_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextDoc {
+    pub id: String,
+    pub title: String,
+    pub chars: u64,
+    pub tokens: u64,
+    pub enabled: bool,
+    pub pinned: bool,
+    pub created_at: String,
+    pub preview: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

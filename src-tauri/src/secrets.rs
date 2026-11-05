@@ -43,7 +43,7 @@ pub async fn get_api_key_async(provider: &str) -> anyhow::Result<Option<String>>
         Ok(Ok(k)) => Ok(k),
         Ok(Err(e)) => Err(e.into()),
         Err(_) => anyhow::bail!(
-            "macOS is asking whether Flo may use your saved {provider} key — click “Always Allow” in the Keychain prompt (it may be behind other windows)."
+            "macOS is asking whether Flo may use your saved {provider} key. Click “Always Allow” in the Keychain prompt (it may be behind other windows)."
         ),
     }
 }
