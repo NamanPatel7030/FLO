@@ -81,7 +81,28 @@ export interface Settings {
   /** Typing speed used for "time saved" analytics */
   typingWpm: number;
   userName: string;
+  /** "dark" | "light" | "system" */
+  theme: ThemeMode;
+  /** accent hex, e.g. "#3dbbff" */
+  accent: string;
+  /** notch animation style */
+  notchStyle: NotchStyle;
+  /** two-stop gradient [from, to] for the notch; empty = derive from accent */
+  notchGradient: string[];
 }
+
+export type ThemeMode = "dark" | "light" | "system";
+export type NotchStyle = "ribbon" | "wave" | "bars" | "pulse" | "orb" | "aurora";
+
+/** Built-in accent presets (name → hex); users can also pick a custom hex. */
+export const ACCENT_PRESETS: { name: string; accent: string; gradient: [string, string] }[] = [
+  { name: "Sky", accent: "#3dbbff", gradient: ["#1a9be0", "#66ceff"] },
+  { name: "Aqua", accent: "#22d3ee", gradient: ["#0891b2", "#67e8f9"] },
+  { name: "Violet", accent: "#8b5cf6", gradient: ["#6d28d9", "#a78bfa"] },
+  { name: "Emerald", accent: "#10b981", gradient: ["#059669", "#34d399"] },
+  { name: "Sunset", accent: "#fb7185", gradient: ["#f43f5e", "#fda4af"] },
+  { name: "Amber", accent: "#f59e0b", gradient: ["#d97706", "#fbbf24"] },
+];
 
 export interface IslandGeometry {
   platform: Platform;

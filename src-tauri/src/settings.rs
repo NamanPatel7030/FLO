@@ -37,6 +37,18 @@ pub fn migrate(s: &mut Settings) -> bool {
         // anyone upgrading already set Flo up — don't show the first-run wizard
         s.onboarded = true;
     }
+    if s.settings_version < 5 {
+        // existing installs keep the dark look + default blue accent / ribbon notch
+        if s.theme.is_empty() {
+            s.theme = "dark".into();
+        }
+        if s.accent.is_empty() {
+            s.accent = "#3dbbff".into();
+        }
+        if s.notch_style.is_empty() {
+            s.notch_style = "ribbon".into();
+        }
+    }
     s.settings_version = crate::model::SETTINGS_VERSION;
     true
 }

@@ -82,6 +82,10 @@ const settings: Settings = {
   playSounds: true,
   typingWpm: 40,
   userName: "Parth",
+  theme: "dark",
+  accent: "#3dbbff",
+  notchStyle: "ribbon",
+  notchGradient: [],
 };
 
 const keys = new Set<string>(["groq"]);

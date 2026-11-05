@@ -30,7 +30,7 @@ pub enum Phase {
     Error,
 }
 
-pub const SETTINGS_VERSION: u32 = 4;
+pub const SETTINGS_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -67,6 +67,14 @@ pub struct Settings {
     pub play_sounds: bool,
     pub typing_wpm: u32,
     pub user_name: String,
+    /// "dark" | "light" | "system"
+    pub theme: String,
+    /// accent hex, e.g. "#3dbbff"
+    pub accent: String,
+    /// notch animation: "ribbon" | "wave" | "bars" | "pulse" | "orb" | "aurora"
+    pub notch_style: String,
+    /// two-stop gradient for the notch accent [from, to]; empty = derive from accent
+    pub notch_gradient: Vec<String>,
 }
 
 impl Default for Settings {
@@ -103,6 +111,10 @@ impl Default for Settings {
             play_sounds: true,
             typing_wpm: 40,
             user_name: String::new(),
+            theme: "dark".into(),
+            accent: "#3dbbff".into(),
+            notch_style: "ribbon".into(),
+            notch_gradient: vec![],
         }
     }
 }
