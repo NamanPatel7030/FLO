@@ -175,7 +175,8 @@ pub async fn transcribe(st: &Shared, samples: Vec<f32>) -> Result<String> {
     } else {
         // cloud STT bills per second of audio → drop leading/trailing silence
         let samples = audio::trim_silence(&samples);
-        let key = crate::secrets::get_api_key(&s.stt_provider)
+        let key = crate::secrets::get_api_key_async(&s.stt_provider)
+            .await?
             .ok_or_else(|| anyhow!("No API key for {} — add it in Settings → AI.", s.stt_provider))?;
         stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &s.language, &prompt).await
     }

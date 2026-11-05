@@ -74,11 +74,12 @@ fn openai_base(cfg: &LlmConfig) -> Result<String> {
     })
 }
 
-fn key_for(provider: &str) -> Result<Option<String>> {
+async fn key_for(provider: &str) -> Result<Option<String>> {
     if matches!(provider, "ollama" | "lmstudio") {
         return Ok(None);
     }
-    secrets::get_api_key(provider)
+    secrets::get_api_key_async(provider)
+        .await?
         .map(Some)
         .ok_or_else(|| anyhow!("No API key for {provider}. Add it in Settings → AI."))
 }
@@ -120,7 +121,7 @@ async fn send(egress: &Egress, url: &str, req: &ChatRequest<'_>, builder: impl F
 
 async fn openai_compat(egress: &Egress, cfg: &LlmConfig, model: &str, req: ChatRequest<'_>) -> Result<String> {
     let url = format!("{}/chat/completions", openai_base(cfg)?);
-    let key = key_for(&cfg.provider)?;
+    let key = key_for(&cfg.provider).await?;
     let user_content = match req.image_b64 {
         Some((mt, data)) => json!([
             {"type": "text", "text": req.user},
@@ -172,7 +173,7 @@ async fn openai_compat(egress: &Egress, cfg: &LlmConfig, model: &str, req: ChatR
 /// no temperature/top_p/top_k. Server-side refusal fallback enabled.
 async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result<String> {
     let url = "https://api.anthropic.com/v1/messages".to_string();
-    let key = key_for("anthropic")?.unwrap_or_default();
+    let key = key_for("anthropic").await?.unwrap_or_default();
     let mut content = vec![];
     if let Some((mt, data)) = req.image_b64 {
         content.push(json!({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}}));
@@ -225,7 +226,7 @@ async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result
 
 async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result<String> {
     let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
-    let key = key_for("gemini")?.unwrap_or_default();
+    let key = key_for("gemini").await?.unwrap_or_default();
     let mut parts = vec![json!({"text": req.user})];
     if let Some((mt, data)) = req.image_b64 {
         parts.push(json!({"inline_data": {"mime_type": mt, "data": data}}));

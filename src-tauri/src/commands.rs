@@ -31,8 +31,9 @@ pub fn set_api_key(provider: String, key: String) -> R<()> {
 }
 
 #[tauri::command]
-pub fn has_api_key(provider: String) -> bool {
-    secrets::get_api_key(&provider).is_some()
+pub async fn has_api_key(provider: String) -> bool {
+    // async + timeout: never freeze the UI on a pending Keychain prompt
+    matches!(secrets::get_api_key_async(&provider).await, Ok(Some(_)))
 }
 
 #[tauri::command]
