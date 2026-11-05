@@ -1,7 +1,7 @@
 // Notch tray: live items in the wings beside the camera (Claude sessions, to-dos, meeting) +
 // tooltips, the correction card and the meeting-detected prompt. Pure presentation; state lives
 // in Island.tsx.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Asterisk, Check, CheckCircle2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
 import { claudeStatusLabel, relativeTime, ISLAND_GAP, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
@@ -54,10 +54,41 @@ const SOURCE_LOOK: Record<string, { bg: string; bgWorking: string; icon: React.R
 };
 export const sourceLook = (source?: string) => SOURCE_LOOK[source ?? "claude"] ?? SOURCE_LOOK.other;
 
+/**
+ * One shared, low-rate tick for "working" spinners. The tray is always on screen, so a CSS
+ * `infinite` animation would make WebKit redraw at 60 fps forever (≈10% CPU at idle). Stepping
+ * 30° eight times a second looks like the system activity indicator and costs ~1/8 as much.
+ */
+const tickSubs = new Set<(n: number) => void>();
+let tickN = 0;
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+function useSpinnerTick(active: boolean): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    tickSubs.add(setN);
+    if (!tickTimer) {
+      tickTimer = setInterval(() => {
+        tickN = (tickN + 1) % 12;
+        tickSubs.forEach((f) => f(tickN));
+      }, 125);
+    }
+    return () => {
+      tickSubs.delete(setN);
+      if (tickSubs.size === 0 && tickTimer) {
+        clearInterval(tickTimer);
+        tickTimer = null;
+      }
+    };
+  }, [active]);
+  return n;
+}
+
 /** 20px round glass avatar for an agent session, with a status ring/badge. */
 export function ClaudeAvatar({ status, hot, source }: { status: ClaudeSession["status"]; hot?: boolean; source?: string }) {
   const working = status === "working";
   const look = sourceLook(source);
+  const tick = useSpinnerTick(working);
   return (
     <motion.span animate={{ scale: hot ? 1.14 : 1 }} transition={SPRING} className="relative flex h-5 w-5 items-center justify-center">
       {working && (
@@ -67,7 +98,7 @@ export function ClaudeAvatar({ status, hot, source }: { status: ClaudeSession["s
             background: "conic-gradient(from 0deg, transparent 0 55%, #66ceff 85%, #e3f6ff 100%)",
             WebkitMask: "radial-gradient(circle, transparent 10.5px, #000 11px)",
             mask: "radial-gradient(circle, transparent 10.5px, #000 11px)",
-            animation: "flo-spin 1.1s linear infinite",
+            transform: `rotate(${tick * 30}deg)`,
           }}
         />
       )}
@@ -81,7 +112,8 @@ export function ClaudeAvatar({ status, hot, source }: { status: ClaudeSession["s
               : status === "needs_approval"
                 ? undefined
                 : "inset 0 1px 0 rgba(255,255,255,0.35)",
-          animation: status === "needs_approval" ? "flo-pulse-ring 1.6s ease-in-out infinite" : undefined,
+          // pulse 3× when the status appears, then stay still (no idle redraws)
+          animation: status === "needs_approval" ? "flo-pulse-ring 1.6s ease-in-out 3" : undefined,
           opacity: working ? 0.75 : 1,
         }}
       >
@@ -141,7 +173,7 @@ export function TrayItemView({ item, hot }: { item: TrayItem; hot?: boolean }) {
       return (
         <Chip hot={hot} tone="red">
           <span className="relative flex h-2 w-2">
-            <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-60" />
+            <span className="absolute inset-0 rounded-full bg-red-500 opacity-60 [animation:ping_1s_cubic-bezier(0,0,0.2,1)_3]" />
             <span className="relative h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]" />
           </span>
         </Chip>
@@ -423,7 +455,7 @@ export function MeetingPromptCard({
     <div className="absolute inset-x-0 bottom-0 flex flex-col px-4 pb-3" style={{ top: notch ? geo.notchHeight + ISLAND_GAP : 10 }}>
       <div className="flex items-center gap-2">
         <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-60" />
+          <span className="absolute inset-0 rounded-full bg-red-500 opacity-60 [animation:ping_1s_cubic-bezier(0,0,0.2,1)_3]" />
           <span className="relative h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_10px_#ef4444]" />
         </span>
         <span className="text-[13px] font-semibold">{app} call detected</span>

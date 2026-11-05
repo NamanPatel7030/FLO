@@ -435,7 +435,7 @@ export function IslandContent(p: Props) {
           <div className="flex flex-1 flex-col gap-1.5 px-5 pb-3.5 pt-1.5">
             <div className="flex items-center gap-2">
               <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inset-0 animate-ping rounded-full bg-[#d97757] opacity-60" />
+                <span className="absolute inset-0 rounded-full bg-[#d97757] opacity-60 [animation:ping_1s_cubic-bezier(0,0,0.2,1)_3]" />
                 <span className="relative h-2.5 w-2.5 rounded-full bg-[#d97757] shadow-[0_0_10px_#d97757]" />
               </span>
               <span className="truncate text-[13px] font-semibold">
