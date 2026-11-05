@@ -6,6 +6,8 @@ export default defineConfig({
   testDir: "tests/e2e",
   timeout: 30_000,
   fullyParallel: true,
+  // the Vite dev server compiles on demand; too many parallel browsers starve it
+  workers: 4,
   reporter: [["list"]],
   use: {
     baseURL: "http://localhost:5190",
