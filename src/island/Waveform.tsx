@@ -45,7 +45,7 @@ export function Waveform({
       ? "linear-gradient(180deg,#fca5a5,#ef4444)"
       : color === "white"
         ? "rgba(255,255,255,0.9)"
-        : "linear-gradient(180deg,#c4b5fd,#22d3ee)";
+        : "linear-gradient(180deg,#e3f6ff,#66ceff 55%,#1a9be0)";
 
   return (
     <div className="flex items-center" style={{ height, gap }} aria-hidden>
@@ -70,6 +70,22 @@ export function Waveform({
   );
 }
 
+/** Three breathing dots — compact "working" indicator for the right wing. */
+export function Dots({ color = "#93ddff" }: { color?: string }) {
+  return (
+    <div className="flex items-center gap-[3px]" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="block h-[5px] w-[5px] rounded-full"
+          style={{ background: color, animation: `flo-dot 1.1s ${i * 0.16}s ease-in-out infinite` }}
+        />
+      ))}
+      <style>{`@keyframes flo-dot{0%,80%,100%{opacity:.25;transform:scale(.7)}40%{opacity:1;transform:scale(1)}}`}</style>
+    </div>
+  );
+}
+
 /** Small orbiting-dots loader used while transcribing / thinking. */
 export function Orbit({ size = 16 }: { size?: number }) {
   return (
@@ -77,7 +93,7 @@ export function Orbit({ size = 16 }: { size?: number }) {
       <div
         className="absolute inset-0 rounded-full"
         style={{
-          background: "conic-gradient(from 0deg, transparent 0deg, #a78bfa 120deg, #22d3ee 240deg, transparent 360deg)",
+          background: "conic-gradient(from 0deg, transparent 0deg, #1a9be0 110deg, #93ddff 250deg, #ffffff 340deg, transparent 360deg)",
           mask: `radial-gradient(circle, transparent ${size / 2 - 2.5}px, black ${size / 2 - 2}px)`,
           WebkitMask: `radial-gradient(circle, transparent ${size / 2 - 2.5}px, black ${size / 2 - 2}px)`,
           animation: "spin 0.9s linear infinite",

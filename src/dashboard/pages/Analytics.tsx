@@ -53,12 +53,12 @@ export default function Analytics() {
       ) : (
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-6 gap-3">
-            <Stat label="Words" value={formatNumber(a.totalWords)} icon={<Type size={13} />} tint="#a78bfa" />
-            <Stat label="Avg speed" value={`${a.avgWpm}`} sub="words / min" icon={<Gauge size={13} />} tint="#22d3ee" />
+            <Stat label="Words" value={formatNumber(a.totalWords)} icon={<Type size={13} />} tint="#93ddff" />
+            <Stat label="Avg speed" value={`${a.avgWpm}`} sub="words / min" icon={<Gauge size={13} />} tint="#66ceff" />
             <Stat label="Time saved" value={formatDuration(a.minutesSaved * 60)} icon={<Clock size={13} />} tint="#34d399" />
             <Stat label="Streak" value={`${a.streakDays}d`} icon={<Flame size={13} />} tint="#f59e0b" />
             <Stat label="Meetings" value={formatDuration(a.meetingMinutes * 60)} icon={<Mic size={13} />} tint="#f472b6" />
-            <Stat label="To-dos done" value={formatNumber(a.todosDone)} icon={<CheckCircle2 size={13} />} tint="#a78bfa" />
+            <Stat label="To-dos done" value={formatNumber(a.todosDone)} icon={<CheckCircle2 size={13} />} tint="#93ddff" />
           </div>
 
           <Card className="p-5">
@@ -68,8 +68,8 @@ export default function Analytics() {
                 <AreaChart data={daily} margin={{ top: 6, right: 6, left: -12, bottom: 0 }}>
                   <defs>
                     <linearGradient id="gw" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} />
+                      <stop offset="0%" stopColor="#3dbbff" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#3dbbff" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid vertical={false} stroke="var(--chart-grid)" />

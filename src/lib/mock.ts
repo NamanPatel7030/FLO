@@ -72,8 +72,8 @@ const settings: Settings = {
 const keys = new Set<string>(["groq"]);
 
 const projectsBase: Omit<Project, "openTodos" | "doneTodos">[] = [
-  { id: "p_apollo", name: "Apollo", description: "Client dashboard redesign for Northwind", status: "active", color: "#8b5cf6", lastNote: "Design sync — agreed on glass cards", updatedAt: iso(40) },
-  { id: "p_hermes", name: "Hermes API", description: "Payments gateway v2 migration", status: "blocked", color: "#06b6d4", lastNote: "Waiting on Stripe webhook keys", updatedAt: iso(300) },
+  { id: "p_apollo", name: "Apollo", description: "Client dashboard redesign for Northwind", status: "active", color: "#3dbbff", lastNote: "Design sync — agreed on glass cards", updatedAt: iso(40) },
+  { id: "p_hermes", name: "Hermes API", description: "Payments gateway v2 migration", status: "blocked", color: "#1a9be0", lastNote: "Waiting on Stripe webhook keys", updatedAt: iso(300) },
   { id: "p_flo", name: "Flo Flow", description: "Local-first voice assistant", status: "active", color: "#f59e0b", lastNote: "Notch island prototype done", updatedAt: iso(10) },
 ];
 const projects = new Map(projectsBase.map((p) => [p.id, { ...p }]));
@@ -490,7 +490,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "list_projects":
       return [...projects.values()].map(projectView);
     case "create_project": {
-      const palette = ["#8b5cf6", "#06b6d4", "#f59e0b", "#10b981", "#ec4899", "#3b82f6"];
+      const palette = ["#3dbbff", "#1a9be0", "#f59e0b", "#10b981", "#ec4899", "#3b82f6"];
       const p = { id: uid("p"), name: args.name, description: args.description, status: "active" as const, color: palette[projects.size % palette.length], updatedAt: new Date().toISOString() };
       projects.set(p.id, p);
       mockEmit(EV.projects, {});

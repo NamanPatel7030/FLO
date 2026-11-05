@@ -37,7 +37,7 @@ export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
         aria-label={done ? "Mark open" : "Complete"}
         className={clsx(
           "mt-[1px] flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-[1.5px] transition",
-          done || completing ? "border-transparent accent-gradient" : "border-[var(--border-strong)] hover:border-violet-400",
+          done || completing ? "border-transparent accent-gradient" : "border-[var(--border-strong)] hover:border-brand-400",
         )}
       >
         {(done || completing) && (

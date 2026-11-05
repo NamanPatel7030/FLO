@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react";
 import { api, isTauri, on } from "../lib/api";
-import { islandSize, type IslandVariant } from "../lib/format";
+import { islandSize, ISLAND_EAR, type IslandVariant } from "../lib/format";
 import { EV, type AssistantResponse, type ClaudeEvent, type IslandGeometry, type MeetingEvent, type Mode, type Phase, type StateEvent } from "../lib/types";
 import { IslandContent } from "./IslandContent";
 import { runDemo } from "./demo";
@@ -76,7 +76,8 @@ export default function Island() {
   const target: IslandVariant = useMemo(() => {
     if (mode !== "meeting" && phase === "listening") return "listening";
     if (phase === "transcribing" || phase === "thinking") return "working";
-    if (phase === "done" || phase === "error") return "done";
+    if (phase === "error") return "error";
+    if (phase === "done") return "done";
     if (card) return "card";
     if (claudeQueue.length) return "claude";
     if (meeting.live) return meetingOpen ? "meetingExpanded" : "meeting";
@@ -161,7 +162,8 @@ export default function Island() {
   const notch = geo.platform === "macos" && geo.hasNotch;
   const size = islandSize(shown, geo, cardContent);
   const collapsed = shown === "collapsed";
-  const EAR = 10;
+  const EAR = ISLAND_EAR;
+  const live = shown === "listening" || shown === "working" || shown === "done";
   const stage = !isTauri; // browser preview: draw a fake desktop behind
   const win = winSize.current ?? size;
 
@@ -170,12 +172,15 @@ export default function Island() {
     ? { width: collapsed ? size.width : size.width - EAR * 2, height: size.height }
     : { width: size.width - 24, height: size.height - 24 };
   const bigCard = shown === "card" || shown === "claude" || shown === "meetingExpanded" || shown === "peek";
+  // MacBook notch bottom corners are ~9pt; live wings use a slightly rounder 13pt so they read as one shape.
   const radius = notch
     ? collapsed
-      ? "0 0 10px 10px"
+      ? "0 0 9px 9px"
       : bigCard
-        ? "0 0 26px 26px"
-        : `0 0 ${Math.min(20, size.height / 2)}px ${Math.min(20, size.height / 2)}px`
+        ? "0 0 24px 24px"
+        : live
+          ? "0 0 13px 13px"
+          : "0 0 18px 18px"
     : bigCard
       ? "24px"
       : "999px";
@@ -203,13 +208,17 @@ export default function Island() {
         className={notch ? "relative bg-black text-white" : "relative text-white"}
         style={
           notch
-            ? { overflow: "visible" }
+            ? {
+                overflow: "visible",
+                // hairline light-blue glow along the bottom edge while live
+                boxShadow: shown === "listening" ? "inset 0 -1px 0 rgba(102,206,255,0.55)" : bigCard ? "inset 0 -1px 0 rgba(147,221,255,0.14)" : "none",
+              }
             : {
-                background: "rgba(18,18,26,0.72)",
-                backdropFilter: "blur(28px) saturate(180%)",
-                WebkitBackdropFilter: "blur(28px) saturate(180%)",
-                border: "1px solid rgba(255,255,255,0.12)",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.12), 0 12px 32px -8px rgba(0,0,0,0.6)",
+                background: "linear-gradient(180deg, rgba(10,16,24,0.78), rgba(2,4,8,0.86))",
+                backdropFilter: "blur(30px) saturate(180%)",
+                WebkitBackdropFilter: "blur(30px) saturate(180%)",
+                border: "1px solid rgba(147,221,255,0.16)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 14px 36px -10px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(0,0,0,0.6)",
                 overflow: "hidden",
               }
         }
@@ -282,7 +291,7 @@ function Stage({ notch, children }: { notch: boolean; children: React.ReactNode 
       className="fixed inset-0 overflow-hidden"
       style={{
         background:
-          "radial-gradient(1200px 600px at 20% 10%, #4c1d95 0%, transparent 60%), radial-gradient(900px 700px at 90% 80%, #0e7490 0%, transparent 55%), linear-gradient(160deg,#1e1b4b,#0f172a)",
+          "radial-gradient(1100px 600px at 20% 0%, #0b3b5c 0%, transparent 60%), radial-gradient(900px 700px at 90% 85%, #0a2a44 0%, transparent 55%), linear-gradient(160deg,#04070c,#000)",
       }}
     >
       {notch ? (

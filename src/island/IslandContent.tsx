@@ -4,7 +4,8 @@ import { AlertTriangle, Check, LayoutDashboard, Mic, Sparkles, Square, X, Radio,
 import { api } from "../lib/api";
 import { formatClock, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, IslandGeometry, Mode, Phase } from "../lib/types";
-import { Orbit, Waveform } from "./Waveform";
+import { Dots, Orbit, Waveform } from "./Waveform";
+import { ISLAND_WING } from "../lib/format";
 import type { MeetingInfo } from "./Island";
 
 interface Props {
@@ -32,11 +33,12 @@ function Wings({ notch, geo, left, right, onClick }: { notch: boolean; geo: Isla
         <div className="flex min-w-0 flex-1 items-center justify-end">{right}</div>
       </div>
     );
+  // [ wing | camera notch | wing ] — both wings identical, content centred in each.
   return (
-    <div className="flex items-center" style={{ height: geo.notchHeight }} onClick={onClick}>
-      <div className="flex flex-1 items-center justify-start pl-3.5">{left}</div>
-      <div style={{ width: geo.notchWidth - 20 }} />
-      <div className="flex flex-1 items-center justify-end pr-3.5">{right}</div>
+    <div className="flex items-center justify-center" style={{ height: geo.notchHeight }} onClick={onClick}>
+      <div className="flex shrink-0 items-center justify-center" style={{ width: ISLAND_WING }}>{left}</div>
+      <div className="shrink-0" style={{ width: geo.notchWidth }} />
+      <div className="flex shrink-0 items-center justify-center" style={{ width: ISLAND_WING }}>{right}</div>
     </div>
   );
 }
@@ -45,14 +47,14 @@ function ModeIcon({ mode }: { mode: Mode }) {
   if (mode === "assistant")
     return (
       <motion.div animate={{ rotate: [0, 12, -8, 0] }} transition={{ repeat: Infinity, duration: 2.4 }}>
-        <Sparkles size={15} className="text-violet-300" />
+        <Sparkles size={15} className="text-brand-300" />
       </motion.div>
     );
   if (mode === "meeting") return <span className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_10px_#ef4444] animate-pulse" />;
   return (
     <div className="relative">
-      <span className="absolute inset-0 -m-1 rounded-full bg-cyan-400/25 animate-ping" />
-      <Mic size={15} className="relative text-cyan-200" />
+      <span className="absolute inset-0 -m-1 rounded-full bg-brand-400/25 animate-ping" />
+      <Mic size={15} className="relative text-brand-200" />
     </div>
   );
 }
@@ -107,7 +109,7 @@ export function IslandContent(p: Props) {
               {!notch && <span className="text-[13px] font-medium text-white/90">{p.mode === "assistant" ? "Ask anything" : "Listening"}</span>}
             </div>
           }
-          right={<Waveform bars={notch ? 14 : 18} height={notch ? 16 : 22} barWidth={notch ? 2.5 : 3} />}
+          right={<Waveform bars={notch ? 8 : 18} height={notch ? 15 : 22} barWidth={notch ? 2.5 : 3} gap={notch ? 2 : 2} />}
         />
       );
 
@@ -116,9 +118,25 @@ export function IslandContent(p: Props) {
         <Wings
           notch={notch}
           geo={geo}
-          left={<Orbit size={15} />}
-          right={<span className="shimmer text-[12.5px] font-semibold tracking-tight">{p.phase === "transcribing" ? "Transcribing" : p.mode === "assistant" ? "Thinking" : "Polishing"}</span>}
+          left={<Orbit size={14} />}
+          right={
+            notch ? (
+              <span title={p.phase === "transcribing" ? "Transcribing" : p.mode === "assistant" ? "Thinking" : "Polishing"}>
+                <Dots />
+              </span>
+            ) : (
+              <span className="shimmer text-[12.5px] font-semibold tracking-tight">{p.phase === "transcribing" ? "Transcribing" : p.mode === "assistant" ? "Thinking" : "Polishing"}</span>
+            )
+          }
         />
+      );
+
+    case "error":
+      return (
+        <div className="flex h-full flex-col">
+          <Wings notch={notch} geo={geo} left={<AlertTriangle size={14} className="text-amber-300" />} right={<span className="text-[11px] font-medium text-amber-200/90">Oops</span>} />
+          <p className={"line-clamp-1 text-center text-[12px] text-white/75 " + (notch ? "px-5 pb-2" : "px-4")}>{p.message ?? "Something went wrong"}</p>
+        </div>
       );
 
     case "done": {
@@ -132,13 +150,17 @@ export function IslandContent(p: Props) {
               {err ? (
                 <AlertTriangle size={15} className="text-amber-300" />
               ) : (
-                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-400">
+                <span className="flex h-4 w-4 items-center justify-center rounded-full bg-brand-300 shadow-[0_0_10px_rgba(102,206,255,0.6)]">
                   <Check size={11} strokeWidth={3.5} className="text-black" />
                 </span>
               )}
             </motion.div>
           }
-          right={<span className="max-w-[160px] truncate text-[12.5px] font-medium text-white/85">{p.message ?? (err ? "Something went wrong" : p.mode === "meeting" ? "Notes saved" : "Pasted")}</span>}
+          right={
+            <span className={"truncate font-medium text-white/85 " + (notch ? "text-[11px]" : "max-w-[160px] text-[12.5px]")}>
+              {notch ? (p.mode === "meeting" ? "Saved" : p.mode === "assistant" ? "Done" : "Pasted") : (p.message ?? (err ? "Something went wrong" : p.mode === "meeting" ? "Notes saved" : "Pasted"))}
+            </span>
+          }
         />
       );
     }
@@ -186,8 +208,8 @@ export function IslandContent(p: Props) {
                 </button>
               </div>
             </div>
-            <div className="rounded-xl bg-white/[0.06] p-2.5">
-              <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-violet-300/90">
+            <div className="rounded-xl border border-brand-200/10 bg-brand-300/[0.06] p-2.5">
+              <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-brand-300">
                 <Sparkles size={11} /> Live summary
               </div>
               <p className="line-clamp-3 text-[12.5px] leading-snug text-white/85">{p.meeting.summary || "Summary appears after a minute of conversation."}</p>

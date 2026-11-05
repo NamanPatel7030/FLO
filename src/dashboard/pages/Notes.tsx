@@ -124,7 +124,7 @@ function LiveNote({ note }: { note: Note }) {
           </Button>
         </div>
         <div className="relative mt-4 rounded-xl bg-[var(--glass)] p-3.5">
-          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-violet-500 dark:text-violet-300">
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-brand-500 dark:text-brand-300">
             <Sparkles size={12} /> Live summary
           </div>
           <AnimatePresence mode="wait">
@@ -189,7 +189,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
           </div>
         </div>
         <div className="mt-4 rounded-xl bg-[var(--glass)] p-3.5">
-          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-violet-500 dark:text-violet-300">
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-brand-500 dark:text-brand-300">
             <Sparkles size={12} /> Summary
           </div>
           <p className="text-[13.5px] leading-relaxed selectable">{note.summary}</p>

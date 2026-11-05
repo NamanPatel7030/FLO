@@ -65,7 +65,7 @@ export default function Assistant() {
           <AnimatePresence initial={false}>
             {items.map((r) => (
               <motion.div key={r.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-2">
-                <div className="self-end rounded-2xl rounded-br-md bg-violet-500/20 px-4 py-2.5 text-[13.5px] selectable">{r.query}</div>
+                <div className="self-end rounded-2xl rounded-br-md bg-brand-500/20 px-4 py-2.5 text-[13.5px] selectable">{r.query}</div>
                 <div className="flex gap-3">
                   <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full accent-gradient">
                     <Sparkles size={13} className="text-white" />
@@ -123,7 +123,7 @@ export default function Assistant() {
           <button type="button" onClick={() => api.startSession("assistant")} className="flex h-9 w-9 items-center justify-center rounded-xl text-muted hover:bg-[var(--glass)]" title="Speak">
             <Mic size={16} />
           </button>
-          <button type="submit" disabled={!text.trim() || busy} className="flex h-9 w-9 items-center justify-center rounded-xl accent-gradient text-white disabled:opacity-40" title="Send">
+          <button type="submit" disabled={!text.trim() || busy} className="flex h-9 w-9 items-center justify-center rounded-xl accent-gradient text-[#001522] font-semibold disabled:opacity-40" title="Send">
             <ArrowUp size={16} />
           </button>
         </form>

@@ -83,7 +83,7 @@ export default function Dashboard() {
                       transition={{ type: "spring", stiffness: 500, damping: 38 }}
                     />
                   )}
-                  <span className={clsx("relative", active && "text-violet-400")}>{n.icon}</span>
+                  <span className={clsx("relative", active && "text-brand-400")}>{n.icon}</span>
                   <span className="relative font-medium">{n.label}</span>
                   {n.id === "notes" && liveMeeting && <span className="relative ml-auto h-2 w-2 rounded-full bg-red-500 animate-pulse" />}
                   {badge > 0 && (
@@ -137,7 +137,7 @@ export default function Dashboard() {
 
 function Logo() {
   return (
-    <div className="relative flex h-9 w-9 items-center justify-center rounded-xl accent-gradient shadow-[0_6px_20px_-6px_rgba(139,92,246,0.8)]">
+    <div className="relative flex h-9 w-9 items-center justify-center rounded-xl accent-gradient shadow-[0_6px_20px_-6px_rgba(61,187,255,0.8)]">
       <div className="flex items-center gap-[2.5px]">
         {[0.45, 0.85, 1, 0.65].map((h, i) => (
           <span key={i} className="w-[3px] rounded-full bg-white" style={{ height: 16 * h }} />
@@ -152,17 +152,17 @@ function Backdrop() {
     <div className="pointer-events-none absolute inset-0 overflow-hidden">
       <motion.div
         className="absolute -left-40 -top-40 h-[520px] w-[520px] rounded-full opacity-[0.22] blur-[110px]"
-        style={{ background: "#8b5cf6" }}
+        style={{ background: "#3dbbff" }}
         animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
         transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         className="absolute -bottom-48 right-[-120px] h-[560px] w-[560px] rounded-full opacity-[0.18] blur-[120px]"
-        style={{ background: "#06b6d4" }}
+        style={{ background: "#1a9be0" }}
         animate={{ x: [0, -50, 0], y: [0, -30, 0] }}
         transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
       />
-      <div className="absolute left-1/2 top-1/3 h-[300px] w-[300px] rounded-full opacity-[0.08] blur-[100px]" style={{ background: "#f472b6" }} />
+      <div className="absolute left-1/2 top-1/3 h-[300px] w-[300px] rounded-full opacity-[0.08] blur-[100px]" style={{ background: "#0a4f7a" }} />
     </div>
   );
 }
@@ -186,7 +186,7 @@ function Toasts() {
             ) : t.kind === "success" ? (
               <CircleCheck size={16} className="text-emerald-400" />
             ) : (
-              <Info size={16} className="text-cyan-400" />
+              <Info size={16} className="text-brand-400" />
             )}
             {t.text}
           </motion.div>

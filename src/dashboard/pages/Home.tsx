@@ -55,8 +55,8 @@ export default function Home() {
       <div className="grid grid-cols-4 gap-4">
         {a && today ? (
           <>
-            <Stat label="Words today" value={formatNumber(today.words)} sub={`${formatNumber(a.totalWords)} this month`} icon={<Type size={13} />} tint="#a78bfa" />
-            <Stat label="Time saved" value={formatDuration(a.minutesSaved * 60)} sub={`at ${a.avgWpm} wpm vs ${settings?.typingWpm ?? 40} typing`} icon={<Clock size={13} />} tint="#22d3ee" />
+            <Stat label="Words today" value={formatNumber(today.words)} sub={`${formatNumber(a.totalWords)} this month`} icon={<Type size={13} />} tint="#93ddff" />
+            <Stat label="Time saved" value={formatDuration(a.minutesSaved * 60)} sub={`at ${a.avgWpm} wpm vs ${settings?.typingWpm ?? 40} typing`} icon={<Clock size={13} />} tint="#66ceff" />
             <Stat label="Streak" value={`${a.streakDays}d`} sub="days in a row" icon={<Flame size={13} />} tint="#f59e0b" />
             <Stat label="Open to-dos" value={todos?.filter((t) => t.status === "open").length ?? "–"} sub={`${groups?.screen.length ?? 0} found on your screen`} icon={<CheckCircle2 size={13} />} tint="#34d399" />
           </>
@@ -95,7 +95,7 @@ export default function Home() {
           )}
           {att && (
             <div className="mt-3 flex items-center gap-2 rounded-xl bg-[var(--glass)] px-3 py-2 text-[12px] text-muted">
-              <Eye size={13} className="text-cyan-400" />
+              <Eye size={13} className="text-brand-400" />
               Attention is {att.enabled ? (att.paused ? "paused" : "on") : "off"} · {att.capturesToday} looks today
               {att.lastApp ? ` · last in ${att.lastApp}` : ""} · stays on this Mac
             </div>
@@ -172,7 +172,7 @@ function MicOrb() {
       {[0, 1, 2].map((i) => (
         <motion.span
           key={i}
-          className="absolute inset-0 rounded-full border border-violet-400/30"
+          className="absolute inset-0 rounded-full border border-brand-400/30"
           animate={{ scale: [0.6, 1.15], opacity: [0.7, 0] }}
           transition={{ duration: 3, repeat: Infinity, delay: i, ease: "easeOut" }}
         />
@@ -181,7 +181,7 @@ function MicOrb() {
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         onClick={() => api.startSession("dictation")}
-        className="relative flex h-20 w-20 items-center justify-center rounded-full accent-gradient shadow-[0_10px_40px_-6px_rgba(139,92,246,0.8)]"
+        className="relative flex h-20 w-20 items-center justify-center rounded-full accent-gradient shadow-[0_10px_40px_-6px_rgba(61,187,255,0.8)]"
         aria-label="Start dictation"
       >
         <Mic size={30} className="text-white" />

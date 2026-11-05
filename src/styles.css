@@ -3,56 +3,42 @@
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
-  --color-accent-1: #8b5cf6;
-  --color-accent-2: #06b6d4;
+  /* Flo light-blue brand scale */
+  --color-brand-50: #f2fbff;
+  --color-brand-100: #e3f6ff;
+  --color-brand-200: #c2ecff;
+  --color-brand-300: #93ddff;
+  --color-brand-400: #66ceff;
+  --color-brand-500: #3dbbff;
+  --color-brand-600: #1a9be0;
+  --color-brand-700: #137bb3;
+  --color-brand-800: #0d5a85;
+  --color-brand-900: #083a57;
   --color-claude: #d97757;
 }
 
-/* ── design tokens (dark-first) ─────────────────────────────────────────── */
+/* ── design tokens: black + light-blue glass (dark only, by design) ─────── */
 :root {
   color-scheme: dark;
-  --bg: #0b0b12;
-  --fg: #f4f4f7;
-  --fg-muted: rgb(244 244 247 / 0.62);
-  --fg-faint: rgb(244 244 247 / 0.38);
-  --glass: rgb(255 255 255 / 0.055);
-  --glass-strong: rgb(255 255 255 / 0.09);
-  --glass-hover: rgb(255 255 255 / 0.12);
-  --border: rgb(255 255 255 / 0.09);
-  --border-strong: rgb(255 255 255 / 0.16);
-  --highlight: rgb(255 255 255 / 0.08);
-  --shadow: 0 10px 40px -12px rgb(0 0 0 / 0.55);
-  --chart-grid: rgb(255 255 255 / 0.07);
-  --chart-axis: rgb(244 244 247 / 0.45);
-  --s1: #a78bfa;
-  --s2: #22d3ee;
-  --s3: #f59e0b;
+  --bg: #000000;
+  --fg: #f3f9ff;
+  --fg-muted: rgb(226 240 255 / 0.64);
+  --fg-faint: rgb(226 240 255 / 0.40);
+  --glass: rgb(120 200 255 / 0.045);
+  --glass-strong: rgb(140 210 255 / 0.08);
+  --glass-hover: rgb(150 215 255 / 0.12);
+  --border: rgb(150 215 255 / 0.10);
+  --border-strong: rgb(150 215 255 / 0.20);
+  --highlight: rgb(255 255 255 / 0.07);
+  --shadow: 0 12px 40px -14px rgb(0 0 0 / 0.8);
+  --glow: 0 0 0 1px rgb(102 206 255 / 0.25), 0 8px 30px -8px rgb(61 187 255 / 0.45);
+  --chart-grid: rgb(150 215 255 / 0.07);
+  --chart-axis: rgb(226 240 255 / 0.45);
+  --s1: #66ceff;
+  --s2: #e3f6ff;
+  --s3: #fbbf24;
   --s4: #34d399;
   --s5: #f472b6;
-}
-
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    color-scheme: light;
-    --bg: #eef0f6;
-    --fg: #14141c;
-    --fg-muted: rgb(20 20 28 / 0.64);
-    --fg-faint: rgb(20 20 28 / 0.42);
-    --glass: rgb(255 255 255 / 0.55);
-    --glass-strong: rgb(255 255 255 / 0.72);
-    --glass-hover: rgb(255 255 255 / 0.85);
-    --border: rgb(20 20 40 / 0.08);
-    --border-strong: rgb(20 20 40 / 0.14);
-    --highlight: rgb(255 255 255 / 0.9);
-    --shadow: 0 10px 40px -16px rgb(40 30 90 / 0.25);
-    --chart-grid: rgb(20 20 40 / 0.07);
-    --chart-axis: rgb(20 20 28 / 0.5);
-    --s1: #7c3aed;
-    --s2: #0891b2;
-    --s3: #d97706;
-    --s4: #059669;
-    --s5: #db2777;
-  }
 }
 
 html,
@@ -73,9 +59,13 @@ body {
   overflow: hidden;
 }
 
-/* Inside Tauri the window is transparent with native vibrancy → let it show */
+/* Inside Tauri the window has native vibrancy → tint it near-black so the
+   glass reads black + light blue instead of system grey. */
 html.tauri body {
-  background: transparent;
+  background:
+    radial-gradient(900px 520px at 12% -10%, rgb(26 155 224 / 0.16), transparent 60%),
+    radial-gradient(800px 600px at 105% 110%, rgb(61 187 255 / 0.10), transparent 60%),
+    rgb(2 4 8 / 0.86);
 }
 html.island,
 html.island body,
@@ -118,10 +108,11 @@ textarea,
   border-color: var(--border);
 }
 @utility accent-gradient {
-  background-image: linear-gradient(120deg, #8b5cf6 0%, #6366f1 45%, #06b6d4 100%);
+  background-image: linear-gradient(135deg, #c2ecff 0%, #66ceff 40%, #1a9be0 100%);
+  color: #001522;
 }
 @utility accent-text {
-  background-image: linear-gradient(120deg, #a78bfa, #22d3ee);
+  background-image: linear-gradient(120deg, #e3f6ff, #66ceff 60%, #3dbbff);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -129,7 +120,7 @@ textarea,
 
 /* shimmering text for "thinking" */
 .shimmer {
-  background: linear-gradient(90deg, rgb(255 255 255 / 0.45) 0%, #fff 40%, #c4b5fd 50%, #67e8f9 60%, rgb(255 255 255 / 0.45) 100%);
+  background: linear-gradient(90deg, rgb(255 255 255 / 0.45) 0%, #fff 40%, #c2ecff 50%, #66ceff 60%, rgb(255 255 255 / 0.45) 100%);
   background-size: 250% 100%;
   -webkit-background-clip: text;
   background-clip: text;

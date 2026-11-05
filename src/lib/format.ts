@@ -75,7 +75,12 @@ export function groupTodos(todos: Todo[], now: Date = new Date()): TodoGroups {
   return g;
 }
 
-export type IslandVariant = "collapsed" | "peek" | "listening" | "working" | "done" | "meeting" | "meetingExpanded" | "card" | "claude";
+export type IslandVariant = "collapsed" | "peek" | "listening" | "working" | "done" | "error" | "meeting" | "meetingExpanded" | "card" | "claude";
+
+/** Width of each live-activity wing beside the notch (logical px). */
+export const ISLAND_WING = 46;
+/** Concave "ear" that flares the island into the menu bar. */
+export const ISLAND_EAR = 8;
 
 /** Window size (logical px) needed for each island variant. Includes room for the shadow. */
 export interface CardContent {
@@ -103,7 +108,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "listening":
       case "working":
       case "done":
-        return { width: nw + 180, height: nh + 6 };
+        return { width: nw + 2 * (ISLAND_WING + ISLAND_EAR), height: nh };
+      case "error":
+        return { width: nw + 2 * (ISLAND_WING + ISLAND_EAR) + 120, height: nh + 30 };
       case "meeting":
         return { width: nw + 260, height: nh + 34 };
       case "meetingExpanded":
@@ -125,6 +132,8 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "working":
     case "done":
       return { width: 248 + pad, height: 48 + pad };
+    case "error":
+      return { width: 320 + pad, height: 48 + pad };
     case "meeting":
       return { width: 340 + pad, height: 64 + pad };
     case "meetingExpanded":

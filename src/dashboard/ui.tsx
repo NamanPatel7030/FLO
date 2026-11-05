@@ -63,7 +63,7 @@ export function Button({
       className={clsx(
         "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl font-medium transition disabled:opacity-40",
         size === "sm" ? "h-7 px-2.5 text-[12px]" : "h-9 px-3.5 text-[13px]",
-        variant === "primary" && "accent-gradient text-white shadow-[0_6px_20px_-6px_rgba(139,92,246,0.7)] hover:brightness-110",
+        variant === "primary" && "accent-gradient text-[#001522] font-semibold shadow-[0_6px_20px_-6px_rgba(61,187,255,0.7)] hover:brightness-110",
         variant === "glass" && "glass-strong hover:bg-[var(--glass-hover)]",
         variant === "ghost" && "text-muted hover:bg-[var(--glass)] hover:text-[var(--fg)]",
         variant === "danger" && "bg-red-500/15 text-red-400 hover:bg-red-500/25",
@@ -105,7 +105,7 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       className={clsx(
-        "h-9 w-full rounded-xl border border-[var(--border)] bg-[var(--glass)] px-3 text-[13.5px] outline-none transition placeholder:text-[var(--fg-faint)] focus:border-violet-400/60 focus:ring-2 focus:ring-violet-500/20",
+        "h-9 w-full rounded-xl border border-[var(--border)] bg-[var(--glass)] px-3 text-[13.5px] outline-none transition placeholder:text-[var(--fg-faint)] focus:border-brand-400/60 focus:ring-2 focus:ring-brand-500/20",
         props.className,
       )}
     />
@@ -117,7 +117,7 @@ export function Select<T extends string>({ value, onChange, options }: { value: 
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as T)}
-      className="h-9 rounded-xl border border-[var(--border)] bg-[var(--glass)] px-2.5 text-[13.5px] outline-none focus:border-violet-400/60"
+      className="h-9 rounded-xl border border-[var(--border)] bg-[var(--glass)] px-2.5 text-[13.5px] outline-none focus:border-brand-400/60"
     >
       {options.map((o) => (
         <option key={o.value} value={o.value} className="bg-[#1b1b24] text-white">
@@ -173,7 +173,7 @@ export function SourceBadge({ source, app }: { source: TodoSource; app?: string 
     <span
       className={clsx(
         "rounded-md px-1.5 py-[1px] text-[10.5px] font-medium",
-        source === "attention" ? "bg-cyan-500/12 text-cyan-600 dark:text-cyan-300" : "bg-[var(--glass-strong)] text-muted",
+        source === "attention" ? "bg-brand-500/12 text-brand-600 dark:text-brand-300" : "bg-[var(--glass-strong)] text-muted",
       )}
     >
       {source === "attention" && app ? `${app}` : SOURCE[source]}

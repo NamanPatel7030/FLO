@@ -91,7 +91,7 @@ export default function Todos() {
 
 function Group({ title, icon, items, empty, hint, accent }: { title: string; icon: React.ReactNode; items: Todo[]; empty: string; hint?: string; accent?: boolean }) {
   return (
-    <Card className={clsx("p-4", accent && "ring-1 ring-cyan-400/20")}>
+    <Card className={clsx("p-4", accent && "ring-1 ring-brand-400/20")}>
       <CardTitle icon={icon}>
         {title} <span className="text-faint">{items.length}</span>
       </CardTitle>

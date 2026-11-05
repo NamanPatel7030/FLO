@@ -44,7 +44,7 @@ export default function History() {
             >
               <div className="w-24 shrink-0">
                 <div className="flex items-center gap-1 text-[12.5px] font-medium">
-                  {d.mode === "assistant" && <Sparkles size={11} className="text-violet-400" />}
+                  {d.mode === "assistant" && <Sparkles size={11} className="text-brand-400" />}
                   {d.app}
                 </div>
                 <div className="text-[11px] text-faint">{relativeTime(d.createdAt)}</div>

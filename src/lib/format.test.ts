@@ -8,6 +8,8 @@ import {
   countWords,
   groupTodos,
   islandSize,
+  ISLAND_EAR,
+  ISLAND_WING,
   smoothLevels,
 } from "./format";
 import type { Todo } from "./types";
@@ -108,6 +110,20 @@ describe("islandSize", () => {
     const c = islandSize("claude", geo);
     expect(c.width).toBeGreaterThan(200);
     expect(c.height).toBeLessThan(islandSize("card", geo).height);
+  });
+  it("compact live states sit flush with the notch: same height, symmetric wings", () => {
+    for (const v of ["listening", "working", "done"] as const) {
+      const s = islandSize(v, geo);
+      expect(s.height).toBe(32);
+      const wing = (s.width - 200) / 2;
+      expect(Number.isInteger(wing * 2)).toBe(true);
+      expect(wing).toBe(ISLAND_WING + ISLAND_EAR);
+    }
+  });
+  it("error grows below the notch for a readable message", () => {
+    const e = islandSize("error", geo);
+    expect(e.height).toBeGreaterThan(32);
+    expect(e.width).toBeGreaterThan(islandSize("listening", geo).width);
   });
   it("windows collapsed is a capsule, not zero", () => {
     const w = islandSize("collapsed", { ...geo, platform: "windows", hasNotch: false });

@@ -142,11 +142,11 @@ function Voice({ s, set }: P) {
               const downloading = pr && !pr.done;
               const active = s.sttModel === m.id;
               return (
-                <div key={m.id} className={clsx("flex items-center gap-4 rounded-xl p-3 transition", active ? "glass-strong ring-1 ring-violet-400/40" : "bg-[var(--glass)]")}>
+                <div key={m.id} className={clsx("flex items-center gap-4 rounded-xl p-3 transition", active ? "glass-strong ring-1 ring-brand-400/40" : "bg-[var(--glass)]")}>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-[13.5px] font-medium">
                       {m.label}
-                      {active && <span className="rounded-full bg-violet-500/20 px-1.5 text-[10.5px] text-violet-500 dark:text-violet-300">In use</span>}
+                      {active && <span className="rounded-full bg-brand-500/20 px-1.5 text-[10.5px] text-brand-500 dark:text-brand-300">In use</span>}
                     </div>
                     <div className="text-[12px] text-faint">
                       {m.languages} · {m.sizeMb} MB
@@ -442,7 +442,7 @@ function PermissionsTab() {
       </Card>
       {geo?.platform !== "windows" && (
         <Card className="flex items-center gap-4 p-4">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500/15 text-violet-500">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500/15 text-brand-500">
             <Keyboard size={15} />
           </span>
           <div className="flex-1">
