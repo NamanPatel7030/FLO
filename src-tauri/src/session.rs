@@ -9,8 +9,12 @@ use anyhow::{anyhow, Result};
 use std::time::Instant;
 
 const MIN_HOLD_MS: u128 = 250;
+/// a single push-to-talk recording never runs longer than this
+const MAX_RECORDING_SECS: u64 = 120;
 
-pub fn start(st: &Shared, mode: Mode) -> Result<()> {
+/// `via_hotkey`: started by holding a key → if the key is already up when we're ready
+/// (quick tap released during the ~300 ms start), cancel instead of recording forever.
+pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
     let mut guard = st.session.lock();
     if guard.is_some() {
         return Ok(());
@@ -26,9 +30,27 @@ pub fn start(st: &Shared, mode: Mode) -> Result<()> {
     } else {
         None
     };
-    *guard = Some(ActiveSession { mode, recorder, front, selection, started: Instant::now(), screen });
-    drop(guard);
+    if via_hotkey && !st.ptt_down.load(std::sync::atomic::Ordering::SeqCst) {
+        // released while we were starting → it was a tap, not push-to-talk
+        let _ = recorder.stop();
+        st.state(Phase::Idle, mode, None);
+        return Ok(());
+    }
+    let started = Instant::now();
+    *guard = Some(ActiveSession { mode, recorder, front, selection, started, screen });
+    // emit while holding the lock so a concurrent cancel/stop can't be overtaken by "listening"
     st.state(Phase::Listening, mode, None);
+    drop(guard);
+    // watchdog: never record forever
+    let st2 = st.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(MAX_RECORDING_SECS)).await;
+        let same = st2.session.lock().as_ref().map(|s| s.started == started).unwrap_or(false);
+        if same {
+            log::warn!("recording hit {MAX_RECORDING_SECS}s — stopping");
+            stop(st2).await;
+        }
+    });
     Ok(())
 }
 
@@ -40,22 +62,31 @@ pub fn switch_mode(st: &Shared, mode: Mode) {
             if mode == Mode::Assistant && s.selection.is_none() {
                 s.selection = platform::copy_selection();
             }
-            drop(g);
             st.state(Phase::Listening, mode, None);
+            drop(g);
         }
     }
 }
 
 pub fn cancel(st: &Shared) {
-    if let Some(s) = st.session.lock().take() {
-        let mode = s.mode;
+    let mut g = st.session.lock();
+    let mode = g.as_ref().map(|s| s.mode).unwrap_or(Mode::Dictation);
+    if let Some(s) = g.take() {
         let _ = s.recorder.stop();
-        st.state(Phase::Idle, mode, None);
     }
+    // always reset the island, even if there was nothing to cancel
+    st.state(Phase::Idle, mode, None);
 }
 
 pub async fn stop(st: Shared) {
-    let Some(sess) = st.session.lock().take() else { return };
+    let taken = st.session.lock().take();
+    let Some(sess) = taken else {
+        // nothing recording (e.g. start was cancelled) → make sure the island isn't left spinning
+        if st.meeting.lock().is_none() {
+            st.state(Phase::Idle, Mode::Dictation, None);
+        }
+        return;
+    };
     let mode = sess.mode;
     if sess.started.elapsed().as_millis() < MIN_HOLD_MS {
         let _ = sess.recorder.stop();
@@ -77,7 +108,9 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     }
     st.state(Phase::Transcribing, mode, None);
     let t0 = Instant::now();
-    let raw = transcribe(st, samples.clone()).await?;
+    let raw = tokio::time::timeout(std::time::Duration::from_secs(60), transcribe(st, samples.clone()))
+        .await
+        .map_err(|_| anyhow!("Transcription took too long — try a smaller speech model in Settings → Voice."))??;
     let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
     if stt::is_hallucination(&raw, secs) {
         return Err(anyhow!("Didn't catch that — try speaking a bit longer."));

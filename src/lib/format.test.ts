@@ -9,6 +9,7 @@ import {
   groupTodos,
   groupByDay,
   islandSize,
+  isStuck,
   claudeStatusLabel,
   formatHotkey,
   hotkeyWords,
@@ -273,5 +274,22 @@ describe("hotkeys + status labels", () => {
     expect(claudeStatusLabel("waiting_reply")).toBe("Waiting for your reply");
     expect(claudeStatusLabel("needs_approval")).toBe("Needs approval");
     expect(claudeStatusLabel("working")).toBe("Working…");
+  });
+});
+
+
+describe("isStuck (island watchdog)", () => {
+  it("listening with no mic levels for 6s is stuck", () => {
+    expect(isStuck("listening", "dictation", 7000, 7000)).toBe(true);
+    expect(isStuck("listening", "dictation", 7000, 100)).toBe(false); // levels still flowing
+    expect(isStuck("listening", "assistant", 2000, 9000)).toBe(false); // just started
+  });
+  it("working without updates for 45s is stuck", () => {
+    expect(isStuck("transcribing", "dictation", 46000, 46000)).toBe(true);
+    expect(isStuck("thinking", "assistant", 10000, 46000)).toBe(false);
+  });
+  it("meetings and idle are never stuck", () => {
+    expect(isStuck("listening", "meeting", 600000, 600000)).toBe(false);
+    expect(isStuck("idle", "dictation", 600000, 600000)).toBe(false);
   });
 });

@@ -221,7 +221,16 @@ fn run_tap(cb: Arc<HotkeyCallback>) -> bool {
                 vec![CGEventType::FlagsChanged, CGEventType::KeyDown],
                 move |_proxy, ty, event| {
                     let ev = match ty {
-                        CGEventType::KeyDown => machine.lock().key_down(),
+                        CGEventType::KeyDown => {
+                            use core_graphics::event::EventField;
+                            let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+                            let src = event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID);
+                            if crate::hotkey::key_cancels(code, src, std::process::id() as i64) {
+                                machine.lock().key_down()
+                            } else {
+                                None
+                            }
+                        }
                         CGEventType::FlagsChanged => {
                             let f = event.get_flags();
                             let mods = Mods {

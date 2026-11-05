@@ -671,3 +671,14 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
   }
 }
+
+// ── test hook (browser preview only; never loaded inside the app) ──────────────
+if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
+  (window as any).__floMock = {
+    emit: mockEmit,
+    invoke: mockInvoke,
+    claudeSession: mockClaudeSession,
+    correction: mockCorrection,
+    meetingDetected: mockMeetingDetected,
+  };
+}

@@ -41,6 +41,8 @@ pub struct AppState {
     pub meeting: Mutex<Option<MeetingHandle>>,
     pub attention: Mutex<AttentionStatus>,
     pub attention_paused: AtomicBool,
+    /// push-to-talk key physically held right now
+    pub ptt_down: AtomicBool,
     pub attention_captures: AtomicU32,
     pub claude_listening: AtomicBool,
     pub claude_port: u16,

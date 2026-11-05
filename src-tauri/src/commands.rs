@@ -88,7 +88,7 @@ pub async fn start_session(st: State<'_, Shared>, mode: ModeArg) -> R<()> {
         ModeArg::Assistant => Mode::Assistant,
         _ => Mode::Dictation,
     };
-    tauri::async_runtime::spawn_blocking(move || session::start(&st, m)).await.map_err(e)?.map_err(e)
+    tauri::async_runtime::spawn_blocking(move || session::start(&st, m, false)).await.map_err(e)?.map_err(e)
 }
 
 #[tauri::command]

@@ -15,6 +15,7 @@ import {
   type CardContent,
   type IslandVariant,
 } from "../lib/format";
+import { isStuck } from "../lib/format";
 import {
   EV,
   type AssistantResponse,
@@ -73,6 +74,9 @@ function urgentTodos(todos: Todo[]): Todo[] {
 export default function Island() {
   const [geo, setGeo] = useState<IslandGeometry | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
+  const lastStateAt = useRef(Date.now());
+  const lastLevelAt = useRef(0);
+  useEffect(() => on<{ rms: number }>(EV.level, () => (lastLevelAt.current = Date.now())), []);
   const [mode, setMode] = useState<Mode>("dictation");
   const [message, setMessage] = useState<string | undefined>();
   const [card, setCard] = useState<AssistantResponse | null>(null);
@@ -107,6 +111,7 @@ export default function Island() {
   useEffect(() => {
     const offs = [
       on<StateEvent>(EV.state, (e) => {
+        lastStateAt.current = Date.now();
         setPhase(e.phase);
         setMode(e.mode);
         modeRef.current = e.mode;
@@ -373,6 +378,18 @@ export default function Island() {
     };
   }, [phase, mode, card, headClaude, history, result, headFix, promptOpen]);
 
+  // watchdog: if the backend stopped confirming activity, return to idle (never spin forever)
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      if (isStuck(phase, mode, now - lastStateAt.current, now - lastLevelAt.current)) {
+        setPhase("idle");
+        lastStateAt.current = now;
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [phase, mode]);
+
   const dismissClaude = useCallback((seen: boolean) => {
     setClaudeQueue((q) => {
       // "Open" jumps to the editor / terminal where the session runs (and marks it seen)
@@ -517,13 +534,14 @@ export default function Island() {
               style={{ background: "linear-gradient(90deg, transparent, #e3f6ff, transparent)", animation: "flo-shimmer-x 0.9s ease-out 1" }}
             />
           )}
-          <AnimatePresence mode="popLayout" initial={false}>
+          {/* Only the current content is rendered (enter animation only). Exit animations could leave
+              ghost content — e.g. a frozen spinner — on screen if they were ever interrupted. */}
+          {(
             <motion.div
               key={shown + (shown === "claude" ? headClaude?.id : "") + (shown === "correction" ? headFix?.id : "")}
               className="absolute inset-0"
               initial={{ opacity: 0, filter: "blur(6px)", scale: 0.97 }}
               animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
-              exit={{ opacity: 0, filter: "blur(6px)", scale: 0.97 }}
               transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
             >
               {shown === "correction" && headFix ? (
@@ -569,7 +587,7 @@ export default function Island() {
                 />
               )}
             </motion.div>
-          </AnimatePresence>
+          )}
           {notch && showTray && layout && (
             <AnimatePresence>
               <TrayRow items={trayItems.all} slots={layout.slots} pillW={pill.width} nh={geo.notchHeight} hot={tipIdx} onItem={onTrayItem} />

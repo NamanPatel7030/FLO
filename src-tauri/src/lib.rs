@@ -17,6 +17,7 @@ mod platform;
 mod prompts;
 mod secrets;
 mod session;
+mod selftest;
 mod settings;
 mod state;
 mod stt;
@@ -189,8 +190,9 @@ fn start_hotkeys(st: Shared) {
         let st = st.clone();
         match ev {
             HotkeyEvent::Press(mode) => {
+                st.ptt_down.store(true, std::sync::atomic::Ordering::SeqCst);
                 tauri::async_runtime::spawn_blocking(move || {
-                    if let Err(e) = session::start(&st, mode) {
+                    if let Err(e) = session::start(&st, mode, true) {
                         st.state(model::Phase::Error, mode, Some(e.to_string()));
                     }
                 });
@@ -200,9 +202,11 @@ fn start_hotkeys(st: Shared) {
             }
             HotkeyEvent::Switch(_) => {}
             HotkeyEvent::Release => {
+                st.ptt_down.store(false, std::sync::atomic::Ordering::SeqCst);
                 tauri::async_runtime::spawn(session::stop(st));
             }
             HotkeyEvent::Cancel => {
+                st.ptt_down.store(false, std::sync::atomic::Ordering::SeqCst);
                 tauri::async_runtime::spawn_blocking(move || session::cancel(&st));
             }
         }
@@ -216,6 +220,11 @@ pub fn run() {
     if let Some(i) = args.iter().position(|a| a == "--diag") {
         let out = args.get(i + 1).cloned().unwrap_or_else(|| "/tmp/flo-diag.json".into());
         let _ = std::fs::write(&out, serde_json::to_string_pretty(&platform::diagnostics()).unwrap_or_default());
+        return;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--selftest") {
+        let out = args.get(i + 1).cloned().unwrap_or_else(|| "/tmp/flo-selftest.json".into());
+        selftest::run(&out);
         return;
     }
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
@@ -297,6 +306,7 @@ pub fn run() {
                 meeting: Mutex::new(None),
                 attention: Mutex::new(Default::default()),
                 attention_paused: AtomicBool::new(false),
+                ptt_down: AtomicBool::new(false),
                 attention_captures: AtomicU32::new(0),
                 claude_listening: AtomicBool::new(false),
                 claude_port: claude::PORT,

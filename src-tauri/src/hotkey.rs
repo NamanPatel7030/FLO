@@ -71,6 +71,16 @@ impl HotkeyConfig {
     }
 }
 
+/// Should a key press cancel a held push-to-talk session?
+/// Not for keystrokes Flo itself synthesises (e.g. Cmd+C to read the selection) and not for the
+/// fn / Globe key's own key codes (63 = kVK_Function, 179 = Globe on newer Macs).
+pub fn key_cancels(keycode: i64, source_pid: i64, own_pid: i64) -> bool {
+    if source_pid == own_pid {
+        return false;
+    }
+    !matches!(keycode, 63 | 179)
+}
+
 #[derive(Default, Debug)]
 pub struct Machine {
     held: bool,
@@ -193,6 +203,15 @@ mod tests {
         assert_eq!(mc.key_down(), Some(HotkeyEvent::Cancel)); // ctrl+C
         assert_eq!(mc.update_mods(m(""), &cfg), None); // release after cancel is silent
         assert_eq!(mc.key_down(), None);
+    }
+
+    #[test]
+    fn own_synthetic_keys_and_globe_dont_cancel() {
+        let me = 4242;
+        assert!(!key_cancels(8, me, me)); // our own Cmd+C
+        assert!(!key_cancels(63, 1, me)); // fn
+        assert!(!key_cancels(179, 1, me)); // Globe
+        assert!(key_cancels(8, 1, me)); // the user's real C
     }
 
     #[test]

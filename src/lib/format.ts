@@ -345,3 +345,22 @@ export function smoothLevels(prev: number[], rms: number, t: number): number[] {
     return Math.min(1, Math.max(0, p + (target - p) * k));
   });
 }
+
+
+/**
+ * Island watchdog. True when the UI shows activity the backend no longer confirms:
+ *  - "listening" (push-to-talk) but no mic level events for 6 s
+ *  - transcribing / thinking with no state update for 45 s
+ * Meetings are exempt (they're long and quiet by design).
+ */
+export function isStuck(
+  phase: string,
+  mode: string,
+  msSinceState: number,
+  msSinceLevel: number,
+): boolean {
+  if (mode === "meeting") return false;
+  if (phase === "listening") return msSinceLevel > 6000 && msSinceState > 6000;
+  if (phase === "transcribing" || phase === "thinking") return msSinceState > 45000;
+  return false;
+}
