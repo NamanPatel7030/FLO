@@ -3,9 +3,9 @@
 // in Island.tsx.
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Asterisk, Check, CheckCircle2, ExternalLink, Radio, Sparkles, X } from "lucide-react";
-import { claudeStatusLabel, relativeTime, ISLAND_GAP, type TraySlot } from "../lib/format";
-import type { ClaudeSession, CorrectionEvent, IslandGeometry, Todo } from "../lib/types";
+import { Asterisk, Check, CheckCircle2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
+import { claudeStatusLabel, relativeTime, ISLAND_GAP, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
+import type { ClaudeSession, ConfirmEvent, CorrectionEvent, IslandGeometry, Todo } from "../lib/types";
 
 export type TrayItem =
   | { id: string; kind: "claude"; session: ClaudeSession }
@@ -15,6 +15,13 @@ export type TrayItem =
 
 const SPRING = { type: "spring", stiffness: 520, damping: 30 } as const;
 
+const SHORT_STATUS: Record<ClaudeSession["status"], string> = {
+  working: "Working",
+  done: "Done",
+  waiting_reply: "Reply",
+  needs_approval: "Approve",
+};
+
 const STATUS_COLOR: Record<ClaudeSession["status"], string> = {
   working: "text-brand-300",
   done: "text-brand-200",
@@ -22,9 +29,35 @@ const STATUS_COLOR: Record<ClaudeSession["status"], string> = {
   needs_approval: "text-amber-300",
 };
 
-/** 20px round glass avatar for a Claude session, with a status ring/badge. */
-export function ClaudeAvatar({ status, hot }: { status: ClaudeSession["status"]; hot?: boolean }) {
+/** Per-agent look: Claude orange, Codex white/black, Cursor black, anything else light blue. */
+const SOURCE_LOOK: Record<string, { bg: string; bgWorking: string; icon: React.ReactNode }> = {
+  claude: {
+    bg: "radial-gradient(circle at 35% 30%, #f0a383, #d97757 55%, #a8492d)",
+    bgWorking: "radial-gradient(circle at 35% 30%, rgba(217,119,87,0.55), rgba(90,40,24,0.55) 70%)",
+    icon: <Asterisk size={12} strokeWidth={3} className="text-white" />,
+  },
+  codex: {
+    bg: "radial-gradient(circle at 35% 30%, #ffffff, #e5e7eb 70%)",
+    bgWorking: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.55), rgba(160,160,160,0.45) 70%)",
+    icon: <Terminal size={11} strokeWidth={2.6} className="text-black" />,
+  },
+  cursor: {
+    bg: "radial-gradient(circle at 35% 30%, #3a3a3a, #0b0b0b 70%)",
+    bgWorking: "radial-gradient(circle at 35% 30%, rgba(70,70,70,0.6), rgba(10,10,10,0.6) 70%)",
+    icon: <MousePointer2 size={10} strokeWidth={2.6} className="text-white" />,
+  },
+  other: {
+    bg: "radial-gradient(circle at 35% 30%, #93ddff, #1a9be0 70%)",
+    bgWorking: "radial-gradient(circle at 35% 30%, rgba(147,221,255,0.5), rgba(26,155,224,0.45) 70%)",
+    icon: <Webhook size={10} strokeWidth={2.6} className="text-black" />,
+  },
+};
+export const sourceLook = (source?: string) => SOURCE_LOOK[source ?? "claude"] ?? SOURCE_LOOK.other;
+
+/** 20px round glass avatar for an agent session, with a status ring/badge. */
+export function ClaudeAvatar({ status, hot, source }: { status: ClaudeSession["status"]; hot?: boolean; source?: string }) {
   const working = status === "working";
+  const look = sourceLook(source);
   return (
     <motion.span animate={{ scale: hot ? 1.14 : 1 }} transition={SPRING} className="relative flex h-5 w-5 items-center justify-center">
       {working && (
@@ -41,9 +74,7 @@ export function ClaudeAvatar({ status, hot }: { status: ClaudeSession["status"];
       <span
         className="relative flex h-5 w-5 items-center justify-center rounded-full"
         style={{
-          background: working
-            ? "radial-gradient(circle at 35% 30%, rgba(217,119,87,0.55), rgba(90,40,24,0.55) 70%)"
-            : "radial-gradient(circle at 35% 30%, #f0a383, #d97757 55%, #a8492d)",
+          background: working ? look.bgWorking : look.bg,
           boxShadow:
             status === "waiting_reply"
               ? "0 0 0 1.5px #66ceff, 0 0 10px rgba(102,206,255,0.45)"
@@ -54,7 +85,7 @@ export function ClaudeAvatar({ status, hot }: { status: ClaudeSession["status"];
           opacity: working ? 0.75 : 1,
         }}
       >
-        <Asterisk size={12} strokeWidth={3} className="text-white" />
+        {look.icon}
       </span>
       {status === "done" && (
         <span className="absolute -bottom-[2px] -right-[3px] flex h-[10px] w-[10px] items-center justify-center rounded-full bg-brand-300 ring-[1.5px] ring-black">
@@ -90,9 +121,16 @@ function Chip({ children, hot, badge, tone = "blue" }: { children: React.ReactNo
 export function TrayItemView({ item, hot }: { item: TrayItem; hot?: boolean }) {
   switch (item.kind) {
     case "claude":
-      return <ClaudeAvatar status={item.session.status} hot={hot} />;
-    case "more":
-      return <Chip hot={hot}>+{item.sessions.length}</Chip>;
+      return <ClaudeAvatar status={item.session.status} hot={hot} source={item.session.source} />;
+    case "more": {
+      // all sessions: total count, badge = how many are still working
+      const working = item.sessions.filter((s) => s.status === "working").length;
+      return (
+        <Chip hot={hot} badge={working}>
+          {item.sessions.length}
+        </Chip>
+      );
+    }
     case "todos":
       return (
         <Chip hot={hot} badge={item.todos.length}>
@@ -156,6 +194,7 @@ export function TrayRow({
 }
 
 const btnGhost = "rounded-full px-2.5 py-[3px] text-[11px] font-medium text-white/65 transition hover:bg-white/10 hover:text-white";
+const iconGhost = "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white/55 transition hover:bg-white/10 hover:text-white";
 const btnPrimary =
   "flex items-center gap-1 rounded-full px-2.5 py-[3px] text-[11px] font-semibold text-white transition hover:brightness-110 " +
   "bg-[linear-gradient(135deg,rgba(147,221,255,0.55),rgba(61,187,255,0.35))] border border-brand-200/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.4),0_6px_16px_-8px_rgba(61,187,255,0.9)]";
@@ -192,7 +231,7 @@ export function TrayTooltip({
       {item.kind === "claude" && (
         <>
           <div className="flex items-center gap-2">
-            <ClaudeAvatar status={item.session.status} />
+            <ClaudeAvatar status={item.session.status} source={item.session.source} />
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13px] font-semibold leading-tight">{item.session.project}</div>
               <div className={"text-[11px] font-medium leading-tight " + STATUS_COLOR[item.session.status]}>{claudeStatusLabel(item.session.status)}</div>
@@ -201,27 +240,44 @@ export function TrayTooltip({
           </div>
           <p className="mt-1.5 line-clamp-2 text-[12px] leading-[16px] text-white/70">{item.session.message || "No message yet."}</p>
           <div className="mt-auto flex justify-end gap-1">
-            <button className={btnGhost} onClick={() => onDismiss(item.session)}>
-              Dismiss
+            <button className={iconGhost} onClick={() => onDismiss(item.session)} title="Dismiss" aria-label="Dismiss">
+              <X size={13} />
             </button>
-            <button className={btnPrimary} onClick={() => onOpen(item.session)}>
-              <ExternalLink size={11} /> Open
+            <button className={btnPrimary} onClick={() => onOpen(item.session)} title="Open" aria-label="Open">
+              <ExternalLink size={12} /> Open
             </button>
           </div>
         </>
       )}
       {item.kind === "more" && (
         <>
-          <div className="mb-1 text-[12px] font-semibold text-white/85">{item.sessions.length} more Claude sessions</div>
-          <div className="flex min-h-0 flex-col gap-1 overflow-hidden">
-            {item.sessions.slice(0, 4).map((s) => (
-              <button key={s.sessionId} className="flex items-center gap-2 rounded-lg px-1 py-[2px] text-left hover:bg-white/[0.06]" onClick={() => onOpen(s)}>
-                <span className="scale-[0.8]">
-                  <ClaudeAvatar status={s.status} />
-                </span>
-                <span className="truncate text-[12px] font-medium">{s.project}</span>
-                <span className={"ml-auto shrink-0 text-[10.5px] " + STATUS_COLOR[s.status]}>{claudeStatusLabel(s.status).split(" —")[0]}</span>
-              </button>
+          <div className="mb-1 flex h-[26px] items-center gap-1.5 text-[12px] font-semibold text-white/85">
+            <Asterisk size={12} strokeWidth={3} className="text-[#e0896a]" />
+            {item.sessions.length} Claude sessions
+            <span className="ml-auto text-[10.5px] font-normal text-white/40">
+              {item.sessions.filter((s) => s.status === "working").length} working
+            </span>
+          </div>
+          <div className="flex min-h-0 flex-col overflow-y-auto" style={{ maxHeight: TRAY_LIST_ROW * 6 }}>
+            {item.sessions.map((s) => (
+              <div key={s.sessionId} className="group flex shrink-0 items-center gap-2 rounded-lg px-1" style={{ height: TRAY_LIST_ROW }}>
+                <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => onOpen(s)} aria-label={`Open ${s.project}`}>
+                  <span className="scale-[0.8]">
+                    <ClaudeAvatar status={s.status} source={s.source} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-[12px] font-medium">{s.project}</span>
+                      <span className={"shrink-0 text-[10px] " + STATUS_COLOR[s.status]} title={claudeStatusLabel(s.status)}>{SHORT_STATUS[s.status]}</span>
+                    </span>
+                    <span className="block truncate text-[11px] leading-tight text-white/50">{s.message || " "}</span>
+                  </span>
+                  <span className="shrink-0 text-[10px] text-white/35">{relativeTime(s.updatedAt)}</span>
+                </button>
+                <button className={iconGhost + " opacity-60 group-hover:opacity-100"} onClick={() => onDismiss(s)} title="Dismiss" aria-label={`Dismiss ${s.project}`}>
+                  <X size={12} />
+                </button>
+              </div>
             ))}
           </div>
         </>
@@ -267,6 +323,33 @@ export function TrayTooltip({
   );
 }
 
+/** "Send to Rahul on Slack?" — Flo never sends without this OK. */
+export function ConfirmCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent; more: number; notch: boolean; geo: IslandGeometry; onAnswer: (approve: boolean) => void }) {
+  return (
+    <div className="absolute inset-x-0 bottom-0 flex flex-col px-4 pb-3" style={{ top: notch ? geo.notchHeight + ISLAND_GAP : 10 }} data-testid="confirm-card">
+      <div className="flex items-center gap-2">
+        <svg viewBox="0 0 24 24" width={15} height={15} aria-hidden>
+          <path fill="#E01E5A" d="M5 15a2 2 0 1 1-2-2h2v2Zm1 0a2 2 0 1 1 4 0v5a2 2 0 1 1-4 0v-5Z" />
+          <path fill="#36C5F0" d="M9 5a2 2 0 1 1 2-2v2H9Zm0 1a2 2 0 1 1 0 4H4a2 2 0 1 1 0-4h5Z" />
+          <path fill="#2EB67D" d="M19 9a2 2 0 1 1 2 2h-2V9Zm-1 0a2 2 0 1 1-4 0V4a2 2 0 1 1 4 0v5Z" />
+          <path fill="#ECB22E" d="M15 19a2 2 0 1 1-2 2v-2h2Zm0-1a2 2 0 1 1 0-4h5a2 2 0 1 1 0 4h-5Z" />
+        </svg>
+        <span className="truncate text-[13px] font-semibold">{c.title}</span>
+        {more > 0 && <span className="ml-auto rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
+      </div>
+      <p className="selectable mt-1.5 line-clamp-3 rounded-xl border border-white/[0.06] bg-white/[0.04] px-2.5 py-1.5 text-[12.5px] leading-[17px] text-white/85">{c.body}</p>
+      <div className="mt-auto flex justify-end gap-1">
+        <button className={btnGhost} onClick={() => onAnswer(false)}>
+          Cancel
+        </button>
+        <button className={btnPrimary} onClick={() => onAnswer(true)}>
+          <Send size={11} /> Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** "Did I mishear?" card below the notch. */
 export function CorrectionCard({
   c,
@@ -299,7 +382,7 @@ export function CorrectionCard({
       <div className="mt-auto flex items-center justify-end gap-1">
         {saved ? (
           <motion.span initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-1 text-[11.5px] font-medium text-brand-200">
-            <Check size={12} strokeWidth={3} /> Saved — I'll spell it right next time
+            <Check size={12} strokeWidth={3} /> Saved. I'll spell it right next time
           </motion.span>
         ) : (
           <>

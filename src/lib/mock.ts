@@ -1,5 +1,8 @@
 // In-browser mock backend so the full UI runs with `npm run dev` outside Tauri.
 import type {
+  ConfirmEvent,
+  Integration,
+  ContextDoc,
   Analytics,
   AssistantResponse,
   AttentionStatus,
@@ -58,6 +61,8 @@ const settings: Settings = {
   hotkeyAssistant: "fn",
   meetingDetection: true,
   learnCorrections: true,
+  systemPrompt: "",
+  slackSync: false,
   sttProvider: "local",
   sttModel: "large-v3-turbo-q5_0",
   language: "auto",
@@ -79,7 +84,7 @@ const settings: Settings = {
 const keys = new Set<string>(["groq"]);
 
 const projectsBase: Omit<Project, "openTodos" | "doneTodos">[] = [
-  { id: "p_apollo", name: "Apollo", description: "Client dashboard redesign for Northwind", status: "active", color: "#3dbbff", lastNote: "Design sync — agreed on glass cards", updatedAt: iso(40) },
+  { id: "p_apollo", name: "Apollo", description: "Client dashboard redesign for Northwind", status: "active", color: "#3dbbff", lastNote: "Design sync: agreed on glass cards", updatedAt: iso(40) },
   { id: "p_hermes", name: "Hermes API", description: "Payments gateway v2 migration", status: "blocked", color: "#1a9be0", lastNote: "Waiting on Stripe webhook keys", updatedAt: iso(300) },
   { id: "p_flo", name: "Flo", description: "Local-first voice assistant", status: "active", color: "#f59e0b", lastNote: "Notch island prototype done", updatedAt: iso(10) },
 ];
@@ -88,7 +93,7 @@ const projects = new Map(projectsBase.map((p) => [p.id, { ...p }]));
 const todos: Todo[] = [
   { id: "t1", title: "Reply to Rahul about the invoice", reason: "Rahul asked “can you confirm the invoice by today?”", person: "Rahul", app: "Slack", source: "attention", status: "open", confidence: 0.92, createdAt: iso(25) },
   { id: "t2", title: "Send Apollo deck to Northwind", source: "voice", status: "open", projectId: "p_apollo", due: inDays(2), createdAt: iso(120) },
-  { id: "t3", title: "Review PR #482 — notch window positioning", app: "GitHub", source: "attention", status: "open", reason: "You were requested as reviewer", confidence: 0.81, createdAt: iso(70), projectId: "p_flo" },
+  { id: "t3", title: "Review PR #482: notch window positioning", app: "GitHub", source: "attention", status: "open", reason: "You were requested as reviewer", confidence: 0.81, createdAt: iso(70), projectId: "p_flo" },
   { id: "t4", title: "Ask Priya for Stripe webhook keys", source: "meeting", status: "open", projectId: "p_hermes", createdAt: iso(200) },
   { id: "t5", title: "Book flight to Bangalore", source: "voice", status: "open", due: inDays(5), createdAt: iso(600) },
   { id: "t6", title: "Answer Mom on WhatsApp about Sunday lunch", app: "WhatsApp", person: "Mom", source: "attention", status: "open", confidence: 0.74, createdAt: iso(15) },
@@ -103,7 +108,7 @@ const todos: Todo[] = [
 const notes: Note[] = [
   {
     id: "n1",
-    title: "Design sync — Apollo",
+    title: "Design sync · Apollo",
     kind: "meeting",
     projectId: "p_apollo",
     durationSec: 1840,
@@ -182,9 +187,9 @@ const dictionary: DictionaryEntry[] = [
 ];
 
 const models: LocalModel[] = [
-  { id: "parakeet-tdt-0.6b-v3", label: "Parakeet v3 — fastest", sizeMb: 640, languages: "English + 24 EU", installed: false },
+  { id: "parakeet-tdt-0.6b-v3", label: "Parakeet v3 · fastest", sizeMb: 640, languages: "English + 24 EU", installed: false },
   { id: "large-v3-turbo-q5_0", label: "Whisper Large v3 Turbo", sizeMb: 574, languages: "99 languages", installed: true },
-  { id: "small-q5_1", label: "Whisper Small — light", sizeMb: 190, languages: "99 languages", installed: false },
+  { id: "small-q5_1", label: "Whisper Small · light", sizeMb: 190, languages: "99 languages", installed: false },
 ];
 
 const netlog: NetworkLogEntry[] = [
@@ -198,7 +203,7 @@ const assistantLog: AssistantResponse[] = [
   {
     id: "a1",
     query: "What's blocked across my projects?",
-    reply: "Only Hermes API is blocked — it's waiting on Stripe webhook keys from Priya. Apollo and Flo are on track.",
+    reply: "Only Hermes API is blocked, it's waiting on Stripe webhook keys from Priya. Apollo and Flo are on track.",
     actions: [],
     results: [],
     createdAt: iso(90),
@@ -222,17 +227,17 @@ const hook: ClaudeHookStatus = { installed: false, configPath: "~/.claude/settin
 
 // ── live Claude sessions (notch tray) ───────────────────────────────────────
 const claudeSessions: ClaudeSession[] = [
-  { sessionId: "s1", project: "Flo", cwd: "/Users/parth/Flo", status: "done", message: "Built the notch tray and correction card — all 34 tests pass.", updatedAt: iso(3), appBundle: "com.microsoft.VSCode" },
-  { sessionId: "s2", project: "hermes-api", cwd: "/Users/parth/hermes-api", status: "needs_approval", message: "Claude needs your permission to run `npm publish`.", updatedAt: iso(9), appBundle: "com.googlecode.iterm2" },
-  { sessionId: "s4", project: "apollo-web", cwd: "/Users/parth/apollo-web", status: "working", message: "Refactoring chart components…", updatedAt: iso(1), appBundle: "com.todesktop.230313mzl4w4u92" },
+  { sessionId: "s1", project: "Flo", cwd: "/Users/parth/Flo", status: "done", message: "Built the notch tray and correction card, all 34 tests pass.", updatedAt: iso(3), appBundle: "com.microsoft.VSCode", source: "claude" },
+  { sessionId: "s2", project: "hermes-api", cwd: "/Users/parth/hermes-api", status: "needs_approval", message: "Claude needs your permission to run `npm publish`.", updatedAt: iso(9), appBundle: "com.googlecode.iterm2", source: "claude" },
+  { sessionId: "s4", project: "apollo-web", cwd: "/Users/parth/apollo-web", status: "working", message: "Refactoring chart components…", updatedAt: iso(1), appBundle: "com.todesktop.230313mzl4w4u92", source: "claude" },
 ];
 const emitSessions = () => mockEmit(EV.claudeSessions, claudeSessions.map((s) => ({ ...s })));
 
 /** Demo: a session asks for a reply. */
-export function mockClaudeSession(status: ClaudeSession["status"] = "waiting_reply", project = "job-finder", message = "Which job boards should I scrape next — LinkedIn or Wellfound?") {
+export function mockClaudeSession(status: ClaudeSession["status"] = "waiting_reply", project = "job-finder", message = "Which job boards should I scrape next, LinkedIn or Wellfound?") {
   const existing = claudeSessions.find((s) => s.project === project);
   if (existing) Object.assign(existing, { status, message, updatedAt: new Date().toISOString() });
-  else claudeSessions.unshift({ sessionId: uid("s"), project, cwd: `/Users/parth/${project}`, status, message, updatedAt: new Date().toISOString() });
+  else claudeSessions.unshift({ sessionId: uid("s"), project, cwd: `/Users/parth/${project}`, status, message, updatedAt: new Date().toISOString(), source: "claude" });
   emitSessions();
 }
 
@@ -250,7 +255,7 @@ export function mockMeetingDetected(app = "Zoom", active = true) {
 }
 
 /** Push a fake Claude Code event (used by the island demo). */
-export function mockClaudeEvent(kind: ClaudeEvent["kind"] = "stop", project = "Flo", message = "Built the island UI — all tests pass.") {
+export function mockClaudeEvent(kind: ClaudeEvent["kind"] = "stop", project = "Flo", message = "Built the island UI, all tests pass.") {
   const e: ClaudeEvent = { id: uid("c"), kind, sessionId: uid("s"), project, cwd: `/Users/parth/${project}`, message, at: new Date().toISOString(), seen: false };
   claudeEvents.unshift(e);
   mockEmit(EV.claude, e);
@@ -325,7 +330,7 @@ function stopLevels() {
 }
 
 const MEETING_LINES = [
-  "Alright, let's kick off — first item is the launch checklist.",
+  "Alright, let's kick off, first item is the launch checklist.",
   "The notch animation feels great on the new MacBook.",
   "We still need Windows bottom-right positioning tested.",
   "Can someone own the release notes?",
@@ -352,17 +357,28 @@ function startMockMeeting(title?: string, projectId?: string): Note {
   startLevels();
   const t0 = Date.now();
   let i = 0;
+  let words = 0;
+  let lineStart = 0;
+  // Wispr-style: the current line grows word by word as a live `partial`, then commits as a segment
   meetingTimer = setInterval(() => {
     if (!liveNote) return;
     const elapsedSec = Math.round((Date.now() - t0) / 1000);
     liveNote.durationSec = elapsedSec;
-    const seg = { t: elapsedSec, text: MEETING_LINES[i % MEETING_LINES.length] };
+    const line = MEETING_LINES[i % MEETING_LINES.length].split(" ");
+    if (words === 0) lineStart = elapsedSec;
+    words++;
+    if (words < line.length) {
+      mockEmit(EV.meeting, { noteId: liveNote.id, partial: line.slice(0, words).join(" "), elapsedSec, live: true });
+      return;
+    }
+    const seg = { t: lineStart, text: line.join(" ") };
     liveNote.transcript.push(seg);
     i++;
+    words = 0;
     if (i % 3 === 0)
       liveNote.summary = `Discussed launch checklist and the notch animation. Windows positioning still needs testing; release notes have an owner.`;
-    mockEmit(EV.meeting, { noteId: liveNote.id, segment: seg, summary: liveNote.summary || undefined, elapsedSec, live: true });
-  }, 2500);
+    mockEmit(EV.meeting, { noteId: liveNote.id, segment: seg, partial: "", summary: liveNote.summary || undefined, elapsedSec, live: true });
+  }, 320);
   return liveNote;
 }
 
@@ -373,7 +389,7 @@ function stopMockMeeting(): Note | null {
   const n = liveNote;
   if (n) {
     n.live = false;
-    n.summary ||= "Short meeting — no major decisions captured.";
+    n.summary ||= "Short meeting, no major decisions captured.";
     n.actionItems = ["Test Windows bottom-right positioning", "Write release notes"];
     mockEmit(EV.meeting, { noteId: n.id, summary: n.summary, elapsedSec: n.durationSec, live: false });
   }
@@ -399,7 +415,7 @@ function fakeAssistant(text: string): AssistantResponse {
     todos.unshift(t);
     res.actions.push({ type: "add_todo", title, project: proj?.name });
     res.results.push(`✓ To-do added${proj ? ` to ${proj.name}` : ""}`);
-    res.reply = `Got it — “${title}” is on your list${proj ? ` under ${proj.name}` : ""}.`;
+    res.reply = `Got it. “${title}” is on your list${proj ? ` under ${proj.name}` : ""}.`;
     mockEmit(EV.todos, {});
   } else if (q.includes("meeting")) {
     const title = text.replace(/.*meeting notes( for)?/i, "").trim() || "Meeting notes";
@@ -409,7 +425,7 @@ function fakeAssistant(text: string): AssistantResponse {
     res.reply = `Started meeting notes for “${title}”. I'll summarize live.`;
   } else if (q.includes("blocked") || q.includes("status") || q.includes("projects")) {
     const lines = [...projects.values()].map((p) => `${p.name}: ${p.status}`);
-    res.reply = `Here's where things stand — ${lines.join(" · ")}. Hermes is waiting on Stripe keys.`;
+    res.reply = `Here's where things stand: ${lines.join(" · ")}. Hermes is waiting on Stripe keys.`;
   } else {
     res.reply = "I'm running in demo mode. Connect a model in Settings → AI and I'll answer for real.";
   }
@@ -421,6 +437,50 @@ function fakeAssistant(text: string): AssistantResponse {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const perms = { microphone: true, accessibility: true, inputMonitoring: false, screen: false, hotkeyActive: false };
+
+// ── context library ──────────────────────────────────────────────────────────
+const ctxContent = new Map<string, string>();
+const contextDocs: ContextDoc[] = [];
+function makeDoc(title: string, content: string, pinned = false): ContextDoc {
+  const d: ContextDoc = {
+    id: uid("ctx"),
+    title,
+    chars: content.length,
+    tokens: Math.ceil(content.length / 4),
+    enabled: true,
+    pinned,
+    createdAt: new Date().toISOString(),
+    preview: content.replace(/\s+/g, " ").trim().slice(0, 160),
+  };
+  ctxContent.set(d.id, content);
+  return d;
+}
+contextDocs.push(
+  makeDoc("About me", "I'm Parth, a full-stack developer in Ahmedabad. I build AI agents and dashboards. Prefer short, warm replies.", true),
+  makeDoc(
+    "Apollo project brief",
+    "# Apollo\nClient dashboard redesign for Northwind. Stack: React, Tailwind, Supabase. Launch target: end of month. Owner of release notes: Priya. Open risk: Windows positioning of the notch window.",
+  ),
+);
+
+// ── integrations + Slack + confirmations ─────────────────────────────────────
+const integrations: Integration[] = [
+  { id: "claude", name: "Claude Code", available: true, installed: true, configPath: "~/.claude/settings.json", note: "Hooks ping Flo when a session finishes or needs you." },
+  { id: "codex", name: "Codex CLI", available: true, installed: false, configPath: "~/.codex/config.toml", note: "Notify hook reports finished turns." },
+  { id: "cursor", name: "Cursor", available: false, installed: false, configPath: "~/.cursor/hooks.json", note: "Agent hooks report when a task stops." },
+  { id: "webhook", name: "Any tool (webhook)", available: true, installed: true, configPath: "http://127.0.0.1:47621/agent/hook?token=TOKEN&source=NAME", note: "POST JSON {status, project, message} from any script or agent." },
+];
+let slackWho: string | null = null;
+/** confirm_action calls (for tests) */
+export const confirmLog: { id: string; approve: boolean }[] = [];
+export function mockConfirm(title = "Send to Rahul on Slack?", body = "Hey Rahul, the deck is in the shared drive. Can you review it before Friday's call? Thanks!") {
+  const e: ConfirmEvent = { id: uid("cf"), kind: "slack", title, body };
+  mockEmit(EV.confirm, e);
+  return e;
+}
+
+/** Every island_resize call (for tests: detect resize oscillation). */
+export const resizeLog: { w: number; h: number; at: number }[] = [];
 
 export async function mockInvoke(cmd: string, args: Record<string, any> = {}): Promise<unknown> {
   switch (cmd) {
@@ -455,6 +515,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return geo;
     }
     case "island_resize":
+      resizeLog.push({ w: args.width, h: args.height, at: Date.now() });
+      return null;
     case "open_dashboard":
       return null;
     case "start_session":
@@ -636,6 +698,63 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
     case "repair_permissions":
       return null;
+    case "list_integrations":
+      return integrations.map((i) => ({ ...i }));
+    case "install_integration":
+    case "uninstall_integration": {
+      const it = integrations.find((i) => i.id === args.id);
+      if (it) {
+        if (!it.available) throw new Error(`${it.name} was not found on this Mac`);
+        it.installed = cmd === "install_integration";
+      }
+      return integrations.map((i) => ({ ...i }));
+    }
+    case "slack_connect":
+      if (!String(args.token ?? "").startsWith("xox")) throw new Error("That doesn't look like a Slack token (xoxp-…)");
+      slackWho = "Parth Gundaniya · Avenuor";
+      return slackWho;
+    case "slack_status":
+      return slackWho;
+    case "slack_disconnect":
+      slackWho = null;
+      return null;
+    case "slack_sync_now":
+      return 3;
+    case "confirm_action":
+      confirmLog.push({ id: args.id, approve: !!args.approve });
+      return args.approve ? "Sent" : "Cancelled";
+    case "list_context_docs":
+      return contextDocs.map((d) => ({ ...d }));
+    case "get_context_doc": {
+      const d = contextDocs.find((x) => x.id === args.id);
+      if (!d) throw new Error("not found");
+      return { doc: { ...d }, content: ctxContent.get(d.id) ?? "" };
+    }
+    case "add_context_doc": {
+      const d = makeDoc(String(args.title || "Untitled"), String(args.content ?? ""));
+      contextDocs.unshift(d);
+      return { ...d };
+    }
+    case "update_context_doc": {
+      const d = contextDocs.find((x) => x.id === args.id);
+      if (!d) throw new Error("not found");
+      if (args.title !== undefined) d.title = args.title;
+      if (args.enabled !== undefined) d.enabled = args.enabled;
+      if (args.pinned !== undefined) d.pinned = args.pinned;
+      if (args.content !== undefined) {
+        ctxContent.set(d.id, args.content);
+        d.chars = args.content.length;
+        d.tokens = Math.ceil(args.content.length / 4);
+        d.preview = args.content.replace(/\s+/g, " ").trim().slice(0, 160);
+      }
+      return { ...d };
+    }
+    case "delete_context_doc": {
+      const i = contextDocs.findIndex((x) => x.id === args.id);
+      if (i >= 0) contextDocs.splice(i, 1);
+      ctxContent.delete(args.id);
+      return null;
+    }
     case "list_claude_sessions":
       return claudeSessions.map((s) => ({ ...s }));
     case "open_claude_by_session":
@@ -680,5 +799,8 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     claudeSession: mockClaudeSession,
     correction: mockCorrection,
     meetingDetected: mockMeetingDetected,
+    resizes: resizeLog,
+    confirm: mockConfirm,
+    confirms: confirmLog,
   };
 }

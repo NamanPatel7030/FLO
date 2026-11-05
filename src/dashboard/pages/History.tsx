@@ -45,7 +45,7 @@ export default function History() {
 
   return (
     <div>
-      <PageHeader title="History" subtitle="Everything you've said to Flo — stays on this device. Click any entry to copy it." />
+      <PageHeader title="History" subtitle="Everything you've said to Flo, stays on this device. Click any entry to copy it." />
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <div className="relative min-w-[260px] flex-1">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
@@ -74,7 +74,7 @@ export default function History() {
           <Empty
             icon={<HistoryIcon size={18} />}
             title={q || filter !== "all" ? "No matches" : "Nothing here yet"}
-            hint={q || filter !== "all" ? "Try another word or filter." : "Hold your dictation key and speak — everything you dictate shows up here, ready to copy."}
+            hint={q || filter !== "all" ? "Try another word or filter." : "Hold your dictation key and speak, everything you dictate shows up here, ready to copy."}
           />
         </Card>
       ) : (

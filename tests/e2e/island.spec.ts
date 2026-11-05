@@ -8,6 +8,9 @@ async function emit(page: Page, event: string, payload: unknown) {
   await page.evaluate(([e, p]) => (window as any).__floMock.emit(e, p), [event, payload] as const);
 }
 
+const LISTENING = '[aria-label="Listening"]';
+const TRANSCRIBING = '[role="status"][aria-label="Transcribing"]';
+
 async function openIsland(page: Page) {
   await page.goto(ISLAND);
   await page.waitForFunction(() => !!(window as any).__floMock);
@@ -22,10 +25,13 @@ test("dictation: listening → transcribing → pasted result with copy → back
   await openIsland(page);
   await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
   await emit(page, "flo://level", { rms: 0.4 });
-  await expect(page.getByText(/Listening/)).toBeVisible();
+  await expect(page.locator(LISTENING)).toBeVisible();
+  // icons only: no chrome text like "Listening…" or shortcut hints
+  await expect(page.getByText(/Listening|release|hands-free|space/i)).toHaveCount(0);
 
   await emit(page, "flo://state", { phase: "transcribing", mode: "dictation" });
-  await expect(page.getByText(/Transcribing/)).toBeVisible();
+  await expect(page.locator(TRANSCRIBING)).toBeVisible();
+  await expect(page.getByText(/Transcribing|Polishing/)).toHaveCount(0);
 
   await emit(page, "flo://transcript", { text: "Send the deck to Rahul by Friday.", final: true });
   await emit(page, "flo://state", { phase: "done", mode: "dictation" });
@@ -33,17 +39,17 @@ test("dictation: listening → transcribing → pasted result with copy → back
   await expect(page.getByRole("button", { name: /copy/i }).first()).toBeVisible();
 
   await emit(page, "flo://state", { phase: "idle", mode: "dictation" });
-  await expect(page.getByText(/Listening|Transcribing/)).toHaveCount(0);
+  await expect(page.locator(`${LISTENING}, ${TRANSCRIBING}`)).toHaveCount(0);
 });
 
 test("watchdog: a stuck 'listening' with no mic activity returns to idle by itself", async ({ page }) => {
   await page.clock.install();
   await openIsland(page);
   await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
-  await page.clock.runFor(600); // let the dropdown open
-  await expect(page.getByText(/Listening/)).toBeVisible();
+  await page.clock.runFor(600); // let the island open
+  await expect(page.locator(LISTENING)).toBeVisible();
   await page.clock.runFor(9000); // no level events, no state updates
-  await expect(page.getByText(/Listening/)).toHaveCount(0);
+  await expect(page.locator(LISTENING)).toHaveCount(0);
 });
 
 test("watchdog: never resets while the mic is live", async ({ page }) => {
@@ -54,7 +60,7 @@ test("watchdog: never resets while the mic is live", async ({ page }) => {
     await emit(page, "flo://level", { rms: 0.3 });
     await page.clock.runFor(2000);
   }
-  await expect(page.getByText(/Listening/)).toBeVisible();
+  await expect(page.locator(LISTENING)).toBeVisible();
 });
 
 test("errors are readable (no 'Oops'), offer a fix and clear themselves", async ({ page }) => {
@@ -64,7 +70,7 @@ test("errors are readable (no 'Oops'), offer a fix and clear themselves", async 
   await emit(page, "flo://state", { phase: "error", mode: "assistant", message: msg });
   await expect(page.getByText(msg)).toBeVisible();
   await expect(page.getByText(/oops/i)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /fix/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /fix in settings/i })).toBeVisible();
   await page.clock.runFor(6000);
   await expect(page.getByText(msg)).toHaveCount(0);
 });
@@ -130,22 +136,84 @@ test("meeting detection: prompt → Start notes starts a meeting", async ({ page
 test("hovering the notch opens the glass quick menu", async ({ page }) => {
   await openIsland(page);
   await emit(page, "flo://hover", { inside: true, x: 100, y: 10 });
-  await expect(page.getByText("Dictate")).toBeVisible();
-  await expect(page.getByText("History")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dictate" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "History" })).toBeVisible();
   await emit(page, "flo://hover", { inside: false });
-  await expect(page.getByText("Dictate")).toHaveCount(0, { timeout: 3000 });
+  await expect(page.getByRole("button", { name: "Dictate" })).toHaveCount(0, { timeout: 3000 });
 });
 
-test("hands-free (ctrl/fn + space): hint shows and fits without clipping", async ({ page }) => {
+test("hands-free (ctrl/fn + space): lock badge on the icon, no text", async ({ page }) => {
   await openIsland(page);
   await emit(page, "flo://state", { phase: "listening", mode: "dictation", message: "hands-free" });
   await emit(page, "flo://level", { rms: 0.2 });
-  const hint = page.getByText(/esc to cancel/);
-  await expect(hint).toBeVisible();
-  await expect(page.getByText("hands-free", { exact: true })).toBeVisible();
-  const fits = await hint.evaluate((el) => {
-    const row = el.parentElement!;
-    return row.scrollWidth <= row.clientWidth + 1;
-  });
-  expect(fits).toBe(true);
+  await expect(page.locator('[aria-label="Hands-free"]')).toBeVisible();
+  await expect(page.getByText(/esc to cancel|hands-free|release/i)).toHaveCount(0);
+});
+
+const sess = (id: string, project: string, status: string, message: string) => ({
+  sessionId: id,
+  project,
+  cwd: `/Users/p/${project}`,
+  status,
+  message,
+  updatedAt: new Date().toISOString(),
+});
+
+test("tooltip stays open while hovering one avatar (no resize feedback loop)", async ({ page }) => {
+  await openIsland(page);
+  await emit(page, "flo://claude-sessions", [
+    sess("a", "Flo", "done", "Built the notch tray"),
+    sess("b", "job-finder", "waiting_reply", "LinkedIn or Wellfound?"),
+    sess("c", "api", "working", "Running the test suite"),
+  ]);
+  const target = page.locator('[aria-label="job-finder: Waiting for your reply"]');
+  await target.waitFor();
+  // the real cursor sits still: fixed centre-relative offset (cx) and y, sent every 80 ms
+  const box = await target.boundingBox();
+  const win = await page.locator("[data-island-root]").boundingBox();
+  const cx = box!.x + box!.width / 2 - (win!.x + win!.width / 2);
+  const y = box!.y - win!.y + box!.height / 2;
+  const t0 = Date.now();
+  let opened = false;
+  const samples: boolean[] = [];
+  while (Date.now() - t0 < 2400) {
+    const w = await page.locator("[data-island-root]").boundingBox();
+    await emit(page, "flo://hover", { inside: true, cx, y, x: w!.width / 2 + cx });
+    const vis = await page.getByText("LinkedIn or Wellfound?").isVisible();
+    if (vis) opened = true;
+    if (opened) samples.push(vis);
+    await page.waitForTimeout(80);
+  }
+  expect(opened).toBe(true);
+  // once open it never flickers closed
+  expect(samples.length).toBeGreaterThan(10);
+  expect(samples.every(Boolean)).toBe(true);
+  // the window only grows while hovered: no shrink/grow oscillation
+  const sizes = await page.evaluate(() => (window as any).__floMock.resizes.map((r: any) => r.w));
+  const after = sizes.slice(sizes.findIndex((w: number) => w > 300));
+  for (let i = 1; i < after.length; i++) expect(after[i]).toBeGreaterThanOrEqual(after[i - 1]);
+});
+
+test("many Claude sessions: avatars + a list of all of them", async ({ page }) => {
+  await openIsland(page);
+  const list = Array.from({ length: 7 }, (_, i) => sess(`s${i}`, `proj-${i}`, i < 3 ? "working" : "done", `message ${i}`));
+  await emit(page, "flo://claude-sessions", list);
+  await expect(page.locator('[aria-label^="proj-"]')).toHaveCount(4); // 4 avatars
+  const more = page.locator('[aria-label="more"]');
+  await expect(more).toBeVisible();
+  await page.waitForTimeout(400); // let the avatars finish springing in
+  const box = await more.boundingBox();
+  const win = await page.locator("[data-island-root]").boundingBox();
+  const cx = box!.x + box!.width / 2 - (win!.x + win!.width / 2);
+  const y = box!.y - win!.y + box!.height / 2;
+  for (let i = 0; i < 30; i++) {
+    const w = await page.locator("[data-island-root]").boundingBox();
+    await emit(page, "flo://hover", { inside: true, cx, y, x: w!.width / 2 + cx });
+    if (await page.getByText("7 Claude sessions").isVisible()) break;
+    await page.waitForTimeout(80);
+  }
+  await expect(page.getByText("7 Claude sessions")).toBeVisible();
+  await expect(page.getByText("3 working")).toBeVisible();
+  for (let i = 0; i < 7; i++) await expect(page.getByRole("button", { name: `Open proj-${i}` })).toBeAttached();
+  await expect(page.getByText(/[—–]/)).toHaveCount(0);
 });

@@ -369,3 +369,111 @@ html.island .selectable {
     transform: translateX(220%);
   }
 }
+/* transcribing: a bright crest travelling through the bars */
+@keyframes flo-flow {
+  0%,
+  100% {
+    transform: scaleY(0.2);
+    opacity: 0.32;
+  }
+  22% {
+    transform: scaleY(var(--peak, 1));
+    opacity: 1;
+  }
+  44% {
+    transform: scaleY(0.22);
+    opacity: 0.4;
+  }
+}
+/* thinking: slow neural breathing from the centre */
+@keyframes flo-breathe {
+  0%,
+  100% {
+    transform: scaleY(0.22);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scaleY(calc(var(--peak, 1) * 0.85));
+    opacity: 0.95;
+  }
+}
+/* live transcription: blinking caret + newly appended words fading in */
+.flo-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: #66ceff;
+  box-shadow: 0 0 6px rgb(102 206 255 / 0.8);
+  animation: flo-blink 1s steps(1, end) infinite;
+}
+@keyframes flo-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.flo-type-in {
+  animation: flo-type-in 0.28s ease-out both;
+}
+@keyframes flo-type-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+/* ocean wave: horizontal drift (transform only) */
+.flo-ocean-drift {
+  animation: flo-ocean 10s linear infinite;
+  will-change: transform;
+}
+@keyframes flo-ocean {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--w, -100%));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flo-ocean-drift {
+    animation: none;
+  }
+}
+/* maker signature: draws itself */
+.flo-sig {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: flo-sig-draw 1.8s cubic-bezier(0.65, 0, 0.35, 1) 0.3s forwards;
+}
+@keyframes flo-sig-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flo-sig {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+}
+@keyframes flo-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+/* reduced motion: gentle opacity pulse instead of motion */
+@media (prefers-reduced-motion: reduce) {
+  [role="status"] > span {
+    transform: scaleY(0.55) !important;
+    opacity: 0.75 !important;
+  }
+}

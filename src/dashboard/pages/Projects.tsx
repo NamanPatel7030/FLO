@@ -29,7 +29,7 @@ export default function Projects() {
     <div>
       <PageHeader
         title="Projects"
-        subtitle="Say “what's the status of Apollo?” or “mark Hermes as blocked” — Flo keeps these in sync."
+        subtitle="Say “what's the status of Apollo?” or “mark Hermes as blocked”, Flo keeps these in sync."
         actions={
           <Button variant="primary" icon={<Plus size={15} />} onClick={() => setCreating(true)}>
             New project

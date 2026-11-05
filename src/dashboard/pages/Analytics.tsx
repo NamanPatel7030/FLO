@@ -5,7 +5,9 @@ import { CheckCircle2, Clock, Flame, Gauge, Mic, Type } from "lucide-react";
 import { api } from "../../lib/api";
 import { formatDuration, formatNumber } from "../../lib/format";
 import type { Analytics as A } from "../../lib/types";
-import { Card, CardTitle, PageHeader, Skeleton, Stat } from "../ui";
+import { Button, Card, CardTitle, PageHeader, Skeleton, Stat } from "../ui";
+import { Keyboard } from "lucide-react";
+import { useStore } from "../store";
 
 const RANGES = [7, 30, 60] as const;
 const S1 = "var(--s1)";
@@ -14,6 +16,7 @@ const S4 = "var(--s4)";
 const axis = { fill: "var(--chart-axis)", fontSize: 11 };
 
 export default function Analytics() {
+  const go = useStore((s) => s.go);
   const [days, setDays] = useState<(typeof RANGES)[number]>(30);
   const [a, setA] = useState<A | null>(null);
   useEffect(() => {
@@ -28,8 +31,12 @@ export default function Analytics() {
     <div>
       <PageHeader
         title="Analytics"
-        subtitle="How much faster you're working — computed locally from your history."
+        subtitle="How much faster you're working, computed locally from your history."
         actions={
+          <div className="flex items-center gap-2">
+          <Button size="sm" icon={<Keyboard size={13} />} onClick={() => go("typing")}>
+            Measure my speed
+          </Button>
           <div className="glass flex rounded-xl p-1">
             {RANGES.map((r) => (
               <button
@@ -40,6 +47,7 @@ export default function Analytics() {
                 {r}d
               </button>
             ))}
+          </div>
           </div>
         }
       />

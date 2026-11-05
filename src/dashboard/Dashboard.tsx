@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import clsx from "clsx";
-import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info } from "lucide-react";
+import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Library, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info } from "lucide-react";
 import { bootStore, hotkeyLabel, useStore, type Page } from "./store";
 import Home from "./pages/Home";
 import Assistant from "./pages/Assistant";
@@ -11,6 +11,10 @@ import Notes from "./pages/Notes";
 import Analytics from "./pages/Analytics";
 import HistoryPage from "./pages/History";
 import Settings from "./pages/Settings";
+import ContextPage from "./pages/Context";
+import Typing from "./pages/Typing";
+import { Signature } from "./Signature";
+import { Ocean } from "../island/Ocean";
 import { Kbd } from "./ui";
 import { Logo } from "./Logo";
 import { missingRequired, usePermissions } from "./usePermissions";
@@ -18,6 +22,7 @@ import { missingRequired, usePermissions } from "./usePermissions";
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: "home", label: "Home", icon: <HomeIcon size={16} /> },
   { id: "assistant", label: "Assistant", icon: <Sparkles size={16} /> },
+  { id: "context", label: "Context", icon: <Library size={16} /> },
   { id: "todos", label: "To-dos", icon: <CheckCircle2 size={16} /> },
   { id: "projects", label: "Projects", icon: <FolderKanban size={16} /> },
   { id: "notes", label: "Notes", icon: <StickyNote size={16} /> },
@@ -29,12 +34,14 @@ const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
 const PAGES: Record<Page, () => React.ReactElement> = {
   home: Home,
   assistant: Assistant,
+  context: ContextPage,
   todos: Todos,
   projects: Projects,
   notes: Notes,
   analytics: Analytics,
   history: HistoryPage,
   settings: Settings,
+  typing: Typing,
 };
 
 export default function Dashboard() {
@@ -125,6 +132,9 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
+            <div className="mt-2">
+              <Signature />
+            </div>
           </div>
         </aside>
 
@@ -153,15 +163,21 @@ export default function Dashboard() {
 }
 
 /** Static glow backdrop (no infinite animation → near-zero GPU when idle). */
+/** Subtle ocean: deep navy → black gradient + a slow, low-opacity wave band along the bottom. */
 function Backdrop() {
   return (
-    <div
-      className="pointer-events-none absolute inset-0"
-      style={{
-        background:
-          "radial-gradient(640px 520px at -6% -8%, rgba(61,187,255,0.16), transparent 70%), radial-gradient(720px 600px at 106% 108%, rgba(26,155,224,0.12), transparent 70%), radial-gradient(420px 320px at 55% 35%, rgba(10,79,122,0.10), transparent 70%)",
-      }}
-    />
+    <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(640px 520px at -6% -8%, rgba(61,187,255,0.14), transparent 70%), radial-gradient(900px 500px at 50% 120%, rgba(6,42,68,0.55), transparent 70%), linear-gradient(180deg, rgba(2,4,8,0) 0%, rgba(4,20,34,0.45) 100%)",
+        }}
+      />
+      <div className="absolute inset-x-0 bottom-0 opacity-[0.22]" data-testid="ocean-backdrop">
+        <Ocean width={1600} height={120} calm foam style={{ width: "100%", height: 120 }} />
+      </div>
+    </div>
   );
 }
 

@@ -9,6 +9,7 @@ import { Card, CardTitle, Empty, Kbd, ProgressRing, Skeleton, Stat, StatusPill, 
 import { ClaudeSessionsCard, TodoRow } from "../components";
 import { missingRequired, PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { Logo } from "../Logo";
+import { Ocean } from "../../island/Ocean";
 
 export default function Home() {
   const { settings, todos, projects, notes, geo, go } = useStore();
@@ -28,6 +29,10 @@ export default function Home() {
       {/* hero */}
       <Card strong className="relative overflow-hidden p-6">
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full opacity-40 blur-3xl accent-gradient" />
+        {/* a calm wave echoing the notch */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 opacity-40" aria-hidden>
+          <Ocean width={1200} height={44} calm style={{ width: "100%", height: 44 }} />
+        </div>
         <div className="relative flex items-center justify-between gap-6">
           <div>
             <div className="flex items-center gap-2 text-[13px] text-muted">
@@ -39,7 +44,7 @@ export default function Home() {
               {settings?.userName ? `, ${settings.userName}` : ""}.
             </h1>
             <p className="mt-2 max-w-lg text-[14px] text-muted">
-              Hold <Kbd>{hotkeyLabel(geo, settings)}</Kbd> to dictate anywhere. Hold <Kbd>{assistantHotkeyLabel(geo, settings)}</Kbd> to ask Flo — “add a to-do to Apollo”, “what's blocked?”, “start meeting notes”.
+              Hold <Kbd>{hotkeyLabel(geo, settings)}</Kbd> to dictate anywhere. Hold <Kbd>{assistantHotkeyLabel(geo, settings)}</Kbd> to ask Flo, “add a to-do to Apollo”, “what's blocked?”, “start meeting notes”.
             </p>
             <div className="mt-4 flex gap-2">
               <Button variant="primary" icon={<Mic size={15} />} onClick={() => api.startSession("dictation")}>
@@ -169,7 +174,7 @@ export default function Home() {
               <div className="mt-0.5 text-[11px] text-faint">
                 {relativeTime(n.createdAt)} · {formatDuration(n.durationSec)}
               </div>
-              <p className="mt-1.5 line-clamp-2 text-[12px] text-muted">{n.summary || "Live — summary coming…"}</p>
+              <p className="mt-1.5 line-clamp-2 text-[12px] text-muted">{n.summary || "Live, summary coming…"}</p>
             </button>
           ))}
         </div>
@@ -212,7 +217,7 @@ function SetupCard({ onOpen }: { onOpen: () => void }) {
       <div className="relative flex flex-wrap items-center gap-5">
         <div className="min-w-[220px] flex-1">
           <div className="text-[16px] font-semibold tracking-tight">
-            Finish setup — {left} step{left === 1 ? "" : "s"} left
+            Finish setup · {left} step{left === 1 ? "" : "s"} left
           </div>
           <p className="mt-1 text-[13px] text-muted">Flo needs these so holding fn can hear you and type where your cursor is.</p>
         </div>

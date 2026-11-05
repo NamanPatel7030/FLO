@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { ListChecks, Plus, Radio, Sparkles, Square, StickyNote, Trash2, Copy } from "lucide-react";
+import { ArrowDown, ListChecks, Plus, Radio, Sparkles, Square, StickyNote, Trash2, Copy } from "lucide-react";
+import { splitLive } from "../../lib/liveText";
+import { isStopped, markStopped, stopMeetingNow } from "../../lib/meetingStops";
 import { api, on } from "../../lib/api";
 import { formatClock, formatDuration, relativeTime } from "../../lib/format";
 import { EV, type MeetingEvent, type Note } from "../../lib/types";
@@ -25,7 +27,7 @@ export default function Notes() {
     <div>
       <PageHeader
         title="Notes"
-        subtitle="Meeting notes with live transcription and summaries — recorded and processed on this device."
+        subtitle="Meeting notes with live transcription and summaries, recorded and processed on this device."
         actions={
           !live && (
             <>
@@ -87,9 +89,10 @@ function LiveNote({ note }: { note: Note }) {
   const stop = async () => {
     if (stopping) return;
     setStopping(true);
+    markStopped(note.id);
     try {
-      await api.stopMeeting();
-      toast({ kind: "info", text: "Recording stopped — writing the summary…" });
+      await stopMeetingNow(note.id);
+      toast({ kind: "info", text: "Recording stopped. Writing the summary…" });
       await refreshNotes();
     } catch (e) {
       toast({ kind: "error", text: `Couldn't stop: ${e}` });
@@ -97,26 +100,45 @@ function LiveNote({ note }: { note: Note }) {
     }
   };
   const [segs, setSegs] = useState(note.transcript);
+  const [partial, setPartial] = useState("");
   const [summary, setSummary] = useState(note.summary);
   const [elapsed, setElapsed] = useState(note.durationSec);
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const [pinned, setPinned] = useState(true);
   useEffect(
     () =>
       on<MeetingEvent>(EV.meeting, (e) => {
         if (e.noteId !== note.id) return;
-        if (e.segment) setSegs((s) => [...s, e.segment!]);
+        if (!e.live) markStopped(e.noteId);
         if (e.summary) setSummary(e.summary);
+        // after Stop: no more live text (late final sentences must not revive the live view)
+        if (!e.live || isStopped(e.noteId)) {
+          setPartial("");
+          setStopping(true);
+          return;
+        }
+        if (e.segment) setSegs((s) => [...s, e.segment!]);
+        if (e.partial !== undefined) setPartial(e.partial);
+        else if (e.segment) setPartial("");
         setElapsed(e.elapsedSec);
       }),
     [note.id],
   );
   useEffect(() => {
+    if (stopping) return;
     const t = setInterval(() => setElapsed((x) => x + 1), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [stopping]);
+  // keep pinned to the live line unless the user scrolled up to read
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [segs.length]);
+    const el = scroller.current;
+    if (el && pinned) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [segs.length, partial, pinned]);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -124,17 +146,21 @@ function LiveNote({ note }: { note: Note }) {
         <div className="pointer-events-none absolute -left-10 -top-10 h-32 w-32 rounded-full bg-red-500 opacity-20 blur-3xl" />
         <div className="relative flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="relative flex h-3 w-3">
-              <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-60" />
-              <span className="relative h-3 w-3 rounded-full bg-red-500" />
-            </span>
+            {stopping ? (
+              <span className="relative flex h-3 w-3 rounded-full bg-brand-300 shadow-[0_0_10px_rgba(102,206,255,0.8)]" />
+            ) : (
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-60" />
+                <span className="relative h-3 w-3 rounded-full bg-red-500" />
+              </span>
+            )}
             <div>
               <div className="text-[17px] font-semibold">{note.title}</div>
               <div className="font-mono text-[13px] tabular-nums text-muted">{formatClock(elapsed)}</div>
             </div>
           </div>
           <Button variant="danger" disabled={stopping} icon={<Square size={12} fill="currentColor" />} onClick={stop}>
-            {stopping ? "Stopping…" : "Stop & summarize"}
+            {stopping ? "Summarizing…" : "Stop & summarize"}
           </Button>
         </div>
         <div className="relative mt-4 rounded-xl bg-[var(--glass)] p-3.5">
@@ -148,9 +174,9 @@ function LiveNote({ note }: { note: Note }) {
           </AnimatePresence>
         </div>
       </Card>
-      <Card className="max-h-[52vh] overflow-y-auto p-5">
+      <Card className="relative p-5">
         <CardTitle>Live transcript</CardTitle>
-        <div className="flex flex-col gap-2.5">
+        <div ref={scroller} onScroll={onScroll} className="flex max-h-[46vh] flex-col gap-2.5 overflow-y-auto pr-1" data-testid="live-transcript">
           <AnimatePresence initial={false}>
             {segs.map((s, i) => (
               <motion.div key={i} initial={{ opacity: 0, y: 8, filter: "blur(3px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} className="flex gap-3">
@@ -159,11 +185,51 @@ function LiveNote({ note }: { note: Note }) {
               </motion.div>
             ))}
           </AnimatePresence>
-          {segs.length === 0 && <div className="text-[13px] text-faint">Listening…</div>}
-          <div ref={bottom} />
+          <div className="flex gap-3" data-testid="live-line">
+            <span className="w-11 shrink-0 pt-[1px] font-mono text-[11.5px] tabular-nums text-brand-300/70">{formatClock(elapsed)}</span>
+            <LiveLine text={partial} placeholder={segs.length === 0 ? "Waiting for someone to speak" : ""} />
+          </div>
         </div>
+        <AnimatePresence>
+          {!pinned && (
+            <motion.button
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              onClick={() => setPinned(true)}
+              className="btn-primary absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px]"
+            >
+              <ArrowDown size={13} /> Jump to live
+            </motion.button>
+          )}
+        </AnimatePresence>
       </Card>
     </div>
+  );
+}
+
+/** The live, still-changing line: only newly appended words animate in, caret at the end. */
+function LiveLine({ text, placeholder }: { text: string; placeholder: string }) {
+  const prev = useRef("");
+  const { stable, added } = splitLive(prev.current, text);
+  useEffect(() => {
+    prev.current = text;
+  }, [text]);
+  if (!text)
+    return (
+      <span className="text-[13.5px] leading-relaxed text-faint">
+        {placeholder}
+        <span className="flo-caret" aria-hidden />
+      </span>
+    );
+  return (
+    <span className="selectable text-[13.5px] leading-relaxed text-[var(--fg)]/70" aria-live="polite">
+      {stable}
+      <span key={stable.length + ":" + added} className="flo-type-in">
+        {added}
+      </span>
+      <span className="flo-caret" aria-hidden />
+    </span>
   );
 }
 

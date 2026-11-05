@@ -96,7 +96,8 @@ export type IslandVariant =
   | "tray"
   | "trayTooltip"
   | "correction"
-  | "meetingPrompt";
+  | "meetingPrompt"
+  | "confirm";
 
 // ── hotkeys + statuses ───────────────────────────────────────────────────────
 export const HOTKEY_OPTIONS: HotkeyCombo[] = ["fn", "ctrl", "alt", "fn+ctrl", "ctrl+alt", "cmd+alt", "fn+shift"];
@@ -110,9 +111,9 @@ export const hotkeyWords = (c: string) => c.split("+").map((k) => KEY_WORD[k] ??
 export function claudeStatusLabel(s: ClaudeStatus): string {
   switch (s) {
     case "working":
-      return "Working…";
+      return "Working";
     case "done":
-      return "Done — waiting for review";
+      return "Done, ready for review";
     case "waiting_reply":
       return "Waiting for your reply";
     case "needs_approval":
@@ -134,6 +135,10 @@ const GLOW_ROOM = 8;
 export const TRAY_TIP_W = 300;
 export const TRAY_TIP_H = 118;
 const TRAY_TIP_GAP = 8;
+/** Row height in the all-sessions list tooltip. */
+export const TRAY_LIST_ROW = 36;
+/** Tooltip height: single item card, or a list of `rows` sessions (max 6 visible). */
+export const trayTipHeight = (rows?: number) => (rows ? 38 + Math.min(rows, 6) * TRAY_LIST_ROW + 6 : TRAY_TIP_H);
 
 export interface TraySlot {
   side: "left" | "right";
@@ -155,17 +160,48 @@ export function trayLayout(geo: IslandGeometry, nLeft: number, nRight: number): 
   return { width: nw + 2 * (wing + ISLAND_EAR), height: geo.notchHeight, wing, slots };
 }
 
-/** Which tray slot is under (x, y)? (-1 = none). x/y are relative to the island window. */
-export function hitTestTray(slots: TraySlot[], winW: number, x: number, y: number, nh: number): number {
+/**
+ * Which tray slot is under the cursor? `cx` = offset from the window's horizontal centre, which
+ * stays stable while the window resizes (the island is always centred on the notch). -1 = none.
+ */
+export function hitTestTrayC(slots: TraySlot[], cx: number, y: number, nh: number, tol: number = TRAY_SLOT / 2): number {
   if (y < 0 || y > nh + 2) return -1;
-  const rel = x - winW / 2;
-  return slots.findIndex((s) => Math.abs(rel - s.cx) <= TRAY_SLOT / 2);
+  return slots.findIndex((s) => Math.abs(cx - s.cx) <= tol);
 }
 
-/** Tooltip card under a tray item, clamped inside the window. */
-export function tooltipRect(winW: number, cx: number, nh: number): { x: number; y: number; w: number; h: number } {
-  const x = Math.min(Math.max(winW / 2 + cx - TRAY_TIP_W / 2, 8), winW - TRAY_TIP_W - 8);
-  return { x, y: nh + TRAY_TIP_GAP, w: TRAY_TIP_W, h: TRAY_TIP_H };
+/** Window-relative variant (x from the left edge). */
+export function hitTestTray(slots: TraySlot[], winW: number, x: number, y: number, nh: number): number {
+  return hitTestTrayC(slots, x - winW / 2, y, nh);
+}
+
+/** Tooltip rect in centre-relative coordinates (left/right are offsets from the window centre). */
+export function tipRectC(slotCx: number, nh: number, h: number = TRAY_TIP_H) {
+  return { left: slotCx - TRAY_TIP_W / 2, right: slotCx + TRAY_TIP_W / 2, top: nh + TRAY_TIP_GAP, bottom: nh + TRAY_TIP_GAP + h };
+}
+
+/**
+ * Tooltip hysteresis. Once item `prev` is open it stays open while the cursor is on it, on its
+ * tooltip, or in the corridor between them; we only switch when another item is clearly hit
+ * (inner tolerance), and only close when the cursor is elsewhere. Prevents open/close flicker.
+ */
+export function pickTip(prev: number, slots: TraySlot[], cx: number, y: number, nh: number, tipH: number = TRAY_TIP_H): number {
+  const clear = hitTestTrayC(slots, cx, y, nh, TRAY_SLOT / 2 - 3);
+  if (clear >= 0) return clear;
+  if (prev >= 0 && slots[prev]) {
+    const s = slots[prev];
+    const r = tipRectC(s.cx, nh, tipH);
+    const left = Math.min(r.left, s.cx - TRAY_SLOT / 2) - 6;
+    const right = Math.max(r.right, s.cx + TRAY_SLOT / 2) + 6;
+    if (cx >= left && cx <= right && y >= -2 && y <= r.bottom + 6) return prev;
+    return -1;
+  }
+  return hitTestTrayC(slots, cx, y, nh);
+}
+
+/** Tooltip card under a tray item (window-relative). The window is sized to fit it centred. */
+export function tooltipRect(winW: number, cx: number, nh: number, h: number = TRAY_TIP_H): { x: number; y: number; w: number; h: number } {
+  const x = Math.min(Math.max(winW / 2 + cx - TRAY_TIP_W / 2, 8), Math.max(8, winW - TRAY_TIP_W - 8));
+  return { x, y: nh + TRAY_TIP_GAP, w: TRAY_TIP_W, h };
 }
 
 /** Peek quick-action tile under (x, y)? Tiles share the pill width below the notch. */
@@ -206,6 +242,8 @@ export interface CardContent {
   trayRight?: number;
   /** tooltip anchor (slot cx) for trayTooltip */
   tipCx?: number;
+  /** trayTooltip shows a list of this many sessions */
+  tipRows?: number;
   /** hover swell (collapsed / tray) */
   swell?: boolean;
 }
@@ -229,8 +267,6 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
   const nh = notch ? geo.notchHeight : 0;
   if (notch) {
     const compact = nw + 2 * (ISLAND_WING + ISLAND_EAR);
-    // dropdown row needs ~260px for "Listening…  release fn to paste"; keep wing symmetry (even extra)
-    const live = Math.max(compact, nw + 2 * Math.ceil((Math.max(300, compact) - nw) / 2));
     const tray = trayLayout(geo, content?.trayLeft ?? 0, content?.trayRight ?? 0);
     const hasTray = (content?.trayLeft ?? 0) + (content?.trayRight ?? 0) > 0;
     switch (variant) {
@@ -243,22 +279,24 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "trayTooltip": {
         const cx = Math.abs(content?.tipCx ?? 0);
         const w = Math.max(tray.width, 2 * cx + TRAY_TIP_W + 16);
-        return { width: w + (w % 2), height: nh + TRAY_TIP_GAP + TRAY_TIP_H + 8 };
+        return { width: w + (w % 2), height: nh + TRAY_TIP_GAP + trayTipHeight(content?.tipRows) + 8 };
       }
       case "correction":
         return { width: 400, height: nh + ISLAND_GAP + 98 };
       case "meetingPrompt":
         return { width: 380, height: nh + ISLAND_GAP + 86 };
+      case "confirm":
+        return { width: 420, height: nh + ISLAND_GAP + 132 };
       case "peek":
-        return { width: Math.max(nw + 2 * 150, hasTray ? tray.width : 0), height: nh + 72 };
+        return { width: Math.max(nw + 2 * 130, hasTray ? tray.width : 0), height: nh + 54 };
+      // live states: icons only, flush with the notch (no text row)
       case "listening":
       case "working":
-        return { width: live, height: nh + ISLAND_ROW };
       case "done":
         return { width: compact, height: nh };
       case "result":
-        // text (≤2 lines) + 12px top/bottom padding
-        return { width: 440, height: nh + ISLAND_GAP + lines(content?.textChars, 54, 2) * ISLAND_LINE + 16 };
+        // one line of pasted text + copy icon
+        return { width: 440, height: nh + ISLAND_GAP + ISLAND_LINE + 14 };
       case "error":
         return {
           width: 420,
@@ -286,19 +324,21 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "tray":
       return { width: Math.max(64, 28 + items * TRAY_SLOT) + pad + (content?.swell ? 8 : 0), height: 40 + pad };
     case "trayTooltip":
-      return { width: Math.max(TRAY_TIP_W + 16, 28 + items * TRAY_SLOT) + pad, height: 40 + TRAY_TIP_GAP + TRAY_TIP_H + pad };
+      return { width: Math.max(TRAY_TIP_W + 16, 28 + items * TRAY_SLOT) + pad, height: 40 + TRAY_TIP_GAP + trayTipHeight(content?.tipRows) + pad };
     case "correction":
       return { width: 380 + pad, height: 110 + pad };
     case "meetingPrompt":
       return { width: 360 + pad, height: 96 + pad };
+    case "confirm":
+      return { width: 400 + pad, height: 140 + pad };
     case "peek":
-      return { width: 300 + pad, height: 64 + pad };
+      return { width: 260 + pad, height: 52 + pad };
     case "listening":
     case "working":
     case "done":
-      return { width: 248 + pad, height: 48 + pad };
+      return { width: 150 + pad, height: 40 + pad };
     case "result":
-      return { width: 360 + pad, height: 40 + lines(content?.textChars, 44, 2) * ISLAND_LINE + pad };
+      return { width: 360 + pad, height: 22 + ISLAND_LINE + pad };
     case "error":
       return { width: 380 + pad, height: 34 + lines(content?.textChars, 40, 4) * ISLAND_LINE + (content?.action ? 34 : 0) + pad };
     case "history":

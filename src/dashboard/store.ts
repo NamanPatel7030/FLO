@@ -3,7 +3,7 @@ import { api, on } from "../lib/api";
 import { formatHotkey } from "../lib/format";
 import { EV, type ClaudeEvent, type Note, type Project, type Settings, type ToastEvent, type Todo, type IslandGeometry } from "../lib/types";
 
-export type Page = "home" | "assistant" | "todos" | "projects" | "notes" | "analytics" | "history" | "settings";
+export type Page = "home" | "assistant" | "context" | "todos" | "projects" | "notes" | "analytics" | "history" | "settings" | "typing";
 
 interface Toast extends ToastEvent {
   id: number;
@@ -32,7 +32,7 @@ let toastId = 1;
 
 function readHash(): { page: Page; arg?: string } {
   const [, page, arg] = location.hash.replace(/^#/, "").split("/");
-  const pages: Page[] = ["home", "assistant", "todos", "projects", "notes", "analytics", "history", "settings"];
+  const pages: Page[] = ["home", "assistant", "context", "todos", "projects", "notes", "analytics", "history", "settings", "typing"];
   return { page: pages.includes(page as Page) ? (page as Page) : "home", arg };
 }
 

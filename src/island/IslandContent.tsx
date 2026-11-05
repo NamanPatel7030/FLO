@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, Check, Copy, History, LayoutDashboard, MessageSquareText, Mic, Radio, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, History, LayoutDashboard, Lock, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
-import { formatClock, ISLAND_GAP, ISLAND_ROW, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
+import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase } from "../lib/types";
-import { Dots, Orbit, Waveform } from "./Waveform";
+import { FlowWave, Waveform } from "./Waveform";
 import type { MeetingInfo } from "./Island";
 import { copyText } from "../lib/clipboard";
 
@@ -27,21 +27,27 @@ interface Props {
   onOpenHistory: () => void;
   onClaude: (seen: boolean) => void;
   onToggleMeeting: () => void;
+  onStopMeeting: () => void;
+  onStartMeeting: () => void;
   /** peek tile under the cursor (backend hit-testing), -1 = none */
   hotTile?: number;
   /** configured push-to-talk keys, already formatted ("⌃", "fn") */
   keys: { dict: string; asst: string };
+  /** width of the black pill (for the full-width working wave) */
+  pillW: number;
 }
 
 /** Number of quick actions in the peek menu (for hit-testing). */
 export const PEEK_ACTIONS = 5;
 
-function CopyButton({ text, label = true }: { text: string; label?: boolean }) {
+function CopyButton({ text, label = false }: { text: string; label?: boolean }) {
   const [done, setDone] = useState(false);
   return (
     <button
+      title={done ? "Copied" : "Copy"}
       className={
-        "flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition " +
+        "flex shrink-0 items-center justify-center gap-1 rounded-full text-[11.5px] font-medium transition " +
+        (label ? "px-2.5 py-1 " : "h-7 w-7 ") +
         (done ? "bg-brand-300/20 text-brand-200" : "bg-white/[0.08] text-white/80 hover:bg-white/[0.14] hover:text-white")
       }
       onClick={async (e) => {
@@ -90,18 +96,31 @@ function Below({ notch, geo, children, className = "" }: { notch: boolean; geo: 
   );
 }
 
-function ModeIcon({ mode }: { mode: Mode }) {
+function ModeIcon({ mode, locked }: { mode: Mode; locked?: boolean }) {
+  const badge = locked ? (
+    <span
+      className="absolute -bottom-[3px] -right-[5px] flex h-[11px] w-[11px] items-center justify-center rounded-full bg-brand-300 ring-[1.5px] ring-black"
+      aria-label="Hands-free"
+      title="Hands-free"
+    >
+      <Lock size={7} strokeWidth={3} className="text-black" />
+    </span>
+  ) : null;
   if (mode === "assistant")
     return (
-      <motion.div animate={{ rotate: [0, 12, -8, 0] }} transition={{ repeat: Infinity, duration: 2.4 }}>
-        <Sparkles size={15} className="text-brand-300" />
-      </motion.div>
+      <div className="relative" aria-label="Assistant listening">
+        <motion.div animate={{ rotate: [0, 12, -8, 0] }} transition={{ repeat: Infinity, duration: 2.4 }}>
+          <Sparkles size={15} className="text-brand-300" />
+        </motion.div>
+        {badge}
+      </div>
     );
   if (mode === "meeting") return <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500 shadow-[0_0_10px_#ef4444]" />;
   return (
-    <div className="relative">
+    <div className="relative" aria-label="Listening">
       <span className="absolute inset-0 -m-1 animate-ping rounded-full bg-brand-400/25" />
       <Mic size={15} className="relative text-brand-200" />
+      {badge}
     </div>
   );
 }
@@ -115,9 +134,6 @@ function useClock(startedAt: number, live: boolean) {
   }, [live]);
   return live ? Math.max(0, (now - startedAt) / 1000) : 0;
 }
-
-const workingLabel = (phase: Phase, mode: Mode) =>
-  phase === "transcribing" ? "Transcribing…" : mode === "assistant" ? "Thinking…" : "Polishing…";
 
 function timeOf(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -148,14 +164,16 @@ export function IslandContent(p: Props) {
       const actions = [
         { icon: <Mic size={16} />, label: "Dictate", run: () => api.startSession("dictation") },
         { icon: <Sparkles size={16} />, label: "Ask", run: () => api.startSession("assistant") },
-        { icon: <Radio size={16} />, label: "Meeting", run: () => api.startMeeting() },
+        p.meeting.live
+          ? { icon: <Square size={14} fill="currentColor" className="text-red-400" />, label: "Stop meeting", run: p.onStopMeeting }
+          : { icon: <Radio size={16} />, label: "Meeting", run: p.onStartMeeting },
         { icon: <History size={16} />, label: "History", run: p.onOpenHistory },
         { icon: <LayoutDashboard size={16} />, label: "Open", run: () => api.openDashboard() },
       ];
       return (
         <div className="flex h-full flex-col">
           {notch && <div style={{ height: top }} />}
-          <div className={"grid flex-1 grid-cols-5 items-center gap-1.5 " + (notch ? "px-3 pb-2.5 pt-1" : "px-2 py-1.5")}>
+          <div className={"grid flex-1 grid-cols-5 items-center gap-1.5 " + (notch ? "px-3 pb-2 pt-1" : "px-2 py-1.5")}>
             {actions.map((a, i) => (
               <Quick key={a.label} index={i} hot={p.hotTile === i} icon={a.icon} label={a.label} onClick={a.run} />
             ))}
@@ -165,60 +183,28 @@ export function IslandContent(p: Props) {
     }
 
     case "listening": {
-      const ask = p.mode === "assistant";
-      if (!notch)
-        return (
-          <Wings
-            notch={false}
-            geo={geo}
-            onClick={() => api.stopSession()}
-            left={
-              <div className="flex items-center gap-2">
-                <ModeIcon mode={p.mode} />
-                <span className="text-[13px] font-medium text-white/90">{ask ? "Ask Flo anything" : "Listening…"}</span>
-              </div>
-            }
-            right={<Waveform bars={14} height={20} barWidth={3} />}
-          />
-        );
+      // icons only: mode icon + live waveform (no text). Hands-free → lock badge + glow.
+      const locked = p.message === "hands-free";
+      const wave = (
+        <span style={{ filter: locked ? "drop-shadow(0 0 6px rgba(102,206,255,0.75))" : undefined }}>
+          <Waveform bars={notch ? 8 : 14} height={notch ? 15 : 20} barWidth={notch ? 2.5 : 3} gap={2} />
+        </span>
+      );
       return (
-        <div className="flex h-full cursor-pointer flex-col" onClick={() => api.stopSession()}>
-          <Wings notch geo={geo} left={<ModeIcon mode={p.mode} />} right={<Waveform bars={8} height={15} barWidth={2.5} gap={2} />} />
-          <div className="flex items-center justify-center gap-2 px-4" style={{ height: ISLAND_ROW }}>
-            <span className="text-[13px] font-medium text-white/90">{ask ? "Ask Flo anything" : "Listening…"}</span>
-            {p.message === "hands-free" ? (
-              <span className="flex items-center gap-1.5 text-[12px] text-white/45">
-                <span className="rounded-full border border-brand-300/30 bg-brand-300/10 px-1.5 py-px text-[10.5px] font-medium text-brand-200">hands-free</span>
-                tap {ask ? p.keys.asst : p.keys.dict} to {ask ? "send" : "paste"} · esc to cancel
-              </span>
-            ) : (
-              <span className="text-[12px] text-white/40">
-                release {ask ? p.keys.asst : p.keys.dict} to {ask ? "send" : "paste"} · + space for hands-free
-              </span>
-            )}
-          </div>
+        <div className="h-full cursor-pointer" onClick={() => api.stopSession()} title={locked ? "Hands-free" : undefined}>
+          <Wings notch={notch} geo={geo} left={<ModeIcon mode={p.mode} locked={locked} />} right={wave} />
         </div>
       );
     }
 
-    case "working":
-      if (!notch)
-        return (
-          <Wings
-            notch={false}
-            geo={geo}
-            left={<Orbit size={15} />}
-            right={<span className="shimmer text-[13px] font-semibold tracking-tight">{workingLabel(p.phase, p.mode)}</span>}
-          />
-        );
+    case "working": {
+      const kind = p.mode === "assistant" && p.phase === "thinking" ? "think" : "transcribe";
       return (
-        <div className="flex h-full flex-col">
-          <Wings notch geo={geo} left={<Orbit size={14} />} right={<Dots />} />
-          <div className="flex items-center justify-center px-4" style={{ height: ISLAND_ROW }}>
-            <span className="shimmer text-[13px] font-semibold tracking-tight">{workingLabel(p.phase, p.mode)}</span>
-          </div>
+        <div className="flex h-full items-center justify-center" style={notch ? { height: geo.notchHeight } : undefined}>
+          <FlowWave width={Math.max(80, p.pillW - (notch ? 20 : 32))} height={notch ? 16 : 18} kind={kind} />
         </div>
       );
+    }
 
     case "done":
       return (
@@ -230,7 +216,7 @@ export function IslandContent(p: Props) {
               <CheckBadge />
             </motion.div>
           }
-          right={<span className="truncate text-[11px] font-medium text-white/85">{p.mode === "meeting" ? "Saved" : "Done"}</span>}
+          right={<span className="h-1.5 w-1.5 rounded-full bg-brand-300 shadow-[0_0_8px_rgba(102,206,255,0.9)]" aria-label={p.mode === "meeting" ? "Saved" : "Done"} />}
         />
       );
 
@@ -238,15 +224,11 @@ export function IslandContent(p: Props) {
       const text = p.result ?? "";
       return (
         <div className="relative h-full">
-          {notch && <Wings notch geo={geo} left={<CheckBadge />} right={<span className="text-[11px] font-medium text-white/80">Pasted</span>} />}
-          <Below notch={notch} geo={geo} className="pb-2">
-            <div className="flex items-start gap-3">
-              {!notch && (
-                <span className="mt-0.5">
-                  <CheckBadge />
-                </span>
-              )}
-              <p className="selectable line-clamp-2 min-w-0 flex-1 text-[13px] leading-[18px] text-white/90">{text}</p>
+          {notch && <Wings notch geo={geo} left={<CheckBadge />} right={null} />}
+          <Below notch={notch} geo={geo} className="justify-center pb-1.5">
+            <div className="flex items-center gap-2.5" aria-label="Pasted">
+              {!notch && <CheckBadge />}
+              <p className="selectable min-w-0 flex-1 truncate text-[13px] leading-[18px] text-white/90">{text}</p>
               <CopyButton text={text} />
             </div>
           </Below>
@@ -278,13 +260,15 @@ export function IslandContent(p: Props) {
             {wantsFix(msg) && (
               <div className="mt-2 flex justify-end">
                 <button
-                  className="rounded-full bg-brand-300/15 px-3 py-1 text-[11.5px] font-medium text-brand-200 hover:bg-brand-300/25"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-300/15 text-brand-200 hover:bg-brand-300/25"
+                  title="Fix in Settings"
+                  aria-label="Fix in Settings"
                   onClick={() => {
                     p.onCloseError();
                     api.openDashboard("settings");
                   }}
                 >
-                  Fix in Settings
+                  <Settings2 size={14} />
                 </button>
               </div>
             )}
@@ -308,7 +292,7 @@ export function IslandContent(p: Props) {
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
               {items.length === 0 ? (
-                <p className="flex h-[54px] items-center justify-center text-[13px] text-white/55">Nothing yet — hold {p.keys.dict} and speak.</p>
+                <p className="flex h-[54px] items-center justify-center text-[13px] text-white/55">Nothing yet. Hold {p.keys.dict} and speak.</p>
               ) : (
                 items.map((d) => (
                   <div key={d.id} className="flex h-[54px] items-center gap-3 border-t border-white/[0.06] first:border-t-0">
@@ -351,7 +335,10 @@ export function IslandContent(p: Props) {
             }
             right={<Waveform bars={10} height={14} barWidth={2.5} color="red" />}
           />
-          <div className={"truncate text-[12px] text-white/60 " + (notch ? "px-5 pb-2" : "px-4 pb-2")}>{p.meeting.lastLine ?? "Listening for the conversation…"}</div>
+          <div className={"truncate text-[12px] " + (notch ? "px-5 pb-2" : "px-4 pb-2")} data-testid="island-live-line">
+            <span className={p.meeting.partial ? "text-white/70" : "text-white/55"}>{p.meeting.partial || p.meeting.lastLine || ""}</span>
+            <span className="flo-caret" aria-hidden />
+          </div>
         </div>
       );
 
@@ -370,17 +357,14 @@ export function IslandContent(p: Props) {
                 <button className="rounded-full bg-white/10 px-2.5 py-1 text-[11.5px] hover:bg-white/20" onClick={p.onToggleMeeting}>
                   Minimize
                 </button>
-                <button className="flex items-center gap-1 rounded-full bg-red-500/90 px-2.5 py-1 text-[11.5px] font-medium hover:bg-red-500" onClick={(e) => {
+                <button
+                  className="flex items-center gap-1 rounded-full bg-red-500/90 px-2.5 py-1 text-[11.5px] font-medium hover:bg-red-500"
+                  aria-label="Stop meeting"
+                  onClick={(e) => {
                     e.stopPropagation();
-                    const b = e.currentTarget;
-                    if (b.dataset.busy) return;
-                    b.dataset.busy = "1";
-                    b.lastChild && (b.lastChild.textContent = " Stopping…");
-                    api.stopMeeting().catch(() => {
-                      delete b.dataset.busy;
-                      b.lastChild && (b.lastChild.textContent = " Stop");
-                    });
-                  }}>
+                    p.onStopMeeting();
+                  }}
+                >
                   <Square size={10} fill="currentColor" /> Stop
                 </button>
               </div>
@@ -391,7 +375,10 @@ export function IslandContent(p: Props) {
               </div>
               <p className="line-clamp-3 text-[12.5px] leading-snug text-white/85">{p.meeting.summary || "Summary appears after a minute of conversation."}</p>
             </div>
-            <p className="line-clamp-2 text-[12px] text-white/55">“{p.meeting.lastLine ?? "…"}”</p>
+            <p className="line-clamp-2 text-[12px] text-white/60">
+              {p.meeting.partial || p.meeting.lastLine || ""}
+              <span className="flo-caret" aria-hidden />
+            </p>
           </div>
         </div>
       );
@@ -483,15 +470,27 @@ function Quick({ icon, label, onClick, hot, index }: { icon: React.ReactNode; la
       whileTap={{ scale: 0.94 }}
       onClick={onClick}
       data-hot={hot ? "true" : "false"}
-      className="island-tile flex h-[52px] flex-col items-center justify-center gap-1 rounded-xl text-white/85 hover:text-white"
+      aria-label={label}
+      title={label}
+      className="island-tile relative flex h-[40px] flex-col items-center justify-center rounded-xl text-white/85 hover:text-white"
     >
       <span
-        className="flex items-center justify-center text-brand-200"
-        style={{ filter: hot ? "drop-shadow(0 0 8px rgba(102,206,255,0.85))" : "drop-shadow(0 0 4px rgba(102,206,255,0.35))" }}
+        className="flex items-center justify-center text-brand-200 transition-transform duration-200"
+        style={{
+          filter: hot ? "drop-shadow(0 0 8px rgba(102,206,255,0.85))" : "drop-shadow(0 0 4px rgba(102,206,255,0.35))",
+          transform: hot ? "translateY(-4px)" : "none",
+        }}
       >
         {icon}
       </span>
-      <span className={"text-[10.5px] font-medium " + (hot ? "text-white" : "text-white/75")}>{label}</span>
+      {/* label only on the hovered tile */}
+      <span
+        className="pointer-events-none absolute bottom-[3px] text-[9.5px] font-medium text-white/85 transition-opacity duration-150"
+        style={{ opacity: hot ? 1 : 0 }}
+        aria-hidden
+      >
+        {label}
+      </span>
     </motion.button>
   );
 }

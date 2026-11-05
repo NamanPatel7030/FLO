@@ -16,12 +16,15 @@ import {
   hotkeyWords,
   HOTKEY_OPTIONS,
   hitTestTray,
+  hitTestTrayC,
+  pickTip,
+  trayTipHeight,
+  TRAY_TIP_H,
   peekTileAt,
   trayLayout,
   tooltipRect,
   TRAY_TIP_W,
   ISLAND_EAR,
-  ISLAND_ROW,
   ISLAND_WING,
   smoothLevels,
 } from "./format";
@@ -131,14 +134,11 @@ describe("islandSize", () => {
       expect(s.height).toBe(nh);
       expect((s.width - g.notchWidth) / 2).toBe(ISLAND_WING + ISLAND_EAR);
     });
-    it(`listening/working drop a status row below the notch (nh=${nh})`, () => {
+    it(`listening/working are icons only: flush with the notch, no text row (nh=${nh})`, () => {
       for (const v of ["listening", "working"] as const) {
         const s = islandSize(v, g);
-        expect(s.height).toBe(nh + ISLAND_ROW);
-        // wings must still fit beside the notch, symmetric
-        expect((s.width - g.notchWidth) / 2).toBeGreaterThanOrEqual(ISLAND_WING + ISLAND_EAR);
-        expect(Number.isInteger(s.width - g.notchWidth)).toBe(true);
-        expect((s.width - g.notchWidth) % 2).toBe(0);
+        expect(s.height).toBe(nh);
+        expect((s.width - g.notchWidth) / 2).toBe(ISLAND_WING + ISLAND_EAR);
       }
     });
     it(`error height fits the message: longer message → taller, capped at 3 lines (nh=${nh})`, () => {
@@ -152,12 +152,10 @@ describe("islandSize", () => {
       expect(huge.height).toBe(islandSize("error", g, { textChars: 5000 }).height);
       expect(fix.height).toBeGreaterThan(mid.height);
     });
-    it(`result shows up to 2 lines of pasted text (nh=${nh})`, () => {
+    it(`result is one compact line regardless of length (nh=${nh})`, () => {
       const one = islandSize("result", g, { textChars: 10 });
-      const two = islandSize("result", g, { textChars: 400 });
       expect(one.height).toBeGreaterThan(nh);
-      expect(two.height).toBeGreaterThan(one.height);
-      expect(islandSize("result", g, { textChars: 4000 }).height).toBe(two.height);
+      expect(islandSize("result", g, { textChars: 4000 }).height).toBe(one.height);
     });
     it(`history grows with rows, capped at 6 (nh=${nh})`, () => {
       const a = islandSize("history", g, { rows: 1 });
@@ -241,6 +239,28 @@ describe("tray layout (notch)", () => {
     expect(hitTestTray(l.slots, winW, winW / 2, 16, 32)).toBe(-1); // over the camera
     expect(hitTestTray(l.slots, winW, winW / 2 + s0.cx, 80, 32)).toBe(-1); // below the row
   });
+  it("centre-based hit-test is independent of the window width", () => {
+    const l = trayLayout(geo, 2, 1);
+    const s0 = l.slots[0];
+    expect(hitTestTrayC(l.slots, s0.cx, 16, 32)).toBe(0);
+    // same cursor, window grew by 200px (tooltip opened): window-relative x changes, cx doesn't
+    expect(hitTestTray(l.slots, l.width + 200, (l.width + 200) / 2 + s0.cx, 16, 32)).toBe(0);
+    expect(hitTestTrayC(l.slots, 0, 16, 32)).toBe(-1);
+  });
+  it("pickTip keeps the open tooltip on its avatar, the tooltip and the corridor; switches only on a clear hit", () => {
+    const l = trayLayout(geo, 3, 0);
+    const [a, b] = l.slots;
+    expect(pickTip(-1, l.slots, a.cx, 16, 32)).toBe(0); // open on A
+    expect(pickTip(0, l.slots, a.cx + 11, 16, 32)).toBe(0); // loose edge of A keeps A
+    expect(pickTip(0, l.slots, a.cx, 32 + 40, 32)).toBe(0); // down into the tooltip
+    expect(pickTip(0, l.slots, a.cx + 100, 32 + 90, 32)).toBe(0); // across the tooltip
+    expect(pickTip(0, l.slots, b.cx, 16, 32)).toBe(1); // clearly over B → switch
+    expect(pickTip(0, l.slots, 400, 300, 32)).toBe(-1); // far away → close
+    const tall = trayTipHeight(6); // list tooltip is taller → corridor extends with it
+    expect(tall).toBeGreaterThan(TRAY_TIP_H);
+    expect(pickTip(0, l.slots, a.cx, 32 + tall, 32, tall)).toBe(0);
+    expect(pickTip(0, l.slots, a.cx, 32 + tall, 32)).toBe(-1);
+  });
   it("tooltip stays inside the window and below the notch", () => {
     const l = trayLayout(geo, 4, 0);
     const far = l.slots[3];
@@ -271,10 +291,11 @@ describe("hotkeys + status labels", () => {
     expect(HOTKEY_OPTIONS).toContain("fn");
   });
   it("labels Claude statuses", () => {
-    expect(claudeStatusLabel("done")).toBe("Done — waiting for review");
+    expect(claudeStatusLabel("done")).toBe("Done, ready for review");
     expect(claudeStatusLabel("waiting_reply")).toBe("Waiting for your reply");
     expect(claudeStatusLabel("needs_approval")).toBe("Needs approval");
-    expect(claudeStatusLabel("working")).toBe("Working…");
+    expect(claudeStatusLabel("working")).toBe("Working");
+    for (const st of ["done", "waiting_reply", "needs_approval", "working"] as const) expect(claudeStatusLabel(st)).not.toMatch(/[—–]/);
   });
 });
 

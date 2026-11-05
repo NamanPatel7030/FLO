@@ -86,6 +86,62 @@ export function Dots({ color = "#93ddff" }: { color?: string }) {
   );
 }
 
+/**
+ * Transcribing / thinking: one cohesive light-blue wave across the whole island (both wings).
+ * - "transcribe": a bright crest travels left → right through the bars, with a soft shimmer sweep.
+ * - "think": slower "neural" breathing that pulses out from the centre.
+ * Pure CSS keyframes on transform/opacity (GPU), no React re-renders. Reduced motion → static.
+ */
+export function FlowWave({ width, height = 16, kind = "transcribe" }: { width: number; height?: number; kind?: "transcribe" | "think" }) {
+  const pitch = 7; // bar + gap
+  const n = Math.max(8, Math.floor((width - 24) / pitch));
+  const centre = (n - 1) / 2;
+  const dur = kind === "think" ? 2.4 : 1.35;
+  return (
+    <div
+      className="relative flex items-center justify-center overflow-hidden"
+      style={{ width, height, gap: pitch - 3 }}
+      role="status"
+      aria-label={kind === "think" ? "Thinking" : "Transcribing"}
+    >
+      {Array.from({ length: n }, (_, i) => {
+        const delay = kind === "think" ? -(dur - (Math.abs(i - centre) / Math.max(1, centre)) * dur * 0.55) : -(dur - (i / n) * dur);
+        const edge = 1 - Math.pow(Math.abs(i - centre) / (centre + 1), 2) * 0.55; // softer toward the ends
+        return (
+          <span
+            key={i}
+            className="block shrink-0 rounded-full"
+            style={
+              {
+                width: 3,
+                height,
+                opacity: 0.35,
+                transform: "scaleY(0.2)",
+                background: "linear-gradient(180deg,#e3f6ff,#66ceff 55%,#1a9be0)",
+                boxShadow: "0 0 6px rgba(102,206,255,0.45)",
+                animation: `${kind === "think" ? "flo-breathe" : "flo-flow"} ${dur}s ease-in-out ${delay}s infinite`,
+                "--peak": String(edge),
+                willChange: "transform, opacity",
+              } as React.CSSProperties
+            }
+          />
+        );
+      })}
+      {kind === "transcribe" && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 left-0 w-1/4"
+          style={{
+            background: "linear-gradient(90deg, transparent, rgba(227,246,255,0.22), transparent)",
+            animation: `flo-sweep ${dur * 1.6}s linear infinite`,
+            willChange: "transform",
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 /** Small orbiting-dots loader used while transcribing / thinking. */
 export function Orbit({ size = 16 }: { size?: number }) {
   return (

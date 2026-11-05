@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { AlarmClock, Check, Terminal, X, BellRing } from "lucide-react";
-import { api } from "../lib/api";
-import { relativeTime } from "../lib/format";
-import type { ClaudeEvent, Todo } from "../lib/types";
+import { AlarmClock, Asterisk, Check, MousePointer2, SquareTerminal, Terminal, Webhook, X, BellRing } from "lucide-react";
+import { api, on } from "../lib/api";
+import { claudeStatusLabel, relativeTime } from "../lib/format";
+import { EV, type ClaudeSession, type Todo } from "../lib/types";
 import { useStore } from "./store";
-import { Card, CardTitle, Empty, SourceBadge, Button } from "./ui";
+import { Card, CardTitle, Empty, SourceBadge } from "./ui";
 
 export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
   const projects = useStore((s) => s.projects);
@@ -76,31 +76,65 @@ export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
   );
 }
 
+const SOURCE_STYLE: Record<string, { cls: string; icon: React.ReactNode; label: string }> = {
+  claude: { cls: "bg-[#d97757] text-white", icon: <Asterisk size={10} strokeWidth={3} />, label: "Claude Code" },
+  codex: { cls: "bg-white text-black", icon: <SquareTerminal size={10} strokeWidth={2.5} />, label: "Codex" },
+  cursor: { cls: "bg-[#0b0b0b] text-white ring-1 ring-white/20", icon: <MousePointer2 size={9} strokeWidth={2.5} />, label: "Cursor" },
+  other: { cls: "bg-brand-400 text-black", icon: <Webhook size={9} strokeWidth={2.5} />, label: "Webhook" },
+};
+
+/** Small round glyph per agent (Claude orange, Codex white/black, Cursor, anything else light blue). */
+function SourceGlyph({ source, live }: { source?: string; live?: boolean }) {
+  const st = SOURCE_STYLE[source ?? "claude"] ?? SOURCE_STYLE.other;
+  return (
+    <span className="relative flex h-[18px] w-[18px] shrink-0" title={st.label} aria-label={st.label}>
+      {live && <span className={clsx("absolute inset-0 animate-ping rounded-full opacity-40", st.cls)} />}
+      <span className={clsx("relative flex h-[18px] w-[18px] items-center justify-center rounded-full", st.cls)}>{st.icon}</span>
+    </span>
+  );
+}
+
+const STATUS_CHIP: Record<ClaudeSession["status"], string> = {
+  working: "border-brand-300/30 bg-brand-300/10 text-brand-200",
+  done: "border-emerald-300/25 bg-emerald-300/10 text-emerald-200",
+  waiting_reply: "border-sky-300/30 bg-sky-300/10 text-sky-200",
+  needs_approval: "border-amber-300/35 bg-amber-300/10 text-amber-200",
+};
+
+/** Live Claude Code sessions (same list as the notch tray). */
 export function ClaudeSessionsCard() {
-  const claude = useStore((s) => s.claude);
-  const unseen = claude?.filter((c) => !c.seen).length ?? 0;
+  const [sessions, setSessions] = useState<ClaudeSession[] | null>(null);
+  useEffect(() => {
+    api.listClaudeSessions().then(setSessions).catch(() => setSessions([]));
+    return on<ClaudeSession[]>(EV.claudeSessions, (l) => setSessions(Array.isArray(l) ? l : []));
+  }, []);
+  const working = sessions?.filter((s) => s.status === "working").length ?? 0;
+  const drop = (id: string) => setSessions((l) => (l ?? []).filter((s) => s.sessionId !== id));
   return (
     <Card className="p-4">
-      <CardTitle
-        icon={<Terminal size={15} />}
-        action={
-          unseen > 0 ? (
-            <Button size="sm" variant="ghost" onClick={() => api.markClaudeSeen()}>
-              Mark all seen
-            </Button>
-          ) : undefined
-        }
-      >
+      <CardTitle icon={<Terminal size={15} />}>
         Claude sessions
-        {unseen > 0 && <span className="rounded-full bg-[#d97757] px-1.5 text-[10.5px] font-semibold leading-[18px] text-white">{unseen} new</span>}
+        {!!sessions?.length && <span className="rounded-full bg-[#d97757] px-1.5 text-[10.5px] font-semibold leading-[18px] text-white">{sessions.length}</span>}
+        {working > 0 && <span className="text-[11px] font-normal text-brand-300">{working} working</span>}
       </CardTitle>
-      {!claude ? null : claude.length === 0 ? (
-        <Empty icon={<BellRing size={18} />} title="No sessions yet" hint="Connect Claude Code in Settings → Integrations and Flo will ping you when a session finishes." />
+      {!sessions ? null : sessions.length === 0 ? (
+        <Empty icon={<BellRing size={18} />} title="All caught up" hint="Connect Claude Code in Settings · Integrations and your sessions show up here and in the notch." />
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex max-h-[320px] flex-col gap-0.5 overflow-y-auto">
           <AnimatePresence initial={false}>
-            {claude.slice(0, 5).map((c) => (
-              <ClaudeRow key={c.id} e={c} />
+            {sessions.map((s) => (
+              <ClaudeRow
+                key={s.sessionId}
+                s={s}
+                onOpen={() => {
+                  if (s.status !== "working") drop(s.sessionId);
+                  api.openClaudeBySession(s.sessionId).catch(() => {});
+                }}
+                onDismiss={() => {
+                  drop(s.sessionId);
+                  api.dismissClaudeSession(s.sessionId).catch(() => {});
+                }}
+              />
             ))}
           </AnimatePresence>
         </div>
@@ -109,29 +143,28 @@ export function ClaudeSessionsCard() {
   );
 }
 
-function ClaudeRow({ e }: { e: ClaudeEvent }) {
-  const needs = e.kind === "notification";
+function ClaudeRow({ s, onOpen, onDismiss }: { s: ClaudeSession; onOpen: () => void; onDismiss: () => void }) {
   return (
-    <motion.button
-      layout
+    <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      onClick={() => api.openClaudeSession(e.id).catch(() => api.markClaudeSeen(e.id))}
-      title="Open where this Claude session is running"
-      className="flex items-start gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-[var(--glass)]"
+      exit={{ opacity: 0, height: 0 }}
+      className="group flex items-center gap-2 rounded-xl px-2 py-1.5 transition hover:bg-[var(--glass)]"
     >
-      <span className="relative mt-1.5 flex h-2 w-2 shrink-0">
-        {!e.seen && <span className="absolute inset-0 animate-ping rounded-full bg-[#d97757] opacity-60" />}
-        <span className={clsx("relative h-2 w-2 rounded-full", e.seen ? "bg-[var(--border-strong)]" : "bg-[#d97757]")} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-[13px]">
-          <span className={clsx("font-medium", e.seen && "text-muted")}>{needs ? "Needs you" : "Finished"}</span>
-          <span className="text-faint">· {e.project}</span>
-          <span className="ml-auto shrink-0 text-[11px] text-faint">{relativeTime(e.at)}</span>
+      <button onClick={onOpen} title="Open where this session runs" className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <SourceGlyph source={s.source} live={s.status !== "done"} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-[13px]">
+            <span className="truncate font-medium">{s.project}</span>
+            <span className={clsx("shrink-0 rounded-full border px-1.5 text-[10.5px] leading-[16px]", STATUS_CHIP[s.status])}>{claudeStatusLabel(s.status)}</span>
+            <span className="ml-auto shrink-0 text-[11px] text-faint">{relativeTime(s.updatedAt)}</span>
+          </div>
+          <div className="truncate text-[12px] text-muted">{s.message}</div>
         </div>
-        <div className="line-clamp-2 text-[12px] text-muted">{e.message}</div>
-      </div>
-    </motion.button>
+      </button>
+      <button onClick={onDismiss} title="Dismiss" aria-label={`Dismiss ${s.project}`} className="rounded-lg p-1 text-faint opacity-0 transition group-hover:opacity-100 hover:bg-[var(--glass-strong)] hover:text-[var(--fg)]">
+        <X size={13} />
+      </button>
+    </motion.div>
   );
 }

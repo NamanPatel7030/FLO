@@ -50,7 +50,7 @@ export default function Assistant() {
 
   return (
     <div className="flex h-[calc(100vh-80px)] flex-col">
-      <PageHeader title="Assistant" subtitle="Run all your projects by voice. Flo sees your projects, to-dos and notes — and acts on them." />
+      <PageHeader title="Assistant" subtitle="Run all your projects by voice. Flo sees your projects, to-dos and notes, and acts on them." />
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {items.length === 0 && !busy && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">

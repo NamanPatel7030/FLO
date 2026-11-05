@@ -28,7 +28,7 @@ export default function Todos() {
     <div>
       <PageHeader
         title="To-dos"
-        subtitle="Everything you said, promised, or missed — gathered in one place."
+        subtitle="Everything you said, promised, or missed, gathered in one place."
         actions={
           <Select
             value={filter}
@@ -60,7 +60,7 @@ export default function Todos() {
             icon={<Eye size={15} />}
             items={g.screen}
             empty="Flo hasn't spotted anything you missed."
-            hint="Found by Attention — stays on this device"
+            hint="Found by Attention, stays on this device"
             accent
           />
           <Group title="Upcoming" icon={<CalendarClock size={15} />} items={g.upcoming} empty="No upcoming deadlines." />

@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Download, KeyRound, Lock, Plug, RotateCcw, ShieldCheck, Trash2, X, Terminal, Keyboard } from "lucide-react";
+import { Check, Download, KeyRound, Lock, RotateCcw, ShieldCheck, Trash2, X, Keyboard } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
-import { EV, type ClaudeHookStatus, type DictionaryEntry, type KeyProvider, type LlmProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo } from "../../lib/types";
+import { EV, type DictionaryEntry, type KeyProvider, type LlmProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo } from "../../lib/types";
 import { useStore } from "../store";
 import { Button, Card, CardTitle, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
+import { About } from "../About";
+import { Integrations } from "../Integrations";
 
-const TABS = ["General", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations"] as const;
+const TABS = ["General", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Settings() {
@@ -45,6 +47,7 @@ export default function Settings() {
             {tab === "Permissions" && <PermissionsTab />}
             {tab === "Dictionary" && <Dictionary />}
             {tab === "Integrations" && <Integrations />}
+            {tab === "About" && <About />}
           </motion.div>
         </AnimatePresence>
       )}
@@ -94,7 +97,7 @@ function Shortcuts({ s, set }: P) {
     <div className="flex flex-col gap-4">
       <Card className="p-5">
         <CardTitle>Push-to-talk keys</CardTitle>
-        <p className="-mt-1 mb-4 text-[12px] text-muted">Hold the key, speak, release. Pressing any other key while holding cancels — so your normal shortcuts keep working.</p>
+        <p className="-mt-1 mb-4 text-[12px] text-muted">Hold the key, speak, release. Pressing any other key while holding cancels, so your normal shortcuts keep working.</p>
         <div className="flex flex-col gap-5">
           <div>
             <div className="mb-2 flex items-baseline justify-between">
@@ -110,7 +113,7 @@ function Shortcuts({ s, set }: P) {
             </div>
             <KeyPicker value={s.hotkeyAssistant} other={s.hotkeyDictation} onChange={(v) => set({ hotkeyAssistant: v })} />
           </div>
-          {clash && <p className="text-[12px] text-amber-300">Dictation and Assistant can't use the same key — pick a different one.</p>}
+          {clash && <p className="text-[12px] text-amber-300">Dictation and Assistant can't use the same key. Pick a different one.</p>}
           {(s.hotkeyDictation === "fn" || s.hotkeyAssistant === "fn") && (
             <p className="text-[12px] text-faint">Using fn? Settings → Permissions → “Free the fn key” stops it from opening the emoji picker.</p>
           )}
@@ -135,6 +138,9 @@ function General({ s, set }: P) {
         <div className="flex items-center gap-2">
           <Input type="number" className="w-20" value={s.typingWpm} onChange={(e) => set({ typingWpm: Number(e.target.value) || 40 })} />
           <span className="text-[12px] text-muted">wpm</span>
+          <Button size="sm" icon={<Keyboard size={13} />} onClick={() => useStore.getState().go("typing")}>
+            Measure
+          </Button>
         </div>
       </Row>
     </Card>
@@ -259,7 +265,7 @@ function AI({ s, set }: P) {
   return (
     <div className="flex flex-col gap-4">
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
-        <Row label="Language model" hint={local ? "Runs on your machine — nothing leaves it." : s.llmProvider === "none" ? "Dictation is pasted as transcribed." : "Called directly with your key. No Flo servers in between."}>
+        <Row label="Language model" hint={local ? "Runs on your machine, nothing leaves it." : s.llmProvider === "none" ? "Dictation is pasted as transcribed." : "Called directly with your key. No Flo servers in between."}>
           <Select<LlmProvider>
             value={s.llmProvider}
             onChange={(v) => set({ llmProvider: v, llmModel: PROVIDERS.find((p) => p.value === v)?.model ?? "", localLlmUrl: v === "lmstudio" ? "http://localhost:1234" : v === "ollama" ? "http://localhost:11434" : s.localLlmUrl })}
@@ -374,7 +380,7 @@ function Privacy({ s, set }: P) {
         <ShieldCheck size={20} className="mt-0.5 shrink-0 text-emerald-500" />
         <div className="text-[13px] text-muted">
           <span className="font-medium text-[var(--fg)]">Local-first by design.</span> Your history, notes, to-dos and screen text are stored encrypted on this device. No account, no telemetry. Every network request
-          goes through one gate — see it below.
+          goes through one gate, see it below.
         </div>
       </Card>
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
@@ -450,7 +456,7 @@ function Privacy({ s, set }: P) {
                       ) : l.bytes ? (
                         `${formatNumber(l.bytes / 1024)} KB`
                       ) : (
-                        "—"
+                        "·"
                       )}
                     </td>
                   </tr>
@@ -521,7 +527,7 @@ function PermissionsTab() {
         <div className="mt-1 flex items-center gap-3 rounded-xl border border-brand-300/15 bg-brand-300/[0.05] p-3">
           <div className="flex-1 text-[12px] leading-relaxed text-muted">
             <span className="font-medium text-[var(--fg)]">Turned it on but still see “Grant”?</span> System Settings may be showing a switch from an
-            older Flo build. Repair clears Flo’s old privacy entries (only Flo’s) and restarts — then press Grant once for each.
+            older Flo build. Repair clears Flo’s old privacy entries (only Flo’s) and restarts. Then press Grant once for each.
           </div>
           <RepairButton />
         </div>
@@ -565,7 +571,7 @@ function Dictionary() {
   return (
     <Card className="p-5">
       <CardTitle>Personal dictionary</CardTitle>
-      <p className="-mt-1 mb-3 text-[12px] text-muted">Names, jargon and spellings Flo should always get right. Add a “heard as” to fix common mis-hearings — Flo also learns these when you correct it.</p>
+      <p className="-mt-1 mb-3 text-[12px] text-muted">Names, jargon and spellings Flo should always get right. Add a “heard as” to fix common mis-hearings, Flo also learns these when you correct it.</p>
       <form
         className="mb-3 flex gap-2"
         onSubmit={async (e) => {
@@ -611,83 +617,6 @@ function Dictionary() {
         ))}
       </div>
     </Card>
-  );
-}
-
-function Integrations() {
-  const toast = useStore((x) => x.toast);
-  const [st, setSt] = useState<ClaudeHookStatus | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    api.claudeHookStatus().then(setSt);
-  }, []);
-  const act = async (fn: () => Promise<ClaudeHookStatus>, msg: string) => {
-    setBusy(true);
-    try {
-      setSt(await fn());
-      toast({ kind: "success", text: msg });
-    } catch (e) {
-      toast({ kind: "error", text: String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="flex flex-col gap-4">
-      <Card className="relative overflow-hidden p-5">
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-[#d97757] opacity-25 blur-3xl" />
-        <div className="relative flex items-start gap-4">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#d97757] text-white">
-            <Terminal size={18} />
-          </span>
-          <div className="flex-1">
-            <div className="flex items-center gap-2 text-[15px] font-semibold">
-              Claude Code
-              {st && (
-                <span className={clsx("rounded-full px-2 py-0.5 text-[11px] font-medium", st.installed ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300" : "bg-[var(--glass-strong)] text-muted")}>
-                  {st.installed ? "Connected" : "Not connected"}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-[12.5px] text-muted">
-              Get a notch reminder whenever a Claude Code session finishes or needs your input. Flo listens on 127.0.0.1 only; Claude Code hooks ping it when a session stops or needs input.
-            </p>
-            {st ? (
-              <div className="mt-3 grid grid-cols-3 gap-2 text-[12px]">
-                <Info label="Listener" value={st.listening ? "Listening" : "Stopped"} ok={st.listening} />
-                <Info label="Port" value={`127.0.0.1:${st.port}`} />
-                <Info label="Config" value={st.configPath} mono />
-              </div>
-            ) : (
-              <Skeleton className="mt-3 h-12" />
-            )}
-            <div className="mt-4 flex gap-2">
-              {st?.installed ? (
-                <Button variant="glass" disabled={busy} onClick={() => act(api.uninstallClaudeHook, "Claude Code disconnected")}>
-                  Disconnect
-                </Button>
-              ) : (
-                <Button variant="primary" icon={<Plug size={14} />} disabled={busy || !st} onClick={() => act(api.installClaudeHook, "Claude Code connected")}>
-                  Connect
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      </Card>
-      <Card className="p-4 text-[12.5px] text-muted">
-        <span className="font-medium text-[var(--fg)]">Coming later:</span> WhatsApp and Slack — so Attention can catch messages you haven't replied to, even when the app isn't on screen.
-      </Card>
-    </div>
-  );
-}
-
-function Info({ label, value, ok, mono }: { label: string; value: string; ok?: boolean; mono?: boolean }) {
-  return (
-    <div className="rounded-xl bg-[var(--glass)] px-3 py-2">
-      <div className="text-[10.5px] uppercase tracking-wider text-faint">{label}</div>
-      <div className={clsx("mt-0.5 truncate", mono && "font-mono text-[11.5px]", ok === true && "text-emerald-600 dark:text-emerald-300")}>{value}</div>
-    </div>
   );
 }
 

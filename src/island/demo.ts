@@ -71,7 +71,7 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
       at(300, () => {
         mockEmit(EV.state, { phase: "transcribing", mode: "dictation" });
         mockEmit(EV.transcript, {
-          text: "Hey Rahul, the invoice is attached — can you confirm the amount by Friday so we can close the month? Thanks!",
+          text: "Hey Rahul, the invoice is attached, can you confirm the amount by Friday so we can close the month? Thanks!",
           final: true,
         });
         mockEmit(EV.state, { phase: "done", mode: "dictation" });
@@ -88,7 +88,7 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
       at(300, () => mockInvoke("ask_assistant", { text: "Add a to-do to Apollo: send the deck by Friday" }));
       break;
     case "claude":
-      at(300, () => mockClaudeEvent("stop", "Flo", "Built the island UI and glass dashboard — all tests pass."));
+      at(300, () => mockClaudeEvent("stop", "Flo", "Built the island UI and glass dashboard, all tests pass."));
       at(400, () => mockClaudeEvent("notification", "hermes-api", "Claude needs your permission to run `npm publish`."));
       break;
     case "meeting":
@@ -104,7 +104,7 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
         at(12000, () => mockClaudeSession("waiting_reply"));
         at(14000, () => mockMeetingDetected("Zoom", true));
         at(20000, () => mockMeetingDetected("Zoom", false));
-        at(21000, () => mockClaudeEvent("stop", "Flo", "Built the island UI and glass dashboard — all tests pass."));
+        at(21000, () => mockClaudeEvent("stop", "Flo", "Built the island UI and glass dashboard, all tests pass."));
         at(26000, () => api.startSession("assistant"));
         at(28500, () => api.stopSession());
         at(32000, () => hooks.openHistory());
