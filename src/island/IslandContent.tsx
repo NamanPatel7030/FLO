@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, Check, Copy, Globe, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Globe, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
 import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase } from "../lib/types";
@@ -8,6 +8,7 @@ import { FlowWave, Waveform } from "./Waveform";
 import type { MeetingInfo } from "./Island";
 import { copyText } from "../lib/clipboard";
 import { CardRow } from "./CardRow";
+import { isSignInError } from "../lib/account";
 import { Ribbon } from "./Ribbon";
 import { isLongReply, toPlainText } from "../lib/markdown";
 
@@ -247,6 +248,29 @@ export function IslandContent(p: Props) {
 
     case "error": {
       const msg = p.message ?? "Something went wrong";
+      if (isSignInError(msg))
+        return (
+          <CardRow
+            notch={notch}
+            geo={geo}
+            testId="signin-card"
+            icon={<LogIn size={15} className="text-brand-300" />}
+            actions={
+              <button
+                className="rounded-full bg-brand-300/20 px-3 py-1 text-[11.5px] font-semibold text-brand-100 hover:bg-brand-300/30"
+                onClick={() => {
+                  p.onCloseError();
+                  api.openDashboard();
+                }}
+              >
+                Sign in
+              </button>
+            }
+          >
+            <p className="text-[13px] font-semibold">Sign in to Flo</p>
+            <p className="text-[12px] text-white/55">Dictation starts once you're signed in.</p>
+          </CardRow>
+        );
       return (
         <CardRow
           notch={notch}

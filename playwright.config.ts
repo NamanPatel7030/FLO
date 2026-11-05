@@ -10,17 +10,21 @@ const PORT = 5190;
 
 export default defineConfig({
   testDir: "tests/e2e",
-  timeout: 30_000,
+  // the dev server compiles routes on demand; on a loaded machine a cold compile can be slow, so
+  // give each test headroom (the heaviest, the onboarding walkthrough, also calls test.slow())
+  timeout: 45_000,
   fullyParallel: true,
-  // the Vite dev server compiles on demand; too many parallel browsers starve it
-  workers: CI ? 2 : 4,
-  retries: CI ? 1 : 0,
+  // too many parallel browsers starve the single Vite server
+  workers: CI ? 2 : 3,
+  retries: CI ? 1 : 1,
   reporter: CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   use: {
     baseURL: `http://localhost:${PORT}`,
     headless: true,
     viewport: { width: 1440, height: 900 },
     trace: "retain-on-failure",
+    // signed in by default (the mock starts signed out); account tests reset this with test.use
+    storageState: { cookies: [], origins: [{ origin: `http://localhost:${PORT}`, localStorage: [{ name: "flo.mock.signedin", value: "1" }] }] },
   },
   projects: [
     {

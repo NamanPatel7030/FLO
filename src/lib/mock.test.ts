@@ -30,7 +30,16 @@ describe("mockInvoke", () => {
     expect(after.openTodos).toBe(before.openTodos - 1);
   });
 
+  it("refuses sessions while signed out (friendly sign-in error)", async () => {
+    const msgs: string[] = [];
+    const un = mockListen<StateEvent>("flo://state", (e) => e.phase === "error" && msgs.push(e.message ?? ""));
+    await expect(mockInvoke("start_session", { mode: "dictation" })).rejects.toThrow(/sign in/i);
+    un();
+    expect(msgs[0]).toMatch(/Sign in to Flo/);
+  });
+
   it("emits a dictation cycle on start/stop_session", async () => {
+    await mockInvoke("account_login", { email: "t@example.com", password: "secret" });
     const phases: string[] = [];
     const un = mockListen<StateEvent>("flo://state", (e) => phases.push(e.phase));
     await mockInvoke("start_session", { mode: "dictation" });

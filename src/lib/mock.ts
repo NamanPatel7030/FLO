@@ -64,6 +64,7 @@ const settings: Settings = {
   systemPrompt: "",
   slackSync: false,
   // ?onboard=1 shows the first-run setup wizard in the browser preview
+  accountUrl: "http://localhost:3000",
   onboarded: typeof location === "undefined" || !new URLSearchParams(location.search).has("onboard"),
   sttProvider: "local",
   sttModel: "large-v3-turbo-q5_0",
@@ -465,6 +466,28 @@ function fakeAssistant(text: string): AssistantResponse {
 // ── invoke dispatcher ───────────────────────────────────────────────────────
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// ── account (signed out by default; ?signedin=1 or localStorage flo.mock.signedin=1 bypasses) ──
+const qs = () => (typeof location === "undefined" ? new URLSearchParams() : new URLSearchParams(location.search));
+const mockSignedIn = (() => {
+  try {
+    return qs().has("signedin") || localStorage.getItem("flo.mock.signedin") === "1";
+  } catch {
+    return qs().has("signedin");
+  }
+})();
+const DEMO_USER = { id: "u_1", email: "naman@hellonaman.com", name: "Naman Gundaniya" };
+const account: { signedIn: boolean; user?: typeof DEMO_USER; googleState?: string } = mockSignedIn
+  ? { signedIn: true, user: DEMO_USER }
+  : { signedIn: false, user: qs().has("offline") ? DEMO_USER : undefined };
+const ACCOUNT_URL = "http://localhost:3000";
+const nameFromEmail = (e: string) =>
+  e
+    .split("@")[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+
 const perms = { microphone: true, accessibility: true, inputMonitoring: false, screen: false, hotkeyActive: false };
 
 // ── context library ──────────────────────────────────────────────────────────
@@ -572,7 +595,42 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
     case "open_dashboard":
       return null;
+    case "account_status":
+      await sleep(120);
+      return { signedIn: account.signedIn, user: account.user, accountUrl: ACCOUNT_URL, offline: !account.signedIn && qs().has("offline") };
+    case "account_login": {
+      await sleep(450);
+      const email = String(args.email ?? "").trim();
+      if (email.includes("offline")) throw new Error("network error: could not connect to the account server");
+      if (!email.includes("@") || String(args.password ?? "").length < 4 || args.password === "wrong") throw new Error("401 Unauthorized: invalid email or password");
+      account.signedIn = true;
+      account.user = { id: "u_" + email.length, email, name: nameFromEmail(email) };
+      mockEmit("flo://account", { signedIn: true, user: account.user });
+      return account.user;
+    }
+    case "account_google_start":
+      await sleep(200);
+      account.googleState = "st_" + Math.random().toString(36).slice(2, 8);
+      return { state: account.googleState };
+    case "account_exchange": {
+      await sleep(400);
+      if (!args.code || String(args.code).toUpperCase() === "BAD") throw new Error("400: invalid or expired code");
+      account.signedIn = true;
+      account.user = DEMO_USER;
+      mockEmit("flo://account", { signedIn: true, user: account.user });
+      return account.user;
+    }
+    case "account_logout":
+      account.signedIn = false;
+      account.user = undefined;
+      mockEmit("flo://account", { signedIn: false });
+      return null;
     case "start_session":
+      // the backend refuses sessions while signed out
+      if (!account.signedIn) {
+        mockEmit(EV.state, { phase: "error", mode: args.mode ?? "dictation", message: "Sign in to Flo to start dictating." });
+        throw new Error("Sign in to Flo first");
+      }
       sessionMode = args.mode ?? "dictation";
       if (sessionMode === "meeting") {
         startMockMeeting();
@@ -863,6 +921,12 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     meetingDetected: mockMeetingDetected,
     resizes: resizeLog,
     calls: callLog,
+    /** finish a pending "Continue with Google" like the deep link would */
+    completeGoogle: () => {
+      account.signedIn = true;
+      account.user = DEMO_USER;
+      mockEmit("flo://account", { signedIn: true, user: DEMO_USER });
+    },
     /** replace the mock's agent sessions (so open / dismiss act on them) and emit the list */
     setSessions: (list: ClaudeSession[]) => {
       claudeSessions.splice(0, claudeSessions.length, ...list);

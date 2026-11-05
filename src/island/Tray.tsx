@@ -1,7 +1,7 @@
 // Notch tray: live items in the wings beside the camera (Claude sessions, to-dos, meeting) +
 // tooltips, the correction card and the meeting-detected prompt. Pure presentation; state lives
 // in Island.tsx.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { motion } from "motion/react";
 import { Asterisk, Check, CheckCircle2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
 import { claudeStatusLabel, relativeTime, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
@@ -56,65 +56,48 @@ const SOURCE_LOOK: Record<string, { bg: string; bgWorking: string; icon: React.R
 export const sourceLook = (source?: string) => SOURCE_LOOK[source ?? "claude"] ?? SOURCE_LOOK.other;
 
 /**
- * One shared, low-rate tick for "working" spinners. The tray is always on screen, so a CSS
- * `infinite` animation would make WebKit redraw at 60 fps forever (≈10% CPU at idle). Stepping
- * 30° eight times a second looks like the system activity indicator and costs ~1/8 as much.
+ * Smooth, cheap "working" spinner: ONE pre-rendered SVG arc (~270°, gradient stroke with a fading
+ * tail, round caps) on its own element, rotated only by a CSS `transform` keyframe. WebKit hands
+ * transform-only animations to Core Animation (compositor), so the main thread does nothing:
+ * no JS ticks, no conic-gradient / mask / shadow / filter on the rotating element.
  */
-const tickSubs = new Set<(n: number) => void>();
-let tickN = 0;
-let tickTimer: ReturnType<typeof setInterval> | null = null;
-function useSpinnerTick(active: boolean): number {
-  const [n, setN] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    tickSubs.add(setN);
-    if (!tickTimer) {
-      tickTimer = setInterval(() => {
-        tickN = (tickN + 1) % 12;
-        tickSubs.forEach((f) => f(tickN));
-      }, 125);
-    }
-    return () => {
-      tickSubs.delete(setN);
-      if (tickSubs.size === 0 && tickTimer) {
-        clearInterval(tickTimer);
-        tickTimer = null;
-      }
-    };
-  }, [active]);
-  return n;
+function WorkingArc() {
+  return (
+    <span className="flo-spin pointer-events-none absolute -inset-[3px]" aria-hidden>
+      <svg viewBox="0 0 26 26" width="100%" height="100%">
+        <defs>
+          <linearGradient id="flo-arc" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0" stopColor="#1a9be0" stopOpacity="0" />
+            <stop offset="0.45" stopColor="#1a9be0" />
+            <stop offset="0.8" stopColor="#66ceff" />
+            <stop offset="1" stopColor="#e3f6ff" />
+          </linearGradient>
+        </defs>
+        {/* 270° arc, r = 11.5 around (13,13): starts at 9 o'clock, ends at 6 o'clock */}
+        <path d="M 1.5 13 A 11.5 11.5 0 1 1 13 24.5" fill="none" stroke="url(#flo-arc)" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
 }
 
 /** 20px round glass avatar for an agent session, with a status ring/badge. */
 export function ClaudeAvatar({ status, hot, source }: { status: ClaudeSession["status"]; hot?: boolean; source?: string }) {
   const working = status === "working";
   const look = sourceLook(source);
-  const tick = useSpinnerTick(working);
   return (
     <motion.span animate={{ scale: hot ? 1.14 : 1 }} transition={SPRING} className="relative flex h-5 w-5 items-center justify-center">
-      {working && (
-        <span
-          className="absolute -inset-[3px] rounded-full"
-          style={{
-            background: "conic-gradient(from 0deg, transparent 0 55%, #66ceff 85%, #e3f6ff 100%)",
-            WebkitMask: "radial-gradient(circle, transparent 10.5px, #000 11px)",
-            mask: "radial-gradient(circle, transparent 10.5px, #000 11px)",
-            transform: `rotate(${tick * 30}deg)`,
-          }}
-        />
-      )}
+      {working && <WorkingArc />}
       <span
         className="relative flex h-5 w-5 items-center justify-center rounded-full"
         style={{
           background: working ? look.bgWorking : look.bg,
+          // static rings only (nothing animates on an idle tray)
           boxShadow:
             status === "waiting_reply"
-              ? "0 0 0 1.5px #66ceff, 0 0 10px rgba(102,206,255,0.45)"
+              ? "0 0 0 1.5px #66ceff, 0 0 8px rgba(102,206,255,0.4)"
               : status === "needs_approval"
-                ? undefined
+                ? "0 0 0 1.5px #fbbf24, 0 0 8px rgba(251,191,36,0.4)"
                 : "inset 0 1px 0 rgba(255,255,255,0.35)",
-          // pulse 3× when the status appears, then stay still (no idle redraws)
-          animation: status === "needs_approval" ? "flo-pulse-ring 1.6s ease-in-out 3" : undefined,
           opacity: working ? 0.75 : 1,
         }}
       >

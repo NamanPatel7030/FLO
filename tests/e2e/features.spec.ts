@@ -191,46 +191,6 @@ test("AI settings: local Ollama with nothing pulled shows the install hint", asy
   await expect(hint.getByRole("button", { name: "Copy command" })).toBeVisible();
 });
 
-test("setup wizard: first run walks every step, finishes, and can be reopened", async ({ page }) => {
-  await page.goto("/?onboard=1#/home");
-  await mock(page);
-  const wiz = page.locator('[data-testid="onboarding"]');
-  await expect(wiz).toBeVisible();
-  await expect(wiz.getByText("Your Assistant")).toBeVisible();
-  await wiz.getByRole("button", { name: "Get started" }).click();
-  await expect(wiz.locator('[data-testid="perm-row"]')).toHaveCount(4);
-  await wiz.getByRole("button", { name: "Continue" }).click();
-  // voice: download the recommended model with progress
-  const voice = wiz.locator('[data-testid="voice-model"]');
-  await expect(voice).toBeVisible();
-  const dl = voice.getByRole("button", { name: "Download" });
-  if (await dl.count()) {
-    await dl.click();
-    await expect(voice.getByText("Ready")).toBeVisible({ timeout: 8000 });
-  }
-  await wiz.getByRole("button", { name: "Continue" }).click();
-  // AI: provider + model picker
-  await expect(wiz.getByRole("combobox", { name: "Model" })).toBeVisible();
-  await wiz.getByRole("button", { name: "Continue" }).click();
-  // shortcuts: live try-it reacts to real events
-  await expect(wiz.getByText(/waiting for your voice/)).toBeVisible();
-  await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
-  await expect(wiz.locator('[data-testid="try-ribbon"] canvas')).toBeVisible();
-  await emit(page, "flo://transcript", { text: "hello", final: true });
-  await expect(wiz.locator('[data-testid="try-heard"]')).toContainText("hello");
-  await wiz.getByRole("button", { name: "Continue" }).click();
-  await expect(wiz.getByText("You're all set")).toBeVisible();
-  await wiz.getByRole("button", { name: "Start using Flo" }).click();
-  await expect(wiz).toHaveCount(0);
-  await expect.poll(async () => (await invoke(page, "get_settings")).onboarded).toBe(true);
-  // reopen from Settings → General
-  await page.goto("/#/settings/general");
-  await page.getByRole("button", { name: "Run setup again" }).click();
-  await expect(page.locator('[data-testid="onboarding"]')).toBeVisible();
-  await page.getByRole("button", { name: "Skip setup" }).click();
-  await expect(page.locator('[data-testid="onboarding"]')).toHaveCount(0);
-});
-
 test("integrations: 4 agent cards, webhook token hidden, Slack connect flow", async ({ page }) => {
   await page.goto("/#/settings/integrations");
   await mock(page);
@@ -302,4 +262,18 @@ test("assistant page: markdown replies, sources, mode badge, follow-ups and the 
   expect(ask.args.mode).toBe("web");
   // nothing renders as raw markup
   await expect(page.getByText("**")).toHaveCount(0);
+});
+
+test("typing test: New passage loads fresh text and resets without leaving the page", async ({ page }) => {
+  await page.goto("/#/typing");
+  await mock(page);
+  await page.locator("[data-word]").first().waitFor();
+  const before = (await wordsOnScreen(page)).join(" ");
+  // type a few words so there is progress to reset
+  await page.keyboard.type("hello world test ");
+  await expect(page.locator('[data-word="0"]')).toHaveAttribute("data-state", "wrong");
+  await page.getByRole("button", { name: "New passage" }).click();
+  // still on the typing page, progress reset, and the whole passage changed
+  await expect(page.locator('[data-word="0"]')).toHaveAttribute("data-state", "current");
+  await expect.poll(async () => (await wordsOnScreen(page)).join(" ")).not.toBe(before);
 });

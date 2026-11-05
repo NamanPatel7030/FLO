@@ -517,3 +517,21 @@ html.island .selectable {
     opacity: 0.75 !important;
   }
 }
+
+/* agent "working" spinner: transform-only → composited (Core Animation in WebKit), no main-thread work */
+@keyframes flo-spin {
+  to {
+    transform: rotate(360deg) translateZ(0);
+  }
+}
+.flo-spin {
+  display: block;
+  transform: translateZ(0);
+  will-change: transform;
+  animation: flo-spin 1.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flo-spin {
+    animation-duration: 3s;
+  }
+}

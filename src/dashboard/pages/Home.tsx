@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, Check, CheckCircle2, Lock, Clock, Flame, FolderKanban, Mic, Radio, Sparkles, StickyNote, Type, Eye } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Lock, Clock, Flame, FolderKanban, Keyboard, Mic, Radio, Sparkles, StickyNote, Type, Eye } from "lucide-react";
 import { api } from "../../lib/api";
 import { formatDuration, formatNumber, greeting, groupTodos, relativeTime } from "../../lib/format";
 import type { Analytics, AttentionStatus } from "../../lib/types";
@@ -55,6 +55,9 @@ export default function Home() {
               </Button>
               <Button icon={<Radio size={15} />} onClick={() => api.startMeeting()}>
                 Start meeting notes
+              </Button>
+              <Button icon={<Keyboard size={15} />} onClick={() => go("typing")}>
+                Typing test
               </Button>
             </div>
           </div>

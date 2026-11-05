@@ -11,8 +11,9 @@ import { Button, Card, CardTitle, Input, PageHeader, Select, Skeleton, Toggle } 
 import { About } from "../About";
 import { Integrations } from "../Integrations";
 import { AiProviderFields, PROVIDERS } from "../AiSetup";
+import { accountApi, initials, refreshAccount, useAccount } from "../../lib/account";
 
-const TABS = ["General", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
+const TABS = ["Account", "General", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Settings() {
@@ -40,6 +41,7 @@ export default function Settings() {
       ) : (
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="max-w-3xl">
+            {tab === "Account" && <AccountTab />}
             {tab === "General" && <General s={settings} set={set} />}
             {tab === "Shortcuts" && <Shortcuts s={settings} set={set} />}
             {tab === "Voice" && <Voice s={settings} set={set} />}
@@ -125,6 +127,39 @@ function Shortcuts({ s, set }: P) {
         <Toggle label="Learn from my corrections" hint="If you fix a word Flo typed, it offers to remember the right spelling." checked={s.learnCorrections} onChange={(v) => set({ learnCorrections: v })} />
       </Card>
     </div>
+  );
+}
+
+function AccountTab() {
+  const { status } = useAccount();
+  const [busy, setBusy] = useState(false);
+  const u = status?.user;
+  return (
+    <Card className="p-5" >
+      <div className="flex items-center gap-4" data-testid="account-card">
+        <span className="accent-gradient flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-[18px] font-semibold text-white shadow-[0_0_24px_-6px_rgba(61,187,255,0.7)]">
+          {u?.image ? <img src={u.image} alt="" className="h-full w-full rounded-full object-cover" /> : initials(u)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[15px] font-semibold">{u?.name || "Signed out"}</div>
+          <div className="truncate text-[12.5px] text-muted">{u?.email}</div>
+          {status?.offline && <div className="mt-0.5 text-[11.5px] text-amber-500 dark:text-amber-300">Offline: using your saved sign-in</div>}
+        </div>
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await accountApi.logout().catch(() => {});
+            await refreshAccount();
+            setBusy(false);
+          }}
+        >
+          Sign out
+        </Button>
+      </div>
+      <p className="mt-4 text-[12px] text-faint">Your account only signs you in. Dictations, notes, to-dos and keys stay on this computer.</p>
+    </Card>
   );
 }
 

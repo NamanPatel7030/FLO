@@ -20,6 +20,7 @@ import {
 } from "../lib/format";
 import { isStuck, sessionsByUrgency } from "../lib/format";
 import { toPlainText } from "../lib/markdown";
+import { isSignInError } from "../lib/account";
 import {
   EV,
   type AssistantResponse,
@@ -396,7 +397,8 @@ export default function Island() {
       case "card":
         return card ? { replyChars: toPlainText(card.reply).length, results: card.results.length } : undefined;
       case "error":
-        return { textChars: (message ?? "Something went wrong").length, action: wantsFix(message) };
+        // "Sign in to Flo" is a two-short-lines card
+        return { textChars: isSignInError(message) ? 40 : (message ?? "Something went wrong").length, action: wantsFix(message) };
       case "result":
         return { textChars: result?.length ?? 0 };
       case "history":

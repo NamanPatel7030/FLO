@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Flame, Gauge, Keyboard, RotateCcw, Timer, Volume2, VolumeX } from "lucide-react";
+import { Check, Flame, Gauge, Keyboard, RotateCcw, RotateCw, Timer, Volume2, VolumeX } from "lucide-react";
 import { buildPracticeWords, computeWpm, initialTyping, minutesSavedPer1000, typeKey, wordLetters, type TypingState } from "../../lib/typing";
 import { playChime, playKey, setSoundOn, soundOn } from "../../lib/keySounds";
 import { useStore } from "../store";
@@ -39,16 +39,20 @@ export default function Typing() {
   const left = Math.max(0, limitMs - elapsed);
   const idx = st.typed.length;
 
-  const reset = useCallback(() => {
+  // restart = same passage; newPassage = fresh random text. Both reset progress, never leave the page.
+  const reset = useCallback((fresh: boolean) => {
     stRef.current = initialTyping();
     setSt(stRef.current);
     setStartedAt(null);
     setApplied(null);
     setFlare(null);
     setBase(0);
-    setSeed(Date.now());
+    setShift(0);
+    if (fresh) setSeed((s) => s + 1);
     setTimeout(() => input.current?.focus(), 0);
   }, []);
+  const restart = useCallback(() => reset(false), [reset]);
+  const newPassage = useCallback(() => reset(true), [reset]);
 
   // clock: 4 Hz only while a test runs
   useEffect(() => {
@@ -64,7 +68,7 @@ export default function Typing() {
   // keys
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") return reset();
+      if (e.key === "Escape") return restart();
       if (finished || e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key === "Spacebar" ? " " : e.key;
       if (k !== "Backspace" && k.length !== 1) return;
@@ -86,7 +90,7 @@ export default function Typing() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [words, startedAt, finished, reset]);
+  }, [words, startedAt, finished, restart]);
 
   useEffect(() => {
     if (flare === null) return;
@@ -136,6 +140,9 @@ export default function Typing() {
         subtitle="Measure your real typing speed. Flo uses it to show how much time speaking saves you."
         actions={
           <div className="flex items-center gap-2">
+            <button onClick={newPassage} className="btn-glass flex h-9 items-center gap-1.5 rounded-xl px-3 text-[13px] font-medium" title="New passage" aria-label="New passage">
+              <RotateCw size={14} /> New passage
+            </button>
             <button
               onClick={() => {
                 setSoundOn(!sound);
@@ -153,7 +160,7 @@ export default function Typing() {
                   key={d}
                   onClick={() => {
                     setMinutes(d);
-                    reset();
+                    restart();
                   }}
                   className={clsx("relative h-8 rounded-lg px-3 text-[13px] font-medium transition", minutes === d ? "text-[var(--fg)]" : "text-muted hover:text-[var(--fg)]")}
                   aria-pressed={minutes === d}
@@ -241,7 +248,7 @@ export default function Typing() {
           <input ref={input} aria-label="Typing input" className="absolute h-0 w-0 opacity-0" autoFocus readOnly />
           {!startedAt && (
             <div className="pointer-events-none mt-4 flex items-center justify-center gap-2 text-[12.5px] text-muted">
-              <Keyboard size={14} className="text-brand-300" /> Start typing to begin. Space moves to the next word. Esc restarts.
+              <Keyboard size={14} className="text-brand-300" /> Start typing to begin. Space moves to the next word. Esc restarts, New passage loads fresh text.
             </div>
           )}
         </Card>
@@ -254,7 +261,7 @@ export default function Typing() {
           wrongWords={stats.wrongWords}
           before={settings?.typingWpm ?? 40}
           applied={applied}
-          onRetry={reset}
+          onRetry={restart}
           onApply={async () => {
             if (!settings) return;
             await setSettings({ ...settings, typingWpm: stats.net });

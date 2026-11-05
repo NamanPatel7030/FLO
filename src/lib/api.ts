@@ -33,6 +33,9 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   return invoke<T>(cmd, args);
 }
 
+/** Raw command call (for modules that keep their own typed wrappers, e.g. lib/account.ts). */
+export const invokeRaw = call;
+
 /** Subscribe to a backend event. Returns an unsubscribe fn (safe to call immediately). */
 export function on<T>(event: string, cb: (payload: T) => void): () => void {
   if (!isTauri) return mockListen<T>(event, cb);

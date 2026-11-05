@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+*.db
+*.db-journal
+.env
+.env.local
+test-results/
+playwright-report/
+tests/.tmp/
+next-env.d.ts.bak

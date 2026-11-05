@@ -17,6 +17,7 @@ const axis = { fill: "var(--chart-axis)", fontSize: 11 };
 
 export default function Analytics() {
   const go = useStore((s) => s.go);
+  const settings = useStore((s) => s.settings);
   const [days, setDays] = useState<(typeof RANGES)[number]>(30);
   const [a, setA] = useState<A | null>(null);
   useEffect(() => {
@@ -68,6 +69,24 @@ export default function Analytics() {
             <Stat label="Meetings" value={formatDuration(a.meetingMinutes * 60)} icon={<Mic size={13} />} tint="#f472b6" />
             <Stat label="To-dos done" value={formatNumber(a.todosDone)} icon={<CheckCircle2 size={13} />} tint="#93ddff" />
           </div>
+
+          <Card className="p-5" data-testid="typing-speed-card">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle icon={<Keyboard size={15} />}>Typing speed</CardTitle>
+                <p className="-mt-1 text-[12.5px] text-muted">Your measured speed. Flo uses it to show how much time speaking saves you.</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <div className="text-[26px] font-semibold leading-none">{settings?.typingWpm ?? 40}</div>
+                  <div className="text-[11px] text-faint">wpm</div>
+                </div>
+                <Button size="sm" icon={<Keyboard size={13} />} onClick={() => go("typing")}>
+                  Test again
+                </Button>
+              </div>
+            </div>
+          </Card>
 
           <Card className="p-5">
             <CardTitle>Words dictated per day</CardTitle>

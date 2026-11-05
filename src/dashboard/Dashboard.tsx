@@ -19,6 +19,8 @@ import { Kbd } from "./ui";
 import { Logo } from "./Logo";
 import { missingRequired, usePermissions } from "./usePermissions";
 import { Onboarding } from "./Onboarding";
+import { SignIn } from "./SignIn";
+import { useAccount } from "../lib/account";
 
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: "home", label: "Home", icon: <HomeIcon size={16} /> },
@@ -54,6 +56,8 @@ export default function Dashboard() {
   const notes = useStore((s) => s.notes);
   const geo = useStore((s) => s.geo);
   const settings = useStore((s) => s.settings);
+  const account = useAccount();
+  const signedIn = !!account.status?.signedIn || (account.offlineOk && !!account.status?.user);
   const openTodos = todos?.filter((t) => t.status === "open").length ?? 0;
   const unseenClaude = claude?.filter((c) => !c.seen).length ?? 0;
   const liveMeeting = notes?.some((n) => n.live);
@@ -158,8 +162,8 @@ export default function Dashboard() {
           </div>
         </main>
         <Toasts />
-        {/* first run (or Settings → General → Run setup again) */}
-        {settings?.onboarded === false && <Onboarding />}
+        {/* account gate first, then first-run onboarding (or Settings → General → Run setup again) */}
+        {account.status && !signedIn ? <SignIn status={account.status} /> : account.status && settings?.onboarded === false ? <Onboarding /> : null}
       </div>
     </MotionConfig>
   );
