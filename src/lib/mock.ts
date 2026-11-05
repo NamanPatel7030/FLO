@@ -711,7 +711,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     }
     case "slack_connect":
       if (!String(args.token ?? "").startsWith("xox")) throw new Error("That doesn't look like a Slack token (xoxp-…)");
-      slackWho = "Parth Gundaniya · Avenuor";
+      slackWho = "Parth Gundaniya · Northwind";
       return slackWho;
     case "slack_status":
       return slackWho;

@@ -8,6 +8,7 @@ import {
   TRAY_TIP_H,
   trayTipHeight,
   ISLAND_EAR,
+  ISLAND_WING,
   peekTileAt,
   SWELL_X,
   SWELL_Y,
@@ -40,7 +41,7 @@ import {
 import { IslandContent, PEEK_ACTIONS } from "./IslandContent";
 import { ConfirmCard, CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, TrayTooltip, type TrayItem } from "./Tray";
 import { runDemo } from "./demo";
-import { Ocean } from "./Ocean";
+import { Ribbon } from "./Ribbon";
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
 
 export interface MeetingInfo {
@@ -634,11 +635,18 @@ export default function Island() {
       >
         {notch && !collapsed && <Ears size={EAR} />}
         <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: radius }}>
-          {/* ocean along the bottom edge while active (idle notch / tray stay pure black, zero CPU) */}
-          {notch && !["collapsed", "tray", "trayTooltip"].includes(shown) && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ opacity: shown === "listening" || shown === "working" ? 0.95 : 0.5 }} data-testid="island-ocean">
-              <Ocean width={Math.max(40, Math.round(pill.width))} height={shown === "listening" || shown === "working" || shown === "done" ? 11 : 16} react={shown === "listening"} calm={shown !== "listening"} />
-            </div>
+          {/* one luminous ribbon inside the wings: listening → working → done (persists across them);
+              unmounted otherwise, so the idle notch / tray never draws */}
+          {notch && (shown === "listening" || shown === "working" || shown === "done") && (
+            <Ribbon
+              width={Math.round(geo.notchWidth + 2 * ISLAND_WING)}
+              height={geo.notchHeight}
+              notchWidth={geo.notchWidth}
+              wing={ISLAND_WING}
+              mode={shown === "listening" ? "listen" : shown === "done" ? "done" : phase === "thinking" ? "think" : "transcribe"}
+              leftWing={shown === "working"}
+              bright={message === "hands-free"}
+            />
           )}
           {/* tiny shimmer along the bottom rim while swelling */}
           {notch && swollen && !reduce && (

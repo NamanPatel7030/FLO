@@ -190,18 +190,21 @@ export function IslandContent(p: Props) {
           <Waveform bars={notch ? 8 : 14} height={notch ? 15 : 20} barWidth={notch ? 2.5 : 3} gap={2} />
         </span>
       );
+      // notch: the right wing belongs to the luminous ribbon (drawn by Island)
       return (
         <div className="h-full cursor-pointer" onClick={() => api.stopSession()} title={locked ? "Hands-free" : undefined}>
-          <Wings notch={notch} geo={geo} left={<ModeIcon mode={p.mode} locked={locked} />} right={wave} />
+          <Wings notch={notch} geo={geo} left={<ModeIcon mode={p.mode} locked={locked} />} right={notch ? null : wave} />
         </div>
       );
     }
 
     case "working": {
       const kind = p.mode === "assistant" && p.phase === "thinking" ? "think" : "transcribe";
+      // notch: the ribbon settles and carries a light pulse (drawn by Island); keep an a11y status here
+      if (notch) return <div role="status" aria-label={kind === "think" ? "Thinking" : "Transcribing"} className="h-full" />;
       return (
-        <div className="flex h-full items-center justify-center" style={notch ? { height: geo.notchHeight } : undefined}>
-          <FlowWave width={Math.max(80, p.pillW - (notch ? 20 : 32))} height={notch ? 16 : 18} kind={kind} />
+        <div className="flex h-full items-center justify-center">
+          <FlowWave width={Math.max(80, p.pillW - 32)} height={18} kind={kind} />
         </div>
       );
     }
@@ -216,7 +219,13 @@ export function IslandContent(p: Props) {
               <CheckBadge />
             </motion.div>
           }
-          right={<span className="h-1.5 w-1.5 rounded-full bg-brand-300 shadow-[0_0_8px_rgba(102,206,255,0.9)]" aria-label={p.mode === "meeting" ? "Saved" : "Done"} />}
+          right={
+            notch ? (
+              <span className="sr-only">{p.mode === "meeting" ? "Saved" : "Done"}</span>
+            ) : (
+              <span className="h-1.5 w-1.5 rounded-full bg-brand-300 shadow-[0_0_8px_rgba(102,206,255,0.9)]" aria-label={p.mode === "meeting" ? "Saved" : "Done"} />
+            )
+          }
         />
       );
 

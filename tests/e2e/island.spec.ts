@@ -217,3 +217,20 @@ test("many Claude sessions: avatars + a list of all of them", async ({ page }) =
   for (let i = 0; i < 7; i++) await expect(page.getByRole("button", { name: `Open proj-${i}` })).toBeAttached();
   await expect(page.getByText(/[—–]/)).toHaveCount(0);
 });
+
+test("ribbon: lives only while listening / working / done, never when idle", async ({ page }) => {
+  await openIsland(page);
+  const ribbon = page.locator('[data-testid="island-ribbon"]');
+  await expect(ribbon).toHaveCount(0); // idle tray: nothing drawn
+  await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
+  await expect(ribbon).toHaveAttribute("data-mode", "listen");
+  await emit(page, "flo://state", { phase: "transcribing", mode: "dictation" });
+  await expect(ribbon).toHaveAttribute("data-mode", "transcribe");
+  await emit(page, "flo://state", { phase: "thinking", mode: "assistant" });
+  await expect(ribbon).toHaveAttribute("data-mode", "think");
+  await emit(page, "flo://state", { phase: "done", mode: "dictation" });
+  await expect(ribbon).toHaveAttribute("data-mode", "done");
+  await emit(page, "flo://state", { phase: "idle", mode: "dictation" });
+  await expect(ribbon).toHaveCount(0);
+  await expect(page.locator('[data-testid="island-ocean"]')).toHaveCount(0);
+});

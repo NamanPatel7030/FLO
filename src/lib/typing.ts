@@ -1,37 +1,96 @@
-// Typing speed test helpers (pure).
+// Typing speed test engine (pure, word-based like Monkeytype).
+//
+// Each word is compared on its own: Space commits the current word and moves on, so one missed
+// character only marks THAT word. Backspace may return into the previous word only if it has errors.
 
-export interface WpmResult {
-  /** chars typed that match the passage */
-  correctChars: number;
-  /** wrong chars still present in the typed text (uncorrected errors) */
-  errors: number;
-  typedChars: number;
-  /** (all typed chars / 5) / minutes */
-  gross: number;
-  /** ((correctChars / 5) − uncorrected errors) / minutes, never below 0 */
-  net: number;
-  /** correctChars / typedChars, 0–100 */
-  accuracy: number;
+export interface TypingState {
+  /** committed words as the user typed them */
+  typed: string[];
+  /** the word being typed */
+  current: string;
+  /** keystroke accounting (for accuracy) */
+  correctKeys: number;
+  totalKeys: number;
+  /** consecutive correctly committed words */
+  streak: number;
 }
 
-/** Standard net WPM: ((correctChars / 5) − uncorrectedErrors) / minutes. */
-export function computeWpm(typed: string, target: string, elapsedMs: number): WpmResult {
-  let correct = 0;
-  let errors = 0;
-  for (let i = 0; i < typed.length; i++) {
-    if (typed[i] === target[i]) correct++;
-    else errors++;
+export const initialTyping = (): TypingState => ({ typed: [], current: "", correctKeys: 0, totalKeys: 0, streak: 0 });
+
+/** Apply one key ("Backspace", " " or a single character) to the state. */
+export function typeKey(st: TypingState, words: string[], key: string): TypingState {
+  const i = st.typed.length;
+  const target = words[i] ?? "";
+  if (key === "Backspace") {
+    if (st.current.length) return { ...st, current: st.current.slice(0, -1) };
+    // step back into the previous word only if it was wrong
+    if (i > 0 && st.typed[i - 1] !== words[i - 1]) {
+      return { ...st, typed: st.typed.slice(0, -1), current: st.typed[i - 1], streak: 0 };
+    }
+    return st;
   }
+  if (key === " ") {
+    if (!st.current.length) return st; // ignore leading / double spaces
+    const ok = st.current === target;
+    return {
+      typed: [...st.typed, st.current],
+      current: "",
+      correctKeys: st.correctKeys + (ok ? 1 : 0),
+      totalKeys: st.totalKeys + 1,
+      streak: ok ? st.streak + 1 : 0,
+    };
+  }
+  if (key.length !== 1) return st;
+  const pos = st.current.length;
+  const ok = pos < target.length && target[pos] === key;
+  return { ...st, current: st.current + key, correctKeys: st.correctKeys + (ok ? 1 : 0), totalKeys: st.totalKeys + 1 };
+}
+
+export type LetterState = "correct" | "wrong" | "extra" | "missing" | "pending";
+
+/** Per-letter states for word `i` (committed, current or upcoming). */
+export function wordLetters(word: string, typed: string | undefined, committed: boolean): { ch: string; state: LetterState }[] {
+  const out: { ch: string; state: LetterState }[] = [];
+  const t = typed ?? "";
+  for (let j = 0; j < word.length; j++) {
+    if (j < t.length) out.push({ ch: word[j], state: t[j] === word[j] ? "correct" : "wrong" });
+    else out.push({ ch: word[j], state: committed ? "missing" : "pending" });
+  }
+  for (let j = word.length; j < t.length; j++) out.push({ ch: t[j], state: "extra" });
+  return out;
+}
+
+export interface WpmResult {
+  /** chars of correctly typed words (+ their spaces) / 5 per minute */
+  net: number;
+  /** everything typed (incl. spaces) / 5 per minute */
+  raw: number;
+  /** correct keystrokes / total keystrokes, 0–100 */
+  accuracy: number;
+  correctWords: number;
+  wrongWords: number;
+}
+
+export function computeWpm(words: string[], st: Pick<TypingState, "typed" | "current" | "correctKeys" | "totalKeys">, elapsedMs: number): WpmResult {
   const minutes = Math.max(elapsedMs, 1000) / 60000;
-  const gross = typed.length / 5 / minutes;
-  const net = Math.max(0, (correct / 5 - errors) / minutes);
+  let correctChars = 0;
+  let rawChars = 0;
+  let correctWords = 0;
+  st.typed.forEach((t, i) => {
+    rawChars += t.length + 1;
+    if (t === words[i]) {
+      correctChars += t.length + 1;
+      correctWords++;
+    }
+  });
+  rawChars += st.current.length;
+  if (st.current && st.current === words[st.typed.length]) correctChars += st.current.length;
   return {
-    correctChars: correct,
-    errors,
-    typedChars: typed.length,
-    gross: Math.round(gross),
-    net: Math.round(net),
-    accuracy: typed.length ? Math.round((correct / typed.length) * 1000) / 10 : 100,
+    net: Math.round(correctChars / 5 / minutes),
+    raw: Math.round(rawChars / 5 / minutes),
+    accuracy: st.totalKeys ? Math.round((st.correctKeys / st.totalKeys) * 1000) / 10 : 100,
+    correctWords,
+    wrongWords: st.typed.length - correctWords,
   };
 }
 
@@ -50,10 +109,10 @@ export const PASSAGES = [
   "Travel light and keep notes. The details you think you will remember fade within a week, but a few honest lines written on the train will bring the whole journey back years later.",
 ];
 
-/** A long practice text: passages in a shuffled order (enough for a 5 minute test). */
-export function buildPracticeText(seed = Date.now()): string {
+/** Words for a test: passages in a shuffled order, repeated (enough for 5 minutes). */
+export function buildPracticeWords(seed = Date.now()): string[] {
   const order = PASSAGES.map((p, i) => ({ p, k: Math.sin(seed + i * 7.13) }))
     .sort((a, b) => a.k - b.k)
     .map((x) => x.p);
-  return [...order, ...order].join(" ");
+  return [...order, ...order, ...order].join(" ").split(" ");
 }

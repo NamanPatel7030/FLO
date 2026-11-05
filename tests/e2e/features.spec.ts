@@ -3,6 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 const mock = (page: Page) => page.waitForFunction(() => !!(window as any).__floMock);
 const invoke = (page: Page, cmd: string, args: Record<string, unknown> = {}) =>
   page.evaluate(([c, a]) => (window as any).__floMock.invoke(c, a), [cmd, args] as const);
+/** page.clock.install() keeps time flowing; pause it so the mock meeting timer can't race the test. */
+const freeze = (page: Page) => page.clock.pauseAt(new Date(Date.now() + 2000));
 const emit = (page: Page, event: string, payload: unknown) =>
   page.evaluate(([e, p]) => (window as any).__floMock.emit(e, p), [event, payload] as const);
 
@@ -30,7 +32,10 @@ test("about: maker card with name and site link", async ({ page }) => {
   await mock(page);
   await expect(page.getByText("Naman Gundaniya")).toBeVisible();
   await expect(page.getByRole("button", { name: "hellonaman.com" })).toBeVisible();
-  await expect(page.getByText("I turn messy problems into AI agents that ship.")).toBeVisible();
+  await expect(page.getByText("I'm the human. AI is my leverage. Together, we build anything.")).toBeVisible();
+  await expect(page.getByText("Forward Deployed Engineer", { exact: true })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Naman Gundaniya" })).toBeVisible();
+  await expect(page.getByText(/CTO|Avenuor/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Crafted by Naman Gundaniya" })).toBeVisible();
 });
 
@@ -38,6 +43,7 @@ test("live meeting: partial line grows, then the committed segment replaces it",
   await page.clock.install(); // freeze the mock's own meeting timer
   await page.goto("/#/notes");
   await mock(page);
+  await freeze(page);
   const note = await invoke(page, "start_meeting", { title: "Design sync" });
   await page.goto(`/#/notes/${note.id}`);
   const live = page.locator('[data-testid="live-line"]');
@@ -56,6 +62,7 @@ test("meeting stop: late live:true events never bring the notch pill back", asyn
   await page.goto("/?nh=38&nw=200#/island");
   await mock(page);
   await page.locator('[aria-label="todos"]').waitFor();
+  await freeze(page);
   const note = await invoke(page, "start_meeting", { title: "Standup" });
   await emit(page, "flo://meeting", { noteId: note.id, partial: "morning everyone", elapsedSec: 2, live: true });
   await page.clock.runFor(800);
@@ -78,6 +85,7 @@ test("notes: Stop switches to Summarizing and ignores late events", async ({ pag
   await page.clock.install();
   await page.goto("/#/notes");
   await mock(page);
+  await freeze(page);
   const note = await invoke(page, "start_meeting", { title: "Retro" });
   await page.goto(`/#/notes/${note.id}`);
   await expect(page.locator('[data-testid="live-line"]')).toBeVisible();
@@ -90,21 +98,38 @@ test("notes: Stop switches to Summarizing and ignores late events", async ({ pag
   expect(n.live).toBe(false);
 });
 
+const wordsOnScreen = (page: Page) => page.locator("[data-word]").evaluateAll((els) => els.map((e) => e.textContent ?? ""));
+
+test("typing test: one wrong letter only marks that word", async ({ page }) => {
+  await page.goto("/#/typing");
+  await mock(page);
+  await page.locator("[data-word]").first().waitFor();
+  const [w0, w1, w2] = await wordsOnScreen(page);
+  const wrong = w0.slice(0, -1) + (w0.endsWith("x") ? "y" : "x");
+  await page.keyboard.type(`${wrong} ${w1} ${w2} `);
+  await expect(page.locator('[data-word="0"]')).toHaveAttribute("data-state", "wrong");
+  await expect(page.locator('[data-word="1"]')).toHaveAttribute("data-state", "correct");
+  await expect(page.locator('[data-word="2"]')).toHaveAttribute("data-state", "correct");
+  await expect(page.locator('[data-word="3"]')).toHaveAttribute("data-state", "current");
+  // the passage box shows whole lines only (3 × line height)
+  const h = await page.locator('[data-testid="typing-passage"]').evaluate((el) => el.getBoundingClientRect().height);
+  expect(h).toBe(126);
+});
+
 test("typing test: 1 minute, finish, apply speed to settings", async ({ page }) => {
   await page.clock.install();
   await page.goto("/#/typing");
   await mock(page);
+  await page.clock.pauseAt(new Date(Date.now() + 2000));
   await page.getByRole("button", { name: "1 min" }).click();
-  const box = page.getByLabel("Typing input");
-  await box.focus();
-  const passage = (await page.locator('[data-testid="typing-passage"]').innerText()).replace(/\s+/g, " ").slice(0, 120);
-  await page.keyboard.type(passage);
+  await page.locator("[data-word]").first().waitFor();
+  const words = (await wordsOnScreen(page)).slice(0, 30);
+  await page.keyboard.type(words.join(" ") + " ");
   await page.clock.runFor(61_000);
-  await page.clock.runFor(1_500); // result transition
   const result = page.locator('[data-testid="typing-result"]');
   await expect(result).toBeVisible();
-  const wpm = Number((await result.innerText()).match(/\d+/)![0]);
-  expect(wpm).toBeGreaterThan(0);
+  const wpm = Number(await result.getAttribute("data-wpm"));
+  expect(wpm).toBeGreaterThan(20); // 30 correct words in one minute
   await page.getByRole("button", { name: "Use this speed" }).click();
   await expect.poll(async () => (await invoke(page, "get_settings")).typingWpm).toBe(wpm);
   await expect(page.getByText(/Typing speed updated/)).toBeVisible();
@@ -138,7 +163,7 @@ test("integrations: 4 agent cards, webhook token hidden, Slack connect flow", as
   await expect(page.getByText(/token=TOKEN/)).toHaveCount(0);
   await page.getByLabel("Slack token").fill("xoxp-123-abc");
   await page.getByRole("button", { name: "Connect" }).last().click();
-  await expect(page.locator('[data-testid="slack-connected"]')).toContainText("Parth Gundaniya · Avenuor");
+  await expect(page.locator('[data-testid="slack-connected"]')).toContainText("Parth Gundaniya · Northwind");
   await page.getByText("Turn unanswered DMs and mentions into to-dos").click();
   await expect.poll(async () => (await invoke(page, "get_settings")).slackSync).toBe(true);
   await page.getByRole("button", { name: "Sync now" }).click();

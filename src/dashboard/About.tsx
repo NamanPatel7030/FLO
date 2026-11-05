@@ -12,7 +12,7 @@ const LinkedinIcon = () => (
   </svg>
 );
 import { Logo } from "./Logo";
-import { MAKER_SITE, openExternal } from "./Signature";
+import { MAKER_SITE, openExternal, Portrait, SignatureMark } from "./Signature";
 import { Card } from "./ui";
 
 const LINKS = [
@@ -38,16 +38,16 @@ export function About() {
         <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand-400/10 blur-3xl" />
         <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-faint">Made by</div>
         <div className="relative flex items-start gap-4">
-          <span className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full p-[2px] accent-gradient shadow-[0_0_24px_-6px_rgba(102,206,255,0.7)]">
-            <span className="flex h-full w-full items-center justify-center rounded-full bg-[#05090f] text-[17px] font-semibold tracking-tight text-brand-200">NG</span>
-          </span>
+          <Portrait size={72} />
           <div className="min-w-0 flex-1">
             <div className="text-[16px] font-semibold tracking-tight">Naman Gundaniya</div>
-            <div className="mt-0.5 text-[12.5px] text-muted">Forward Deployed Engineer · CTO and Founding Engineer at Avenuor</div>
+            <div className="mt-0.5 text-[12.5px] text-muted">Forward Deployed Engineer</div>
             <blockquote className="mt-3 border-l-2 border-brand-300/50 pl-3 text-[13.5px] italic leading-relaxed text-[var(--fg)]/85">
-              I turn messy problems into AI agents that ship.
+              I'm the human. AI is my leverage. Together, we build anything.
             </blockquote>
-            <div className="mt-1.5 text-[12px] text-faint">Production AI agents, multi-agent systems, RAG and MCP servers. Based in India.</div>
+            <div className="mt-1 flex justify-end pr-2" aria-label="Naman">
+              <SignatureMark id="about-sig" className="h-[26px] w-[60px]" />
+            </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {LINKS.map((l) => (
                 <button key={l.url} onClick={() => openExternal(l.url)} className="btn-glass flex h-8 items-center gap-1.5 rounded-xl px-3 text-[12.5px]" title={l.url} aria-label={l.label}>

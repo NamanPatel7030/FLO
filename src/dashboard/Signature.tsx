@@ -1,6 +1,7 @@
 // Maker credit: a handwritten "Naman" that draws itself once, and again on hover.
 import { useState } from "react";
 import { isTauri } from "../lib/api";
+import naman from "../assets/naman.png";
 
 export const MAKER_SITE = "https://hellonaman.com";
 
@@ -22,37 +23,74 @@ const PATH =
   "C68 22 70 18 73 18 C76 18 75 24 76 28 C78 29 82 26 85 22 " +
   "M10 36 C30 33 55 33 86 31";
 
+/** The handwritten "Naman" mark (draws itself; remount with a new key to redraw). */
+export function SignatureMark({ className = "h-[22px] w-[52px]", id = "sig" }: { className?: string; id?: string }) {
+  return (
+    <svg viewBox="0 0 92 40" className={className} aria-hidden>
+      <defs>
+        <linearGradient id={`${id}-grad`} x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stopColor="#e3f6ff" />
+          <stop offset="0.55" stopColor="#66ceff" />
+          <stop offset="1" stopColor="#1a9be0" />
+        </linearGradient>
+      </defs>
+      <path
+        d={PATH}
+        pathLength={1}
+        fill="none"
+        stroke={`url(#${id}-grad)`}
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="flo-sig"
+        style={{ filter: "drop-shadow(0 0 3px rgba(102,206,255,0.45))" }}
+      />
+    </svg>
+  );
+}
+
+/** Round cut-out portrait over a light-blue → deep-navy glow, thin ring, subtle shine. */
+export function Portrait({ size }: { size: number }) {
+  return (
+    <span
+      className="relative inline-flex shrink-0 overflow-hidden rounded-full"
+      style={{
+        width: size,
+        height: size,
+        background: "radial-gradient(circle at 50% 35%, #66ceff 0%, #1a9be0 38%, #062a44 78%, #020b14 100%)",
+        boxShadow: "0 0 0 1px rgba(147,221,255,0.55), 0 0 18px -4px rgba(102,206,255,0.6)",
+      }}
+    >
+      <img src={naman} alt="Naman Gundaniya" className="absolute inset-x-0 bottom-0 h-[112%] w-full object-cover object-top" draggable={false} />
+      <span className="pointer-events-none absolute inset-0 rounded-full" style={{ background: "linear-gradient(160deg, rgba(255,255,255,0.28), transparent 42%)" }} />
+    </span>
+  );
+}
+
 export function Signature() {
   const [k, setK] = useState(0);
+  const [hover, setHover] = useState(false);
   return (
     <button
       onClick={() => openExternal(MAKER_SITE)}
-      onMouseEnter={() => setK((x) => x + 1)}
+      onMouseEnter={() => {
+        setK((x) => x + 1);
+        setHover(true);
+      }}
+      onMouseLeave={() => setHover(false)}
       title="Crafted by Naman Gundaniya · hellonaman.com"
       aria-label="Crafted by Naman Gundaniya"
       className="group flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-[var(--glass)]"
     >
       <span className="text-[9.5px] font-medium uppercase tracking-[0.14em] text-faint group-hover:text-muted">crafted by</span>
-      <svg key={k} viewBox="0 0 92 40" className="h-[22px] w-[52px]" aria-hidden>
-        <defs>
-          <linearGradient id="sig-grad" x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0" stopColor="#e3f6ff" />
-            <stop offset="0.55" stopColor="#66ceff" />
-            <stop offset="1" stopColor="#1a9be0" />
-          </linearGradient>
-        </defs>
-        <path
-          d={PATH}
-          pathLength={1}
-          fill="none"
-          stroke="url(#sig-grad)"
-          strokeWidth={2.2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="flo-sig"
-          style={{ filter: "drop-shadow(0 0 3px rgba(102,206,255,0.45))" }}
-        />
-      </svg>
+      <span
+        className="overflow-hidden transition-all duration-300"
+        style={{ width: hover ? 24 : 0, opacity: hover ? 1 : 0 }}
+        aria-hidden
+      >
+        <Portrait size={24} />
+      </span>
+      <SignatureMark key={k} />
     </button>
   );
 }
