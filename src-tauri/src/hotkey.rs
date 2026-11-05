@@ -13,7 +13,12 @@ pub enum HotkeyEvent {
     Release,
     /// another key was pressed while holding → it was a shortcut, not push-to-talk
     Cancel,
+    /// Space pressed while holding → hands-free: keep listening after the keys are released
+    Lock(Mode),
 }
+
+pub const KEY_SPACE: i64 = 49;
+pub const KEY_ESC: i64 = 53;
 
 /// Set of held modifiers (also used as a combo definition).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,11 +92,26 @@ pub struct Machine {
     mode: Option<Mode>,
     /// the combo that started the session — releasing it ends the session
     base: Mods,
+    /// hands-free (ctrl/fn + Space): releasing the keys doesn't stop
+    locked: bool,
+    /// while locked: is the base combo currently held (to detect the finishing tap)
+    base_held: bool,
 }
 
 impl Machine {
     /// Feed the full current modifier state.
     pub fn update_mods(&mut self, m: Mods, cfg: &HotkeyConfig) -> Option<HotkeyEvent> {
+        if self.locked {
+            let holding = m.contains(&self.base);
+            let was = self.base_held;
+            self.base_held = holding;
+            if holding && !was {
+                // tapped the key again → finish
+                self.reset();
+                return Some(HotkeyEvent::Release);
+            }
+            return None;
+        }
         match self.mode {
             None => {
                 let mode = if m == cfg.assistant {
@@ -124,13 +144,46 @@ impl Machine {
         }
     }
 
-    /// A non-modifier key went down.
-    pub fn key_down(&mut self) -> Option<HotkeyEvent> {
-        if self.mode.take().is_some() {
-            self.held = false;
-            return Some(HotkeyEvent::Cancel);
+    fn reset(&mut self) {
+        self.mode = None;
+        self.held = false;
+        self.locked = false;
+        self.base_held = false;
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
+    /// A non-modifier key went down. Returns (event, swallow_the_key).
+    pub fn key_down_code(&mut self, keycode: i64) -> (Option<HotkeyEvent>, bool) {
+        let Some(mode) = self.mode else { return (None, false) };
+        if self.locked {
+            return match keycode {
+                KEY_ESC => {
+                    self.reset();
+                    (Some(HotkeyEvent::Cancel), true)
+                }
+                KEY_SPACE if self.base_held => {
+                    self.reset();
+                    (Some(HotkeyEvent::Release), true)
+                }
+                _ => (None, false), // typing while hands-free is fine
+            };
         }
-        None
+        if keycode == KEY_SPACE {
+            self.locked = true;
+            self.base_held = true;
+            return (Some(HotkeyEvent::Lock(mode)), true);
+        }
+        self.reset();
+        (Some(HotkeyEvent::Cancel), false)
+    }
+
+    /// A non-modifier key went down (no keycode known → treat as a shortcut).
+    #[cfg(test)]
+    pub fn key_down(&mut self) -> Option<HotkeyEvent> {
+        self.key_down_code(0).0
     }
 
     /// Legacy single-combo API (fn + optional ctrl), kept for tests/back-compat.
@@ -212,6 +265,45 @@ mod tests {
         assert!(!key_cancels(63, 1, me)); // fn
         assert!(!key_cancels(179, 1, me)); // Globe
         assert!(key_cancels(8, 1, me)); // the user's real C
+    }
+
+    #[test]
+    fn ctrl_space_goes_hands_free_until_tapped_again() {
+        let cfg = HotkeyConfig::default();
+        let mut mc = Machine::default();
+        assert_eq!(mc.update_mods(m("ctrl"), &cfg), Some(HotkeyEvent::Press(Mode::Dictation)));
+        assert_eq!(mc.key_down_code(KEY_SPACE), (Some(HotkeyEvent::Lock(Mode::Dictation)), true)); // swallowed
+        assert_eq!(mc.update_mods(m(""), &cfg), None); // let go → keeps listening
+        assert_eq!(mc.key_down_code(12), (None, false)); // typing doesn't cancel
+        assert_eq!(mc.update_mods(m("ctrl"), &cfg), Some(HotkeyEvent::Release)); // tap ctrl → finish
+        assert_eq!(mc.update_mods(m(""), &cfg), None);
+        assert_eq!(mc.update_mods(m("ctrl"), &cfg), Some(HotkeyEvent::Press(Mode::Dictation))); // fresh start works
+    }
+
+    #[test]
+    fn fn_space_hands_free_assistant_and_esc_cancels() {
+        let cfg = HotkeyConfig::default();
+        let mut mc = Machine::default();
+        mc.update_mods(m("fn"), &cfg);
+        assert_eq!(mc.key_down_code(KEY_SPACE), (Some(HotkeyEvent::Lock(Mode::Assistant)), true));
+        mc.update_mods(m(""), &cfg);
+        assert_eq!(mc.key_down_code(KEY_ESC), (Some(HotkeyEvent::Cancel), true));
+        assert!(!mc.is_locked());
+    }
+
+    #[test]
+    fn space_again_while_holding_finishes() {
+        let cfg = HotkeyConfig::default();
+        let mut mc = Machine::default();
+        mc.update_mods(m("ctrl"), &cfg);
+        mc.key_down_code(KEY_SPACE);
+        assert_eq!(mc.key_down_code(KEY_SPACE), (Some(HotkeyEvent::Release), true)); // still holding ctrl
+    }
+
+    #[test]
+    fn space_without_hotkey_is_untouched() {
+        let mut mc = Machine::default();
+        assert_eq!(mc.key_down_code(KEY_SPACE), (None, false));
     }
 
     #[test]

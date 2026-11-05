@@ -186,9 +186,16 @@ export function IslandContent(p: Props) {
           <Wings notch geo={geo} left={<ModeIcon mode={p.mode} />} right={<Waveform bars={8} height={15} barWidth={2.5} gap={2} />} />
           <div className="flex items-center justify-center gap-2 px-4" style={{ height: ISLAND_ROW }}>
             <span className="text-[13px] font-medium text-white/90">{ask ? "Ask Flo anything" : "Listening…"}</span>
-            <span className="text-[12px] text-white/40">
-              release {ask ? p.keys.asst : p.keys.dict} to {ask ? "send" : "paste"}
-            </span>
+            {p.message === "hands-free" ? (
+              <span className="flex items-center gap-1.5 text-[12px] text-white/45">
+                <span className="rounded-full border border-brand-300/30 bg-brand-300/10 px-1.5 py-px text-[10.5px] font-medium text-brand-200">hands-free</span>
+                tap {ask ? p.keys.asst : p.keys.dict} to {ask ? "send" : "paste"} · esc to cancel
+              </span>
+            ) : (
+              <span className="text-[12px] text-white/40">
+                release {ask ? p.keys.asst : p.keys.dict} to {ask ? "send" : "paste"} · + space for hands-free
+              </span>
+            )}
           </div>
         </div>
       );

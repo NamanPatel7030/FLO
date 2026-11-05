@@ -34,6 +34,11 @@ extern "C" {
 }
 
 static HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// mach port of the active tap, to re-enable it if macOS pauses it (timeout / user input)
+static TAP_PORT: std::sync::atomic::AtomicPtr<c_void> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+extern "C" {
+    fn CGEventTapEnable(tap: *mut c_void, enable: bool);
+}
 static HOTKEY_CFG: parking_lot::RwLock<Option<HotkeyConfig>> = parking_lot::RwLock::new(None);
 
 /// Apply the configured push-to-talk combos (takes effect immediately).
@@ -217,18 +222,31 @@ fn run_tap(cb: Arc<HotkeyCallback>) -> bool {
             let tap = CGEventTap::new(
                 CGEventTapLocation::Session,
                 CGEventTapPlacement::HeadInsertEventTap,
-                CGEventTapOptions::ListenOnly,
+                // active tap (not listen-only) so the Space of ctrl/fn + Space isn't typed into the app
+                CGEventTapOptions::Default,
                 vec![CGEventType::FlagsChanged, CGEventType::KeyDown],
                 move |_proxy, ty, event| {
+                    if matches!(ty, CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput) {
+                        let p = TAP_PORT.load(Ordering::SeqCst);
+                        if !p.is_null() {
+                            unsafe { CGEventTapEnable(p, true) };
+                        }
+                        return None;
+                    }
                     let ev = match ty {
                         CGEventType::KeyDown => {
                             use core_graphics::event::EventField;
                             let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
                             let src = event.get_integer_value_field(EventField::EVENT_SOURCE_UNIX_PROCESS_ID);
-                            if crate::hotkey::key_cancels(code, src, std::process::id() as i64) {
-                                machine.lock().key_down()
-                            } else {
+                            let repeat = event.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) != 0;
+                            if repeat || !crate::hotkey::key_cancels(code, src, std::process::id() as i64) {
                                 None
+                            } else {
+                                let (ev, swallow) = machine.lock().key_down_code(code);
+                                if swallow {
+                                    event.set_type(CGEventType::Null); // drop the key
+                                }
+                                ev
                             }
                         }
                         CGEventType::FlagsChanged => {
@@ -253,6 +271,10 @@ fn run_tap(cb: Arc<HotkeyCallback>) -> bool {
             );
             match tap {
                 Ok(tap) => unsafe {
+                    {
+                        use core_foundation::base::TCFType;
+                        TAP_PORT.store(tap.mach_port.as_concrete_TypeRef() as *mut c_void, Ordering::SeqCst);
+                    }
                     let src = tap.mach_port.create_runloop_source(0).expect("runloop source");
                     CFRunLoop::get_current().add_source(&src, kCFRunLoopCommonModes);
                     tap.enable();

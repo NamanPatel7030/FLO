@@ -11,6 +11,22 @@ use std::time::Instant;
 const MIN_HOLD_MS: u128 = 250;
 /// a single push-to-talk recording never runs longer than this
 const MAX_RECORDING_SECS: u64 = 120;
+/// hands-free recordings may run longer
+const MAX_HANDS_FREE_SECS: u64 = 600;
+
+/// ctrl/fn + Space: keep listening after the keys are released.
+pub fn lock(st: &Shared, mode: Mode) {
+    use std::sync::atomic::Ordering;
+    let mut g = st.session.lock();
+    match g.as_mut() {
+        Some(s) => {
+            s.locked = true;
+            st.state(Phase::Listening, s.mode, Some("hands-free".into()));
+        }
+        None => st.lock_pending.store(true, Ordering::SeqCst), // start still in progress
+    }
+    let _ = mode;
+}
 
 /// `via_hotkey`: started by holding a key → if the key is already up when we're ready
 /// (quick tap released during the ~300 ms start), cancel instead of recording forever.
@@ -30,26 +46,32 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
     } else {
         None
     };
-    if via_hotkey && !st.ptt_down.load(std::sync::atomic::Ordering::SeqCst) {
+    let locked = st.lock_pending.swap(false, std::sync::atomic::Ordering::SeqCst);
+    if via_hotkey && !locked && !st.ptt_down.load(std::sync::atomic::Ordering::SeqCst) {
         // released while we were starting → it was a tap, not push-to-talk
         let _ = recorder.stop();
         st.state(Phase::Idle, mode, None);
         return Ok(());
     }
     let started = Instant::now();
-    *guard = Some(ActiveSession { mode, recorder, front, selection, started, screen });
+    *guard = Some(ActiveSession { mode, recorder, front, selection, started, screen, locked });
     // emit while holding the lock so a concurrent cancel/stop can't be overtaken by "listening"
-    st.state(Phase::Listening, mode, None);
+    st.state(Phase::Listening, mode, locked.then(|| "hands-free".to_string()));
     drop(guard);
-    // watchdog: never record forever
+    // watchdog: never record forever (hands-free gets longer)
     let st2 = st.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(MAX_RECORDING_SECS)).await;
-        let same = st2.session.lock().as_ref().map(|s| s.started == started).unwrap_or(false);
-        if same {
-            log::warn!("recording hit {MAX_RECORDING_SECS}s — stopping");
-            stop(st2).await;
+        let state = st2.session.lock().as_ref().map(|s| (s.started == started, s.locked));
+        let Some((true, locked)) = state else { return };
+        if locked {
+            tokio::time::sleep(std::time::Duration::from_secs(MAX_HANDS_FREE_SECS - MAX_RECORDING_SECS)).await;
+            if st2.session.lock().as_ref().map(|s| s.started != started).unwrap_or(true) {
+                return;
+            }
         }
+        log::warn!("recording hit its time limit — stopping");
+        stop(st2).await;
     });
     Ok(())
 }
@@ -100,7 +122,7 @@ pub async fn stop(st: Shared) {
 }
 
 async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
-    let ActiveSession { mode, recorder, front, selection, started, screen } = sess;
+    let ActiveSession { mode, recorder, front, selection, started, screen, .. } = sess;
     let duration_ms = started.elapsed().as_millis() as u64;
     let samples = tokio::task::spawn_blocking(move || recorder.stop()).await?;
     if audio::rms(&samples) < 0.003 {

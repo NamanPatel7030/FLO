@@ -135,3 +135,17 @@ test("hovering the notch opens the glass quick menu", async ({ page }) => {
   await emit(page, "flo://hover", { inside: false });
   await expect(page.getByText("Dictate")).toHaveCount(0, { timeout: 3000 });
 });
+
+test("hands-free (ctrl/fn + space): hint shows and fits without clipping", async ({ page }) => {
+  await openIsland(page);
+  await emit(page, "flo://state", { phase: "listening", mode: "dictation", message: "hands-free" });
+  await emit(page, "flo://level", { rms: 0.2 });
+  const hint = page.getByText(/esc to cancel/);
+  await expect(hint).toBeVisible();
+  await expect(page.getByText("hands-free", { exact: true })).toBeVisible();
+  const fits = await hint.evaluate((el) => {
+    const row = el.parentElement!;
+    return row.scrollWidth <= row.clientWidth + 1;
+  });
+  expect(fits).toBe(true);
+});

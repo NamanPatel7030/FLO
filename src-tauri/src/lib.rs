@@ -205,8 +205,13 @@ fn start_hotkeys(st: Shared) {
                 st.ptt_down.store(false, std::sync::atomic::Ordering::SeqCst);
                 tauri::async_runtime::spawn(session::stop(st));
             }
+            HotkeyEvent::Lock(mode) => {
+                // keys may now be released; the session keeps going
+                tauri::async_runtime::spawn_blocking(move || session::lock(&st, mode));
+            }
             HotkeyEvent::Cancel => {
                 st.ptt_down.store(false, std::sync::atomic::Ordering::SeqCst);
+                st.lock_pending.store(false, std::sync::atomic::Ordering::SeqCst);
                 tauri::async_runtime::spawn_blocking(move || session::cancel(&st));
             }
         }
@@ -307,6 +312,7 @@ pub fn run() {
                 attention: Mutex::new(Default::default()),
                 attention_paused: AtomicBool::new(false),
                 ptt_down: AtomicBool::new(false),
+                lock_pending: AtomicBool::new(false),
                 attention_captures: AtomicU32::new(0),
                 claude_listening: AtomicBool::new(false),
                 claude_port: claude::PORT,

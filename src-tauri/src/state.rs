@@ -19,6 +19,8 @@ pub struct ActiveSession {
     pub front: FrontApp,
     pub selection: Option<String>,
     pub started: Instant,
+    /// hands-free (ctrl/fn + Space): longer cap, keys released
+    pub locked: bool,
     /// OCR text of the focused window, captured in the background (assistant only)
     pub screen: Option<tauri::async_runtime::JoinHandle<Option<String>>>,
 }
@@ -41,8 +43,10 @@ pub struct AppState {
     pub meeting: Mutex<Option<MeetingHandle>>,
     pub attention: Mutex<AttentionStatus>,
     pub attention_paused: AtomicBool,
-    /// push-to-talk key physically held right now
+    /// push-to-talk key physically held right now (or hands-free locked)
     pub ptt_down: AtomicBool,
+    /// Space arrived before the session finished starting
+    pub lock_pending: AtomicBool,
     pub attention_captures: AtomicU32,
     pub claude_listening: AtomicBool,
     pub claude_port: u16,
