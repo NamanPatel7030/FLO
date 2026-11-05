@@ -1,5 +1,6 @@
 import type {
   Analytics,
+  AssistantMode,
   AssistantResponse,
   AttentionStatus,
   ClaudeEvent,
@@ -59,6 +60,10 @@ export const api = {
   hasApiKey: (provider: KeyProvider) => call<boolean>("has_api_key", { provider }),
   deleteApiKey: (provider: KeyProvider) => call<void>("delete_api_key", { provider }),
   testLlm: () => call<string>("test_llm"),
+  /** live /models list (local Ollama: pulled models); curated fallback when unreachable */
+  providerModels: (provider: string) => call<string[]>("provider_models", { provider }).catch(() => [] as string[]),
+  /** pulled local Ollama models ([] = none / not running); null when the backend lacks the command */
+  localModels: () => call<string[]>("local_models").catch(() => null),
 
   getIslandGeometry: () => call<IslandGeometry>("get_island_geometry"),
   islandResize: (width: number, height: number) => call<void>("island_resize", { width, height }),
@@ -67,7 +72,9 @@ export const api = {
   startSession: (mode: Mode) => call<void>("start_session", { mode }),
   stopSession: () => call<void>("stop_session"),
   cancelSession: () => call<void>("cancel_session"),
-  askAssistant: (text: string) => call<AssistantResponse>("ask_assistant", { text }),
+  askAssistant: (text: string, mode: AssistantMode = "quick") => call<AssistantResponse>("ask_assistant", { text, mode }),
+  /** re-ask a previous answer: deep = reads the focused window, detailed; web = web search + sources */
+  assistantFollowup: (id: string, mode: "deep" | "web") => call<AssistantResponse>("assistant_followup", { id, mode }),
   /** Not in original contract; falls back to [] if backend lacks it. */
   listAssistant: () => call<AssistantResponse[]>("list_assistant").catch(() => [] as AssistantResponse[]),
 

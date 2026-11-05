@@ -4,12 +4,13 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Asterisk, Check, CheckCircle2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
-import { claudeStatusLabel, relativeTime, ISLAND_GAP, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
+import { claudeStatusLabel, relativeTime, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
 import type { ClaudeSession, ConfirmEvent, CorrectionEvent, IslandGeometry, Todo } from "../lib/types";
+import { CardRow } from "./CardRow";
 
 export type TrayItem =
-  | { id: string; kind: "claude"; session: ClaudeSession }
-  | { id: "more"; kind: "more"; sessions: ClaudeSession[] }
+  /** ALL agent sessions behind one stacked icon (sorted most urgent first) */
+  | { id: "agents"; kind: "agents"; sessions: ClaudeSession[] }
   | { id: "todos"; kind: "todos"; todos: Todo[] }
   | { id: "meeting"; kind: "meeting"; app: string };
 
@@ -150,19 +151,38 @@ function Chip({ children, hot, badge, tone = "blue" }: { children: React.ReactNo
   );
 }
 
+/** One stacked icon for every agent session: the most urgent one on top, a ghost disc behind
+ *  when there are more, and a small count badge. Status (ring / check / stepped spinner) comes
+ *  from the most urgent session. */
+function AgentStack({ sessions, hot }: { sessions: ClaudeSession[]; hot?: boolean }) {
+  const top = sessions[0];
+  const n = sessions.length;
+  return (
+    <span className="relative flex h-5 w-5 items-center justify-center">
+      {n > 1 && (
+        <span
+          className="absolute h-5 w-5 rounded-full"
+          style={{ transform: "translate(4px, -3px) scale(0.86)", background: sourceLook(sessions[1].source).bg, opacity: 0.45, boxShadow: "0 0 0 1.5px #000" }}
+          aria-hidden
+        />
+      )}
+      <ClaudeAvatar status={top.status} hot={hot} source={top.source} />
+      {n > 1 && (
+        <span
+          className="absolute -right-[7px] -top-[5px] flex h-[13px] min-w-[13px] items-center justify-center rounded-full bg-white px-[3px] text-[8.5px] font-bold leading-none text-black ring-[1.5px] ring-black"
+          data-testid="agents-count"
+        >
+          {n > 9 ? "9+" : n}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function TrayItemView({ item, hot }: { item: TrayItem; hot?: boolean }) {
   switch (item.kind) {
-    case "claude":
-      return <ClaudeAvatar status={item.session.status} hot={hot} source={item.session.source} />;
-    case "more": {
-      // all sessions: total count, badge = how many are still working
-      const working = item.sessions.filter((s) => s.status === "working").length;
-      return (
-        <Chip hot={hot} badge={working}>
-          {item.sessions.length}
-        </Chip>
-      );
-    }
+    case "agents":
+      return <AgentStack sessions={item.sessions} hot={hot} />;
     case "todos":
       return (
         <Chip hot={hot} badge={item.todos.length}>
@@ -215,7 +235,7 @@ export function TrayRow({
               e.stopPropagation();
               onItem(it);
             }}
-            aria-label={it.kind === "claude" ? `${it.session.project}: ${claudeStatusLabel(it.session.status)}` : it.kind}
+            aria-label={it.kind === "agents" ? `Agents: ${it.sessions.length} · ${it.sessions[0].project} ${claudeStatusLabel(it.sessions[0].status)}` : it.kind}
           >
             <TrayItemView item={it} hot={hot === i} />
           </motion.button>
@@ -237,6 +257,7 @@ export function TrayTooltip({
   rect,
   onOpen,
   onDismiss,
+  onClearDone,
   onStartNotes,
   onIgnoreMeeting,
   onOpenTodos,
@@ -245,6 +266,7 @@ export function TrayTooltip({
   rect: { x: number; y: number; w: number; h: number };
   onOpen: (s: ClaudeSession) => void;
   onDismiss: (s: ClaudeSession) => void;
+  onClearDone: () => void;
   onStartNotes: (app: string) => void;
   onIgnoreMeeting: (app: string) => void;
   onOpenTodos: () => void;
@@ -256,55 +278,34 @@ export function TrayTooltip({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -4, scale: 0.98 }}
       transition={{ type: "spring", stiffness: 480, damping: 34 }}
-      className="island-tip absolute z-20 flex flex-col overflow-hidden rounded-2xl px-3.5 py-3 text-white"
+      className="island-tip absolute z-20 flex flex-col overflow-hidden rounded-2xl px-3 py-2.5 text-white"
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, transformOrigin: "top center" }}
       onClick={(e) => e.stopPropagation()}
     >
-      {item.kind === "claude" && (
-        <>
-          <div className="flex items-center gap-2">
-            <ClaudeAvatar status={item.session.status} source={item.session.source} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] font-semibold leading-tight">{item.session.project}</div>
-              <div className={"text-[11px] font-medium leading-tight " + STATUS_COLOR[item.session.status]}>{claudeStatusLabel(item.session.status)}</div>
-            </div>
-            <span className="shrink-0 text-[10.5px] text-white/40">{relativeTime(item.session.updatedAt)}</span>
+      {item.kind === "agents" && (
+        <div className="flex h-full flex-col" data-testid="session-list">
+          <div className="mb-1 flex h-[26px] shrink-0 items-center gap-1.5 text-[12px] font-semibold text-white/85">
+            {item.sessions.length} session{item.sessions.length === 1 ? "" : "s"}
+            <span className="ml-auto text-[10.5px] font-normal text-white/40">{item.sessions.filter((s) => s.status === "working").length} working</span>
           </div>
-          <p className="mt-1.5 line-clamp-2 text-[12px] leading-[16px] text-white/70">{item.session.message || "No message yet."}</p>
-          <div className="mt-auto flex justify-end gap-1">
-            <button className={iconGhost} onClick={() => onDismiss(item.session)} title="Dismiss" aria-label="Dismiss">
-              <X size={13} />
-            </button>
-            <button className={btnPrimary} onClick={() => onOpen(item.session)} title="Open" aria-label="Open">
-              <ExternalLink size={12} /> Open
-            </button>
-          </div>
-        </>
-      )}
-      {item.kind === "more" && (
-        <>
-          <div className="mb-1 flex h-[26px] items-center gap-1.5 text-[12px] font-semibold text-white/85">
-            <Asterisk size={12} strokeWidth={3} className="text-[#e0896a]" />
-            {item.sessions.length} Claude sessions
-            <span className="ml-auto text-[10.5px] font-normal text-white/40">
-              {item.sessions.filter((s) => s.status === "working").length} working
-            </span>
-          </div>
-          <div className="flex min-h-0 flex-col overflow-y-auto" style={{ maxHeight: TRAY_LIST_ROW * 6 }}>
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto" style={{ maxHeight: TRAY_LIST_ROW * 6 }}>
             {item.sessions.map((s) => (
-              <div key={s.sessionId} className="group flex shrink-0 items-center gap-2 rounded-lg px-1" style={{ height: TRAY_LIST_ROW }}>
-                <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => onOpen(s)} aria-label={`Open ${s.project}`}>
-                  <span className="scale-[0.8]">
-                    <ClaudeAvatar status={s.status} source={s.source} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="truncate text-[12px] font-medium">{s.project}</span>
-                      <span className={"shrink-0 text-[10px] " + STATUS_COLOR[s.status]} title={claudeStatusLabel(s.status)}>{SHORT_STATUS[s.status]}</span>
+              <div key={s.sessionId} className="group flex shrink-0 items-center gap-2 rounded-lg px-1 hover:bg-white/[0.05]" style={{ height: TRAY_LIST_ROW }} data-testid="session-row">
+                <span className="flex w-5 shrink-0 scale-[0.85] justify-center">
+                  <ClaudeAvatar status={s.status} source={s.source} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-[12px] font-medium">{s.project}</span>
+                    <span className={"shrink-0 text-[10px] " + STATUS_COLOR[s.status]} title={claudeStatusLabel(s.status)}>
+                      {SHORT_STATUS[s.status]}
                     </span>
-                    <span className="block truncate text-[11px] leading-tight text-white/50">{s.message || " "}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-white/35">{relativeTime(s.updatedAt)}</span>
                   </span>
-                  <span className="shrink-0 text-[10px] text-white/35">{relativeTime(s.updatedAt)}</span>
+                  <span className="block truncate text-[11px] leading-tight text-white/50">{s.message || " "}</span>
+                </span>
+                <button className={iconGhost} onClick={() => onOpen(s)} title="Open" aria-label={`Open ${s.project}`}>
+                  <ExternalLink size={12} />
                 </button>
                 <button className={iconGhost + " opacity-60 group-hover:opacity-100"} onClick={() => onDismiss(s)} title="Dismiss" aria-label={`Dismiss ${s.project}`}>
                   <X size={12} />
@@ -312,7 +313,12 @@ export function TrayTooltip({
               </div>
             ))}
           </div>
-        </>
+          <div className="mt-auto flex h-[30px] shrink-0 items-center justify-end border-t border-white/[0.06] pt-1">
+            <button className={btnGhost} disabled={!item.sessions.some((s) => s.status === "done")} onClick={onClearDone}>
+              Clear done
+            </button>
+          </div>
+        </div>
       )}
       {item.kind === "todos" && (
         <>
@@ -358,27 +364,35 @@ export function TrayTooltip({
 /** "Send to Rahul on Slack?" — Flo never sends without this OK. */
 export function ConfirmCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent; more: number; notch: boolean; geo: IslandGeometry; onAnswer: (approve: boolean) => void }) {
   return (
-    <div className="absolute inset-x-0 bottom-0 flex flex-col px-4 pb-3" style={{ top: notch ? geo.notchHeight + ISLAND_GAP : 10 }} data-testid="confirm-card">
-      <div className="flex items-center gap-2">
-        <svg viewBox="0 0 24 24" width={15} height={15} aria-hidden>
+    <CardRow
+      notch={notch}
+      geo={geo}
+      testId="confirm-card"
+      icon={
+        <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden>
           <path fill="#E01E5A" d="M5 15a2 2 0 1 1-2-2h2v2Zm1 0a2 2 0 1 1 4 0v5a2 2 0 1 1-4 0v-5Z" />
           <path fill="#36C5F0" d="M9 5a2 2 0 1 1 2-2v2H9Zm0 1a2 2 0 1 1 0 4H4a2 2 0 1 1 0-4h5Z" />
           <path fill="#2EB67D" d="M19 9a2 2 0 1 1 2 2h-2V9Zm-1 0a2 2 0 1 1-4 0V4a2 2 0 1 1 4 0v5Z" />
           <path fill="#ECB22E" d="M15 19a2 2 0 1 1-2 2v-2h2Zm0-1a2 2 0 1 1 0-4h5a2 2 0 1 1 0 4h-5Z" />
         </svg>
+      }
+      actions={
+        <div className="flex flex-col items-stretch gap-1">
+          <button className={btnPrimary + " justify-center"} onClick={() => onAnswer(true)}>
+            <Send size={11} /> Send
+          </button>
+          <button className={btnGhost} onClick={() => onAnswer(false)}>
+            Cancel
+          </button>
+        </div>
+      }
+    >
+      <div className="flex items-center gap-1.5">
         <span className="truncate text-[13px] font-semibold">{c.title}</span>
-        {more > 0 && <span className="ml-auto rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
+        {more > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
       </div>
-      <p className="selectable mt-1.5 line-clamp-3 rounded-xl border border-white/[0.06] bg-white/[0.04] px-2.5 py-1.5 text-[12.5px] leading-[17px] text-white/85">{c.body}</p>
-      <div className="mt-auto flex justify-end gap-1">
-        <button className={btnGhost} onClick={() => onAnswer(false)}>
-          Cancel
-        </button>
-        <button className={btnPrimary} onClick={() => onAnswer(true)}>
-          <Send size={11} /> Send
-        </button>
-      </div>
-    </div>
+      <p className="selectable mt-1 line-clamp-3 rounded-xl border border-white/[0.06] bg-white/[0.04] px-2.5 py-1.5 text-[12.5px] leading-[17px] text-white/85">{c.body}</p>
+    </CardRow>
   );
 }
 
@@ -400,21 +414,15 @@ export function CorrectionCard({
 }) {
   const [saved, setSaved] = useState(false);
   return (
-    <div className="absolute inset-x-0 bottom-0 flex flex-col px-4 pb-3" style={{ top: notch ? geo.notchHeight + ISLAND_GAP : 10 }}>
-      <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-white/60">
-        <Sparkles size={12} className="text-brand-300" /> Did I mishear?
-        <span className="font-normal text-white/35">· {c.app}</span>
-        {more > 0 && <span className="ml-auto rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
-      </div>
-      <div className="mt-1.5 flex items-baseline gap-2 text-[15px]">
-        <span className="text-white/40 line-through decoration-white/40">{c.heard}</span>
-        <span className="text-white/35">→</span>
-        <span className="font-semibold text-brand-200 drop-shadow-[0_0_10px_rgba(102,206,255,0.45)]">{c.corrected}</span>
-      </div>
-      <div className="mt-auto flex items-center justify-end gap-1">
-        {saved ? (
+    <CardRow
+      notch={notch}
+      geo={geo}
+      testId="correction-card"
+      icon={<Sparkles size={15} className="text-brand-300" />}
+      actions={
+        saved ? (
           <motion.span initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-1 text-[11.5px] font-medium text-brand-200">
-            <Check size={12} strokeWidth={3} /> Saved. I'll spell it right next time
+            <Check size={12} strokeWidth={3} /> Saved
           </motion.span>
         ) : (
           <>
@@ -423,17 +431,30 @@ export function CorrectionCard({
             </button>
             <button
               className={btnPrimary}
+              aria-label="Save to dictionary"
+              title="Save to dictionary"
               onClick={async () => {
                 await onSave();
                 setSaved(true);
               }}
             >
-              Save to dictionary
+              Save
             </button>
           </>
-        )}
+        )
+      }
+    >
+      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white/55">
+        Did I mishear?
+        <span className="truncate font-normal text-white/35">· {c.app}</span>
+        {more > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
       </div>
-    </div>
+      <div className="flex min-w-0 items-baseline gap-2 text-[14.5px]">
+        <span className="truncate text-white/40 line-through decoration-white/40">{c.heard}</span>
+        <span className="text-white/35">→</span>
+        <span className="truncate font-semibold text-brand-200 drop-shadow-[0_0_10px_rgba(102,206,255,0.45)]">{c.corrected}</span>
+      </div>
+    </CardRow>
   );
 }
 
@@ -452,26 +473,29 @@ export function MeetingPromptCard({
   onLater: () => void;
 }) {
   return (
-    <div className="absolute inset-x-0 bottom-0 flex flex-col px-4 pb-3" style={{ top: notch ? geo.notchHeight + ISLAND_GAP : 10 }}>
-      <div className="flex items-center gap-2">
+    <CardRow
+      notch={notch}
+      geo={geo}
+      testId="meeting-prompt-card"
+      icon={
         <span className="relative flex h-2.5 w-2.5">
           <span className="absolute inset-0 rounded-full bg-red-500 opacity-60 [animation:ping_1s_cubic-bezier(0,0,0.2,1)_3]" />
           <span className="relative h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_10px_#ef4444]" />
         </span>
-        <span className="text-[13px] font-semibold">{app} call detected</span>
-        <button className="ml-auto rounded-full p-1 text-white/45 hover:bg-white/10 hover:text-white" onClick={onLater} aria-label="Not now">
-          <X size={12} />
-        </button>
-      </div>
-      <p className="mt-1 text-[12px] text-white/60">Take notes? I'll transcribe and summarize it on this Mac.</p>
-      <div className="mt-auto flex justify-end gap-1">
-        <button className={btnGhost} onClick={onLater}>
-          Not now
-        </button>
-        <button className={btnPrimary} onClick={onStart}>
-          <Radio size={11} /> Start notes
-        </button>
-      </div>
-    </div>
+      }
+      actions={
+        <>
+          <button className={iconGhost} onClick={onLater} aria-label="Not now" title="Not now">
+            <X size={12} />
+          </button>
+          <button className={btnPrimary} onClick={onStart}>
+            <Radio size={11} /> Start notes
+          </button>
+        </>
+      }
+    >
+      <div className="truncate text-[13px] font-semibold">{app} call detected</div>
+      <p className="truncate text-[12px] text-white/60">Take notes on this Mac?</p>
+    </CardRow>
   );
 }

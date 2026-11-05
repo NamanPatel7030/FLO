@@ -63,6 +63,8 @@ const settings: Settings = {
   learnCorrections: true,
   systemPrompt: "",
   slackSync: false,
+  // ?onboard=1 shows the first-run setup wizard in the browser preview
+  onboarded: typeof location === "undefined" || !new URLSearchParams(location.search).has("onboard"),
   sttProvider: "local",
   sttModel: "large-v3-turbo-q5_0",
   language: "auto",
@@ -207,6 +209,7 @@ const assistantLog: AssistantResponse[] = [
     actions: [],
     results: [],
     createdAt: iso(90),
+    mode: "quick",
   },
   {
     id: "a2",
@@ -215,6 +218,7 @@ const assistantLog: AssistantResponse[] = [
     actions: [{ type: "add_todo", title: "Send Apollo deck to Northwind", project: "Apollo", due: inDays(2) }],
     results: ["✓ To-do added to Apollo"],
     createdAt: iso(120),
+    mode: "quick",
   },
 ];
 
@@ -405,9 +409,34 @@ function projectView(p: Omit<Project, "openTodos" | "doneTodos">): Project {
   return { ...p, openTodos: ts.filter((t) => t.status === "open").length, doneTodos: ts.filter((t) => t.status === "done").length };
 }
 
+/** deep / web answers: long markdown (+ sources for web) */
+function fakeDepth(query: string, mode: "deep" | "web"): AssistantResponse {
+  const reply =
+    mode === "web"
+      ? `## What I found\n\n- **Tauri 2** ships a stable plugin API for global shortcuts.\n- Notch apps place a borderless panel at the top centre of the screen.\n- Use \`NSPanel\` so the window never steals focus.\n\nSee the [Tauri docs](https://v2.tauri.app/plugin/global-shortcut/) for setup.`
+      : `## Deeper look\n\nFrom your screen, the failing step is the **island resize** after hover.\n\n1. Ignore DOM hover inside Tauri\n2. Only resize when the size changes\n3. Never shrink while hovered\n\n\`\`\`ts\nif (backendHover.current) return;\n\`\`\`\n\nThat removes the open/close loop.`;
+  return {
+    id: uid("a"),
+    query,
+    reply,
+    actions: [],
+    results: [],
+    createdAt: new Date().toISOString(),
+    mode,
+    sources:
+      mode === "web"
+        ? [
+            { title: "Global Shortcut | Tauri", url: "https://v2.tauri.app/plugin/global-shortcut/" },
+            { title: "NSPanel | Apple Developer", url: "https://developer.apple.com/documentation/appkit/nspanel" },
+            { title: "tauri-nspanel on GitHub", url: "https://github.com/ahkohd/tauri-nspanel" },
+          ]
+        : undefined,
+  };
+}
+
 function fakeAssistant(text: string): AssistantResponse {
   const q = text.toLowerCase();
-  const res: AssistantResponse = { id: uid("a"), query: text, reply: "", actions: [], results: [], createdAt: new Date().toISOString() };
+  const res: AssistantResponse = { id: uid("a"), query: text, reply: "", actions: [], results: [], createdAt: new Date().toISOString(), mode: "quick" };
   const proj = [...projects.values()].find((p) => q.includes(p.name.toLowerCase()));
   if (q.includes("to-do") || q.includes("todo") || q.startsWith("add") || q.includes("remind")) {
     const title = text.replace(/.*?(to-?do( to \w+)?|remind me to)[:,]?\s*/i, "").replace(/^./, (c) => c.toUpperCase()) || text;
@@ -482,7 +511,11 @@ export function mockConfirm(title = "Send to Rahul on Slack?", body = "Hey Rahul
 /** Every island_resize call (for tests: detect resize oscillation). */
 export const resizeLog: { w: number; h: number; at: number }[] = [];
 
+/** every invoke (for tests: assert which commands ran with which args) */
+export const callLog: { cmd: string; args: Record<string, any> }[] = [];
+
 export async function mockInvoke(cmd: string, args: Record<string, any> = {}): Promise<unknown> {
+  callLog.push({ cmd, args });
   switch (cmd) {
     case "get_settings":
       return { ...settings };
@@ -497,6 +530,26 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "delete_api_key":
       keys.delete(args.provider);
       return null;
+    case "provider_models": {
+      await sleep(350);
+      const M: Record<string, string[]> = {
+        openai: ["gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-4.1-mini"],
+        anthropic: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
+        gemini: ["gemini-flash-latest", "gemini-2.5-pro", "gemini-2.5-flash-lite"],
+        groq: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "qwen/qwen3-32b"],
+        openrouter: ["openai/gpt-oss-120b", "anthropic/claude-haiku-5-5", "qwen/qwen3-235b-a22b", "deepseek/deepseek-chat"],
+        minimax: ["MiniMax-M2", "MiniMax-Text-01"],
+        qwen: ["qwen-plus", "qwen-max", "qwen-turbo", "qwen3-coder-plus"],
+        ollama_cloud: ["gpt-oss:120b", "gpt-oss:20b", "qwen3-coder:480b", "deepseek-v3.1:671b"],
+        lmstudio: ["local-model"],
+        ollama: ["qwen3:8b", "llama3.2:3b"],
+      };
+      return M[args.provider] ?? [];
+    }
+    case "local_models":
+      await sleep(250);
+      // ?ollama=none → nothing pulled / not running
+      return new URLSearchParams(location.search).get("ollama") === "none" ? [] : ["qwen3:8b", "llama3.2:3b", "gemma3:4b"];
     case "test_llm":
       await sleep(600);
       return `${settings.llmProvider} · ${settings.llmModel} responded in 412 ms`;
@@ -556,7 +609,16 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
     case "ask_assistant": {
       await sleep(700);
-      const r = fakeAssistant(args.text);
+      const r = args.mode && args.mode !== "quick" ? fakeDepth(args.text, args.mode) : fakeAssistant(args.text);
+      assistantLog.unshift(r);
+      mockEmit(EV.assistant, r);
+      return r;
+    }
+    case "assistant_followup": {
+      await sleep(900);
+      const prev = assistantLog.find((x) => x.id === args.id);
+      const r = fakeDepth(prev?.query ?? "that", args.mode);
+      assistantLog.unshift(r);
       mockEmit(EV.assistant, r);
       return r;
     }
@@ -800,6 +862,12 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     correction: mockCorrection,
     meetingDetected: mockMeetingDetected,
     resizes: resizeLog,
+    calls: callLog,
+    /** replace the mock's agent sessions (so open / dismiss act on them) and emit the list */
+    setSessions: (list: ClaudeSession[]) => {
+      claudeSessions.splice(0, claudeSessions.length, ...list);
+      emitSessions();
+    },
     confirm: mockConfirm,
     confirms: confirmLog,
   };

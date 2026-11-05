@@ -21,6 +21,30 @@ async function openIsland(page: Page) {
   await page.waitForTimeout(150);
 }
 
+const sess = (id: string, project: string, status: string, message: string) => ({
+  sessionId: id,
+  project,
+  cwd: `/Users/p/${project}`,
+  status,
+  message,
+  updatedAt: new Date().toISOString(),
+});
+
+/** rest the cursor on the agents icon like the backend does (~80 ms samples, centre-relative cx) */
+async function hoverAgents(page: Page, until: () => Promise<boolean>) {
+  const icon = page.locator('[aria-label^="Agents:"]');
+  const box = await icon.boundingBox();
+  const win = await page.locator("[data-island-root]").boundingBox();
+  const cx = box!.x + box!.width / 2 - (win!.x + win!.width / 2);
+  const y = box!.y - win!.y + box!.height / 2;
+  for (let i = 0; i < 30; i++) {
+    const w = await page.locator("[data-island-root]").boundingBox();
+    await emit(page, "flo://hover", { inside: true, cx, y, x: w!.width / 2 + cx });
+    if (await until()) return;
+    await page.waitForTimeout(80);
+  }
+}
+
 test("dictation: listening → transcribing → pasted result with copy → back to idle", async ({ page }) => {
   await openIsland(page);
   await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
@@ -75,43 +99,26 @@ test("errors are readable (no 'Oops'), offer a fix and clear themselves", async 
   await expect(page.getByText(msg)).toHaveCount(0);
 });
 
-test("tray: multiple Claude sessions stay beside the notch with a status tooltip", async ({ page }) => {
+test("tray: all agent sessions sit behind ONE stacked icon; hover lists them, most urgent first", async ({ page }) => {
   await openIsland(page);
-  const s = (id: string, project: string, status: string, message: string) => ({
-    sessionId: id,
-    project,
-    cwd: `/Users/p/${project}`,
-    status,
-    message,
-    updatedAt: new Date().toISOString(),
-  });
   await emit(page, "flo://claude-sessions", [
-    s("a", "Flo", "done", "Built the notch tray"),
-    s("b", "job-finder", "waiting_reply", "LinkedIn or Wellfound?"),
-    s("c", "api", "needs_approval", "Allow npm publish?"),
+    sess("a", "Flo", "done", "Built the notch tray"),
+    sess("b", "job-finder", "waiting_reply", "LinkedIn or Wellfound?"),
+    sess("c", "api", "needs_approval", "Allow npm publish?"),
+    sess("d", "web", "working", "Running the test suite"),
   ]);
-  const avatars = page.locator('[aria-label*=": "]');
-  await expect(avatars).toHaveCount(3);
-  await expect(page.locator('[aria-label="job-finder: Waiting for your reply"]')).toBeVisible();
-
-  // hover the second avatar like the backend does: every ~80 ms, coordinates relative to the
-  // island window's CURRENT frame (the window grows while hovering)
-  const target = page.locator('[aria-label="job-finder: Waiting for your reply"]');
-  // (keep hovering, as the real cursor would, until the tooltip shows — max ~2.5 s)
-  for (let i = 0; i < 30; i++) {
-    const box = await target.boundingBox();
-    const win = await page.locator("[data-island-root]").boundingBox();
-    if (!box || !win) break;
-    await emit(page, "flo://hover", { inside: true, x: box.x - win.x + box.width / 2, y: box.y - win.y + box.height / 2 });
-    if (await page.getByText("LinkedIn or Wellfound?").isVisible()) break;
-    await page.waitForTimeout(80);
-  }
-  await expect(page.getByText("LinkedIn or Wellfound?")).toBeVisible();
-  await expect(page.getByText(/Waiting for your reply/).first()).toBeVisible();
-
-  // dismissing one leaves the rest until the user is done with them
-  await emit(page, "flo://claude-sessions", [s("a", "Flo", "done", "Built the notch tray"), s("c", "api", "needs_approval", "Allow npm publish?")]);
-  await expect(avatars).toHaveCount(2);
+  const icon = page.locator('[aria-label^="Agents:"]');
+  await expect(icon).toHaveCount(1);
+  // the icon shows the most urgent session + a count
+  await expect(icon).toHaveAttribute("aria-label", "Agents: 4 · api Needs approval");
+  await expect(page.locator('[data-testid="agents-count"]')).toHaveText("4");
+  const list = page.locator('[data-testid="session-list"]');
+  await hoverAgents(page, () => list.isVisible());
+  await expect(list).toBeVisible();
+  await expect(list.locator('[data-testid="session-row"]')).toHaveCount(4);
+  await expect(list.locator('[data-testid="session-row"]').first()).toContainText("api");
+  await expect(list.locator('[data-testid="session-row"]').last()).toContainText("web");
+  await expect(list).toContainText("LinkedIn or Wellfound?");
 });
 
 test("correction: 'Did I mishear?' → Save to dictionary", async ({ page }) => {
@@ -150,26 +157,17 @@ test("hands-free (ctrl/fn + space): lock badge on the icon, no text", async ({ p
   await expect(page.getByText(/esc to cancel|hands-free|release/i)).toHaveCount(0);
 });
 
-const sess = (id: string, project: string, status: string, message: string) => ({
-  sessionId: id,
-  project,
-  cwd: `/Users/p/${project}`,
-  status,
-  message,
-  updatedAt: new Date().toISOString(),
-});
 
-test("tooltip stays open while hovering one avatar (no resize feedback loop)", async ({ page }) => {
+test("session list stays open while resting on the icon (no resize feedback loop)", async ({ page }) => {
   await openIsland(page);
   await emit(page, "flo://claude-sessions", [
     sess("a", "Flo", "done", "Built the notch tray"),
     sess("b", "job-finder", "waiting_reply", "LinkedIn or Wellfound?"),
     sess("c", "api", "working", "Running the test suite"),
   ]);
-  const target = page.locator('[aria-label="job-finder: Waiting for your reply"]');
-  await target.waitFor();
-  // the real cursor sits still: fixed centre-relative offset (cx) and y, sent every 80 ms
-  const box = await target.boundingBox();
+  const icon = page.locator('[aria-label^="Agents:"]');
+  await icon.waitFor();
+  const box = await icon.boundingBox();
   const win = await page.locator("[data-island-root]").boundingBox();
   const cx = box!.x + box!.width / 2 - (win!.x + win!.width / 2);
   const y = box!.y - win!.y + box!.height / 2;
@@ -185,37 +183,42 @@ test("tooltip stays open while hovering one avatar (no resize feedback loop)", a
     await page.waitForTimeout(80);
   }
   expect(opened).toBe(true);
-  // once open it never flickers closed
   expect(samples.length).toBeGreaterThan(10);
   expect(samples.every(Boolean)).toBe(true);
-  // the window only grows while hovered: no shrink/grow oscillation
   const sizes = await page.evaluate(() => (window as any).__floMock.resizes.map((r: any) => r.w));
   const after = sizes.slice(sizes.findIndex((w: number) => w > 300));
   for (let i = 1; i < after.length; i++) expect(after[i]).toBeGreaterThanOrEqual(after[i - 1]);
 });
 
-test("many Claude sessions: avatars + a list of all of them", async ({ page }) => {
+test("session list: open focuses a session, x dismisses it, Clear done removes finished ones", async ({ page }) => {
   await openIsland(page);
-  const list = Array.from({ length: 7 }, (_, i) => sess(`s${i}`, `proj-${i}`, i < 3 ? "working" : "done", `message ${i}`));
-  await emit(page, "flo://claude-sessions", list);
-  await expect(page.locator('[aria-label^="proj-"]')).toHaveCount(4); // 4 avatars
-  const more = page.locator('[aria-label="more"]');
-  await expect(more).toBeVisible();
-  await page.waitForTimeout(400); // let the avatars finish springing in
-  const box = await more.boundingBox();
-  const win = await page.locator("[data-island-root]").boundingBox();
-  const cx = box!.x + box!.width / 2 - (win!.x + win!.width / 2);
-  const y = box!.y - win!.y + box!.height / 2;
-  for (let i = 0; i < 30; i++) {
-    const w = await page.locator("[data-island-root]").boundingBox();
-    await emit(page, "flo://hover", { inside: true, cx, y, x: w!.width / 2 + cx });
-    if (await page.getByText("7 Claude sessions").isVisible()) break;
-    await page.waitForTimeout(80);
-  }
-  await expect(page.getByText("7 Claude sessions")).toBeVisible();
-  await expect(page.getByText("3 working")).toBeVisible();
+  const list7 = Array.from({ length: 7 }, (_, i) => sess(`s${i}`, `proj-${i}`, i < 3 ? "working" : "done", `message ${i}`));
+  const setSessions = (l: unknown[]) => page.evaluate((x) => (window as any).__floMock.setSessions(x), l);
+  await setSessions(list7.map((x) => ({ ...x, source: "claude" })));
+  await expect(page.locator('[aria-label^="Agents:"]')).toHaveCount(1);
+  const list = page.locator('[data-testid="session-list"]');
+  await hoverAgents(page, () => list.isVisible());
+  await expect(list).toContainText("7 sessions");
+  await expect(list).toContainText("3 working");
   for (let i = 0; i < 7; i++) await expect(page.getByRole("button", { name: `Open proj-${i}` })).toBeAttached();
-  await expect(page.getByText(/[—–]/)).toHaveCount(0);
+  await expect(page.getByText(/[\u2014\u2013]/)).toHaveCount(0);
+  // keep the cursor there while acting (backend keeps reporting inside)
+  const keep = setInterval(() => emit(page, "flo://hover", { inside: true, cx: 0, y: 60 }).catch(() => {}), 80);
+  try {
+    await page.getByRole("button", { name: "Dismiss proj-0" }).click();
+    await expect(list.locator('[data-testid="session-row"]')).toHaveCount(6);
+    await page.getByRole("button", { name: "Open proj-4" }).click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__floMock.calls.filter((c: any) => c.cmd === "open_claude_by_session").map((c: any) => c.args.sessionId)))
+      .toContain("s4");
+  } finally {
+    clearInterval(keep);
+  }
+  // Clear done (re-open the list first)
+  await setSessions(list7.slice(1).map((x) => ({ ...x, source: "claude" })));
+  await hoverAgents(page, () => list.isVisible());
+  await list.getByRole("button", { name: "Clear done" }).click();
+  await expect(page.locator('[aria-label^="Agents:"]')).toHaveAttribute("aria-label", /^Agents: 2 /);
 });
 
 test("ribbon: lives only while listening / working / done, never when idle", async ({ page }) => {
@@ -233,4 +236,79 @@ test("ribbon: lives only while listening / working / done, never when idle", asy
   await emit(page, "flo://state", { phase: "idle", mode: "dictation" });
   await expect(ribbon).toHaveCount(0);
   await expect(page.locator('[data-testid="island-ocean"]')).toHaveCount(0);
+});
+
+test("content cards: notch row empty; icon + text + action in one row below, 16px sides, icon centred", async ({ page }) => {
+  await openIsland(page);
+  const root = page.locator("[data-island-root]");
+  const check = async (name: string) => {
+    const row = page.locator("[data-card-row]");
+    await expect(row, name).toBeVisible();
+    await page.waitForTimeout(450); // let the spring settle
+    const r = await row.evaluate((el) => {
+      const b = el.getBoundingClientRect();
+      const icon = el.querySelector("[data-card-icon]")!.getBoundingClientRect();
+      const text = el.querySelector("[data-card-text]")!.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return { top: b.top, pl: cs.paddingLeft, pr: cs.paddingRight, iconMid: icon.top + icon.height / 2, textMid: text.top + text.height / 2, iconLeft: icon.left - b.left };
+    });
+    const top = (await root.boundingBox())!.y;
+    expect(r.top - top, `${name}: below the notch`).toBeGreaterThanOrEqual(38);
+    expect(r.pl, name).toBe("16px");
+    expect(r.pr, name).toBe("16px");
+    expect(Math.abs(r.iconMid - r.textMid), `${name}: icon centred with text`).toBeLessThanOrEqual(2);
+    await page.screenshot({ path: `test-results/card-${name}.png`, clip: { x: 420, y: 0, width: 600, height: 170 } }).catch(() => {});
+  };
+  await emit(page, "flo://transcript", { text: "Ship the notch fix today and tell Rahul.", final: true });
+  await check("result");
+  await page.keyboard.press("Escape");
+  await emit(page, "flo://state", { phase: "error", mode: "dictation", message: "No API key for Groq. Add one in Settings." });
+  await check("error");
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  await emit(page, "flo://correction", { id: "c9", heard: "tory", corrected: "Tauri", app: "Notes" });
+  await check("correction");
+  await page.getByRole("button", { name: "Ignore" }).click();
+  await page.evaluate(() => (window as any).__floMock.confirm("Send to Rahul on Slack?", "Hey Rahul, deck is in the drive."));
+  await check("confirm");
+  await page.locator('[data-testid="confirm-card"]').getByRole("button", { name: "Cancel" }).click();
+  await emit(page, "flo://claude", { id: "e1", kind: "stop", sessionId: "s1", project: "Flo", cwd: "/Users/p/Flo", message: "Built the notch tray", at: new Date().toISOString(), seen: false });
+  await check("claude");
+});
+
+test("hover: DOM mouseleave/enter during resizes is ignored while the backend says inside", async ({ page }) => {
+  await openIsland(page);
+  const root = page.locator("[data-island-root]");
+  const dictate = page.getByRole("button", { name: "Dictate" });
+  const box = await root.boundingBox();
+  // the real cursor rests on the notch; the backend reports inside every ~80 ms
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + 10);
+  const t0 = Date.now();
+  let opened = false;
+  const samples: boolean[] = [];
+  let i = 0;
+  while (Date.now() - t0 < 2400) {
+    await emit(page, "flo://hover", { inside: true, cx: 0, y: 10, x: 100 });
+    // WebKit-style spurious DOM leave/enter as the window resizes under the cursor
+    const b = await root.boundingBox();
+    if (i++ % 2) await page.mouse.move(b!.x + b!.width / 2, b!.y + 10);
+    else await page.mouse.move(5, 600);
+    const vis = await dictate.isVisible();
+    if (vis) opened = true;
+    if (opened) samples.push(vis);
+    await page.waitForTimeout(80);
+  }
+  expect(opened).toBe(true);
+  expect(samples.length).toBeGreaterThan(10);
+  expect(samples.every(Boolean)).toBe(true);
+  // the window never shrinks while hovered
+  const log: number[][] = await page.evaluate(() => (window as any).__floMock.resizes.map((r: any) => [r.w, r.h]));
+  const from = log.findIndex(([w]) => w > 300);
+  expect(from).toBeGreaterThanOrEqual(0);
+  for (let k = from + 1; k < log.length; k++) {
+    expect(log[k][0]).toBeGreaterThanOrEqual(log[k - 1][0]);
+    expect(log[k][1]).toBeGreaterThanOrEqual(log[k - 1][1]);
+  }
+  // leaving for real (backend) still closes it
+  await emit(page, "flo://hover", { inside: false });
+  await expect(dictate).toHaveCount(0, { timeout: 3000 });
 });

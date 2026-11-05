@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Download, KeyRound, Lock, RotateCcw, ShieldCheck, Trash2, X, Keyboard } from "lucide-react";
+import { Check, Download, KeyRound, Lock, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
-import { EV, type DictionaryEntry, type KeyProvider, type LlmProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo } from "../../lib/types";
+import { EV, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo } from "../../lib/types";
 import { useStore } from "../store";
 import { Button, Card, CardTitle, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
 import { About } from "../About";
 import { Integrations } from "../Integrations";
+import { AiProviderFields, PROVIDERS } from "../AiSetup";
 
 const TABS = ["General", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
 type Tab = (typeof TABS)[number];
@@ -134,6 +135,11 @@ function General({ s, set }: P) {
         <Input className="w-56" value={s.userName} onChange={(e) => set({ userName: e.target.value })} />
       </Row>
       <Toggle label="Sounds" hint="Soft chimes when recording starts and stops." checked={s.playSounds} onChange={(v) => set({ playSounds: v })} />
+      <Row label="Setup" hint="Walk through permissions, voice, AI and shortcuts again.">
+        <Button size="sm" icon={<Sparkles size={13} />} onClick={() => set({ onboarded: false })}>
+          Run setup again
+        </Button>
+      </Row>
       <Row label="Your typing speed" hint="Used to calculate time saved.">
         <div className="flex items-center gap-2">
           <Input type="number" className="w-20" value={s.typingWpm} onChange={(e) => set({ typingWpm: Number(e.target.value) || 40 })} />
@@ -247,41 +253,21 @@ function Voice({ s, set }: P) {
   );
 }
 
-const PROVIDERS: { value: LlmProvider; label: string; model: string; key?: KeyProvider }[] = [
-  { value: "ollama", label: "Ollama (local)", model: "qwen3:8b" },
-  { value: "lmstudio", label: "LM Studio (local)", model: "local-model" },
-  { value: "openai", label: "OpenAI", model: "gpt-5-mini", key: "openai" },
-  { value: "anthropic", label: "Anthropic", model: "claude-haiku-5-5", key: "anthropic" },
-  { value: "gemini", label: "Google Gemini", model: "gemini-flash-latest", key: "gemini" },
-  { value: "groq", label: "Groq", model: "openai/gpt-oss-120b", key: "groq" },
-  { value: "openrouter", label: "OpenRouter", model: "openai/gpt-oss-120b", key: "openrouter" },
-  { value: "none", label: "None (raw transcripts)", model: "" },
-];
-
 function AI({ s, set }: P) {
   const toast = useStore((x) => x.toast);
   const [testing, setTesting] = useState(false);
-  const local = s.llmProvider === "ollama" || s.llmProvider === "lmstudio";
   return (
     <div className="flex flex-col gap-4">
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
-        <Row label="Language model" hint={local ? "Runs on your machine, nothing leaves it." : s.llmProvider === "none" ? "Dictation is pasted as transcribed." : "Called directly with your key. No Flo servers in between."}>
-          <Select<LlmProvider>
-            value={s.llmProvider}
-            onChange={(v) => set({ llmProvider: v, llmModel: PROVIDERS.find((p) => p.value === v)?.model ?? "", localLlmUrl: v === "lmstudio" ? "http://localhost:1234" : v === "ollama" ? "http://localhost:11434" : s.localLlmUrl })}
-            options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))}
-          />
-        </Row>
-        {s.llmProvider !== "none" && (
-          <Row label="Model">
-            <Input className="w-64" value={s.llmModel} onChange={(e) => set({ llmModel: e.target.value })} />
-          </Row>
-        )}
-        {local && (
-          <Row label="Server URL">
-            <Input className="w-64" value={s.localLlmUrl} onChange={(e) => set({ localLlmUrl: e.target.value })} />
-          </Row>
-        )}
+        <AiProviderFields
+          s={s}
+          set={set}
+          row={(label, hint, node) => (
+            <Row key={label} label={label} hint={hint}>
+              {node}
+            </Row>
+          )}
+        />
         <Toggle label="Polish dictation" hint="Remove filler words, fix punctuation, apply your dictionary." checked={s.cleanupEnabled} onChange={(v) => set({ cleanupEnabled: v })} />
         {s.llmProvider !== "none" && (
           <Row label="Connection">

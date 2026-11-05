@@ -1,4 +1,10 @@
-import type { ClaudeStatus, HotkeyCombo, IslandGeometry, Todo } from "./types";
+import type { ClaudeSession, ClaudeStatus, HotkeyCombo, IslandGeometry, Todo } from "./types";
+
+const URGENCY: Record<ClaudeStatus, number> = { needs_approval: 0, waiting_reply: 1, done: 2, working: 3 };
+/** Most urgent first: needs_approval > waiting_reply > done > working; newest first within a status. */
+export function sessionsByUrgency(list: ClaudeSession[]): ClaudeSession[] {
+  return [...list].sort((a, b) => (URGENCY[a.status] ?? 9) - (URGENCY[b.status] ?? 9) || Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
 
 export function formatDuration(totalSec: number): string {
   const s = Math.max(0, Math.round(totalSec));
@@ -132,13 +138,14 @@ export const SWELL_X = 6;
 export const SWELL_Y = 3;
 /** Extra transparent room below a swollen island so the glow isn't clipped. */
 const GLOW_ROOM = 8;
-export const TRAY_TIP_W = 300;
+export const TRAY_TIP_W = 340;
 export const TRAY_TIP_H = 118;
 const TRAY_TIP_GAP = 8;
 /** Row height in the all-sessions list tooltip. */
 export const TRAY_LIST_ROW = 36;
 /** Tooltip height: single item card, or a list of `rows` sessions (max 6 visible). */
-export const trayTipHeight = (rows?: number) => (rows ? 38 + Math.min(rows, 6) * TRAY_LIST_ROW + 6 : TRAY_TIP_H);
+/** session list: header 38 + rows (max 6, then scroll) + footer 32 ("Clear done") */
+export const trayTipHeight = (rows?: number) => (rows ? 38 + Math.min(rows, 6) * TRAY_LIST_ROW + 38 : TRAY_TIP_H);
 
 export interface TraySlot {
   side: "left" | "right";
@@ -250,9 +257,10 @@ export interface CardContent {
 
 /** Height of the assistant card body (below the notch) for given content. */
 function cardBody(c: CardContent | undefined, charsPerLine: number): number {
-  if (!c || c.replyChars === undefined) return 228;
-  const lines = Math.min(5, Math.max(1, Math.ceil(c.replyChars / charsPerLine)));
-  return Math.min(228, 62 + lines * 19 + ((c.results ?? 0) > 0 ? 34 : 0));
+  // header + up to 4 reply lines + results + action row (Go deeper / Web / Open full answer)
+  if (!c || c.replyChars === undefined) return 250;
+  const lines = Math.min(4, Math.max(1, Math.ceil(c.replyChars / charsPerLine)));
+  return Math.min(250, 62 + lines * 19 + ((c.results ?? 0) > 0 ? 34 : 0) + 34);
 }
 
 const lines = (chars: number | undefined, perLine: number, max: number) =>
@@ -281,12 +289,13 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
         const w = Math.max(tray.width, 2 * cx + TRAY_TIP_W + 16);
         return { width: w + (w % 2), height: nh + TRAY_TIP_GAP + trayTipHeight(content?.tipRows) + 8 };
       }
+      // content cards: notch row empty, then ONE row (icon + text + actions)
       case "correction":
-        return { width: 400, height: nh + ISLAND_GAP + 98 };
+        return { width: 420, height: nh + ISLAND_GAP + 54 };
       case "meetingPrompt":
-        return { width: 380, height: nh + ISLAND_GAP + 86 };
+        return { width: 400, height: nh + ISLAND_GAP + 52 };
       case "confirm":
-        return { width: 420, height: nh + ISLAND_GAP + 132 };
+        return { width: 460, height: nh + ISLAND_GAP + 98 };
       case "peek":
         return { width: Math.max(nw + 2 * 130, hasTray ? tray.width : 0), height: nh + 54 };
       // live states: icons only, flush with the notch (no text row)
@@ -296,11 +305,11 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
         return { width: compact, height: nh };
       case "result":
         // one line of pasted text + copy icon
-        return { width: 440, height: nh + ISLAND_GAP + ISLAND_LINE + 14 };
+        return { width: 440, height: nh + ISLAND_GAP + ISLAND_LINE + 20 };
       case "error":
         return {
           width: 420,
-          height: nh + ISLAND_GAP + lines(content?.textChars, 50, 3) * ISLAND_LINE + (content?.action ? 34 : 0) + 16,
+          height: nh + ISLAND_GAP + Math.max(28, lines(content?.textChars, 46, 3) * ISLAND_LINE) + 18,
         };
       case "history":
         // header 30 + rows + footer 34
@@ -312,7 +321,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "card":
         return { width: 520, height: nh + cardBody(content, 62) };
       case "claude":
-        return { width: 460, height: nh + 118 };
+        return { width: 460, height: nh + ISLAND_GAP + 64 };
     }
   }
   // floating capsule (Windows / no notch). Padding 24 for shadow.
@@ -326,11 +335,11 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "trayTooltip":
       return { width: Math.max(TRAY_TIP_W + 16, 28 + items * TRAY_SLOT) + pad, height: 40 + TRAY_TIP_GAP + trayTipHeight(content?.tipRows) + pad };
     case "correction":
-      return { width: 380 + pad, height: 110 + pad };
+      return { width: 400 + pad, height: 66 + pad };
     case "meetingPrompt":
-      return { width: 360 + pad, height: 96 + pad };
+      return { width: 380 + pad, height: 64 + pad };
     case "confirm":
-      return { width: 400 + pad, height: 140 + pad };
+      return { width: 440 + pad, height: 108 + pad };
     case "peek":
       return { width: 260 + pad, height: 52 + pad };
     case "listening":
@@ -338,9 +347,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "done":
       return { width: 150 + pad, height: 40 + pad };
     case "result":
-      return { width: 360 + pad, height: 22 + ISLAND_LINE + pad };
+      return { width: 360 + pad, height: 26 + ISLAND_LINE + pad };
     case "error":
-      return { width: 380 + pad, height: 34 + lines(content?.textChars, 40, 4) * ISLAND_LINE + (content?.action ? 34 : 0) + pad };
+      return { width: 380 + pad, height: 24 + Math.max(28, lines(content?.textChars, 34, 4) * ISLAND_LINE) + pad };
     case "history":
       return { width: 400 + pad, height: 30 + historyRows(content) * HISTORY_ROW + 34 + 12 + pad };
     case "meeting":
@@ -350,7 +359,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "card":
       return { width: 440 + pad, height: Math.min(240, cardBody(content, 52) + 12) + pad };
     case "claude":
-      return { width: 380 + pad, height: 128 + pad };
+      return { width: 380 + pad, height: 74 + pad };
   }
 }
 

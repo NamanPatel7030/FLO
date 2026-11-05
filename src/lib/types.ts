@@ -426,6 +426,7 @@ export const EV = {
 /**
  * Tauri commands (snake_case names, camelCase args):
  *  get_settings() -> Settings            save_settings({settings})
+ *  local_models() -> string[]   (pulled Ollama / LM Studio models; error hint when not running)
  *  provider_models({provider}) -> string[]  (live /models list incl. local Ollama pulls; curated fallback)
  *  set_api_key({provider,key})           has_api_key({provider}) -> bool
  *  delete_api_key({provider})            test_llm() -> string

@@ -288,6 +288,7 @@ pub fn run() {
             commands::delete_api_key,
             commands::test_llm,
             commands::provider_models,
+            commands::local_models,
             commands::get_island_geometry,
             commands::island_resize,
             commands::open_dashboard,

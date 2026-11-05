@@ -154,6 +154,83 @@ test("confirm card: Slack message waits for Send (never auto-sends)", async ({ p
   await expect.poll(() => page.evaluate(() => (window as any).__floMock.confirms.at(-1))).toEqual({ id: c2.id, approve: false });
 });
 
+test("AI settings: new providers, key only for key providers, searchable model picker with Custom", async ({ page }) => {
+  await page.goto("/#/settings/ai");
+  await mock(page);
+  const provider = page.locator("select").first();
+  for (const label of ["MiniMax", "Qwen (Alibaba DashScope)", "Ollama Cloud", "Ollama (local)"])
+    await expect(provider.locator("option", { hasText: label })).toHaveCount(1);
+  // local Ollama: no key field, pulled models listed
+  await expect(page.getByLabel(/API key/)).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Model" }).click();
+  await expect(page.getByRole("option", { name: "gemma3:4b" })).toBeVisible();
+  await expect(page.getByRole("listbox").getByRole("option", { selected: true })).toHaveText(/qwen3:8b/);
+  await page.keyboard.press("Escape");
+  // Qwen: key field + Get key + its models
+  await provider.selectOption("qwen");
+  await expect(page.getByLabel("Qwen (Alibaba DashScope) API key")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Get key/ })).toBeVisible();
+  await page.getByRole("combobox", { name: "Model" }).click();
+  await page.getByLabel("Search models").fill("max");
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveText(["qwen-max", "Custom…"]);
+  await page.getByRole("option", { name: "qwen-max" }).click();
+  await expect.poll(async () => (await invoke(page, "get_settings")).llmModel).toBe("qwen-max");
+  // Custom… free text
+  await page.getByRole("combobox", { name: "Model" }).click();
+  await page.getByRole("option", { name: /Custom/ }).click();
+  await page.getByLabel("Custom model").fill("qwen3-max-preview");
+  await expect.poll(async () => (await invoke(page, "get_settings")).llmModel).toBe("qwen3-max-preview");
+  await expect(page.getByRole("button", { name: "Test" })).toBeVisible();
+});
+
+test("AI settings: local Ollama with nothing pulled shows the install hint", async ({ page }) => {
+  await page.goto("/?ollama=none#/settings/ai");
+  await mock(page);
+  const hint = page.locator('[data-testid="ollama-install"]');
+  await expect(hint).toContainText("ollama pull qwen3:8b");
+  await expect(hint.getByRole("button", { name: "Copy command" })).toBeVisible();
+});
+
+test("setup wizard: first run walks every step, finishes, and can be reopened", async ({ page }) => {
+  await page.goto("/?onboard=1#/home");
+  await mock(page);
+  const wiz = page.locator('[data-testid="onboarding"]');
+  await expect(wiz).toBeVisible();
+  await expect(wiz.getByText("Your Assistant")).toBeVisible();
+  await wiz.getByRole("button", { name: "Get started" }).click();
+  await expect(wiz.locator('[data-testid="perm-row"]')).toHaveCount(4);
+  await wiz.getByRole("button", { name: "Continue" }).click();
+  // voice: download the recommended model with progress
+  const voice = wiz.locator('[data-testid="voice-model"]');
+  await expect(voice).toBeVisible();
+  const dl = voice.getByRole("button", { name: "Download" });
+  if (await dl.count()) {
+    await dl.click();
+    await expect(voice.getByText("Ready")).toBeVisible({ timeout: 8000 });
+  }
+  await wiz.getByRole("button", { name: "Continue" }).click();
+  // AI: provider + model picker
+  await expect(wiz.getByRole("combobox", { name: "Model" })).toBeVisible();
+  await wiz.getByRole("button", { name: "Continue" }).click();
+  // shortcuts: live try-it reacts to real events
+  await expect(wiz.getByText(/waiting for your voice/)).toBeVisible();
+  await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
+  await expect(wiz.locator('[data-testid="try-ribbon"] canvas')).toBeVisible();
+  await emit(page, "flo://transcript", { text: "hello", final: true });
+  await expect(wiz.locator('[data-testid="try-heard"]')).toContainText("hello");
+  await wiz.getByRole("button", { name: "Continue" }).click();
+  await expect(wiz.getByText("You're all set")).toBeVisible();
+  await wiz.getByRole("button", { name: "Start using Flo" }).click();
+  await expect(wiz).toHaveCount(0);
+  await expect.poll(async () => (await invoke(page, "get_settings")).onboarded).toBe(true);
+  // reopen from Settings → General
+  await page.goto("/#/settings/general");
+  await page.getByRole("button", { name: "Run setup again" }).click();
+  await expect(page.locator('[data-testid="onboarding"]')).toBeVisible();
+  await page.getByRole("button", { name: "Skip setup" }).click();
+  await expect(page.locator('[data-testid="onboarding"]')).toHaveCount(0);
+});
+
 test("integrations: 4 agent cards, webhook token hidden, Slack connect flow", async ({ page }) => {
   await page.goto("/#/settings/integrations");
   await mock(page);
@@ -168,4 +245,61 @@ test("integrations: 4 agent cards, webhook token hidden, Slack connect flow", as
   await expect.poll(async () => (await invoke(page, "get_settings")).slackSync).toBe(true);
   await page.getByRole("button", { name: "Sync now" }).click();
   await expect(page.getByText("3 to-dos added")).toBeVisible();
+});
+
+const followups = (page: Page) =>
+  page.evaluate(() => (window as any).__floMock.calls.filter((c: any) => c.cmd === "assistant_followup").map((c: any) => c.args.mode));
+
+test("notch assistant card: Go deeper / Search the web call assistant_followup; long answers fade + Open full answer", async ({ page }) => {
+  await page.goto("/?nh=38&nw=200#/island");
+  await mock(page);
+  await page.locator('[aria-label="todos"]').waitFor();
+  const id = (await invoke(page, "list_assistant"))[0].id;
+  await emit(page, "flo://assistant", (await invoke(page, "list_assistant"))[0]);
+  await expect(page.getByRole("button", { name: "Go deeper" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Search the web" })).toBeVisible();
+  await page.getByRole("button", { name: "Go deeper" }).click();
+  await expect(page.locator('[data-testid="card-thinking"]')).toBeVisible();
+  // the deep answer replaces the card; it is long → fade + labelled Open full answer
+  await expect(page.locator('[data-testid="card-reply"]')).toContainText("Deeper look");
+  await expect(page.getByRole("button", { name: "Open full answer" })).toContainText("Open full answer");
+  await page.getByRole("button", { name: "Search the web" }).click();
+  await expect(page.getByText("3 sources")).toBeVisible();
+  expect(await followups(page)).toEqual(["deep", "web"]);
+  const first = (await page.evaluate(() => (window as any).__floMock.calls.find((c: any) => c.cmd === "assistant_followup"))).args.id;
+  expect(first).toBe(id);
+  await page.getByRole("button", { name: "Open full answer" }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__floMock.calls.filter((c: any) => c.cmd === "open_dashboard").map((c: any) => c.args.route))).toContainEqual(expect.stringMatching(/^assistant\//));
+});
+
+test("assistant page: markdown replies, sources, mode badge, follow-ups and the Quick/Deep/Web switch", async ({ page }) => {
+  await page.goto("/#/assistant");
+  await mock(page);
+  await expect(page.locator('[data-testid="answer"]').first()).toBeVisible();
+  // Web mode from the input switch
+  await page.getByRole("radio", { name: /Web/ }).click();
+  await expect(page.getByRole("radio", { name: /Web/ })).toHaveAttribute("aria-checked", "true");
+  await page.getByLabel("Ask Flo").fill("How do notch apps avoid stealing focus?");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const last = page.locator('[data-testid="answer"]').last();
+  await expect(last.locator('[data-testid="mode-badge"]')).toHaveText(/Web/);
+  await expect(last.locator("h4")).toHaveText("What I found");
+  await expect(last.locator("li")).toHaveCount(3);
+  await expect(last.locator("strong").first()).toHaveText("Tauri 2");
+  await expect(last.locator("code").first()).toHaveText("NSPanel");
+  await expect(last.getByRole("link", { name: "Tauri docs" })).toHaveAttribute("href", "https://v2.tauri.app/plugin/global-shortcut/");
+  await expect(last.locator('[data-testid="source-chip"]')).toHaveCount(3);
+  await expect(last.locator('[data-testid="source-chip"]').first()).toContainText("v2.tauri.app");
+  // per-answer Go deeper → deep answer with a code block + copy
+  await last.getByRole("button", { name: "Go deeper" }).click();
+  const deep = page.locator('[data-testid="answer"]').last();
+  await expect(deep.locator('[data-testid="mode-badge"]')).toHaveText(/Deep/);
+  await expect(deep.locator('[data-testid="md-code"]')).toContainText("backendHover.current");
+  await expect(deep.getByRole("button", { name: "Copy code" })).toBeVisible();
+  await expect(deep.locator("ol li")).toHaveCount(3);
+  expect(await followups(page)).toEqual(["deep"]);
+  const ask = await page.evaluate(() => (window as any).__floMock.calls.find((c: any) => c.cmd === "ask_assistant"));
+  expect(ask.args.mode).toBe("web");
+  // nothing renders as raw markup
+  await expect(page.getByText("**")).toHaveCount(0);
 });

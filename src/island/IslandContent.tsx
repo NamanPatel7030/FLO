@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, Check, Copy, History, LayoutDashboard, Lock, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Globe, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
 import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase } from "../lib/types";
 import { FlowWave, Waveform } from "./Waveform";
 import type { MeetingInfo } from "./Island";
 import { copyText } from "../lib/clipboard";
+import { CardRow } from "./CardRow";
+import { Ribbon } from "./Ribbon";
+import { isLongReply, toPlainText } from "../lib/markdown";
 
 interface Props {
   variant: IslandVariant;
@@ -35,6 +38,10 @@ interface Props {
   keys: { dict: string; asst: string };
   /** width of the black pill (for the full-width working wave) */
   pillW: number;
+  /** a Go deeper / Search the web follow-up is running for the card */
+  followup?: "deep" | "web" | null;
+  onFollowup: (mode: "deep" | "web") => void;
+  onOpenAnswer: (id: string) => void;
 }
 
 /** Number of quick actions in the peek menu (for hit-testing). */
@@ -232,42 +239,23 @@ export function IslandContent(p: Props) {
     case "result": {
       const text = p.result ?? "";
       return (
-        <div className="relative h-full">
-          {notch && <Wings notch geo={geo} left={<CheckBadge />} right={null} />}
-          <Below notch={notch} geo={geo} className="justify-center pb-1.5">
-            <div className="flex items-center gap-2.5" aria-label="Pasted">
-              {!notch && <CheckBadge />}
-              <p className="selectable min-w-0 flex-1 truncate text-[13px] leading-[18px] text-white/90">{text}</p>
-              <CopyButton text={text} />
-            </div>
-          </Below>
-        </div>
+        <CardRow notch={notch} geo={geo} icon={<CheckBadge />} actions={<CopyButton text={text} />} label="Pasted" testId="result-card">
+          <p className="selectable truncate text-[13px] leading-[18px] text-white/90">{text}</p>
+        </CardRow>
       );
     }
 
     case "error": {
       const msg = p.message ?? "Something went wrong";
       return (
-        <div className="relative h-full">
-          {notch && (
-            <Wings
-              notch
-              geo={geo}
-              left={<AlertTriangle size={14} className="text-amber-300" />}
-              right={
-                <button className="rounded-full p-1 text-white/50 hover:bg-white/10 hover:text-white" onClick={p.onCloseError} aria-label="Dismiss">
-                  <X size={13} />
-                </button>
-              }
-            />
-          )}
-          <Below notch={notch} geo={geo} className="pb-2">
-            <div className="flex items-start gap-2">
-              {!notch && <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-300" />}
-              <p className={"selectable flex-1 text-[13px] leading-[18px] text-white/85 " + (notch ? "line-clamp-3" : "line-clamp-4")}>{msg}</p>
-            </div>
-            {wantsFix(msg) && (
-              <div className="mt-2 flex justify-end">
+        <CardRow
+          notch={notch}
+          geo={geo}
+          testId="error-card"
+          icon={<AlertTriangle size={15} className="text-amber-300" />}
+          actions={
+            <>
+              {wantsFix(msg) && (
                 <button
                   className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-300/15 text-brand-200 hover:bg-brand-300/25"
                   title="Fix in Settings"
@@ -279,10 +267,15 @@ export function IslandContent(p: Props) {
                 >
                   <Settings2 size={14} />
                 </button>
-              </div>
-            )}
-          </Below>
-        </div>
+              )}
+              <button className="flex h-7 w-7 items-center justify-center rounded-full text-white/50 hover:bg-white/10 hover:text-white" onClick={p.onCloseError} aria-label="Dismiss">
+                <X size={13} />
+              </button>
+            </>
+          }
+        >
+          <p className={"selectable text-[13px] leading-[18px] text-white/85 " + (notch ? "line-clamp-3" : "line-clamp-4")}>{msg}</p>
+        </CardRow>
       );
     }
 
@@ -395,27 +388,47 @@ export function IslandContent(p: Props) {
     case "card": {
       const c = p.card;
       if (!c) return null;
+      const plain = toPlainText(c.reply);
+      const long = isLongReply(c.reply);
+      const busy = p.followup;
+      const iconBtn = "flex h-7 w-7 items-center justify-center rounded-full text-white/60 transition hover:bg-white/10 hover:text-white disabled:opacity-35";
       return (
         <div className="flex h-full flex-col">
           {notch && <div style={{ height: top }} />}
-          <div className="flex min-h-0 flex-1 flex-col gap-2 px-5 pb-4 pt-2">
-            <div className="flex items-start justify-between gap-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 px-4 pb-3 pt-2">
+            <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2 text-[11.5px] text-white/50">
                 <MessageSquareText size={13} className="shrink-0" />
                 <span className="truncate">{c.query}</span>
+                {c.mode && c.mode !== "quick" && (
+                  <span className="shrink-0 rounded-full bg-brand-300/15 px-1.5 text-[9.5px] font-semibold uppercase tracking-wider text-brand-200">{c.mode}</span>
+                )}
               </div>
               <button className="rounded-full p-1 text-white/50 hover:bg-white/10 hover:text-white" onClick={p.onCloseCard} aria-label="Dismiss">
                 <X size={13} />
               </button>
             </div>
-            <div className="flex min-h-0 gap-2.5">
-              <span className="accent-gradient mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full">
-                <Sparkles size={11} />
-              </span>
-              <p className="selectable line-clamp-5 overflow-hidden text-[13.5px] leading-snug text-white/95">{c.reply}</p>
-            </div>
+            {busy ? (
+              // follow-up running: the thinking ribbon, inside the card
+              <div className="relative h-[38px] shrink-0 overflow-hidden rounded-xl bg-white/[0.03]" role="status" aria-label={busy === "web" ? "Searching the web" : "Going deeper"} data-testid="card-thinking">
+                <Ribbon width={Math.max(120, p.pillW - 32)} height={38} notchWidth={0} wing={Math.max(120, p.pillW - 32) / 2} mode="think" leftWing />
+              </div>
+            ) : (
+              <div className="flex min-h-0 gap-2.5">
+                <span className="accent-gradient mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full">
+                  <Sparkles size={11} />
+                </span>
+                <p
+                  className="selectable line-clamp-4 overflow-hidden whitespace-pre-line text-[13.5px] leading-snug text-white/95"
+                  style={long ? { WebkitMaskImage: "linear-gradient(180deg,#000 60%,transparent)", maskImage: "linear-gradient(180deg,#000 60%,transparent)" } : undefined}
+                  data-testid="card-reply"
+                >
+                  {plain}
+                </p>
+              </div>
+            )}
             {c.results.length > 0 && (
-              <div className="mt-auto flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {c.results.map((r, i) => (
                   <motion.span
                     key={i}
@@ -429,6 +442,32 @@ export function IslandContent(p: Props) {
                 ))}
               </div>
             )}
+            <div className="mt-auto flex items-center justify-end gap-1">
+              {!!c.sources?.length && <span className="mr-auto text-[11px] text-white/40">{c.sources.length} sources</span>}
+              <button className={iconBtn} disabled={!!busy} onClick={() => p.onFollowup("deep")} title="Go deeper: reads your screen, detailed answer" aria-label="Go deeper">
+                <span className="relative">
+                  <Sparkles size={14} />
+                  <span className="absolute -right-[5px] -top-[5px] text-[10px] font-bold leading-none">+</span>
+                </span>
+              </button>
+              <button className={iconBtn} disabled={!!busy} onClick={() => p.onFollowup("web")} title="Search the web" aria-label="Search the web">
+                <Globe size={14} />
+              </button>
+              {long ? (
+                <button
+                  className="flex h-7 items-center gap-1 rounded-full bg-white/[0.08] px-2.5 text-[11.5px] font-medium text-white/85 hover:bg-white/[0.14] hover:text-white"
+                  onClick={() => p.onOpenAnswer(c.id)}
+                  title="Open full answer"
+                  aria-label="Open full answer"
+                >
+                  <Maximize2 size={12} /> Open full answer
+                </button>
+              ) : (
+                <button className={iconBtn} onClick={() => p.onOpenAnswer(c.id)} title="Open full answer" aria-label="Open full answer">
+                  <Maximize2 size={13} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       );
@@ -439,30 +478,35 @@ export function IslandContent(p: Props) {
       if (!c) return null;
       const needs = c.kind === "notification";
       return (
-        <div className="flex h-full flex-col">
-          {notch && <div style={{ height: top }} />}
-          <div className="flex flex-1 flex-col gap-1.5 px-5 pb-3.5 pt-1.5">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inset-0 rounded-full bg-[#d97757] opacity-60 [animation:ping_1s_cubic-bezier(0,0,0.2,1)_3]" />
-                <span className="relative h-2.5 w-2.5 rounded-full bg-[#d97757] shadow-[0_0_10px_#d97757]" />
-              </span>
-              <span className="truncate text-[13px] font-semibold">
-                {needs ? "Claude needs you" : "Claude finished"} <span className="text-white/50">· {c.project}</span>
-              </span>
-              {p.claudeMore > 0 && <span className="ml-auto rounded-full bg-white/10 px-1.5 text-[10.5px] text-white/70">+{p.claudeMore}</span>}
-            </div>
-            <p className="line-clamp-2 text-[12.5px] leading-snug text-white/70">{c.message}</p>
-            <div className="mt-auto flex justify-end gap-1.5">
-              <button className="rounded-full px-3 py-1 text-[11.5px] text-white/70 hover:bg-white/10" onClick={() => p.onClaude(false)}>
-                Dismiss
+        <CardRow
+          notch={notch}
+          geo={geo}
+          testId="claude-card"
+          icon={
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inset-0 rounded-full bg-[#d97757] opacity-60 [animation:ping_1s_cubic-bezier(0,0,0.2,1)_3]" />
+              <span className="relative h-2.5 w-2.5 rounded-full bg-[#d97757] shadow-[0_0_10px_#d97757]" />
+            </span>
+          }
+          actions={
+            <>
+              <button className="flex h-7 w-7 items-center justify-center rounded-full text-white/50 hover:bg-white/10 hover:text-white" onClick={() => p.onClaude(false)} aria-label="Dismiss" title="Dismiss">
+                <X size={13} />
               </button>
               <button className="rounded-full bg-[#d97757] px-3 py-1 text-[11.5px] font-medium text-white hover:brightness-110" onClick={() => p.onClaude(true)}>
                 Open
               </button>
-            </div>
+            </>
+          }
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[13px] font-semibold">
+              {needs ? "Claude needs you" : "Claude finished"} <span className="text-white/50">· {c.project}</span>
+            </span>
+            {p.claudeMore > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10.5px] text-white/70">+{p.claudeMore}</span>}
           </div>
-        </div>
+          <p className="line-clamp-2 text-[12.5px] leading-snug text-white/70">{c.message}</p>
+        </CardRow>
       );
     }
     default:

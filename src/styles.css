@@ -21,6 +21,10 @@
 :root {
   color-scheme: dark;
   --bg: #000000;
+  /* solid surfaces for popovers / sheets (must not depend on backdrop blur) */
+  --menu-bg: #0b121b;
+  --sheet-bg: linear-gradient(180deg, rgba(12, 20, 30, 0.97), rgba(4, 8, 13, 0.98));
+  --scrim: rgba(1, 4, 8, 0.86);
   --fg: #f3f9ff;
   --fg-muted: rgb(226 240 255 / 0.64);
   --fg-faint: rgb(226 240 255 / 0.40);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  sessionsByUrgency,
   formatDuration,
   formatClock,
   formatNumber,
@@ -150,7 +151,8 @@ describe("islandSize", () => {
       expect(mid.height).toBeGreaterThan(short.height);
       expect(huge.height).toBeGreaterThan(mid.height);
       expect(huge.height).toBe(islandSize("error", g, { textChars: 5000 }).height);
-      expect(fix.height).toBeGreaterThan(mid.height);
+      // the Fix action sits inline in the same row: no extra height
+      expect(fix.height).toBe(mid.height);
     });
     it(`result is one compact line regardless of length (nh=${nh})`, () => {
       const one = islandSize("result", g, { textChars: 10 });
@@ -277,8 +279,9 @@ describe("tray layout (notch)", () => {
     expect(peekTileAt(500, 480, 470, 60, 32, 5)).toBe(4);
   });
   it("correction and meeting prompt cards drop below the notch", () => {
-    expect(islandSize("correction", geo).height).toBeGreaterThan(32 + 60);
-    expect(islandSize("meetingPrompt", geo).height).toBeGreaterThan(32 + 60);
+    // one row (icon + text + actions) below an empty notch row
+    expect(islandSize("correction", geo).height).toBeGreaterThan(32 + 44);
+    expect(islandSize("meetingPrompt", geo).height).toBeGreaterThan(32 + 44);
   });
 });
 
@@ -323,5 +326,18 @@ describe("parseTime", () => {
     const b = Date.UTC(2026, 10, 5, 9, 20, 0, 123);
     expect(a).toBe(b);
     expect(parseTime("2026-11-05T09:20:00.123Z")).toBe(b);
+  });
+});
+
+describe("sessionsByUrgency", () => {
+  const s = (id: string, status: any, mins: number) => ({ sessionId: id, project: id, cwd: "", status, message: "", source: "claude", updatedAt: new Date(Date.now() - mins * 60_000).toISOString() });
+  it("needs_approval > waiting_reply > done > working, newest first within a status", () => {
+    const out = sessionsByUrgency([s("w", "working", 1), s("d", "done", 5), s("d2", "done", 1), s("r", "waiting_reply", 9), s("a", "needs_approval", 30)]);
+    expect(out.map((x) => x.sessionId)).toEqual(["a", "r", "d2", "d", "w"]);
+  });
+  it("does not mutate its input", () => {
+    const list = [s("w", "working", 1), s("a", "needs_approval", 1)];
+    sessionsByUrgency(list);
+    expect(list[0].sessionId).toBe("w");
   });
 });

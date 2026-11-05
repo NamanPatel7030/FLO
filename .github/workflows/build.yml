@@ -8,6 +8,42 @@ on:
   workflow_dispatch:
 
 jobs:
+  # UI end-to-end on both engines the app ships on (mock backend, Vite preview build):
+  #   chromium ≈ Windows WebView2 · webkit ≈ macOS WKWebView + Linux WebKitGTK
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Playwright (chromium + webkit)
+        run: npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+
   build:
     strategy:
       fail-fast: false

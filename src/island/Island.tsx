@@ -18,7 +18,8 @@ import {
   type CardContent,
   type IslandVariant,
 } from "../lib/format";
-import { isStuck } from "../lib/format";
+import { isStuck, sessionsByUrgency } from "../lib/format";
+import { toPlainText } from "../lib/markdown";
 import {
   EV,
   type AssistantResponse,
@@ -65,7 +66,6 @@ const CORRECTION_MS = 10000;
 const MEETING_PROMPT_MS = 8000;
 /** unanswered confirmations are cancelled (never auto-sent) */
 const CONFIRM_MS = 60000;
-const MAX_AVATARS = 5;
 /** Cursor may leave the island this long before hover state drops (no flicker at edges). */
 const LEAVE_GRACE_MS = 250;
 
@@ -92,6 +92,7 @@ export default function Island() {
   const [mode, setMode] = useState<Mode>("dictation");
   const [message, setMessage] = useState<string | undefined>();
   const [card, setCard] = useState<AssistantResponse | null>(null);
+  const [followup, setFollowup] = useState<"deep" | "web" | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [history, setHistory] = useState<Dictation[] | null>(null);
   const [claudeQueue, setClaudeQueue] = useState<ClaudeEvent[]>([]);
@@ -115,6 +116,10 @@ export default function Island() {
   const tipRef = useRef(-1);
   const hotTileRef = useRef(-1);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** flo://hover is the single source of truth once the backend speaks (always inside Tauri).
+   *  WebKit fires DOM mouseleave/mouseenter when the window resizes under a resting cursor,
+   *  which used to open/close the peek menu in a loop. DOM hover is a browser-preview fallback only. */
+  const backendHover = useRef(isTauri);
   const geomRef = useRef<{ notch: boolean; slots: { cx: number; side: "left" | "right"; index: number }[]; shown: IslandVariant; winW: number; pillW: number; nh: number; tipH: (i: number) => number }>({
     notch: false,
     slots: [],
@@ -245,7 +250,10 @@ export default function Island() {
           summary: e.summary ?? m.summary,
         }));
       }),
-      on<HoverEvent>(EV.hover, (e) => handleHoverRef.current(e)),
+      on<HoverEvent>(EV.hover, (e) => {
+        backendHover.current = true;
+        handleHoverRef.current(e);
+      }),
     ];
     return () => offs.forEach((f) => f());
   }, []);
@@ -288,10 +296,10 @@ export default function Island() {
   }, [result, hover]);
 
   useEffect(() => {
-    if (!card || hover) return;
+    if (!card || hover || followup) return;
     const t = setTimeout(() => setCard(null), 8000);
     return () => clearTimeout(t);
-  }, [card, hover]);
+  }, [card, hover, followup]);
 
   const headClaude = claudeQueue[0];
   useEffect(() => {
@@ -326,10 +334,8 @@ export default function Island() {
 
   // ── tray items ──────────────────────────────────────────────────────────
   const trayItems = useMemo(() => {
-    // ≤5 sessions → one avatar each; more → 4 avatars + a chip that lists ALL sessions
-    const shownAvatars = sessions.length > MAX_AVATARS ? MAX_AVATARS - 1 : MAX_AVATARS;
-    const ses: TrayItem[] = sessions.slice(0, shownAvatars).map((s) => ({ id: `claude:${s.sessionId}`, kind: "claude", session: s }));
-    if (sessions.length > MAX_AVATARS) ses.push({ id: "more", kind: "more", sessions });
+    // ONE stacked icon for all agent sessions (most urgent on top); hover lists them all
+    const ses: TrayItem[] = sessions.length ? [{ id: "agents", kind: "agents", sessions: sessionsByUrgency(sessions) }] : [];
     const others: TrayItem[] = [];
     const urgent = urgentTodos(todos);
     if (urgent.length) others.push({ id: "todos", kind: "todos", todos: urgent });
@@ -352,6 +358,8 @@ export default function Island() {
   const [shown, setShown] = useState<IslandVariant>("collapsed");
   const [shownContent, setShownContent] = useState<CardContent | undefined>();
   const winSize = useRef<{ width: number; height: number } | null>(null);
+  const shownRef = useRef<IslandVariant>("collapsed");
+  shownRef.current = shown;
   const shrinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const nh = geo?.notchHeight ?? 0;
@@ -386,7 +394,7 @@ export default function Island() {
   const contentFor = (v: IslandVariant): CardContent | undefined => {
     switch (v) {
       case "card":
-        return card ? { replyChars: card.reply.length, results: card.results.length } : undefined;
+        return card ? { replyChars: toPlainText(card.reply).length, results: card.results.length } : undefined;
       case "error":
         return { textChars: (message ?? "Something went wrong").length, action: wantsFix(message) };
       case "result":
@@ -400,7 +408,7 @@ export default function Island() {
       case "peek":
         return trayCounts;
       case "trayTooltip":
-        return { ...trayCounts, tipCx: layout?.slots[tipIdx]?.cx ?? 0, tipRows: tipItem?.kind === "more" ? tipItem.sessions.length : undefined };
+        return { ...trayCounts, tipCx: layout?.slots[tipIdx]?.cx ?? 0, tipRows: tipItem?.kind === "agents" ? tipItem.sessions.length : undefined };
       default:
         return undefined;
     }
@@ -411,6 +419,13 @@ export default function Island() {
   useEffect(() => {
     if (!geo) return;
     const next = islandSize(target, geo, content);
+    // idempotent: same variant, same size -> no resize, no timers (a re-render on hover is a no-op)
+    if (winSize.current && target === shownRef.current && next.width === winSize.current.width && next.height === winSize.current.height) {
+      if (shrinkTimer.current) clearTimeout(shrinkTimer.current);
+      shrinkTimer.current = null;
+      setShownContent(content);
+      return;
+    }
     const cur = winSize.current ?? next;
     const union = { width: Math.max(cur.width, next.width), height: Math.max(cur.height, next.height) };
     if (shrinkTimer.current) clearTimeout(shrinkTimer.current);
@@ -511,15 +526,20 @@ export default function Island() {
     setIgnoredDetect(app);
     setPromptOpen(false);
   };
+  const clearDone = () => {
+    for (const s of sessions) if (s.status === "done") dismissSession(s);
+  };
   const onTrayItem = (it: TrayItem) => {
-    if (it.kind === "claude") openSession(it.session);
+    // click the stack: jump to the most urgent session
+    if (it.kind === "agents") openSession(it.sessions[0]);
     else if (it.kind === "todos") api.openDashboard("todos");
     else if (it.kind === "meeting") setPromptOpen(true);
     else api.openDashboard("home");
   };
 
-  // DOM mouse tracking (browser preview; harmless in Tauri alongside backend events)
+  // DOM mouse tracking: browser preview only (ignored once the backend reports hover)
   const onMouseMove = (e: React.MouseEvent) => {
+    if (backendHover.current) return;
     const r = rootRef.current?.getBoundingClientRect();
     if (!r) return;
     const x = e.clientX - r.left;
@@ -573,7 +593,7 @@ export default function Island() {
     nh,
     tipH: (i: number) => {
       const it = trayItems.all[i];
-      return it && it.kind === "more" ? trayTipHeight(it.sessions.length) : TRAY_TIP_H;
+      return it && it.kind === "agents" ? trayTipHeight(it.sessions.length) : TRAY_TIP_H;
     },
   };
   const keys = {
@@ -599,7 +619,7 @@ export default function Island() {
       onMouseEnter={(e) => onMouseMove(e)}
       onMouseMove={onMouseMove}
       onMouseLeave={() => {
-        handleHover({ inside: false });
+        if (!backendHover.current) handleHover({ inside: false });
         setDomItem(-1);
       }}
     >
@@ -703,6 +723,20 @@ export default function Island() {
                   keys={keys}
                   pillW={pill.width}
                   onCloseCard={() => setCard(null)}
+                  followup={followup}
+                  onFollowup={(m) => {
+                    if (!card || followup) return;
+                    setFollowup(m);
+                    api
+                      .assistantFollowup(card.id, m)
+                      .then((r) => setCard(r))
+                      .catch(() => {})
+                      .finally(() => setFollowup(null));
+                  }}
+                  onOpenAnswer={(id) => {
+                    api.openDashboard(`assistant/${id}`);
+                    setCard(null);
+                  }}
                   onCloseError={() => setPhase("idle")}
                   onCloseHistory={() => setHistory(null)}
                   onOpenHistory={openHistory}
@@ -735,6 +769,7 @@ export default function Island() {
             }
             onOpen={openSession}
             onDismiss={dismissSession}
+            onClearDone={clearDone}
             onStartNotes={startNotes}
             onIgnoreMeeting={ignoreMeeting}
             onOpenTodos={() => api.openDashboard("todos")}

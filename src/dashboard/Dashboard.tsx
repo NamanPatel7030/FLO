@@ -18,6 +18,7 @@ import { Ocean } from "../island/Ocean";
 import { Kbd } from "./ui";
 import { Logo } from "./Logo";
 import { missingRequired, usePermissions } from "./usePermissions";
+import { Onboarding } from "./Onboarding";
 
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: "home", label: "Home", icon: <HomeIcon size={16} /> },
@@ -157,6 +158,8 @@ export default function Dashboard() {
           </div>
         </main>
         <Toasts />
+        {/* first run (or Settings → General → Run setup again) */}
+        {settings?.onboarded === false && <Onboarding />}
       </div>
     </MotionConfig>
   );

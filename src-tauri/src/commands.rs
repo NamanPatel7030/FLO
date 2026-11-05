@@ -41,6 +41,28 @@ pub fn delete_api_key(provider: String) -> R<()> {
     secrets::delete_api_key(&provider).map_err(e)
 }
 
+/// Models pulled into the local Ollama (or LM Studio) server. Errors with a helpful hint when the
+/// server isn't running (the UI then shows "install Ollama · ollama pull qwen3:8b").
+#[tauri::command]
+pub async fn local_models(st: State<'_, Shared>) -> R<Vec<String>> {
+    let s = st.settings();
+    let lmstudio = s.llm_provider == "lmstudio";
+    let url = if lmstudio { "http://127.0.0.1:1234/v1/models".to_string() } else { format!("{}/api/tags", s.local_llm_url.trim_end_matches('/')) };
+    st.egress.check(&url, Purpose::Test, false).map_err(e)?;
+    let resp = st
+        .egress
+        .client(Purpose::Test, false)
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .map_err(|_| "Ollama isn't running. Install it from ollama.com, then run: ollama pull qwen3:8b".to_string())?;
+    let v: serde_json::Value = resp.json().await.map_err(e)?;
+    let list = if lmstudio { &v["data"] } else { &v["models"] };
+    let key = if lmstudio { "id" } else { "name" };
+    Ok(list.as_array().cloned().unwrap_or_default().iter().filter_map(|m| m[key].as_str().map(String::from)).collect())
+}
+
 /// Model names for a provider (live list when reachable, curated fallback otherwise).
 #[tauri::command]
 pub async fn provider_models(st: State<'_, Shared>, provider: String) -> R<Vec<String>> {

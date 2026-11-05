@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import { on } from "../lib/api";
 import { EV, type LevelEvent } from "../lib/types";
+import { gateLevel, initialGate } from "../lib/gate";
 
 export type RibbonMode = "listen" | "transcribe" | "think" | "done";
 
@@ -49,7 +50,8 @@ export function Ribbon({
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     // critically damped spring for amplitude (ω = 9)
-    let amp = 0.15;
+    const gate = initialGate();
+    let amp = 0.06;
     let vel = 0;
     let leftAlpha = live.current.leftWing ? 1 : 0;
     let doneAt = 0;
@@ -74,7 +76,8 @@ export function Ribbon({
 
       // targets per mode
       let target = 0.15;
-      if (L.mode === "listen") target = 0.18 + Math.min(1, Math.sqrt(Math.max(0, L.level)) * 1.3) * 0.82;
+      // listen: adaptive noise gate → almost flat (≤1px breathing) unless you speak
+      if (L.mode === "listen") target = 0.06 + 0.03 * Math.sin(t * 1.6) + gateLevel(gate, L.level, dt) * 0.91;
       else if (L.mode === "transcribe") target = 0.1;
       else if (L.mode === "think") target = 0.14;
       else if (L.mode === "done") {

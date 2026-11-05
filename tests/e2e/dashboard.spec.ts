@@ -21,8 +21,9 @@ test("assistant: quick-command style request shows a reply", async ({ page }) =>
   await expect(page.getByText(/Apollo/).first()).toBeVisible();
 });
 
-test("history: entries can be copied", async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+test("history: entries can be copied", async ({ page, context, browserName }) => {
+  // permission names are Chromium-only; WebKit copies on the user gesture (or via the execCommand fallback)
+  if (browserName === "chromium") await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/#/history");
   const copy = page.getByRole("button", { name: /copy/i }).first();
   await expect(copy).toBeVisible();
