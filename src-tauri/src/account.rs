@@ -81,13 +81,26 @@ fn remember(st: &Shared, token: &str, user: &AccountUser) -> Result<()> {
 }
 
 /// Fast, no-network guess used at startup (token in keychain + cached user).
+/// Is sign-in actually enforced? Only when a real deployed account server is configured.
+/// Default (empty / localhost / http) = offline-first: Flo works without an account.
+pub fn enforced(st: &Shared) -> bool {
+    let url = base(st);
+    url.starts_with("https://") && !url.contains("localhost") && !url.contains("127.0.0.1")
+}
+
 pub fn cached_signed_in(st: &Shared) -> bool {
-    st.settings().account_user.is_some() && secrets::get_secret(TOKEN).is_some()
+    // offline-first: usable unless an account server is enforced and we have no session
+    !enforced(st) || (st.settings().account_user.is_some() && secrets::get_secret(TOKEN).is_some())
 }
 
 pub async fn status(st: &Shared) -> AccountStatus {
     let account_url = base(st);
     let cached = st.settings().account_user.clone();
+    if !enforced(st) {
+        // offline-first: no account server configured → always usable
+        st.signed_in.store(true, Ordering::SeqCst);
+        return AccountStatus { signed_in: true, user: cached, account_url, offline: false };
+    }
     let Some(token) = secrets::get_secret(TOKEN) else {
         st.signed_in.store(false, Ordering::SeqCst);
         return AccountStatus { signed_in: false, user: None, account_url, offline: false };

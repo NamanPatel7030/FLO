@@ -387,7 +387,7 @@ pub fn run() {
                 attention_paused: AtomicBool::new(false),
                 ptt_down: AtomicBool::new(false),
                 lock_pending: AtomicBool::new(false),
-                signed_in: AtomicBool::new(false),
+                signed_in: AtomicBool::new(true),
                 attention_captures: AtomicU32::new(0),
                 claude_listening: AtomicBool::new(false),
                 claude_port: claude::PORT,
