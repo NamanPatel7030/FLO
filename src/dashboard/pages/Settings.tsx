@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Download, KeyRound, Lock, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard } from "lucide-react";
+import { Check, Download, KeyRound, Lock, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Sun, Moon, Monitor } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
-import { EV, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo } from "../../lib/types";
+import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type ThemeMode, type NotchStyle } from "../../lib/types";
+import { NotchViz } from "../../island/Ribbon";
+import { deriveGradient, normalizeHex } from "../../lib/theme";
 import { useStore } from "../store";
 import { Button, Card, CardTitle, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
 import { About } from "../About";
@@ -13,7 +15,7 @@ import { Integrations } from "../Integrations";
 import { AiProviderFields, PROVIDERS } from "../AiSetup";
 import { accountApi, initials, refreshAccount, useAccount } from "../../lib/account";
 
-const TABS = ["Account", "General", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
+const TABS = ["Account", "General", "Appearance", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Settings() {
@@ -43,6 +45,7 @@ export default function Settings() {
           <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="max-w-3xl">
             {tab === "Account" && <AccountTab />}
             {tab === "General" && <General s={settings} set={set} />}
+            {tab === "Appearance" && <Appearance s={settings} set={set} />}
             {tab === "Shortcuts" && <Shortcuts s={settings} set={set} />}
             {tab === "Voice" && <Voice s={settings} set={set} />}
             {tab === "AI" && <AI s={settings} set={set} />}
@@ -160,6 +163,125 @@ function AccountTab() {
       </div>
       <p className="mt-4 text-[12px] text-faint">Your account only signs you in. Dictations, notes, to-dos and keys stay on this computer.</p>
     </Card>
+  );
+}
+
+const NOTCH_STYLES: { id: NotchStyle; label: string }[] = [
+  { id: "ribbon", label: "Ribbon" },
+  { id: "wave", label: "Wave" },
+  { id: "bars", label: "Bars" },
+  { id: "pulse", label: "Pulse" },
+  { id: "orb", label: "Orb" },
+  { id: "aurora", label: "Aurora" },
+];
+
+function NotchPreview({ style, accent }: { style: NotchStyle; accent: string }) {
+  return (
+    <div className="relative h-11 w-full overflow-hidden rounded-xl bg-black">
+      <NotchViz style={style} accent={accent} width={176} height={44} notchWidth={0} wing={88} mode="transcribe" leftWing />
+    </div>
+  );
+}
+
+function Appearance({ s, set }: P) {
+  const accent = normalizeHex(s.accent || "#3dbbff");
+  const auto = !(Array.isArray(s.notchGradient) && s.notchGradient.length === 2);
+  const [gf, gt] = deriveGradient({ accent, notchGradient: s.notchGradient });
+  const themes: { id: ThemeMode; label: string; Icon: typeof Sun }[] = [
+    { id: "dark", label: "Dark", Icon: Moon },
+    { id: "light", label: "Light", Icon: Sun },
+    { id: "system", label: "System", Icon: Monitor },
+  ];
+  return (
+    <div className="space-y-5">
+      <Card className="p-4">
+        <CardTitle icon={<Palette size={15} />}>Theme</CardTitle>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {themes.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => set({ theme: id })}
+              className={clsx(
+                "flex h-16 flex-col items-center justify-center gap-1.5 rounded-xl border transition",
+                s.theme === id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong",
+              )}
+            >
+              <Icon size={20} className={s.theme === id ? "text-[var(--accent)]" : "text-muted"} />
+              <span className="text-[12px] font-medium">{label}</span>
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <CardTitle>Accent</CardTitle>
+        <div className="mt-3 flex flex-wrap items-center gap-2.5">
+          {ACCENT_PRESETS.map((pre) => (
+            <button
+              key={pre.name}
+              title={pre.name}
+              aria-label={pre.name}
+              onClick={() => set({ accent: pre.accent })}
+              className={clsx("h-8 w-8 rounded-full ring-offset-2 ring-offset-[var(--bg)] transition", accent === normalizeHex(pre.accent) ? "ring-2 ring-[var(--fg)]" : "ring-0 hover:scale-110")}
+              style={{ background: `linear-gradient(135deg, ${pre.gradient[0]}, ${pre.gradient[1]})` }}
+            />
+          ))}
+          <label className="ml-1 flex h-8 cursor-pointer items-center gap-2 rounded-full glass px-3 text-[12px] text-muted" title="Custom colour">
+            <span className="h-4 w-4 rounded-full border border-white/20" style={{ background: accent }} />
+            Custom
+            <input type="color" value={accent} onChange={(e) => set({ accent: e.target.value })} className="h-0 w-0 opacity-0" />
+          </label>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <CardTitle>Notch animation</CardTitle>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {NOTCH_STYLES.map((n) => (
+            <button
+              key={n.id}
+              onClick={() => set({ notchStyle: n.id })}
+              className={clsx(
+                "group rounded-2xl border p-2 text-left transition",
+                s.notchStyle === n.id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong",
+              )}
+            >
+              <NotchPreview style={n.id} accent={accent} />
+              <div className="mt-2 flex items-center justify-between px-0.5">
+                <span className="text-[12.5px] font-medium">{n.label}</span>
+                {s.notchStyle === n.id && <Check size={14} className="text-[var(--accent)]" />}
+              </div>
+            </button>
+          ))}
+        </div>
+        <p className="mt-2.5 text-[12px] text-faint">Previews use your accent. Changes show in the notch the next time it lights up.</p>
+      </Card>
+
+      <Card className="p-4">
+        <CardTitle>Notch gradient</CardTitle>
+        <Toggle
+          label="Auto from accent"
+          hint="Derive the two-colour gradient from your accent."
+          checked={auto}
+          onChange={(v) => set({ notchGradient: v ? [] : [gf, gt] })}
+        />
+        {!auto && (
+          <div className="mt-2 flex items-center gap-4">
+            <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted">
+              <span className="h-6 w-6 rounded-md border border-white/15" style={{ background: gf }} />
+              From
+              <input type="color" value={gf} onChange={(e) => set({ notchGradient: [e.target.value, gt] })} className="h-0 w-0 opacity-0" />
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted">
+              <span className="h-6 w-6 rounded-md border border-white/15" style={{ background: gt }} />
+              To
+              <input type="color" value={gt} onChange={(e) => set({ notchGradient: [gf, e.target.value] })} className="h-0 w-0 opacity-0" />
+            </label>
+            <div className="h-6 flex-1 rounded-md" style={{ background: `linear-gradient(90deg, ${gf}, ${gt})` }} />
+          </div>
+        )}
+      </Card>
+    </div>
   );
 }
 

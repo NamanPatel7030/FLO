@@ -43,7 +43,8 @@ import {
 import { IslandContent, PEEK_ACTIONS } from "./IslandContent";
 import { ConfirmCard, CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, TrayTooltip, type TrayItem } from "./Tray";
 import { runDemo } from "./demo";
-import { Ribbon } from "./Ribbon";
+import { NotchViz } from "./Ribbon";
+import { applyTheme, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
 
 export interface MeetingInfo {
@@ -194,6 +195,18 @@ export default function Island() {
     api.listClaudeSessions().then(setSessions);
     api.listTodos().then(setTodos).catch(() => {});
   }, []);
+
+  // theme + accent: apply on change, and re-read when the dashboard window edits settings
+  useEffect(() => {
+    if (settings) applyTheme(settings);
+  }, [settings?.theme, settings?.accent, settings?.notchGradient?.[0], settings?.notchGradient?.[1]]);
+  useEffect(() => {
+    const offs = [
+      onSettingsBroadcast(() => api.getSettings().then(setSettings).catch(() => {})),
+      watchSystemTheme(() => settings && applyTheme(settings)),
+    ];
+    return () => offs.forEach((f) => f());
+  }, [settings]);
 
   // ── backend events ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -660,7 +673,9 @@ export default function Island() {
           {/* one luminous ribbon inside the wings: listening → working → done (persists across them);
               unmounted otherwise, so the idle notch / tray never draws */}
           {notch && (shown === "listening" || shown === "working" || shown === "done") && (
-            <Ribbon
+            <NotchViz
+              style={settings?.notchStyle ?? "ribbon"}
+              accent={settings?.accent}
               width={Math.round(geo.notchWidth + 2 * ISLAND_WING)}
               height={geo.notchHeight}
               notchWidth={geo.notchWidth}

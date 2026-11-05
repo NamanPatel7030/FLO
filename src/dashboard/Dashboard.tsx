@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import clsx from "clsx";
-import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Library, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info } from "lucide-react";
+import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Library, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info, Sun, Moon, Monitor } from "lucide-react";
 import { bootStore, hotkeyLabel, useStore, type Page } from "./store";
 import Home from "./pages/Home";
 import Assistant from "./pages/Assistant";
@@ -56,6 +56,7 @@ export default function Dashboard() {
   const notes = useStore((s) => s.notes);
   const geo = useStore((s) => s.geo);
   const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
   const account = useAccount();
   const signedIn = !!account.status?.signedIn || (account.offlineOk && !!account.status?.user);
   const openTodos = todos?.filter((t) => t.status === "open").length ?? 0;
@@ -137,6 +138,25 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
+            {settings && (
+              <div className="mt-2.5 flex items-center gap-1 rounded-full glass p-0.5">
+                {([["dark", Moon, "Dark"], ["light", Sun, "Light"], ["system", Monitor, "System"]] as const).map(([mode, Icon, label]) => (
+                  <button
+                    key={mode}
+                    title={label}
+                    aria-label={label}
+                    aria-pressed={settings.theme === mode}
+                    onClick={() => setSettings({ ...settings, theme: mode })}
+                    className={clsx(
+                      "flex h-7 flex-1 items-center justify-center rounded-full transition",
+                      settings.theme === mode ? "accent-gradient text-[#001522]" : "text-muted hover:text-[var(--fg)]",
+                    )}
+                  >
+                    <Icon size={14} />
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="mt-2">
               <Signature />
             </div>

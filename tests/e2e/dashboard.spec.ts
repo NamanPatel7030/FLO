@@ -54,3 +54,24 @@ test("network log shows tokens for AI calls", async ({ page }) => {
   await page.getByRole("button", { name: /privacy/i }).first().click();
   await expect(page.getByText(/Network log/i)).toBeVisible();
 });
+
+test("appearance: theme light, accent and notch style apply and persist", async ({ page }) => {
+  await page.goto("/#/settings/appearance");
+  await expect(page.getByText("Notch animation")).toBeVisible();
+
+  // switch to Light → html[data-theme=light]
+  await page.getByRole("button", { name: "Light" }).last().click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("light");
+
+  // pick the Violet accent → --accent CSS var updates
+  await page.getByLabel("Violet").click();
+  await expect
+    .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()))
+    .toBe("#8b5cf6");
+
+  // pick the Bars notch style → saved via save_settings
+  await page.getByText("Bars", { exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__floMock.invoke("get_settings").then((s: any) => s.notchStyle)))
+    .toBe("bars");
+});

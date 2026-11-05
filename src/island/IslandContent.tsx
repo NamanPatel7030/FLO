@@ -9,7 +9,7 @@ import type { MeetingInfo } from "./Island";
 import { copyText } from "../lib/clipboard";
 import { CardRow } from "./CardRow";
 import { isSignInError } from "../lib/account";
-import { Ribbon } from "./Ribbon";
+import { NotchViz } from "./Ribbon";
 import { isLongReply, toPlainText } from "../lib/markdown";
 
 interface Props {
@@ -435,7 +435,7 @@ export function IslandContent(p: Props) {
             {busy ? (
               // follow-up running: the thinking ribbon, inside the card
               <div className="relative h-[38px] shrink-0 overflow-hidden rounded-xl bg-white/[0.03]" role="status" aria-label={busy === "web" ? "Searching the web" : "Going deeper"} data-testid="card-thinking">
-                <Ribbon width={Math.max(120, p.pillW - 32)} height={38} notchWidth={0} wing={Math.max(120, p.pillW - 32) / 2} mode="think" leftWing />
+                <NotchViz style="ribbon" width={Math.max(120, p.pillW - 32)} height={38} notchWidth={0} wing={Math.max(120, p.pillW - 32) / 2} mode="think" leftWing />
               </div>
             ) : (
               <div className="flex min-h-0 gap-2.5">

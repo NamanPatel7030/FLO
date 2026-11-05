@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, on } from "../lib/api";
 import { formatHotkey } from "../lib/format";
+import { applyTheme, broadcastSettings, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { EV, type ClaudeEvent, type Note, type Project, type Settings, type ToastEvent, type Todo, type IslandGeometry } from "../lib/types";
 
 export type Page = "home" | "assistant" | "context" | "todos" | "projects" | "notes" | "analytics" | "history" | "settings" | "typing";
@@ -58,6 +59,8 @@ export const useStore = create<State>((set, get) => ({
   refreshClaude: async () => set({ claude: await api.listClaudeEvents(50) }),
   setSettings: async (s) => {
     set({ settings: s });
+    applyTheme(s);
+    broadcastSettings();
     await api.saveSettings(s);
   },
   toast: (t) => {
@@ -74,7 +77,10 @@ export function bootStore(): () => void {
   s.refreshProjects();
   s.refreshNotes();
   s.refreshClaude();
-  api.getSettings().then((settings) => useStore.setState({ settings }));
+  api.getSettings().then((settings) => {
+    useStore.setState({ settings });
+    applyTheme(settings);
+  });
   api.getIslandGeometry().then((geo) => useStore.setState({ geo }));
   const offs = [
     on(EV.todos, () => {
@@ -85,6 +91,8 @@ export function bootStore(): () => void {
     on(EV.notes, () => useStore.getState().refreshNotes()),
     on(EV.claude, () => useStore.getState().refreshClaude()),
     on<ToastEvent>(EV.toast, (t) => useStore.getState().toast(t)),
+    onSettingsBroadcast(() => api.getSettings().then((settings) => { useStore.setState({ settings }); applyTheme(settings); })),
+    watchSystemTheme(() => { const st = useStore.getState().settings; if (st) applyTheme(st); }),
   ];
   const onHash = () => {
     const h = readHash();
