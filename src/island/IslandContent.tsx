@@ -350,7 +350,17 @@ export function IslandContent(p: Props) {
                 <button className="rounded-full bg-white/10 px-2.5 py-1 text-[11.5px] hover:bg-white/20" onClick={p.onToggleMeeting}>
                   Minimize
                 </button>
-                <button className="flex items-center gap-1 rounded-full bg-red-500/90 px-2.5 py-1 text-[11.5px] font-medium hover:bg-red-500" onClick={() => api.stopMeeting()}>
+                <button className="flex items-center gap-1 rounded-full bg-red-500/90 px-2.5 py-1 text-[11.5px] font-medium hover:bg-red-500" onClick={(e) => {
+                    e.stopPropagation();
+                    const b = e.currentTarget;
+                    if (b.dataset.busy) return;
+                    b.dataset.busy = "1";
+                    b.lastChild && (b.lastChild.textContent = " Stopping…");
+                    api.stopMeeting().catch(() => {
+                      delete b.dataset.busy;
+                      b.lastChild && (b.lastChild.textContent = " Stop");
+                    });
+                  }}>
                   <Square size={10} fill="currentColor" /> Stop
                 </button>
               </div>

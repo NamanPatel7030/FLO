@@ -82,6 +82,20 @@ export default function Notes() {
 }
 
 function LiveNote({ note }: { note: Note }) {
+  const { toast, refreshNotes } = useStore();
+  const [stopping, setStopping] = useState(false);
+  const stop = async () => {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      await api.stopMeeting();
+      toast({ kind: "info", text: "Recording stopped — writing the summary…" });
+      await refreshNotes();
+    } catch (e) {
+      toast({ kind: "error", text: `Couldn't stop: ${e}` });
+      setStopping(false);
+    }
+  };
   const [segs, setSegs] = useState(note.transcript);
   const [summary, setSummary] = useState(note.summary);
   const [elapsed, setElapsed] = useState(note.durationSec);
@@ -119,8 +133,8 @@ function LiveNote({ note }: { note: Note }) {
               <div className="font-mono text-[13px] tabular-nums text-muted">{formatClock(elapsed)}</div>
             </div>
           </div>
-          <Button variant="danger" icon={<Square size={12} fill="currentColor" />} onClick={() => api.stopMeeting()}>
-            Stop & summarize
+          <Button variant="danger" disabled={stopping} icon={<Square size={12} fill="currentColor" />} onClick={stop}>
+            {stopping ? "Stopping…" : "Stop & summarize"}
           </Button>
         </div>
         <div className="relative mt-4 rounded-xl bg-[var(--glass)] p-3.5">

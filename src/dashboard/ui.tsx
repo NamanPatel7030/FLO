@@ -63,10 +63,10 @@ export function Button({
       className={clsx(
         "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl font-medium transition disabled:opacity-40",
         size === "sm" ? "h-7 px-2.5 text-[12px]" : "h-9 px-3.5 text-[13px]",
-        variant === "primary" && "accent-gradient text-[#001522] font-semibold shadow-[0_6px_20px_-6px_rgba(61,187,255,0.7)] hover:brightness-110",
-        variant === "glass" && "glass-strong hover:bg-[var(--glass-hover)]",
+        variant === "primary" && "btn-primary",
+        variant === "glass" && "btn-glass",
         variant === "ghost" && "text-muted hover:bg-[var(--glass)] hover:text-[var(--fg)]",
-        variant === "danger" && "bg-red-500/15 text-red-400 hover:bg-red-500/25",
+        variant === "danger" && "btn-danger",
         className,
       )}
     >

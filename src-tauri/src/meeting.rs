@@ -48,13 +48,31 @@ pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> R
     Ok(note)
 }
 
+/// Stops recording immediately (the mic closes within ~200 ms) and returns at once; the last
+/// chunk + final summary + action items are written in the background. Safe to call twice.
 pub async fn stop(st: Shared) -> Result<Note> {
-    let h = st.meeting.lock().take().ok_or_else(|| anyhow!("No meeting is running"))?;
+    let taken = st.meeting.lock().take();
+    let Some(h) = taken else {
+        // already stopped (e.g. double click) — not an error
+        return st
+            .db
+            .list_notes()?
+            .into_iter()
+            .find(|n| n.kind == "meeting")
+            .ok_or_else(|| anyhow!("No meeting is running"));
+    };
     h.stop.store(true, Ordering::SeqCst);
+    let mut note = st.db.get_note(&h.note_id)?.ok_or_else(|| anyhow!("note missing"))?;
+    note.live = false;
+    st.db.upsert_note(&note)?;
+    st.emit(ev::NOTES, ());
+    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: note.duration_sec, live: false });
     st.state(Phase::Thinking, Mode::Meeting, Some("Writing summary…".into()));
-    let _ = h.task.await;
-    let note = st.db.get_note(&h.note_id)?.ok_or_else(|| anyhow!("note missing"))?;
-    st.finish(Phase::Done, Mode::Meeting, None);
+    let st2 = st.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = h.task.await;
+        st2.finish(Phase::Done, Mode::Meeting, None);
+    });
     Ok(note)
 }
 

@@ -450,7 +450,7 @@ function PermissionsTab() {
             </div>
           ))}
         <p className="px-1 pt-1 text-[11.5px] leading-relaxed text-faint">
-          After installing a new build, macOS may ask again — remove old “Flo” entries with the – button in System Settings, then add Flo again.
+          Granted it but still see “Grant”? macOS ties permissions to how Flo is signed. Remove old “Flo” / “Flo Flow” entries with the – button in System Settings, add Flo again, then press Restart. Builds signed with your local Flo certificate keep permissions across updates.
         </p>
       </Card>
       {geo?.platform !== "windows" && (
