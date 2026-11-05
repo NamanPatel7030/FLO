@@ -54,7 +54,7 @@ pub async fn stop(st: Shared) -> Result<Note> {
     st.state(Phase::Thinking, Mode::Meeting, Some("Writing summary…".into()));
     let _ = h.task.await;
     let note = st.db.get_note(&h.note_id)?.ok_or_else(|| anyhow!("note missing"))?;
-    st.state(Phase::Done, Mode::Meeting, None);
+    st.finish(Phase::Done, Mode::Meeting, None);
     Ok(note)
 }
 

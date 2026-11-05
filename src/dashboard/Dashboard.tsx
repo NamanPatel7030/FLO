@@ -12,6 +12,7 @@ import Analytics from "./pages/Analytics";
 import HistoryPage from "./pages/History";
 import Settings from "./pages/Settings";
 import { Kbd } from "./ui";
+import { missingRequired, usePermissions } from "./usePermissions";
 
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: "home", label: "Home", icon: <HomeIcon size={16} /> },
@@ -48,6 +49,9 @@ export default function Dashboard() {
   const liveMeeting = notes?.some((n) => n.live);
   const Current = PAGES[page];
   const mac = geo?.platform !== "windows";
+  const perms = usePermissions(5000);
+  const missing = missingRequired(perms);
+  const ready = !perms || (missing.length === 0 && perms.hotkeyActive);
 
   return (
     <MotionConfig reducedMotion="user">
@@ -59,8 +63,8 @@ export default function Dashboard() {
           <div data-tauri-drag-region className="mb-4 flex items-center gap-2.5 px-4">
             <Logo />
             <div className="leading-tight">
-              <div className="text-[15px] font-semibold tracking-tight">Flo Flow</div>
-              <div className="text-[11px] text-faint">Local · BYOK · Private</div>
+              <div className="text-[15px] font-semibold tracking-tight">Flo</div>
+              <div className="text-[11px] text-faint">Your Assistant</div>
             </div>
           </div>
           <nav className="flex flex-col gap-0.5 px-2.5">
@@ -103,10 +107,21 @@ export default function Dashboard() {
           </nav>
           <div className="mt-auto p-3">
             <div className="rounded-2xl glass-strong p-3 text-[12px] text-muted">
-              <div className="mb-1.5 flex items-center gap-1.5 font-medium text-[var(--fg)]">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" /> Ready
-              </div>
-              Hold <Kbd>{hotkeyLabel(geo)}</Kbd> anywhere to dictate.
+              {ready ? (
+                <>
+                  <div className="mb-1.5 flex items-center gap-1.5 font-medium text-[var(--fg)]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-brand-300 shadow-[0_0_8px_#66ceff]" /> Ready
+                  </div>
+                  Hold <Kbd>{hotkeyLabel(geo)}</Kbd> anywhere to dictate.
+                </>
+              ) : (
+                <button className="w-full text-left" onClick={() => go("settings", "permissions")}>
+                  <div className="mb-1.5 flex items-center gap-1.5 font-medium text-amber-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Finish setup
+                  </div>
+                  {missing.length > 0 ? `Grant ${missing.map((m) => m.label).join(", ")}` : "Restart Flo to activate the fn key"} →
+                </button>
+              )}
             </div>
           </div>
         </aside>
@@ -114,7 +129,7 @@ export default function Dashboard() {
         {/* content */}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
           <div data-tauri-drag-region className="h-8 shrink-0" />
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-10">
+          <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-10 xl:px-12">
             <AnimatePresence mode="wait">
               <motion.div
                 key={page}
@@ -122,7 +137,7 @@ export default function Dashboard() {
                 animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
                 exit={{ opacity: 0, y: -6, filter: "blur(4px)" }}
                 transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-                className="mx-auto max-w-[1180px]"
+                className="mx-auto w-full max-w-[1240px]"
               >
                 <Current />
               </motion.div>
@@ -147,23 +162,16 @@ function Logo() {
   );
 }
 
+/** Static glow backdrop (no infinite animation → near-zero GPU when idle). */
 function Backdrop() {
   return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden">
-      <motion.div
-        className="absolute -left-40 -top-40 h-[520px] w-[520px] rounded-full opacity-[0.22] blur-[110px]"
-        style={{ background: "#3dbbff" }}
-        animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
-        transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="absolute -bottom-48 right-[-120px] h-[560px] w-[560px] rounded-full opacity-[0.18] blur-[120px]"
-        style={{ background: "#1a9be0" }}
-        animate={{ x: [0, -50, 0], y: [0, -30, 0] }}
-        transition={{ duration: 26, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <div className="absolute left-1/2 top-1/3 h-[300px] w-[300px] rounded-full opacity-[0.08] blur-[100px]" style={{ background: "#0a4f7a" }} />
-    </div>
+    <div
+      className="pointer-events-none absolute inset-0"
+      style={{
+        background:
+          "radial-gradient(640px 520px at -6% -8%, rgba(61,187,255,0.16), transparent 70%), radial-gradient(720px 600px at 106% 108%, rgba(26,155,224,0.12), transparent 70%), radial-gradient(420px 320px at 55% 35%, rgba(10,79,122,0.10), transparent 70%)",
+      }}
+    />
   );
 }
 

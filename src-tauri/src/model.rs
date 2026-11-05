@@ -30,9 +30,14 @@ pub enum Phase {
     Error,
 }
 
+pub const SETTINGS_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// schema version for migrations (missing in old files → 0)
+    #[serde(default)]
+    pub settings_version: u32,
     pub stt_provider: String,
     pub stt_model: String,
     pub language: String,
@@ -54,6 +59,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            settings_version: SETTINGS_VERSION,
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),
             language: "auto".into(),
@@ -61,7 +67,7 @@ impl Default for Settings {
             llm_model: "qwen3:8b".into(),
             local_llm_url: "http://127.0.0.1:11434".into(),
             cleanup_enabled: true,
-            assistant_cloud_allowed: false,
+            assistant_cloud_allowed: true,
             assistant_screen_context: true,
             attention_enabled: false,
             attention_interval_sec: 20,
@@ -342,10 +348,13 @@ pub struct AttentionStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Permissions {
     pub microphone: bool,
     pub accessibility: bool,
+    pub input_monitoring: bool,
     pub screen: bool,
+    pub hotkey_active: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

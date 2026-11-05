@@ -14,13 +14,25 @@ use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
 use objc2_foundation::{NSArray, NSEdgeInsets, NSRect, NSString};
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
+    fn CGPreflightListenEventAccess() -> bool;
+    fn CGRequestListenEventAccess() -> bool;
+    fn CGRequestPostEventAccess() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
 }
+#[link(name = "objc")]
+extern "C" {
+    fn object_setClass(obj: *mut c_void, cls: *const c_void) -> *const c_void;
+}
+
+static HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[link(name = "Vision", kind = "framework")]
 extern "C" {}
 #[link(name = "AVFoundation", kind = "framework")]
@@ -49,10 +61,33 @@ pub fn send_copy_shortcut() -> Result<()> {
 }
 
 /// Global push-to-talk listener on its own CFRunLoop thread.
+/// Needs Input Monitoring; retries every 2 s until macOS lets us create the tap, so granting the
+/// permission works without restarting Flo.
 pub fn start_hotkeys(cb: HotkeyCallback) {
+    let cb: Arc<HotkeyCallback> = Arc::new(cb);
     std::thread::Builder::new()
         .name("flo-hotkey".into())
         .spawn(move || {
+            let mut asked = false;
+            loop {
+                if unsafe { CGPreflightListenEventAccess() } || asked {
+                    if run_tap(cb.clone()) {
+                        return;
+                    }
+                } else {
+                    unsafe { CGRequestListenEventAccess() };
+                    asked = true;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        })
+        .ok();
+}
+
+/// Returns false if the tap couldn't be created (no permission yet).
+fn run_tap(cb: Arc<HotkeyCallback>) -> bool {
+    {
+        {
             let machine = parking_lot::Mutex::new(Machine::default());
             let tap = CGEventTap::new(
                 CGEventTapLocation::Session,
@@ -75,13 +110,19 @@ pub fn start_hotkeys(cb: HotkeyCallback) {
                     let src = tap.mach_port.create_runloop_source(0).expect("runloop source");
                     CFRunLoop::get_current().add_source(&src, kCFRunLoopCommonModes);
                     tap.enable();
-                    log::info!("Fn hotkey listener running");
+                    HOTKEY_ACTIVE.store(true, Ordering::SeqCst);
+                    log::info!("fn hotkey listener running");
                     CFRunLoop::run_current();
+                    HOTKEY_ACTIVE.store(false, Ordering::SeqCst);
+                    true
                 },
-                Err(_) => log::error!("Could not create event tap — grant Accessibility permission and restart Flo Flow."),
+                Err(_) => {
+                    log::warn!("fn listener not allowed yet — waiting for Input Monitoring permission");
+                    false
+                }
             }
-        })
-        .ok();
+        }
+    }
 }
 
 pub fn frontmost_app() -> FrontApp {
@@ -112,7 +153,7 @@ pub fn activate_app(pid: i32) {
 pub fn open_app(name: &str) -> Result<()> {
     let st = std::process::Command::new("open").arg("-a").arg(name).status()?;
     if !st.success() {
-        return Err(anyhow!("Couldn't find an app named \"{name}\""));
+        return Err(anyhow!("couldn't find an app called “{name}”"));
     }
     Ok(())
 }
@@ -150,7 +191,16 @@ pub fn configure_island(ns_window: *mut c_void) {
         return;
     }
     unsafe {
+        // Non-activating NSPanel: shows over full-screen apps and never steals keyboard focus
+        // from the text field you're dictating into.
+        object_setClass(ns_window, class!(NSPanel) as *const _ as *const c_void);
         let w = ns_window as *mut AnyObject;
+        let mask: usize = msg_send![w, styleMask];
+        let _: () = msg_send![w, setStyleMask: mask | (1usize << 7)]; // NonactivatingPanel
+        let _: () = msg_send![w, setFloatingPanel: true];
+        let _: () = msg_send![w, setBecomesKeyOnlyIfNeeded: true];
+        let _: () = msg_send![w, setHidesOnDeactivate: false];
+        let _: () = msg_send![w, setWorksWhenModal: true];
         let _: () = msg_send![w, setLevel: 27isize]; // > NSMainMenuWindowLevel (24)
         let behavior: usize = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8); // allSpaces|stationary|ignoresCycle|fullScreenAux
         let _: () = msg_send![w, setCollectionBehavior: behavior];
@@ -170,7 +220,15 @@ pub fn permissions() -> Permissions {
         let st: isize = msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media];
         st == 3
     };
-    Permissions { microphone: mic, accessibility: unsafe { AXIsProcessTrusted() }, screen: unsafe { CGPreflightScreenCaptureAccess() } }
+    unsafe {
+        Permissions {
+            microphone: mic,
+            accessibility: AXIsProcessTrusted(),
+            input_monitoring: CGPreflightListenEventAccess(),
+            screen: CGPreflightScreenCaptureAccess(),
+            hotkey_active: HOTKEY_ACTIVE.load(Ordering::SeqCst),
+        }
+    }
 }
 
 pub fn request_microphone() {
@@ -189,7 +247,21 @@ pub fn request_microphone() {
 
 pub fn open_permission_settings(kind: &str) {
     let pane = match kind {
-        "accessibility" => "Privacy_Accessibility",
+        "accessibility" => {
+            unsafe {
+                // system prompt + adds Flo to the Accessibility list
+                let key = NSString::from_str("AXTrustedCheckOptionPrompt");
+                let yes: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithBool: true];
+                let dict: Retained<AnyObject> = msg_send![class!(NSDictionary), dictionaryWithObject: &*yes, forKey: &*key];
+                AXIsProcessTrustedWithOptions(Retained::as_ptr(&dict) as *const c_void);
+                CGRequestPostEventAccess();
+            }
+            "Privacy_Accessibility"
+        }
+        "input" => {
+            unsafe { CGRequestListenEventAccess() };
+            "Privacy_ListenEvent"
+        }
         "screen" => {
             unsafe { CGRequestScreenCaptureAccess() };
             "Privacy_ScreenCapture"

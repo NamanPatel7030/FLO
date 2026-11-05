@@ -23,7 +23,7 @@ pub struct FrontApp {
     pub pid: i32,
 }
 
-pub type HotkeyCallback = Box<dyn Fn(HotkeyEvent) + Send + 'static>;
+pub type HotkeyCallback = Box<dyn Fn(HotkeyEvent) + Send + Sync + 'static>;
 
 /// Save clipboard, put `text`, paste, restore after a delay (runs restore on a helper thread).
 pub fn paste_text(text: &str) -> anyhow::Result<()> {

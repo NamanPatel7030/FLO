@@ -85,8 +85,21 @@ pub fn is_hallucination(text: &str, seconds: f32) -> bool {
     t.is_empty() || (seconds < 3.0 && H.contains(&t.as_str())) || t == "[blank_audio]"
 }
 
+/// Free the model's RAM (~0.6–1.6 GB) after this long without dictation.
+const IDLE_UNLOAD_SECS: u64 = 600;
+
+pub fn spawn_idle_unloader(w: Arc<LocalWhisper>) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            w.unload_if_idle();
+        }
+    });
+}
+
 #[derive(Default)]
 pub struct LocalWhisper {
+    last_used: Mutex<Option<std::time::Instant>>,
     #[cfg(feature = "local-stt")]
     ctx: Mutex<Option<(String, Arc<whisper_rs::WhisperContext>)>>,
     #[cfg(not(feature = "local-stt"))]
@@ -94,12 +107,26 @@ pub struct LocalWhisper {
 }
 
 impl LocalWhisper {
+    pub fn unload_if_idle(&self) {
+        let idle = self.last_used.lock().map(|t| t.elapsed().as_secs() >= IDLE_UNLOAD_SECS).unwrap_or(false);
+        if idle {
+            #[cfg(feature = "local-stt")]
+            {
+                if self.ctx.lock().take().is_some() {
+                    log::info!("unloaded speech model after idle");
+                }
+            }
+            *self.last_used.lock() = None;
+        }
+    }
+
     #[cfg(feature = "local-stt")]
     pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
         use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
         if !model_file.exists() {
             bail!("Speech model not downloaded yet — open Settings → Voice and download it.");
         }
+        *self.last_used.lock() = Some(std::time::Instant::now());
         let key = model_file.to_string_lossy().to_string();
         let ctx = {
             let mut g = self.ctx.lock();

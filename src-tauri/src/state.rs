@@ -59,6 +59,22 @@ impl AppState {
         self.emit(ev::STATE, StateEvent { phase, mode, message });
     }
 
+    /// Emit a terminal phase (done / error), then return the island to idle automatically
+    /// (1.5 s after done, 5 s after an error) unless a new session started meanwhile.
+    pub fn finish(self: &Arc<Self>, phase: Phase, mode: Mode, message: Option<String>) {
+        self.state(phase, mode, message);
+        let me = self.clone();
+        let delay = if phase == Phase::Error { 5000 } else { 1500 };
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            if me.session.lock().is_none() {
+                let m = if me.meeting.lock().is_some() { Mode::Meeting } else { mode };
+                let p = if m == Mode::Meeting { Phase::Listening } else { Phase::Idle };
+                me.state(p, m, None);
+            }
+        });
+    }
+
     pub fn toast(&self, kind: &str, text: impl Into<String>) {
         self.emit(ev::TOAST, ToastEvent { kind: kind.into(), text: text.into() });
     }

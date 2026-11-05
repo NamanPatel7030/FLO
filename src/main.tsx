@@ -10,6 +10,10 @@ const Dashboard = lazy(() => import("./dashboard/Dashboard"));
 const isIsland = location.hash.startsWith("#/island");
 if (isIsland) document.documentElement.classList.add("island");
 if (isTauri) document.documentElement.classList.add("tauri");
+// Pause CSS animations while the window is hidden (lightweight when Flo sits in the background).
+const syncVisibility = () => document.documentElement.classList.toggle("hidden-doc", document.hidden);
+document.addEventListener("visibilitychange", syncVisibility);
+syncVisibility();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Flo Flow IPC contract. Mirrors src-tauri/src/model.rs (serde camelCase).
+// Flo IPC contract. Mirrors src-tauri/src/model.rs (serde camelCase).
 // Any change here MUST be mirrored in Rust.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -272,6 +272,16 @@ export interface ClaudeHookStatus {
   listening: boolean;
 }
 
+export interface Permissions {
+  microphone: boolean;
+  accessibility: boolean;
+  /** Input Monitoring — required for the fn / Right-Ctrl push-to-talk listener */
+  inputMonitoring: boolean;
+  screen: boolean;
+  /** true once the global hotkey listener is actually running */
+  hotkeyActive: boolean;
+}
+
 /** Event names (Rust emits these to all windows) */
 export const EV = {
   state: "flo://state",
@@ -307,7 +317,8 @@ export const EV = {
  *  network_log() -> NetworkLogEntry[]
  *  list_models() -> LocalModel[]         download_model({id})   delete_model({id})
  *  attention_status() -> AttentionStatus set_attention_paused({paused})
- *  check_permissions() -> {microphone,accessibility,screen: boolean}
+ *  check_permissions() -> Permissions   (inputMonitoring = fn key listener; poll every 2s on the Permissions tab)
+ *  restart_app()  — relaunch Flo (needed after granting Accessibility / Input Monitoring / Screen Recording)
  *  open_permission_settings({kind})
  *  fix_fn_key()  — macOS: set "Press 🌐 key to: Do Nothing" so Fn is free for Flo
  *  list_claude_events({limit}) -> ClaudeEvent[]   mark_claude_seen({id?})  (no id = all)

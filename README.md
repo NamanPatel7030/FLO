@@ -1,4 +1,4 @@
-# Flo Flow
+# Flo — Your Assistant
 
 Local-first voice layer for macOS & Windows — an alternative to Wispr Flow + Lemon.
 Lives in the **MacBook notch** (bottom-right corner on Windows). Bring your own keys, or run 100% on-device.
@@ -21,14 +21,20 @@ Lives in the **MacBook notch** (bottom-right corner on Windows). Bring your own 
 - Screenshots for Attention / Assistant context are OCR'd in memory and never written to disk.
 - No raw keylogging: only the push-to-talk keys are observed.
 
+## Quick commands (instant, no AI needed)
+Hold `fn + ctrl` and say: “open Slack”, “launch VS Code”, “open github.com”, “Spotify kholo”,
+“google best biryani near me”, “play lofi beats on YouTube”. Anything else goes to your AI model.
+
 ## Setup (macOS)
 ```bash
 npm install
-npm run tauri build -- --bundles app      # → src-tauri/target/release/bundle/macos/Flo Flow.app
-open "src-tauri/target/release/bundle/macos/Flo Flow.app"
+bash scripts/install-mac.sh     # builds, signs as com.flo.flow, installs /Applications/Flo.app, launches
 ```
 First run:
-1. **Settings → Permissions**: grant Microphone, Accessibility (for fn key + paste) and Screen Recording (assistant screen context / Attention). Restart Flo Flow after granting Accessibility.
+1. **Settings → Permissions**: grant Microphone, Accessibility (paste), **Input Monitoring (fn key)** and
+   Screen Recording (optional). The fn key starts working within ~2 s of granting — no restart needed.
+   Builds are ad-hoc signed, so after installing a *new* build macOS may ask again: remove old “Flo” entries
+   with the – button and add Flo again.
 2. Click **Free the fn key** (sets “Press 🌐 key to: Do Nothing”).
 3. **Settings → Voice**: download *Whisper Large v3 Turbo* (574 MB, multilingual incl. Hindi/Gujarati) — or pick OpenAI/Groq STT with your key.
 4. **Settings → AI**: pick a model. Fully local: install [Ollama](https://ollama.com) and `ollama pull qwen3:8b`.

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Flo Flow",
+  "productName": "Flo",
   "version": "0.1.0",
   "identifier": "com.flo.flow",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Flo Flow",
+        "title": "Flo",
         "width": 1220,
         "height": 800,
         "minWidth": 980,
@@ -32,8 +32,8 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "Local-first voice dictation, assistant, meeting notes and to-dos",
-    "macOS": { "minimumSystemVersion": "13.0" },
+    "shortDescription": "Flo — your assistant. Voice dictation, assistant, meeting notes and to-dos.",
+    "macOS": { "minimumSystemVersion": "13.0", "signingIdentity": "-" },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

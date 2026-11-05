@@ -127,6 +127,24 @@ textarea,
   color: transparent;
   animation: shimmer 1.6s linear infinite;
 }
+.flo-ring {
+  animation: flo-ring 3s ease-out infinite;
+}
+@keyframes flo-ring {
+  from {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+/* don't burn cycles in hidden windows */
+html.hidden-doc * {
+  animation-play-state: paused !important;
+}
+
 @keyframes shimmer {
   from {
     background-position: 120% 0;

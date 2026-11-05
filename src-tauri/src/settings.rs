@@ -8,10 +8,26 @@ pub fn path(data_dir: &Path) -> PathBuf {
 }
 
 pub fn load(data_dir: &Path) -> Settings {
-    std::fs::read_to_string(path(data_dir))
+    let mut s: Settings = std::fs::read_to_string(path(data_dir))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if migrate(&mut s) {
+        let _ = save(data_dir, &s);
+    }
+    s
+}
+
+/// v2: choosing a cloud model + adding your own key is consent for the Assistant to use it.
+pub fn migrate(s: &mut Settings) -> bool {
+    if s.settings_version >= crate::model::SETTINGS_VERSION {
+        return false;
+    }
+    if s.settings_version < 2 {
+        s.assistant_cloud_allowed = true;
+    }
+    s.settings_version = crate::model::SETTINGS_VERSION;
+    true
 }
 
 pub fn save(data_dir: &Path, s: &Settings) -> Result<()> {
@@ -39,6 +55,19 @@ mod tests {
         save(&dir, &s).unwrap();
         assert_eq!(load(&dir).user_name, "Parth");
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn migrates_v1_to_allow_byok_assistant() {
+        let mut s: Settings = serde_json::from_str(r#"{"assistantCloudAllowed":false,"llmProvider":"anthropic"}"#).unwrap();
+        assert_eq!(s.settings_version, 0);
+        assert!(migrate(&mut s));
+        assert!(s.assistant_cloud_allowed);
+        assert!(!migrate(&mut s));
+        // user can still turn it off afterwards
+        s.assistant_cloud_allowed = false;
+        assert!(!migrate(&mut s));
+        assert!(!s.assistant_cloud_allowed);
     }
 
     #[test]

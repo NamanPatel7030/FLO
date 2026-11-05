@@ -7,8 +7,10 @@ import {
   greeting,
   countWords,
   groupTodos,
+  groupByDay,
   islandSize,
   ISLAND_EAR,
+  ISLAND_ROW,
   ISLAND_WING,
   smoothLevels,
 } from "./format";
@@ -111,19 +113,54 @@ describe("islandSize", () => {
     expect(c.width).toBeGreaterThan(200);
     expect(c.height).toBeLessThan(islandSize("card", geo).height);
   });
-  it("compact live states sit flush with the notch: same height, symmetric wings", () => {
-    for (const v of ["listening", "working", "done"] as const) {
-      const s = islandSize(v, geo);
-      expect(s.height).toBe(32);
-      const wing = (s.width - 200) / 2;
-      expect(Number.isInteger(wing * 2)).toBe(true);
-      expect(wing).toBe(ISLAND_WING + ISLAND_EAR);
-    }
-  });
-  it("error grows below the notch for a readable message", () => {
-    const e = islandSize("error", geo);
-    expect(e.height).toBeGreaterThan(32);
-    expect(e.width).toBeGreaterThan(islandSize("listening", geo).width);
+  for (const nh of [32, 38]) {
+    const g = { ...geo, notchHeight: nh, notchWidth: nh === 32 ? 185 : 200 };
+    it(`done stays flush with the notch (nh=${nh}) with symmetric wings`, () => {
+      const s = islandSize("done", g);
+      expect(s.height).toBe(nh);
+      expect((s.width - g.notchWidth) / 2).toBe(ISLAND_WING + ISLAND_EAR);
+    });
+    it(`listening/working drop a status row below the notch (nh=${nh})`, () => {
+      for (const v of ["listening", "working"] as const) {
+        const s = islandSize(v, g);
+        expect(s.height).toBe(nh + ISLAND_ROW);
+        // wings must still fit beside the notch, symmetric
+        expect((s.width - g.notchWidth) / 2).toBeGreaterThanOrEqual(ISLAND_WING + ISLAND_EAR);
+        expect(Number.isInteger(s.width - g.notchWidth)).toBe(true);
+        expect((s.width - g.notchWidth) % 2).toBe(0);
+      }
+    });
+    it(`error height fits the message: longer message → taller, capped at 3 lines (nh=${nh})`, () => {
+      const short = islandSize("error", g, { textChars: 20 });
+      const mid = islandSize("error", g, { textChars: 90 });
+      const huge = islandSize("error", g, { textChars: 2000 });
+      const fix = islandSize("error", g, { textChars: 90, action: true });
+      expect(short.height).toBeGreaterThan(nh);
+      expect(mid.height).toBeGreaterThan(short.height);
+      expect(huge.height).toBeGreaterThan(mid.height);
+      expect(huge.height).toBe(islandSize("error", g, { textChars: 5000 }).height);
+      expect(fix.height).toBeGreaterThan(mid.height);
+    });
+    it(`result shows up to 2 lines of pasted text (nh=${nh})`, () => {
+      const one = islandSize("result", g, { textChars: 10 });
+      const two = islandSize("result", g, { textChars: 400 });
+      expect(one.height).toBeGreaterThan(nh);
+      expect(two.height).toBeGreaterThan(one.height);
+      expect(islandSize("result", g, { textChars: 4000 }).height).toBe(two.height);
+    });
+    it(`history grows with rows, capped at 6 (nh=${nh})`, () => {
+      const a = islandSize("history", g, { rows: 1 });
+      const b = islandSize("history", g, { rows: 6 });
+      expect(b.height).toBeGreaterThan(a.height);
+      expect(islandSize("history", g, { rows: 20 }).height).toBe(b.height);
+      expect(b.width).toBeGreaterThan(g.notchWidth);
+    });
+  }
+  it("windows capsule sizes error/result/history from content too", () => {
+    const w = { ...geo, platform: "windows" as const, hasNotch: false };
+    expect(islandSize("error", w, { textChars: 200 }).height).toBeGreaterThan(islandSize("error", w, { textChars: 10 }).height);
+    expect(islandSize("history", w, { rows: 6 }).height).toBeGreaterThan(islandSize("history", w, { rows: 1 }).height);
+    expect(islandSize("result", w, { textChars: 10 }).height).toBeGreaterThan(30);
   });
   it("windows collapsed is a capsule, not zero", () => {
     const w = islandSize("collapsed", { ...geo, platform: "windows", hasNotch: false });
@@ -144,5 +181,19 @@ describe("smoothLevels", () => {
     expect(Math.max(...next)).toBeGreaterThan(0);
     const silent = smoothLevels(next, 0, 1);
     expect(Math.max(...silent)).toBeLessThan(Math.max(...next));
+  });
+});
+
+describe("groupByDay", () => {
+  const now = new Date(2026, 10, 5, 15, 0);
+  const at = (d: number, h: number) => new Date(2026, 10, d, h, 0).toISOString();
+  it("buckets into Today / Yesterday / dated groups, newest first", () => {
+    const items = [{ createdAt: at(3, 9) }, { createdAt: at(5, 10) }, { createdAt: at(4, 22) }, { createdAt: at(5, 14) }];
+    const g = groupByDay(items, now);
+    expect(g.map((x) => x.label)).toEqual(["Today", "Yesterday", expect.stringMatching(/Nov/)]);
+    expect(g[0].items.map((i) => i.createdAt)).toEqual([at(5, 14), at(5, 10)]);
+  });
+  it("returns [] for no items", () => {
+    expect(groupByDay([], now)).toEqual([]);
   });
 });

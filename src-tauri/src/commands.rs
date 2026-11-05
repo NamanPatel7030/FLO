@@ -111,9 +111,9 @@ pub async fn ask_assistant(st: State<'_, Shared>, text: String) -> R<AssistantRe
         Ok(resp) => {
             let _ = st.db.insert_assistant(resp);
             st.emit(ev::ASSISTANT, resp.clone());
-            st.state(Phase::Done, Mode::Assistant, None);
+            st.finish(Phase::Done, Mode::Assistant, None);
         }
-        Err(err) => st.state(Phase::Error, Mode::Assistant, Some(err.to_string())),
+        Err(err) => st.finish(Phase::Error, Mode::Assistant, Some(err.to_string())),
     }
     r.map_err(e)
 }
@@ -282,6 +282,11 @@ pub fn check_permissions() -> Permissions {
 #[tauri::command]
 pub fn open_permission_settings(kind: String) {
     platform::open_permission_settings(&kind);
+}
+
+#[tauri::command]
+pub fn restart_app(app: tauri::AppHandle) {
+    app.restart();
 }
 
 #[tauri::command]

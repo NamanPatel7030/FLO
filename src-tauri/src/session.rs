@@ -18,7 +18,8 @@ pub fn start(st: &Shared, mode: Mode) -> Result<()> {
     let front = st.target_app();
     let selection = if mode == Mode::Assistant { platform::copy_selection() } else { None };
     let app = st.clone();
-    let recorder = Recorder::start(move |rms| app.emit(ev::LEVEL, LevelEvent { rms }))?;
+    let recorder = Recorder::start(move |rms| app.emit(ev::LEVEL, LevelEvent { rms }))
+        .map_err(|e| anyhow!("Microphone unavailable ({e}). Allow Flo in System Settings → Privacy → Microphone."))?;
     let s = st.settings();
     let screen = if mode == Mode::Assistant && s.assistant_screen_context && platform::permissions().screen {
         Some(tauri::async_runtime::spawn_blocking(|| attention::capture_focused_text().map(|(_, _, t)| t)))
@@ -63,7 +64,7 @@ pub async fn stop(st: Shared) {
     }
     if let Err(e) = finish(&st, sess).await {
         log::warn!("session failed: {e:#}");
-        st.state(Phase::Error, mode, Some(e.to_string()));
+        st.finish(Phase::Error, mode, Some(e.to_string()));
     }
 }
 
@@ -72,14 +73,14 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     let duration_ms = started.elapsed().as_millis() as u64;
     let samples = tokio::task::spawn_blocking(move || recorder.stop()).await?;
     if audio::rms(&samples) < 0.003 {
-        return Err(anyhow!("Didn't catch that — is the right microphone selected?"));
+        return Err(anyhow!("I didn't hear anything — check the microphone in System Settings → Sound."));
     }
     st.state(Phase::Transcribing, mode, None);
     let t0 = Instant::now();
     let raw = transcribe(st, samples.clone()).await?;
     let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
     if stt::is_hallucination(&raw, secs) {
-        return Err(anyhow!("Didn't catch that"));
+        return Err(anyhow!("Didn't catch that — try speaking a bit longer."));
     }
     st.emit(ev::TRANSCRIPT, TranscriptEvent { text: raw.clone(), is_final: false });
 
@@ -91,7 +92,7 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
             tokio::task::spawn_blocking(move || platform::paste_text(&ft)).await??;
             save(st, mode, &front.name, &raw, &final_text, duration_ms, t0.elapsed().as_millis() as u64);
             st.emit(ev::TRANSCRIPT, TranscriptEvent { text: final_text, is_final: true });
-            st.state(Phase::Done, mode, None);
+            st.finish(Phase::Done, mode, None);
         }
         Mode::Assistant => {
             st.state(Phase::Thinking, mode, None);
@@ -103,7 +104,7 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
             save(st, mode, &front.name, &raw, &resp.reply, duration_ms, t0.elapsed().as_millis() as u64);
             let _ = st.db.insert_assistant(&resp);
             st.emit(ev::ASSISTANT, resp);
-            st.state(Phase::Done, mode, None);
+            st.finish(Phase::Done, mode, None);
         }
     }
     Ok(())

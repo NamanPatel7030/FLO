@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Download, KeyRound, Lock, Plug, ShieldCheck, Trash2, X, Terminal, Keyboard } from "lucide-react";
-import { api, on, type Permissions } from "../../lib/api";
+import { Check, Download, KeyRound, Lock, Plug, RotateCcw, ShieldCheck, Trash2, X, Terminal, Keyboard } from "lucide-react";
+import { api, on } from "../../lib/api";
+import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatNumber, relativeTime } from "../../lib/format";
 import { EV, type ClaudeHookStatus, type DictionaryEntry, type KeyProvider, type LlmProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider } from "../../lib/types";
 import { useStore } from "../store";
@@ -318,7 +319,7 @@ function Privacy({ s, set }: P) {
         </div>
       </Card>
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
-        <Toggle label="Let Assistant use cloud models" hint="Selected text and your request may go to your chosen provider (with your key)." checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
+        <Toggle label="Assistant may use your cloud AI (BYOK)" hint="Your request, selected text and screen text go straight to the provider you picked, with your key. Off = local models only." checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
         <Toggle label="Assistant can see the active window" hint="A screenshot of the front window is added as context when you ask." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />
         <Toggle label="Attention" hint="Notice things you might miss on screen and turn them into to-dos." checked={s.attentionEnabled} onChange={(v) => set({ attentionEnabled: v })} />
         {s.attentionEnabled && (
@@ -404,41 +405,53 @@ function Privacy({ s, set }: P) {
 function PermissionsTab() {
   const toast = useStore((x) => x.toast);
   const geo = useStore((x) => x.geo);
-  const [p, setP] = useState<Permissions | null>(null);
-  useEffect(() => {
-    const load = () => api.checkPermissions().then(setP);
-    load();
-    const t = setInterval(load, 3000);
-    return () => clearInterval(t);
-  }, []);
-  const items: { k: keyof Permissions; label: string; why: string }[] = [
-    { k: "microphone", label: "Microphone", why: "To hear you when you hold the hotkey or record a meeting." },
-    { k: "accessibility", label: "Accessibility", why: "To catch the hotkey, read selected text, and paste into any app." },
-    { k: "screen", label: "Screen Recording", why: "For Attention and screen-aware answers. Images stay on this device." },
-  ];
+  const p = usePermissions(2000);
+  const needsRestart = !!p && p.accessibility && p.inputMonitoring && !p.hotkeyActive;
   return (
     <div className="flex flex-col gap-4">
+      {needsRestart && (
+        <Card className="flex items-center gap-4 border-brand-400/30 p-4">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-400/15 text-brand-300">
+            <RotateCcw size={15} />
+          </span>
+          <div className="flex-1">
+            <div className="text-[13.5px] font-medium">Restart Flo to activate the fn key</div>
+            <div className="text-[12px] text-muted">macOS applies Accessibility and Input Monitoring after a relaunch.</div>
+          </div>
+          <Button size="sm" variant="primary" onClick={() => api.restartApp()}>
+            Restart Flo
+          </Button>
+        </Card>
+      )}
       <Card className="flex flex-col gap-2 p-4">
-        {!p && <Skeleton className="h-36" />}
+        {!p && <Skeleton className="h-44" />}
         {p &&
-          items.map((it) => (
-            <div key={it.k} className="flex items-center gap-4 rounded-xl bg-[var(--glass)] p-3">
-              <span className={clsx("flex h-8 w-8 items-center justify-center rounded-full", p[it.k] ? "bg-emerald-500/15 text-emerald-500" : "bg-amber-500/15 text-amber-500")}>
-                {p[it.k] ? <Check size={15} /> : <Lock size={14} />}
+          PERMISSION_ITEMS.map((it) => (
+            <div key={it.key} className="flex items-center gap-4 rounded-xl bg-[var(--glass)] p-3">
+              <span className={clsx("flex h-8 w-8 items-center justify-center rounded-full", p[it.key] ? "bg-brand-400/15 text-brand-300" : "bg-amber-500/15 text-amber-400")}>
+                {p[it.key] ? <Check size={15} /> : <Lock size={14} />}
               </span>
               <div className="flex-1">
-                <div className="text-[13.5px] font-medium">{it.label}</div>
+                <div className="flex items-center gap-2 text-[13.5px] font-medium">
+                  {it.label}
+                  {!it.required && <span className="rounded-full bg-[var(--glass-strong)] px-1.5 py-px text-[10.5px] font-normal text-faint">optional</span>}
+                </div>
                 <div className="text-[12px] text-muted">{it.why}</div>
               </div>
-              {p[it.k] ? (
-                <span className="text-[12px] font-medium text-emerald-600 dark:text-emerald-300">Granted</span>
+              {p[it.key] ? (
+                <span className="flex items-center gap-1 text-[12.5px] font-medium text-brand-300">
+                  Granted <Check size={13} strokeWidth={3} />
+                </span>
               ) : (
-                <Button size="sm" variant="primary" onClick={() => api.openPermissionSettings(it.k)}>
+                <Button size="sm" variant="primary" onClick={() => api.openPermissionSettings(it.kind)}>
                   Grant
                 </Button>
               )}
             </div>
           ))}
+        <p className="px-1 pt-1 text-[11.5px] leading-relaxed text-faint">
+          After installing a new build, macOS may ask again — remove old “Flo” entries with the – button in System Settings, then add Flo again.
+        </p>
       </Card>
       {geo?.platform !== "windows" && (
         <Card className="flex items-center gap-4 p-4">
@@ -491,7 +504,7 @@ function Dictionary() {
           load();
         }}
       >
-        <Input placeholder="Word (e.g. Flo Flow)" value={word} onChange={(e) => setWord(e.target.value)} />
+        <Input placeholder="Word (e.g. Flo)" value={word} onChange={(e) => setWord(e.target.value)} />
         <Input placeholder="Heard as (optional)" value={rep} onChange={(e) => setRep(e.target.value)} />
         <Button type="submit" variant="primary">
           Add

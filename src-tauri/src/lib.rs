@@ -1,4 +1,4 @@
-//! Flo Flow — local-first voice dictation, assistant, meeting notes, attention → to-dos.
+//! Flo — your assistant: local-first voice dictation, assistant, meeting notes, attention → to-dos.
 mod assistant;
 mod attention;
 mod audio;
@@ -7,6 +7,7 @@ mod commands;
 mod db;
 mod egress;
 mod hotkey;
+mod intents;
 mod llm;
 mod meeting;
 mod model;
@@ -69,7 +70,16 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
     Ok(())
 }
 
+/// The dashboard window is destroyed when closed (frees ~100 MB of WebKit memory) and
+/// re-created from tauri.conf.json on demand.
 pub(crate) fn show_dashboard(app: &AppHandle, route: Option<&str>) {
+    if app.get_webview_window("main").is_none() {
+        if let Some(cfg) = app.config().app.windows.iter().find(|w| w.label == "main") {
+            if let Err(e) = WebviewWindowBuilder::from_config(app, cfg).and_then(|b| b.build()) {
+                log::error!("open dashboard: {e}");
+            }
+        }
+    }
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
@@ -86,7 +96,7 @@ fn create_island(app: &AppHandle) -> tauri::Result<()> {
     let (w, h) = if geo.platform == "macos" { (geo.notch_width, geo.notch_height) } else { (64.0, 64.0) };
     let mut b = WebviewWindowBuilder::new(app, "island", WebviewUrl::App("index.html".into()))
         .initialization_script("if (!location.hash || location.hash === '#/') { location.hash = '#/island'; }")
-        .title("Flo Flow Island")
+        .title("Flo Island")
         .inner_size(w, h)
         .transparent(true)
         .decorations(false)
@@ -111,13 +121,13 @@ fn create_island(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Flo Flow", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Flo", true, None::<&str>)?;
     let meeting = MenuItem::with_id(app, "meeting", "Start / stop meeting notes", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause / resume Attention", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Flo Flow", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Flo", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&open, &meeting, &pause, &sep, &quit])?;
-    let mut tray = TrayIconBuilder::with_id("flo").menu(&menu).tooltip("Flo Flow").show_menu_on_left_click(true);
+    let mut tray = TrayIconBuilder::with_id("flo").menu(&menu).tooltip("Flo — your assistant").show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -220,6 +230,7 @@ pub fn run() {
             commands::claude_hook_status,
             commands::install_claude_hook,
             commands::uninstall_claude_hook,
+            commands::restart_app,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -253,22 +264,29 @@ pub fn run() {
             start_hotkeys(st.clone());
             attention::spawn(st.clone());
             claude::spawn_listener(st.clone());
+            stt::spawn_idle_unloader(st.whisper.clone());
             Ok(())
         })
         .on_window_event(|window, event| {
+            // never let the island be closed (e.g. Cmd+W); main window may close to free memory
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
+                if window.label() == "island" {
                     api.prevent_close();
-                    let _ = window.hide();
                 }
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building Flo Flow")
+        .expect("error while building Flo")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 show_dashboard(app, None);
+            }
+            // keep running in the notch when the dashboard is closed
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
             }
             let _ = (app, &event);
         });

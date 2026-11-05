@@ -79,7 +79,7 @@ pub fn island_position(_geo: &IslandGeometry, _width: f64, _height: f64) -> (f64
 }
 
 pub fn permissions() -> Permissions {
-    Permissions { microphone: true, accessibility: true, screen: true }
+    Permissions { microphone: true, accessibility: true, input_monitoring: true, screen: true, hotkey_active: true }
 }
 
 pub fn open_permission_settings(kind: &str) {

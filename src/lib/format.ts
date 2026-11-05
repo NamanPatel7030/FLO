@@ -75,42 +75,88 @@ export function groupTodos(todos: Todo[], now: Date = new Date()): TodoGroups {
   return g;
 }
 
-export type IslandVariant = "collapsed" | "peek" | "listening" | "working" | "done" | "error" | "meeting" | "meetingExpanded" | "card" | "claude";
+export type IslandVariant =
+  | "collapsed"
+  | "peek"
+  | "listening"
+  | "working"
+  | "done"
+  | "result"
+  | "error"
+  | "history"
+  | "meeting"
+  | "meetingExpanded"
+  | "card"
+  | "claude";
+
+/** Does an error message point the user at Settings? → show a "Fix in Settings" button. */
+export const wantsFix = (msg?: string) => !!msg && /settings|api key|model|permission|grant/i.test(msg);
 
 /** Width of each live-activity wing beside the notch (logical px). */
 export const ISLAND_WING = 46;
 /** Concave "ear" that flares the island into the menu bar. */
 export const ISLAND_EAR = 8;
+/** Height of the status row that drops below the notch (listening / working). */
+export const ISLAND_ROW = 30;
+/** Line height of 13px text inside island dropdowns. */
+export const ISLAND_LINE = 18;
+/** Gap between notch bottom and first dropdown content. */
+export const ISLAND_GAP = 6;
 
-/** Window size (logical px) needed for each island variant. Includes room for the shadow. */
+/** Content hints used to size cards so nothing is ever clipped. */
 export interface CardContent {
-  replyChars: number;
-  results: number;
+  replyChars?: number;
+  results?: number;
+  /** characters of the error / result text */
+  textChars?: number;
+  /** history rows */
+  rows?: number;
+  /** error has a "Fix" action button */
+  action?: boolean;
 }
 
 /** Height of the assistant card body (below the notch) for given content. */
 function cardBody(c: CardContent | undefined, charsPerLine: number): number {
-  if (!c) return 228;
+  if (!c || c.replyChars === undefined) return 228;
   const lines = Math.min(5, Math.max(1, Math.ceil(c.replyChars / charsPerLine)));
-  return Math.min(228, 62 + lines * 19 + (c.results > 0 ? 34 : 0));
+  return Math.min(228, 62 + lines * 19 + ((c.results ?? 0) > 0 ? 34 : 0));
 }
+
+const lines = (chars: number | undefined, perLine: number, max: number) =>
+  Math.min(max, Math.max(1, Math.ceil((chars ?? 0) / perLine)));
+
+const HISTORY_ROW = 54;
+const historyRows = (c?: CardContent) => Math.min(6, Math.max(1, c?.rows ?? 6));
 
 export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?: CardContent): { width: number; height: number } {
   const notch = geo.platform === "macos" && geo.hasNotch;
   const nw = notch ? geo.notchWidth : 0;
   const nh = notch ? geo.notchHeight : 0;
   if (notch) {
+    const compact = nw + 2 * (ISLAND_WING + ISLAND_EAR);
+    // dropdown row needs ~260px for "Listening…  release fn to paste"; keep wing symmetry (even extra)
+    const live = Math.max(compact, nw + 2 * Math.ceil((Math.max(300, compact) - nw) / 2));
     switch (variant) {
       case "collapsed":
         return { width: nw, height: nh };
       case "peek":
-        return { width: nw + 160, height: nh + 52 };
+        return { width: nw + 220, height: nh + 56 };
       case "listening":
       case "working":
+        return { width: live, height: nh + ISLAND_ROW };
       case "done":
-        return { width: nw + 2 * (ISLAND_WING + ISLAND_EAR), height: nh };
+        return { width: compact, height: nh };
+      case "result":
+        // text (≤2 lines) + 12px top/bottom padding
+        return { width: 440, height: nh + ISLAND_GAP + lines(content?.textChars, 54, 2) * ISLAND_LINE + 16 };
       case "error":
-        return { width: nw + 2 * (ISLAND_WING + ISLAND_EAR) + 120, height: nh + 30 };
+        return {
+          width: 420,
+          height: nh + ISLAND_GAP + lines(content?.textChars, 50, 3) * ISLAND_LINE + (content?.action ? 34 : 0) + 16,
+        };
+      case "history":
+        // header 30 + rows + footer 34
+        return { width: 460, height: nh + ISLAND_GAP + 30 + historyRows(content) * HISTORY_ROW + 34 };
       case "meeting":
         return { width: nw + 260, height: nh + 34 };
       case "meetingExpanded":
@@ -132,8 +178,12 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "working":
     case "done":
       return { width: 248 + pad, height: 48 + pad };
+    case "result":
+      return { width: 360 + pad, height: 40 + lines(content?.textChars, 44, 2) * ISLAND_LINE + pad };
     case "error":
-      return { width: 320 + pad, height: 48 + pad };
+      return { width: 380 + pad, height: 34 + lines(content?.textChars, 40, 4) * ISLAND_LINE + (content?.action ? 34 : 0) + pad };
+    case "history":
+      return { width: 400 + pad, height: 30 + historyRows(content) * HISTORY_ROW + 34 + 12 + pad };
     case "meeting":
       return { width: 340 + pad, height: 64 + pad };
     case "meetingExpanded":
@@ -146,6 +196,29 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
 }
 
 /** Per-bar smoothed waveform. `t` is a phase offset (time) for organic variation. */
+/** Group items by calendar day (local time): "Today", "Yesterday", then "Mon, 3 Nov". Newest first. */
+export function groupByDay<T extends { createdAt: string }>(items: T[], now: Date = new Date()): { label: string; items: T[] }[] {
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const today = dayKey(now);
+  const y = new Date(now);
+  y.setDate(y.getDate() - 1);
+  const yesterday = dayKey(y);
+  const sorted = [...items].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const groups: { key: string; label: string; items: T[] }[] = [];
+  for (const it of sorted) {
+    const d = new Date(it.createdAt);
+    const k = dayKey(d);
+    let g = groups[groups.length - 1];
+    if (!g || g.key !== k) {
+      const label = k === today ? "Today" : k === yesterday ? "Yesterday" : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+      g = { key: k, label, items: [] };
+      groups.push(g);
+    }
+    g.items.push(it);
+  }
+  return groups.map(({ label, items }) => ({ label, items }));
+}
+
 export function smoothLevels(prev: number[], rms: number, t: number): number[] {
   const n = prev.length;
   // sqrt curve: quiet speech (rms ~0.05–0.2) still moves the bars visibly

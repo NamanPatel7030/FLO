@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Flo Flow listens only while you hold the Fn key or record meeting notes. Audio is transcribed on this Mac.</string>
+  <string>Flo listens only while you hold the Fn key or record meeting notes. Audio is transcribed on this Mac.</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Flo Flow can open apps for you when you ask the assistant.</string>
+  <string>Flo can open apps for you when you ask the assistant.</string>
 </dict>
 </plist>

@@ -12,6 +12,7 @@ import type {
   Mode,
   NetworkLogEntry,
   Note,
+  Permissions,
   Project,
   ProjectStatus,
   Settings,
@@ -45,7 +46,8 @@ export function on<T>(event: string, cb: (payload: T) => void): () => void {
   };
 }
 
-export type Permissions = { microphone: boolean; accessibility: boolean; screen: boolean };
+export type { Permissions };
+export type PermissionKind = "microphone" | "accessibility" | "input" | "screen";
 
 export const api = {
   getSettings: () => call<Settings>("get_settings"),
@@ -99,8 +101,9 @@ export const api = {
   attentionStatus: () => call<AttentionStatus>("attention_status"),
   setAttentionPaused: (paused: boolean) => call<void>("set_attention_paused", { paused }),
   checkPermissions: () => call<Permissions>("check_permissions"),
-  openPermissionSettings: (kind: keyof Permissions) => call<void>("open_permission_settings", { kind }),
+  openPermissionSettings: (kind: PermissionKind) => call<void>("open_permission_settings", { kind }),
   fixFnKey: () => call<void>("fix_fn_key"),
+  restartApp: () => call<void>("restart_app"),
 
   listClaudeEvents: (limit = 50) => call<ClaudeEvent[]>("list_claude_events", { limit }),
   markClaudeSeen: (id?: string) => call<void>("mark_claude_seen", { id }),

@@ -58,10 +58,28 @@ pub fn build_context(st: &Shared, selection: Option<&str>, front: &FrontApp, scr
 }
 
 pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>) -> Result<AssistantResponse> {
+    // 1) instant local commands ("open Slack", "google …", "play … on youtube") — no AI needed
+    if selection.is_none() {
+        if let Some(intent) = crate::intents::parse(query) {
+            let result = execute(st, &intent.action, front, false).await;
+            let (reply, results) = match result {
+                Ok(r) => (intent.reply, vec![r]),
+                Err(e) => (format!("Couldn't do that: {e}"), vec![]),
+            };
+            return Ok(AssistantResponse {
+                id: db::new_id(),
+                query: query.into(),
+                reply,
+                actions: vec![intent.action],
+                results,
+                created_at: chrono::Local::now().to_rfc3339(),
+            });
+        }
+    }
     let s = st.settings();
     let cfgl = LlmConfig::from_settings(&s);
     if !cfgl.is_configured() {
-        return Err(anyhow!("Assistant needs an AI model — set one in Settings → AI."));
+        return Err(anyhow!("Pick an AI model in Settings → AI to ask questions (“open …” and “google …” work without one)."));
     }
     let context = build_context(st, selection.as_deref(), front, screen.as_deref());
     let system = prompts::assistant_system(&context);
@@ -80,7 +98,7 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
     .await
     .map_err(|e| {
         if cfg::is_cloud_llm(&s.llm_provider) && !s.assistant_cloud_allowed {
-            anyhow!("Assistant is set to stay on-device. Turn on “Assistant may use cloud AI” in Settings → Privacy, or pick a local model.")
+            anyhow!("Assistant is set to on-device only. Allow cloud AI in Settings → Privacy, or choose a local model.")
         } else {
             e
         }

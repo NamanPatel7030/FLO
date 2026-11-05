@@ -74,7 +74,7 @@ const keys = new Set<string>(["groq"]);
 const projectsBase: Omit<Project, "openTodos" | "doneTodos">[] = [
   { id: "p_apollo", name: "Apollo", description: "Client dashboard redesign for Northwind", status: "active", color: "#3dbbff", lastNote: "Design sync — agreed on glass cards", updatedAt: iso(40) },
   { id: "p_hermes", name: "Hermes API", description: "Payments gateway v2 migration", status: "blocked", color: "#1a9be0", lastNote: "Waiting on Stripe webhook keys", updatedAt: iso(300) },
-  { id: "p_flo", name: "Flo Flow", description: "Local-first voice assistant", status: "active", color: "#f59e0b", lastNote: "Notch island prototype done", updatedAt: iso(10) },
+  { id: "p_flo", name: "Flo", description: "Local-first voice assistant", status: "active", color: "#f59e0b", lastNote: "Notch island prototype done", updatedAt: iso(10) },
 ];
 const projects = new Map(projectsBase.map((p) => [p.id, { ...p }]));
 
@@ -169,7 +169,7 @@ const history: Dictation[] = Array.from({ length: 28 }, (_, i) => {
 });
 
 const dictionary: DictionaryEntry[] = [
-  { id: "w1", word: "Flo Flow" },
+  { id: "w1", word: "Flo" },
   { id: "w2", word: "Tauri" },
   { id: "w3", word: "Northwind", replacement: "north wind" },
 ];
@@ -191,7 +191,7 @@ const assistantLog: AssistantResponse[] = [
   {
     id: "a1",
     query: "What's blocked across my projects?",
-    reply: "Only Hermes API is blocked — it's waiting on Stripe webhook keys from Priya. Apollo and Flo Flow are on track.",
+    reply: "Only Hermes API is blocked — it's waiting on Stripe webhook keys from Priya. Apollo and Flo are on track.",
     actions: [],
     results: [],
     createdAt: iso(90),
@@ -384,6 +384,8 @@ function fakeAssistant(text: string): AssistantResponse {
 // ── invoke dispatcher ───────────────────────────────────────────────────────
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const perms = { microphone: true, accessibility: true, inputMonitoring: false, screen: false, hotkeyActive: false };
+
 export async function mockInvoke(cmd: string, args: Record<string, any> = {}): Promise<unknown> {
   switch (cmd) {
     case "get_settings":
@@ -407,7 +409,13 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       const geo: IslandGeometry =
         p === "windows"
           ? { platform: "windows", hasNotch: false, notchWidth: 0, notchHeight: 0, screenWidth: 1920 }
-          : { platform: "macos", hasNotch: true, notchWidth: 185, notchHeight: 32, screenWidth: 1512 };
+          : (() => {
+              // ?nh=38 previews the taller notch of 14"/16" MacBook Pros
+              const q = new URLSearchParams(location.search);
+              const nh = Number(q.get("nh")) || 32;
+              const nw = Number(q.get("nw")) || (nh >= 38 ? 200 : 185);
+              return { platform: "macos" as const, hasNotch: true, notchWidth: nw, notchHeight: nh, screenWidth: 1512 };
+            })();
       return geo;
     }
     case "island_resize":
@@ -568,8 +576,18 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "set_attention_paused":
       return null;
     case "check_permissions":
-      return { microphone: true, accessibility: true, screen: false };
-    case "open_permission_settings":
+      return { ...perms };
+    case "open_permission_settings": {
+      // simulate the user granting it in System Settings a moment later
+      const k = args.kind === "input" ? "inputMonitoring" : (args.kind as "microphone" | "accessibility" | "screen");
+      setTimeout(() => {
+        perms[k] = true;
+      }, 1500);
+      return null;
+    }
+    case "restart_app":
+      perms.hotkeyActive = perms.accessibility && perms.inputMonitoring;
+      return null;
     case "fix_fn_key":
       return null;
     case "list_claude_events":

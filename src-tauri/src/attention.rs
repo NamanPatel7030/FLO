@@ -39,7 +39,7 @@ pub fn status(st: &Shared) -> AttentionStatus {
 
 fn denied(app: &str, denylist: &[String]) -> bool {
     let a = app.to_lowercase();
-    a.is_empty() || a.contains("flo flow") || a == "flo-flow" || denylist.iter().any(|d| !d.trim().is_empty() && a.contains(&d.to_lowercase()))
+    a.is_empty() || a == "flo" || a.contains("flo flow") || a == "flo-flow" || denylist.iter().any(|d| !d.trim().is_empty() && a.contains(&d.to_lowercase()))
 }
 
 pub fn spawn(st: Shared) {

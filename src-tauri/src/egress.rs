@@ -1,4 +1,4 @@
-//! Egress guard: the ONLY way Flo Flow talks to the network.
+//! Egress guard: the ONLY way Flo talks to the network.
 //!
 //! * localhost (Ollama / LM Studio) — always allowed
 //! * known BYOK providers — only when the calling feature is allowed to use cloud
@@ -160,7 +160,7 @@ impl Egress {
         });
         reqwest::Client::builder()
             .redirect(policy)
-            .user_agent("FloFlow/0.1")
+            .user_agent("Flo/0.1")
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .expect("http client")

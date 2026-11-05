@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, CheckCircle2, Clock, Flame, FolderKanban, Mic, Radio, Sparkles, StickyNote, Type, Eye } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Lock, Clock, Flame, FolderKanban, Mic, Radio, Sparkles, StickyNote, Type, Eye } from "lucide-react";
 import { api } from "../../lib/api";
 import { formatDuration, formatNumber, greeting, groupTodos, relativeTime } from "../../lib/format";
 import type { Analytics, AttentionStatus } from "../../lib/types";
 import { assistantHotkeyLabel, hotkeyLabel, useStore } from "../store";
 import { Card, CardTitle, Empty, Kbd, ProgressRing, Skeleton, Stat, StatusPill, Button } from "../ui";
 import { ClaudeSessionsCard, TodoRow } from "../components";
+import { missingRequired, PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 
 export default function Home() {
   const { settings, todos, projects, notes, geo, go } = useStore();
@@ -22,6 +23,7 @@ export default function Home() {
 
   return (
     <div className="flex flex-col gap-5">
+      <SetupCard onOpen={() => go("settings", "permissions")} />
       {/* hero */}
       <Card strong className="relative overflow-hidden p-6">
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full opacity-40 blur-3xl accent-gradient" />
@@ -169,13 +171,9 @@ export default function Home() {
 function MicOrb() {
   return (
     <div className="relative hidden h-36 w-36 shrink-0 items-center justify-center lg:flex">
+      {/* CSS-only pulse rings (compositor-driven, no JS per frame) */}
       {[0, 1, 2].map((i) => (
-        <motion.span
-          key={i}
-          className="absolute inset-0 rounded-full border border-brand-400/30"
-          animate={{ scale: [0.6, 1.15], opacity: [0.7, 0] }}
-          transition={{ duration: 3, repeat: Infinity, delay: i, ease: "easeOut" }}
-        />
+        <span key={i} className="flo-ring absolute inset-0 rounded-full border border-brand-400/30" style={{ animationDelay: `${i}s` }} />
       ))}
       <motion.button
         whileHover={{ scale: 1.05 }}
@@ -184,8 +182,51 @@ function MicOrb() {
         className="relative flex h-20 w-20 items-center justify-center rounded-full accent-gradient shadow-[0_10px_40px_-6px_rgba(61,187,255,0.8)]"
         aria-label="Start dictation"
       >
-        <Mic size={30} className="text-white" />
+        <Mic size={30} className="text-[#001522]" />
       </motion.button>
     </div>
+  );
+}
+
+
+/** Prominent checklist until the required permissions are granted and the fn key is live. */
+function SetupCard({ onOpen }: { onOpen: () => void }) {
+  const p = usePermissions(2000);
+  const missing = missingRequired(p);
+  const needsRestart = !!p && missing.length === 0 && !p.hotkeyActive;
+  if (!p || (missing.length === 0 && !needsRestart)) return null;
+  const left = missing.length + (needsRestart ? 1 : 0);
+  return (
+    <Card strong className="relative overflow-hidden border-brand-400/30 p-5">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(500px_200px_at_0%_0%,rgba(61,187,255,0.18),transparent_70%)]" />
+      <div className="relative flex flex-wrap items-center gap-5">
+        <div className="min-w-[220px] flex-1">
+          <div className="text-[16px] font-semibold tracking-tight">
+            Finish setup — {left} step{left === 1 ? "" : "s"} left
+          </div>
+          <p className="mt-1 text-[13px] text-muted">Flo needs these so holding fn can hear you and type where your cursor is.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PERMISSION_ITEMS.filter((i) => i.required).map((i) => (
+            <span
+              key={i.key}
+              className={
+                "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium " +
+                (p[i.key] ? "bg-brand-400/15 text-brand-200" : "bg-amber-500/15 text-amber-300")
+              }
+            >
+              {p[i.key] ? <Check size={13} strokeWidth={3} /> : <Lock size={12} />}
+              {i.label}
+            </span>
+          ))}
+          {needsRestart && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1.5 text-[12.5px] font-medium text-amber-300">Restart Flo</span>
+          )}
+        </div>
+        <Button variant="primary" icon={<ArrowRight size={15} />} onClick={needsRestart ? () => api.restartApp() : onOpen}>
+          {needsRestart ? "Restart Flo" : "Grant access"}
+        </Button>
+      </div>
+    </Card>
   );
 }
