@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const CHUNK_SECS: u64 = 10;
-const SUMMARY_EVERY_SECS: u64 = 60;
+const SUMMARY_EVERY_SECS: u64 = 120;
+/// final pass sends the whole transcript only below this size; above it, summary + tail
+const FULL_TRANSCRIPT_MAX_CHARS: usize = 12_000;
 
 pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> Result<Note> {
     if st.meeting.lock().is_some() {
@@ -81,6 +83,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
     let mut chunk_start = 0.0f64;
     let mut last_summary = Instant::now();
     let mut segs_since_summary = 0;
+    let mut summarized_upto = 0usize; // transcript segments already folded into the summary
     let recorder = Arc::new(parking_lot::Mutex::new(Some(recorder)));
     loop {
         // wait for the next chunk boundary (or stop)
@@ -124,7 +127,8 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
             break;
         }
         if segs_since_summary >= 2 && last_summary.elapsed() >= Duration::from_secs(SUMMARY_EVERY_SECS) {
-            if let Some(sum) = summarize(&st, &note_id, false).await {
+            if let Some((sum, upto)) = summarize_incremental(&st, &note_id, summarized_upto).await {
+                summarized_upto = upto;
                 if let Ok(Some(mut n)) = st.db.get_note(&note_id) {
                     n.summary = sum.summary.clone();
                     let _ = st.db.upsert_note(&n);
@@ -145,19 +149,55 @@ pub fn transcript_text(n: &Note) -> String {
         .join("\n")
 }
 
+/// Rolling update: previous summary + only segments after `from` (flat cost per update).
+async fn summarize_incremental(st: &Shared, note_id: &str, from: usize) -> Option<(prompts::ParsedSummary, usize)> {
+    let n = st.db.get_note(note_id).ok()??;
+    if n.transcript.len() <= from {
+        return None;
+    }
+    let new_lines = n.transcript[from..]
+        .iter()
+        .map(|s| format!("[{:02}:{:02}] {}", (s.t as u64) / 60, (s.t as u64) % 60, s.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let user = prompts::meeting_update_user(&n.summary, &new_lines);
+    let parsed = summarize_with(st, &user, false, 700).await?;
+    Some((parsed, n.transcript.len()))
+}
+
 async fn summarize(st: &Shared, note_id: &str, final_pass: bool) -> Option<prompts::ParsedSummary> {
     let n = st.db.get_note(note_id).ok()??;
     if n.transcript.is_empty() {
         return None;
     }
+    let full = transcript_text(&n);
+    let user = if full.len() <= FULL_TRANSCRIPT_MAX_CHARS || n.summary.trim().is_empty() {
+        text::truncate_chars(&full, 60_000)
+    } else {
+        // long meeting: the rolling summary already covers most of it → summary + last ~4k chars
+        let tail: String = full.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
+        prompts::meeting_update_user(&n.summary, &tail)
+    };
+    summarize_with(st, &user, final_pass, 1200).await
+}
+
+async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u32) -> Option<prompts::ParsedSummary> {
     let s = st.settings();
     let cfgl = LlmConfig::from_settings(&s);
     if !cfgl.is_configured() {
         return None;
     }
     let system = prompts::meeting_summary_system(final_pass);
-    let body = text::truncate_chars(&transcript_text(&n), 60_000);
-    let req = ChatRequest { system: &system, user: &body, image_b64: None, json: true, purpose: Purpose::Meeting, cloud_allowed: cfg::is_cloud_llm(&s.llm_provider) };
+    let body = user.to_string();
+    let req = ChatRequest {
+        system: &system,
+        user: &body,
+        image_b64: None,
+        json: true,
+        purpose: Purpose::Meeting,
+        cloud_allowed: cfg::is_cloud_llm(&s.llm_provider),
+        max_tokens,
+    };
     match llm::chat(&st.egress, &cfgl, req).await {
         Ok(raw) => Some(prompts::parse_summary(&raw)),
         Err(e) => {

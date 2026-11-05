@@ -6,6 +6,7 @@ import { relativeTime } from "../../lib/format";
 import { EV, type AssistantResponse } from "../../lib/types";
 import { assistantHotkeyLabel, useStore } from "../store";
 import { Card, Kbd, PageHeader } from "../ui";
+import { Logo } from "../Logo";
 
 const HINTS = [
   "Add a to-do to Apollo: send the deck by Friday",
@@ -18,6 +19,7 @@ const HINTS = [
 
 export default function Assistant() {
   const geo = useStore((s) => s.geo);
+  const settings = useStore((s) => s.settings);
   const toast = useStore((s) => s.toast);
   const [items, setItems] = useState<AssistantResponse[]>([]);
   const [text, setText] = useState("");
@@ -52,12 +54,10 @@ export default function Assistant() {
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {items.length === 0 && !busy && (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl accent-gradient">
-              <Sparkles size={24} className="text-white" />
-            </div>
+            <Logo size={64} />
             <div className="text-[16px] font-semibold">Ask Flo anything</div>
             <div className="text-[13px] text-muted">
-              Hold <Kbd>{assistantHotkeyLabel(geo)}</Kbd> and speak, or type below.
+              Hold <Kbd>{assistantHotkeyLabel(geo, settings)}</Kbd> and speak, or type below.
             </div>
           </div>
         )}

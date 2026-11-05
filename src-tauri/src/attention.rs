@@ -29,8 +29,22 @@ pub fn capture_focused_text() -> Option<(String, String, String)> {
     Some((app, title, text))
 }
 
+/// Can Attention use the configured AI model? None = yes, Some(reason) = no (so don't even capture).
+pub fn blocked_reason(s: &crate::model::Settings) -> Option<String> {
+    let cfg = LlmConfig::from_settings(s);
+    if !cfg.is_configured() {
+        return Some("Pick an AI model in Settings → AI to find to-dos on screen.".into());
+    }
+    if crate::settings::is_cloud_llm(&s.llm_provider) && !s.attention_cloud_allowed {
+        return Some("Attention keeps screen text on this Mac. Use a local model (Ollama / LM Studio), or allow “Attention may use cloud AI” in Privacy.".into());
+    }
+    None
+}
+
 pub fn status(st: &Shared) -> AttentionStatus {
     let mut s = st.attention.lock().clone();
+    let settings = st.settings();
+    s.blocked = if settings.attention_enabled { blocked_reason(&settings) } else { None };
     s.enabled = st.settings().attention_enabled;
     s.paused = st.attention_paused.load(Ordering::SeqCst);
     s.captures_today = st.attention_captures.load(Ordering::SeqCst);
@@ -55,6 +69,10 @@ pub fn spawn(st: Shared) {
                 last_day = today;
             }
             if !s.attention_enabled || st.attention_paused.load(Ordering::SeqCst) || st.session.lock().is_some() {
+                continue;
+            }
+            // no usable model → don't read the screen at all (and don't spam blocked calls)
+            if blocked_reason(&s).is_some() {
                 continue;
             }
             if !platform::permissions().screen {
@@ -99,11 +117,29 @@ async fn process(st: &Shared, app: &str, title: &str, screen: &str) -> anyhow::R
         return Ok(());
     }
     let system = prompts::attention_system(&s.user_name, &chrono::Local::now().format("%Y-%m-%d (%A)").to_string());
-    let user = format!("App: {app}\nWindow: {title}\nNew text on screen:\n{}", text::truncate_chars(&fresh_text, 6000));
+    // at most one AI call per app every 90 s
+    {
+        static LAST: parking_lot::Mutex<Option<std::collections::HashMap<String, std::time::Instant>>> = parking_lot::Mutex::new(None);
+        let mut g = LAST.lock();
+        let map = g.get_or_insert_with(Default::default);
+        if map.get(app).map(|t| t.elapsed() < Duration::from_secs(90)).unwrap_or(false) {
+            return Ok(());
+        }
+        map.insert(app.to_string(), std::time::Instant::now());
+    }
+    let user = format!("App: {app}\nWindow: {title}\nNew text on screen:\n{}", text::truncate_chars(&fresh_text, 3000));
     let raw = llm::chat(
         &st.egress,
         &cfgl,
-        ChatRequest { system: &system, user: &user, image_b64: None, json: true, purpose: Purpose::Attention, cloud_allowed: s.attention_cloud_allowed },
+        ChatRequest {
+            system: &system,
+            user: &user,
+            image_b64: None,
+            json: true,
+            purpose: Purpose::Attention,
+            cloud_allowed: s.attention_cloud_allowed,
+            max_tokens: 400,
+        },
     )
     .await?;
     let found = prompts::parse_attention(&raw, 0.6);
@@ -143,6 +179,19 @@ async fn process(st: &Shared, app: &str, title: &str, screen: &str) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocked_when_cloud_model_not_allowed() {
+        let mut s = crate::model::Settings::default();
+        s.llm_provider = "anthropic".into();
+        s.attention_cloud_allowed = false;
+        assert!(blocked_reason(&s).is_some());
+        s.attention_cloud_allowed = true;
+        assert!(blocked_reason(&s).is_none());
+        s.llm_provider = "ollama".into();
+        s.attention_cloud_allowed = false;
+        assert!(blocked_reason(&s).is_none());
+    }
 
     #[test]
     fn denylist_and_self() {

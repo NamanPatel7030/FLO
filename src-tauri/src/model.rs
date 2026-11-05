@@ -30,7 +30,7 @@ pub enum Phase {
     Error,
 }
 
-pub const SETTINGS_VERSION: u32 = 2;
+pub const SETTINGS_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -38,6 +38,10 @@ pub struct Settings {
     /// schema version for migrations (missing in old files → 0)
     #[serde(default)]
     pub settings_version: u32,
+    pub hotkey_dictation: String,
+    pub hotkey_assistant: String,
+    pub meeting_detection: bool,
+    pub learn_corrections: bool,
     pub stt_provider: String,
     pub stt_model: String,
     pub language: String,
@@ -60,6 +64,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             settings_version: SETTINGS_VERSION,
+            hotkey_dictation: "ctrl".into(),
+            hotkey_assistant: "fn".into(),
+            meeting_detection: true,
+            learn_corrections: true,
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),
             language: "auto".into(),
@@ -317,12 +325,17 @@ pub struct DictionaryEntry {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NetworkLogEntry {
     pub at: String,
     pub host: String,
     pub purpose: String,
     pub allowed: bool,
     pub bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_in: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_out: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -345,6 +358,9 @@ pub struct AttentionStatus {
     pub captures_today: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_app: Option<String>,
+    /// why Attention is idle even though it's on (e.g. no AI model it may use)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -377,6 +393,36 @@ pub struct ClaudeEvent {
     pub terminal: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeSession {
+    pub session_id: String,
+    pub project: String,
+    pub cwd: String,
+    /// working | done | waiting_reply | needs_approval
+    pub status: String,
+    pub message: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_bundle: Option<String>,
+    #[serde(skip)]
+    pub terminal: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CorrectionEvent {
+    pub id: String,
+    pub heard: String,
+    pub corrected: String,
+    pub app: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MeetingDetectedEvent {
+    pub app: String,
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeHookStatus {
@@ -399,6 +445,9 @@ pub mod ev {
     pub const TOAST: &str = "flo://toast";
     pub const CLAUDE: &str = "flo://claude";
     pub const HOVER: &str = "flo://hover";
+    pub const CLAUDE_SESSIONS: &str = "flo://claude-sessions";
+    pub const CORRECTION: &str = "flo://correction";
+    pub const MEETING_DETECTED: &str = "flo://meeting-detected";
 }
 
 #[cfg(test)]

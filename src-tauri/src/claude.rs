@@ -15,7 +15,21 @@ use std::sync::atomic::Ordering;
 
 pub const PORT: u16 = 47621;
 const MARKER: &str = "flo-flow-hook";
-const HOOK_EVENTS: &[&str] = &["Stop", "Notification"];
+const HOOK_EVENTS: &[&str] = &["Stop", "Notification", "UserPromptSubmit", "SessionEnd"];
+
+/// Tray status for an event: Some(Some(status)) = upsert, Some(None) = remove, None = ignore.
+pub fn session_status(ev: &ClaudeEvent) -> Option<Option<&'static str>> {
+    match ev.kind.as_str() {
+        "prompt" => Some(Some("working")),
+        "stop" => Some(Some("done")),
+        "end" => Some(None),
+        "notification" => {
+            let m = ev.message.to_lowercase();
+            Some(Some(if m.contains("permission") || m.contains("approve") || m.contains("allow") { "needs_approval" } else { "waiting_reply" }))
+        }
+        _ => None,
+    }
+}
 
 // ── pure helpers ────────────────────────────────────────────────────────────
 
@@ -238,12 +252,16 @@ pub fn parse_hook_from(body: &Value, transcript: Option<&str>, bundle: Option<St
     let kind = match name {
         "Notification" => "notification",
         "SubagentStop" => "subagent_stop",
+        "UserPromptSubmit" => "prompt",
+        "SessionEnd" => "end",
         _ => "stop",
     };
     let cwd = body["cwd"].as_str().unwrap_or("").to_string();
     let project = Path::new(&cwd).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Claude".into());
     let message = match kind {
         "notification" => body["message"].as_str().unwrap_or("Claude needs your input").to_string(),
+        "prompt" => body["prompt"].as_str().map(|p| text::truncate_chars(p.trim(), 140)).unwrap_or_default(),
+        "end" => String::new(),
         _ => transcript.and_then(last_assistant_text).map(|m| headline(&m)).unwrap_or_else(|| "Finished its turn".into()),
     };
     ClaudeEvent {
@@ -343,6 +361,19 @@ fn safe_transcript(path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&data[start..]).to_string())
 }
 
+pub fn emit_sessions(st: &Shared) {
+    if let Ok(list) = st.db.list_claude_sessions() {
+        st.emit(ev::CLAUDE_SESSIONS, list);
+    }
+}
+
+/// Focus the window running a session (shared by events and tray items).
+pub fn focus(app_bundle: Option<&str>, terminal: Option<&str>, cwd: &str) -> anyhow::Result<String> {
+    let target = open_target(app_bundle, terminal).or_else(|| crate::platform::running_dev_app().map(|a| (a, false)));
+    let Some((app, _)) = target else { return Ok(String::new()) };
+    crate::platform::focus_session_window(&app, &window_name_candidates(cwd))
+}
+
 /// Re-write an installed hook so it uses the current command format.
 pub fn refresh_if_installed(st: &Shared) {
     let cmd = match secrets::hook_token() {
@@ -403,13 +434,18 @@ pub fn spawn_listener(st: Shared) {
                 let v: Value = serde_json::from_str(&body).unwrap_or(json!({}));
                 let transcript = v["transcript_path"].as_str().and_then(safe_transcript);
                 let ev = parse_hook_from(&v, transcript.as_deref(), bundle, term);
-                if ev.kind == "subagent_stop" {
-                    continue; // too noisy for reminders
+                let Some(status) = session_status(&ev) else { continue };
+                if let Err(e) = st.db.apply_claude_event(&ev, status) {
+                    log::error!("claude session: {e}");
                 }
-                if let Err(e) = st.db.insert_claude_event(&ev) {
-                    log::error!("store claude event: {e}");
+                emit_sessions(&st);
+                // one-shot reminder card only for "done" / "needs you"
+                if matches!(ev.kind.as_str(), "stop" | "notification") {
+                    if let Err(e) = st.db.insert_claude_event(&ev) {
+                        log::error!("store claude event: {e}");
+                    }
+                    st.emit(ev::CLAUDE, ev);
                 }
-                st.emit(ev::CLAUDE, ev);
             }
         })
         .ok();
@@ -505,6 +541,17 @@ mod tests {
         assert!(s.contains(r#"{"a\"b","Flo"}"#));
         assert!(s.contains("best:focus()"));
         assert!(!s.contains("open -a"));
+    }
+
+    #[test]
+    fn session_statuses() {
+        let mk = |kind: &str, msg: &str| parse_hook(&json!({"hook_event_name": kind, "message": msg, "cwd": "/a/b"}), None);
+        assert_eq!(session_status(&mk("UserPromptSubmit", "")), Some(Some("working")));
+        assert_eq!(session_status(&mk("Stop", "")), Some(Some("done")));
+        assert_eq!(session_status(&mk("SessionEnd", "")), Some(None));
+        assert_eq!(session_status(&mk("Notification", "Claude needs your permission to use Bash")), Some(Some("needs_approval")));
+        assert_eq!(session_status(&mk("Notification", "Claude is waiting for your input")), Some(Some("waiting_reply")));
+        assert_eq!(session_status(&mk("SubagentStop", "")), None);
     }
 
     #[test]

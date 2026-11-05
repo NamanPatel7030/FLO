@@ -91,6 +91,7 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
             let ft = final_text.clone();
             tokio::task::spawn_blocking(move || platform::paste_text(&ft)).await??;
             save(st, mode, &front.name, &raw, &final_text, duration_ms, t0.elapsed().as_millis() as u64);
+            crate::corrections::track(st.clone(), final_text.clone(), front.name.clone());
             st.emit(ev::TRANSCRIPT, TranscriptEvent { text: final_text, is_final: true });
             st.finish(Phase::Done, mode, None);
         }
@@ -136,8 +137,11 @@ pub async fn transcribe(st: &Shared, samples: Vec<f32>) -> Result<String> {
         let path = stt::model_path(&st.models_dir, &s.stt_model).ok_or_else(|| anyhow!("Unknown speech model {}", s.stt_model))?;
         let w = st.whisper.clone();
         let lang = s.language.clone();
+        let samples = audio::trim_silence(&samples);
         tokio::task::spawn_blocking(move || w.transcribe(&path, &samples, &lang, &prompt)).await?
     } else {
+        // cloud STT bills per second of audio → drop leading/trailing silence
+        let samples = audio::trim_silence(&samples);
         let key = crate::secrets::get_api_key(&s.stt_provider)
             .ok_or_else(|| anyhow!("No API key for {} — add it in Settings → AI.", s.stt_provider))?;
         stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &s.language, &prompt).await
@@ -155,8 +159,8 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
         .collect();
     let base = text::apply_dictionary(raw, &dict);
     let cfg = LlmConfig::from_settings(&s);
-    // very short utterances don't need an LLM round-trip
-    if !s.cleanup_enabled || !cfg.is_configured() || text::word_count(&base) < 4 {
+    // free local pass unless the transcript actually needs the LLM (fillers, corrections, long text)
+    if !s.cleanup_enabled || !cfg.is_configured() || !text::needs_llm_cleanup(&base) {
         return text::basic_cleanup(&base);
     }
     let vocab: Vec<String> = st.db.list_dictionary().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
@@ -168,6 +172,8 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
         json: false,
         purpose: Purpose::Cleanup,
         cloud_allowed: cfg::is_cloud_llm(&s.llm_provider),
+        // output ≈ input length; ~1.4 tokens/word + headroom
+        max_tokens: (text::word_count(&base) * 2 + 40).min(2000),
     };
     match tokio::time::timeout(std::time::Duration::from_secs(8), llm::chat(&st.egress, &cfg, req)).await {
         Ok(Ok(out)) => {

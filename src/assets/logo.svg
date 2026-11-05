@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="flo-bg" x1="6" y1="4" x2="58" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#103250"/>
+      <stop offset="0.55" stop-color="#061420"/>
+      <stop offset="1" stop-color="#010306"/>
+    </linearGradient>
+    <radialGradient id="flo-glow" cx="18" cy="12" r="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#66ceff" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#66ceff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="flo-wave" x1="13" y1="20" x2="51" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e3f6ff"/>
+      <stop offset="0.5" stop-color="#66ceff"/>
+      <stop offset="1" stop-color="#1a9be0"/>
+    </linearGradient>
+    <linearGradient id="flo-rim" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c2ecff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#3dbbff" stop-opacity="0.12"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="16" fill="url(#flo-bg)"/>
+  <rect x="1" y="1" width="62" height="62" rx="16" fill="url(#flo-glow)"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="15.5" stroke="url(#flo-rim)"/>
+  <path d="M14 39c5-14 12-14 18-7s13 7 18-7" stroke="#66ceff" stroke-opacity="0.28" stroke-width="3.5" stroke-linecap="round" transform="translate(0 6)"/>
+  <path d="M14 37c5-14 12-14 18-7s13 7 18-7" stroke="url(#flo-wave)" stroke-width="6.5" stroke-linecap="round"/>
+  <circle cx="50" cy="23" r="3.3" fill="#e3f6ff"/>
+</svg>

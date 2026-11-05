@@ -74,7 +74,7 @@ export default function History() {
           <Empty
             icon={<HistoryIcon size={18} />}
             title={q || filter !== "all" ? "No matches" : "Nothing here yet"}
-            hint={q || filter !== "all" ? "Try another word or filter." : "Hold fn and speak — everything you dictate shows up here, ready to copy."}
+            hint={q || filter !== "all" ? "Try another word or filter." : "Hold your dictation key and speak — everything you dictate shows up here, ready to copy."}
           />
         </Card>
       ) : (

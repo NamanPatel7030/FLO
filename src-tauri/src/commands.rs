@@ -20,6 +20,7 @@ pub fn get_settings(st: State<Shared>) -> Settings {
 #[tauri::command]
 pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
     settings::save(&st.data_dir, &settings).map_err(e)?;
+    platform::set_hotkeys(crate::hotkey::HotkeyConfig::from_strings(&settings.hotkey_dictation, &settings.hotkey_assistant));
     *st.settings.write() = settings;
     Ok(())
 }
@@ -47,7 +48,7 @@ pub async fn test_llm(st: State<'_, Shared>) -> R<String> {
     let out = llm::chat(
         &st.egress,
         &cfg,
-        llm::ChatRequest { system: "Reply with exactly: ok", user: "ping", image_b64: None, json: false, purpose: Purpose::Test, cloud_allowed: true },
+        llm::ChatRequest { system: "Reply with exactly: ok", user: "ping", image_b64: None, json: false, purpose: Purpose::Test, cloud_allowed: true, max_tokens: 16 },
     )
     .await
     .map_err(e)?;
@@ -327,19 +328,54 @@ pub async fn open_claude_session(app: tauri::AppHandle, st: State<'_, Shared>, i
     let ev = st.db.list_claude_events(200).map_err(e)?.into_iter().find(|x| x.id == id).ok_or("session not found")?;
     let _ = st.db.mark_claude_seen(Some(&id));
     st.emit(ev::CLAUDE, serde_json::Value::Null);
-    let target = claude::open_target(ev.app_bundle.as_deref(), ev.terminal.as_deref())
-        // unknown launcher (older events): the editor/terminal that's running — never Finder
-        .or_else(|| platform::running_dev_app().map(|a| (a, false)));
-    let Some((app_id, _)) = target else {
-        crate::show_dashboard(&app, Some("home"));
-        return Ok(String::new());
-    };
-    let names = claude::window_name_candidates(&ev.cwd);
+    let _ = st.db.dismiss_claude_session(&ev.session_id);
+    claude::emit_sessions(st.inner());
     // focus the EXISTING window running this session; never open a new one
-    tauri::async_runtime::spawn_blocking(move || platform::focus_session_window(&app_id, &names))
+    let r = tauri::async_runtime::spawn_blocking(move || claude::focus(ev.app_bundle.as_deref(), ev.terminal.as_deref(), &ev.cwd))
+        .await
+        .map_err(e)?
+        .map_err(e)?;
+    if r.is_empty() {
+        crate::show_dashboard(&app, Some("home"));
+    }
+    Ok(r)
+}
+
+#[tauri::command]
+pub fn list_claude_sessions(st: State<Shared>) -> R<Vec<ClaudeSession>> {
+    st.db.list_claude_sessions().map_err(e)
+}
+
+/// Tray click: focus the session's window; drop it from the tray unless Claude is still working.
+#[tauri::command]
+pub async fn open_claude_by_session(st: State<'_, Shared>, session_id: String) -> R<String> {
+    let s = st.db.get_claude_session(&session_id).map_err(e)?.ok_or("session not found")?;
+    if s.status != "working" {
+        let _ = st.db.dismiss_claude_session(&session_id);
+    }
+    claude::emit_sessions(st.inner());
+    let (b, t, cwd) = (s.app_bundle.clone(), s.terminal.clone(), s.cwd.clone());
+    tauri::async_runtime::spawn_blocking(move || claude::focus(b.as_deref(), t.as_deref(), &cwd))
         .await
         .map_err(e)?
         .map_err(e)
+}
+
+#[tauri::command]
+pub fn dismiss_claude_session(st: State<Shared>, session_id: String) -> R<()> {
+    st.db.dismiss_claude_session(&session_id).map_err(e)?;
+    claude::emit_sessions(st.inner());
+    Ok(())
+}
+
+/// "Save to dictionary" from a correction card.
+#[tauri::command]
+pub fn accept_correction(st: State<Shared>, heard: String, corrected: String) -> R<DictionaryEntry> {
+    let existing = st.db.list_dictionary().map_err(e)?;
+    if let Some(d) = existing.iter().find(|d| d.word.eq_ignore_ascii_case(&heard)) {
+        let _ = st.db.remove_dictionary(&d.id);
+    }
+    st.db.add_dictionary(&heard, Some(&corrected)).map_err(e)
 }
 
 #[tauri::command]

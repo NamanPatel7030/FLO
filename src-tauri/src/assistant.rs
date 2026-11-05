@@ -26,11 +26,11 @@ pub fn build_context(st: &Shared, selection: Option<&str>, front: &FrontApp, scr
     }
     for p in &projects {
         c.push_str(&format!("- {} [{}]{}\n", p.name, p.status, p.description.as_deref().map(|d| format!(" — {d}")).unwrap_or_default()));
-        for t in todos.iter().filter(|t| t.project_id.as_deref() == Some(&p.id) && t.status == "open").take(15) {
+        for t in todos.iter().filter(|t| t.project_id.as_deref() == Some(&p.id) && t.status == "open").take(8) {
             c.push_str(&format!("    • {}{}\n", t.title, t.due.as_deref().map(|d| format!(" (due {d})")).unwrap_or_default()));
         }
     }
-    let loose: Vec<_> = todos.iter().filter(|t| t.project_id.is_none() && t.status == "open").take(20).collect();
+    let loose: Vec<_> = todos.iter().filter(|t| t.project_id.is_none() && t.status == "open").take(10).collect();
     if !loose.is_empty() {
         c.push_str("\nOther open to-dos:\n");
         for t in loose {
@@ -40,19 +40,19 @@ pub fn build_context(st: &Shared, selection: Option<&str>, front: &FrontApp, scr
     let notes = st.db.list_notes().unwrap_or_default();
     if !notes.is_empty() {
         c.push_str("\nRecent notes:\n");
-        for n in notes.iter().take(5) {
+        for n in notes.iter().take(3) {
             let first = n.summary.lines().next().unwrap_or("");
-            c.push_str(&format!("- {} ({}): {}\n", n.title, &n.created_at[..10.min(n.created_at.len())], text::truncate_chars(first, 160)));
+            c.push_str(&format!("- {} ({}): {}\n", n.title, &n.created_at[..10.min(n.created_at.len())], text::truncate_chars(first, 100)));
         }
     }
     if st.meeting.lock().is_some() {
         c.push_str("\nA meeting recording is currently running.\n");
     }
     if let Some(sel) = selection {
-        c.push_str(&format!("\nSelected text in {}:\n\"\"\"\n{}\n\"\"\"\n", front.name, text::truncate_chars(sel, 6000)));
+        c.push_str(&format!("\nSelected text in {}:\n\"\"\"\n{}\n\"\"\"\n", front.name, text::truncate_chars(sel, 4000)));
     }
     if let Some(scr) = screen {
-        c.push_str(&format!("\nVisible text on screen (OCR, may be noisy):\n\"\"\"\n{}\n\"\"\"\n", text::truncate_chars(scr, 5000)));
+        c.push_str(&format!("\nVisible text on screen (OCR, may be noisy):\n\"\"\"\n{}\n\"\"\"\n", text::truncate_chars(scr, 2000)));
     }
     c
 }
@@ -81,6 +81,8 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
     if !cfgl.is_configured() {
         return Err(anyhow!("Pick an AI model in Settings → AI to ask questions (“open …” and “google …” work without one)."));
     }
+    // screen OCR is the largest prompt cost — only include it when the request is about the screen
+    let screen = screen.filter(|_| text::wants_screen_context(query));
     let context = build_context(st, selection.as_deref(), front, screen.as_deref());
     let system = prompts::assistant_system(&context);
     let raw = llm::chat(
@@ -93,6 +95,7 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
             json: true,
             purpose: Purpose::Assistant,
             cloud_allowed: s.assistant_cloud_allowed,
+            max_tokens: if selection.is_some() { 1500 } else { 600 },
         },
     )
     .await

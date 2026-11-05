@@ -27,7 +27,14 @@ interface Props {
   onOpenHistory: () => void;
   onClaude: (seen: boolean) => void;
   onToggleMeeting: () => void;
+  /** peek tile under the cursor (backend hit-testing), -1 = none */
+  hotTile?: number;
+  /** configured push-to-talk keys, already formatted ("⌃", "fn") */
+  keys: { dict: string; asst: string };
 }
+
+/** Number of quick actions in the peek menu (for hit-testing). */
+export const PEEK_ACTIONS = 5;
 
 function CopyButton({ text, label = true }: { text: string; label?: boolean }) {
   const [done, setDone] = useState(false);
@@ -137,19 +144,25 @@ export function IslandContent(p: Props) {
         </button>
       );
 
-    case "peek":
+    case "peek": {
+      const actions = [
+        { icon: <Mic size={16} />, label: "Dictate", run: () => api.startSession("dictation") },
+        { icon: <Sparkles size={16} />, label: "Ask", run: () => api.startSession("assistant") },
+        { icon: <Radio size={16} />, label: "Meeting", run: () => api.startMeeting() },
+        { icon: <History size={16} />, label: "History", run: p.onOpenHistory },
+        { icon: <LayoutDashboard size={16} />, label: "Open", run: () => api.openDashboard() },
+      ];
       return (
         <div className="flex h-full flex-col">
           {notch && <div style={{ height: top }} />}
-          <div className={"flex flex-1 items-center justify-around " + (notch ? "px-3 pb-1.5" : "px-2")}>
-            <Quick icon={<Mic size={16} />} label="Dictate" onClick={() => api.startSession("dictation")} />
-            <Quick icon={<Sparkles size={16} />} label="Ask" onClick={() => api.startSession("assistant")} />
-            <Quick icon={<Radio size={16} />} label="Meeting" onClick={() => api.startMeeting()} />
-            <Quick icon={<History size={16} />} label="History" onClick={p.onOpenHistory} />
-            <Quick icon={<LayoutDashboard size={16} />} label="Open" onClick={() => api.openDashboard()} />
+          <div className={"grid flex-1 grid-cols-5 items-center gap-1.5 " + (notch ? "px-3 pb-2.5 pt-1" : "px-2 py-1.5")}>
+            {actions.map((a, i) => (
+              <Quick key={a.label} index={i} hot={p.hotTile === i} icon={a.icon} label={a.label} onClick={a.run} />
+            ))}
           </div>
         </div>
       );
+    }
 
     case "listening": {
       const ask = p.mode === "assistant";
@@ -174,7 +187,7 @@ export function IslandContent(p: Props) {
           <div className="flex items-center justify-center gap-2 px-4" style={{ height: ISLAND_ROW }}>
             <span className="text-[13px] font-medium text-white/90">{ask ? "Ask Flo anything" : "Listening…"}</span>
             <span className="text-[12px] text-white/40">
-              release {ask ? "fn + ctrl" : "fn"} to {ask ? "send" : "paste"}
+              release {ask ? p.keys.asst : p.keys.dict} to {ask ? "send" : "paste"}
             </span>
           </div>
         </div>
@@ -288,7 +301,7 @@ export function IslandContent(p: Props) {
             </div>
             <div className="min-h-0 flex-1 overflow-hidden">
               {items.length === 0 ? (
-                <p className="flex h-[54px] items-center justify-center text-[13px] text-white/55">Nothing yet — hold fn and speak.</p>
+                <p className="flex h-[54px] items-center justify-center text-[13px] text-white/55">Nothing yet — hold {p.keys.dict} and speak.</p>
               ) : (
                 items.map((d) => (
                   <div key={d.id} className="flex h-[54px] items-center gap-3 border-t border-white/[0.06] first:border-t-0">
@@ -449,19 +462,29 @@ export function IslandContent(p: Props) {
         </div>
       );
     }
+    default:
+      return null;
   }
 }
 
-function Quick({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function Quick({ icon, label, onClick, hot, index }: { icon: React.ReactNode; label: string; onClick: () => void; hot?: boolean; index: number }) {
   return (
     <motion.button
-      whileHover={{ y: -1.5, scale: 1.04 }}
+      initial={{ opacity: 0, y: 8, scale: 0.92 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 520, damping: 30, delay: 0.03 + index * 0.035 }}
       whileTap={{ scale: 0.94 }}
       onClick={onClick}
-      className="flex flex-col items-center gap-0.5 rounded-xl px-2 py-1 text-white/80 hover:bg-white/10 hover:text-white"
+      data-hot={hot ? "true" : "false"}
+      className="island-tile flex h-[52px] flex-col items-center justify-center gap-1 rounded-xl text-white/85 hover:text-white"
     >
-      {icon}
-      <span className="text-[10px] font-medium">{label}</span>
+      <span
+        className="flex items-center justify-center text-brand-200"
+        style={{ filter: hot ? "drop-shadow(0 0 8px rgba(102,206,255,0.85))" : "drop-shadow(0 0 4px rgba(102,206,255,0.35))" }}
+      >
+        {icon}
+      </span>
+      <span className={"text-[10.5px] font-medium " + (hot ? "text-white" : "text-white/75")}>{label}</span>
     </motion.button>
   );
 }

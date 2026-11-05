@@ -8,6 +8,7 @@ import { assistantHotkeyLabel, hotkeyLabel, useStore } from "../store";
 import { Card, CardTitle, Empty, Kbd, ProgressRing, Skeleton, Stat, StatusPill, Button } from "../ui";
 import { ClaudeSessionsCard, TodoRow } from "../components";
 import { missingRequired, PERMISSION_ITEMS, usePermissions } from "../usePermissions";
+import { Logo } from "../Logo";
 
 export default function Home() {
   const { settings, todos, projects, notes, geo, go } = useStore();
@@ -29,13 +30,16 @@ export default function Home() {
         <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full opacity-40 blur-3xl accent-gradient" />
         <div className="relative flex items-center justify-between gap-6">
           <div>
-            <div className="text-[13px] text-muted">{new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</div>
+            <div className="flex items-center gap-2 text-[13px] text-muted">
+              <Logo size={20} glow={false} />
+              <span>{new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</span>
+            </div>
             <h1 className="mt-1 text-[30px] font-semibold tracking-tight">
               {greeting(new Date().getHours())}
               {settings?.userName ? `, ${settings.userName}` : ""}.
             </h1>
             <p className="mt-2 max-w-lg text-[14px] text-muted">
-              Hold <Kbd>{hotkeyLabel(geo)}</Kbd> to dictate anywhere. Hold <Kbd>{assistantHotkeyLabel(geo)}</Kbd> to ask Flo — “add a to-do to Apollo”, “what's blocked?”, “start meeting notes”.
+              Hold <Kbd>{hotkeyLabel(geo, settings)}</Kbd> to dictate anywhere. Hold <Kbd>{assistantHotkeyLabel(geo, settings)}</Kbd> to ask Flo — “add a to-do to Apollo”, “what's blocked?”, “start meeting notes”.
             </p>
             <div className="mt-4 flex gap-2">
               <Button variant="primary" icon={<Mic size={15} />} onClick={() => api.startSession("dictation")}>
@@ -98,8 +102,14 @@ export default function Home() {
           {att && (
             <div className="mt-3 flex items-center gap-2 rounded-xl bg-[var(--glass)] px-3 py-2 text-[12px] text-muted">
               <Eye size={13} className="text-brand-400" />
-              Attention is {att.enabled ? (att.paused ? "paused" : "on") : "off"} · {att.capturesToday} looks today
-              {att.lastApp ? ` · last in ${att.lastApp}` : ""} · stays on this Mac
+              {att.blocked ? (
+                <span className="text-amber-300/90">Attention is waiting: {att.blocked}</span>
+              ) : (
+                <>
+                  Attention is {att.enabled ? (att.paused ? "paused" : "on") : "off"} · {att.capturesToday} looks today
+                  {att.lastApp ? ` · last in ${att.lastApp}` : ""} · stays on this Mac
+                </>
+              )}
             </div>
           )}
         </Card>

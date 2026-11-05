@@ -61,6 +61,10 @@ impl Db {
             CREATE TABLE IF NOT EXISTS claude_events(
               id TEXT PRIMARY KEY, kind TEXT NOT NULL, session_id TEXT NOT NULL, project TEXT NOT NULL,
               cwd TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL, seen INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS claude_sessions(
+              session_id TEXT PRIMARY KEY, project TEXT NOT NULL, cwd TEXT NOT NULL, status TEXT NOT NULL,
+              message TEXT NOT NULL, updated_at TEXT NOT NULL, app_bundle TEXT, terminal TEXT,
+              dismissed INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS attention_snapshots(
               window_key TEXT PRIMARY KEY, app TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS assistant_log(id TEXT PRIMARY KEY, created_at TEXT NOT NULL, json TEXT NOT NULL);
@@ -345,6 +349,63 @@ impl Db {
         Ok(())
     }
 
+    // ── claude sessions (notch tray) ────────────────────────────────────────
+    /// Upsert a session's latest state; any new event un-dismisses it. `end` removes it.
+    pub fn apply_claude_event(&self, e: &ClaudeEvent, status: Option<&str>) -> Result<()> {
+        let c = self.conn.lock();
+        match status {
+            None => {
+                c.execute("DELETE FROM claude_sessions WHERE session_id=?1", [&e.session_id])?;
+            }
+            Some(st) => {
+                c.execute(
+                    "INSERT INTO claude_sessions (session_id,project,cwd,status,message,updated_at,app_bundle,terminal,dismissed)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0)
+                     ON CONFLICT(session_id) DO UPDATE SET project=?2, cwd=?3, status=?4,
+                       message=CASE WHEN ?5='' THEN message ELSE ?5 END, updated_at=?6,
+                       app_bundle=COALESCE(?7, app_bundle), terminal=COALESCE(?8, terminal), dismissed=0",
+                    params![e.session_id, e.project, e.cwd, st, e.message, e.at, e.app_bundle, e.terminal],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Visible sessions, most recent first; stale ones (>12 h) are dropped.
+    pub fn list_claude_sessions(&self) -> Result<Vec<ClaudeSession>> {
+        let cutoff = (Local::now() - Duration::hours(12)).to_rfc3339();
+        let c = self.conn.lock();
+        c.execute("DELETE FROM claude_sessions WHERE updated_at < ?1", [&cutoff])?;
+        let mut st = c.prepare(
+            "SELECT session_id,project,cwd,status,message,updated_at,app_bundle,terminal FROM claude_sessions
+             WHERE dismissed=0 ORDER BY updated_at DESC LIMIT 20",
+        )?;
+        let rows = st
+            .query_map([], |r| {
+                Ok(ClaudeSession {
+                    session_id: r.get(0)?,
+                    project: r.get(1)?,
+                    cwd: r.get(2)?,
+                    status: r.get(3)?,
+                    message: r.get(4)?,
+                    updated_at: r.get(5)?,
+                    app_bundle: r.get(6)?,
+                    terminal: r.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_claude_session(&self, id: &str) -> Result<Option<ClaudeSession>> {
+        Ok(self.list_claude_sessions()?.into_iter().find(|s| s.session_id == id))
+    }
+
+    pub fn dismiss_claude_session(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute("UPDATE claude_sessions SET dismissed=1 WHERE session_id=?1", [id])?;
+        Ok(())
+    }
+
     // ── attention ───────────────────────────────────────────────────────────
     pub fn last_snapshot(&self, key: &str) -> Result<Option<String>> {
         let c = self.conn.lock();
@@ -615,6 +676,37 @@ mod tests {
         assert_eq!(db.list_claude_events(1).unwrap()[0].app_bundle.as_deref(), Some("com.microsoft.VSCode"));
         db.mark_claude_seen(None).unwrap();
         assert!(db.list_claude_events(10).unwrap()[0].seen);
+    }
+
+    #[test]
+    fn claude_sessions_lifecycle() {
+        let db = Db::open_in_memory().unwrap();
+        let mut e = ClaudeEvent {
+            id: new_id(),
+            kind: "prompt".into(),
+            session_id: "s1".into(),
+            project: "Flo".into(),
+            cwd: "/x/Flo".into(),
+            message: String::new(),
+            at: now(),
+            seen: false,
+            app_bundle: Some("/Applications/Visual Studio Code.app".into()),
+            terminal: None,
+        };
+        db.apply_claude_event(&e, Some("working")).unwrap();
+        e.message = "Built it".into();
+        e.app_bundle = None;
+        db.apply_claude_event(&e, Some("done")).unwrap();
+        let s = db.list_claude_sessions().unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!((s[0].status.as_str(), s[0].message.as_str()), ("done", "Built it"));
+        assert_eq!(s[0].app_bundle.as_deref(), Some("/Applications/Visual Studio Code.app")); // kept
+        db.dismiss_claude_session("s1").unwrap();
+        assert!(db.list_claude_sessions().unwrap().is_empty());
+        db.apply_claude_event(&e, Some("waiting_reply")).unwrap(); // new event → back in tray
+        assert_eq!(db.list_claude_sessions().unwrap().len(), 1);
+        db.apply_claude_event(&e, None).unwrap(); // SessionEnd
+        assert!(db.list_claude_sessions().unwrap().is_empty());
     }
 
     #[test]

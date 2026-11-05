@@ -30,6 +30,22 @@ pub struct ChatRequest<'a> {
     pub json: bool,
     pub purpose: Purpose,
     pub cloud_allowed: bool,
+    /// cap on visible output tokens for this call
+    pub max_tokens: u32,
+}
+
+/// Is this an OpenAI reasoning model (counts hidden reasoning toward the output cap)?
+fn openai_reasoning(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.starts_with("gpt-5") || m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4")
+}
+
+/// (input, output) tokens from any provider's `usage` block.
+pub fn usage_of(v: &Value) -> (Option<u64>, Option<u64>) {
+    let u = &v["usage"];
+    let tin = u["prompt_tokens"].as_u64().or(u["input_tokens"].as_u64()).or(v["usageMetadata"]["promptTokenCount"].as_u64());
+    let tout = u["completion_tokens"].as_u64().or(u["output_tokens"].as_u64()).or(v["usageMetadata"]["candidatesTokenCount"].as_u64());
+    (tin, tout)
 }
 
 pub fn default_model(provider: &str) -> &'static str {
@@ -92,8 +108,9 @@ async fn send(egress: &Egress, url: &str, req: &ChatRequest<'_>, builder: impl F
     })?;
     let status = resp.status();
     let text = resp.text().await?;
-    egress.record(url, req.purpose, bytes + text.len() as u64);
     let v: Value = serde_json::from_str(&text).unwrap_or(json!({ "raw": text }));
+    let (tin, tout) = usage_of(&v);
+    egress.record_usage(url, req.purpose, bytes + text.len() as u64, tin, tout);
     if !status.is_success() {
         let msg = v["error"]["message"].as_str().or(v["error"].as_str()).unwrap_or(&text);
         bail!("AI provider error {status}: {}", crate::text::truncate_chars(msg, 300));
@@ -121,6 +138,17 @@ async fn openai_compat(egress: &Egress, cfg: &LlmConfig, model: &str, req: ChatR
     });
     if req.json && cfg.provider != "lmstudio" {
         body["response_format"] = json!({"type": "json_object"});
+    }
+    if cfg.provider == "openai" {
+        if openai_reasoning(model) {
+            // minimal hidden reasoning; cap must leave room for it
+            body["reasoning_effort"] = json!("minimal");
+            body["max_completion_tokens"] = json!(req.max_tokens.max(256) + 1024);
+        } else {
+            body["max_completion_tokens"] = json!(req.max_tokens.max(64));
+        }
+    } else {
+        body["max_tokens"] = json!(req.max_tokens.max(64));
     }
     if cfg.provider == "ollama" {
         // keep the model warm between dictations
@@ -152,7 +180,8 @@ async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result
     content.push(json!({"type": "text", "text": req.user}));
     let mut body = json!({
         "model": model,
-        "max_tokens": 16000,
+        // adaptive thinking can't be disabled on current Claude models; leave headroom for it
+        "max_tokens": (req.max_tokens.max(256) + 1536),
         "system": req.system,
         "messages": [{"role": "user", "content": content}],
         // voice UX: favour latency
@@ -205,9 +234,14 @@ async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result<St
         "systemInstruction": {"parts": [{"text": req.system}]},
         "contents": [{"role": "user", "parts": parts}],
     });
+    let mut gen = json!({ "maxOutputTokens": req.max_tokens.max(64) });
     if req.json {
-        body["generationConfig"] = json!({"responseMimeType": "application/json"});
+        gen["responseMimeType"] = json!("application/json");
     }
+    if model.contains("flash") {
+        gen["thinkingConfig"] = json!({ "thinkingBudget": 0 }); // no hidden thinking tokens
+    }
+    body["generationConfig"] = gen;
     let v = send(egress, &url, &req, |c| c.post(&url).header("x-goog-api-key", key), body).await?;
     v["candidates"][0]["content"]["parts"]
         .as_array()
@@ -227,6 +261,15 @@ mod tests {
         let l = LlmConfig { provider: "lmstudio".into(), model: String::new(), local_url: "http://127.0.0.1:11434".into() };
         assert_eq!(openai_base(&l).unwrap(), "http://127.0.0.1:1234/v1");
         assert!(openai_base(&LlmConfig { provider: "anthropic".into(), model: String::new(), local_url: String::new() }).is_err());
+    }
+
+    #[test]
+    fn reads_usage_from_all_providers() {
+        assert_eq!(usage_of(&json!({"usage": {"prompt_tokens": 10, "completion_tokens": 3}})), (Some(10), Some(3)));
+        assert_eq!(usage_of(&json!({"usage": {"input_tokens": 7, "output_tokens": 2}})), (Some(7), Some(2)));
+        assert_eq!(usage_of(&json!({"usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 1}})), (Some(5), Some(1)));
+        assert_eq!(usage_of(&json!({})), (None, None));
+        assert!(openai_reasoning("gpt-5-mini") && !openai_reasoning("gpt-4.1-mini"));
     }
 
     #[tokio::test]

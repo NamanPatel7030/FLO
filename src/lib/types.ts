@@ -29,7 +29,18 @@ export type LlmProvider =
 /** Providers whose API key lives in the OS keychain. */
 export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter";
 
+/** Modifier combo for push-to-talk (macOS). Any other key pressed while holding cancels. */
+export type HotkeyCombo = "fn" | "ctrl" | "alt" | "fn+ctrl" | "ctrl+alt" | "cmd+alt" | "fn+shift";
+
 export interface Settings {
+  /** hold to dictate (default "ctrl") */
+  hotkeyDictation: HotkeyCombo;
+  /** hold for the assistant (default "fn") */
+  hotkeyAssistant: HotkeyCombo;
+  /** notice Zoom/Meet/Teams/Slack/FaceTime calls and offer to take notes */
+  meetingDetection: boolean;
+  /** watch for your fixes after a paste and suggest dictionary entries */
+  learnCorrections: boolean;
   sttProvider: SttProvider;
   /** local: model id e.g. "large-v3-turbo-q5_0"; cloud: model name e.g. "whisper-large-v3-turbo" */
   sttModel: string;
@@ -226,6 +237,9 @@ export interface NetworkLogEntry {
   purpose: string;
   allowed: boolean;
   bytes: number;
+  /** AI tokens sent / received (cloud LLM calls) */
+  tokensIn?: number;
+  tokensOut?: number;
 }
 
 export interface LocalModel {
@@ -242,6 +256,8 @@ export interface AttentionStatus {
   lastCaptureAt?: string;
   capturesToday: number;
   lastApp?: string;
+  /** why Attention is idle although enabled (no allowed AI model) */
+  blocked?: string;
 }
 
 // ── Claude Code integration ────────────────────────────────────────────────
@@ -286,6 +302,44 @@ export interface Permissions {
   hotkeyActive: boolean;
 }
 
+// ── Claude Code sessions (notch tray) ──────────────────────────────────────
+export type ClaudeStatus = "working" | "done" | "waiting_reply" | "needs_approval";
+
+/** One live Claude Code session, kept in the notch tray until opened/dismissed. */
+export interface ClaudeSession {
+  sessionId: string;
+  project: string;
+  cwd: string;
+  status: ClaudeStatus;
+  /** last assistant line / notification text */
+  message: string;
+  updatedAt: string;
+  appBundle?: string;
+}
+
+/** Flo noticed you corrected a word it typed. */
+export interface CorrectionEvent {
+  id: string;
+  /** what Flo typed */
+  heard: string;
+  /** what you changed it to */
+  corrected: string;
+  app: string;
+}
+
+/** Another app started (active=true) or stopped using the microphone for a call. */
+export interface MeetingDetectedEvent {
+  app: string;
+  active: boolean;
+}
+
+/** Backend cursor tracking for the island; x/y are logical px relative to the island window. */
+export interface HoverEvent {
+  inside: boolean;
+  x?: number;
+  y?: number;
+}
+
 /** Event names (Rust emits these to all windows) */
 export const EV = {
   state: "flo://state",
@@ -301,6 +355,10 @@ export const EV = {
   claude: "flo://claude",
   /** backend cursor tracking for the island: {inside: boolean} */
   hover: "flo://hover",
+  /** payload: ClaudeSession[] (full current list, not dismissed) */
+  claudeSessions: "flo://claude-sessions",
+  correction: "flo://correction",
+  meetingDetected: "flo://meeting-detected",
 } as const;
 
 /**
@@ -331,5 +389,9 @@ export const EV = {
  *  list_claude_events({limit}) -> ClaudeEvent[]   mark_claude_seen({id?})  (no id = all)
  *  claude_hook_status() -> ClaudeHookStatus
  *  install_claude_hook() -> ClaudeHookStatus      uninstall_claude_hook() -> ClaudeHookStatus
+ *  list_claude_sessions() -> ClaudeSession[]
+ *  open_claude_by_session({sessionId}) -> string  — focus its window; removes it from the tray unless still working
+ *  dismiss_claude_session({sessionId})
+ *  accept_correction({heard, corrected}) -> DictionaryEntry
  *  open_claude_session({id}) -> string   — focus the editor/terminal running that session (marks seen)
  */

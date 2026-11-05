@@ -5,6 +5,9 @@ import type {
   AttentionStatus,
   ClaudeEvent,
   ClaudeHookStatus,
+  ClaudeSession,
+  CorrectionEvent,
+  MeetingDetectedEvent,
   DailyStat,
   Dictation,
   DictionaryEntry,
@@ -51,6 +54,10 @@ function rand(seed: number) {
 
 // ── data ────────────────────────────────────────────────────────────────────
 const settings: Settings = {
+  hotkeyDictation: "ctrl",
+  hotkeyAssistant: "fn",
+  meetingDetection: true,
+  learnCorrections: true,
   sttProvider: "local",
   sttModel: "large-v3-turbo-q5_0",
   language: "auto",
@@ -212,6 +219,35 @@ const claudeEvents: ClaudeEvent[] = [
   { id: "c3", kind: "stop", sessionId: "s3", project: "apollo-web", cwd: "/Users/parth/apollo-web", message: "Refactored chart components and fixed dark-mode contrast.", at: iso(140), seen: true },
 ];
 const hook: ClaudeHookStatus = { installed: false, configPath: "~/.claude/settings.json", port: 47821, listening: true };
+
+// ── live Claude sessions (notch tray) ───────────────────────────────────────
+const claudeSessions: ClaudeSession[] = [
+  { sessionId: "s1", project: "Flo", cwd: "/Users/parth/Flo", status: "done", message: "Built the notch tray and correction card — all 34 tests pass.", updatedAt: iso(3), appBundle: "com.microsoft.VSCode" },
+  { sessionId: "s2", project: "hermes-api", cwd: "/Users/parth/hermes-api", status: "needs_approval", message: "Claude needs your permission to run `npm publish`.", updatedAt: iso(9), appBundle: "com.googlecode.iterm2" },
+  { sessionId: "s4", project: "apollo-web", cwd: "/Users/parth/apollo-web", status: "working", message: "Refactoring chart components…", updatedAt: iso(1), appBundle: "com.todesktop.230313mzl4w4u92" },
+];
+const emitSessions = () => mockEmit(EV.claudeSessions, claudeSessions.map((s) => ({ ...s })));
+
+/** Demo: a session asks for a reply. */
+export function mockClaudeSession(status: ClaudeSession["status"] = "waiting_reply", project = "job-finder", message = "Which job boards should I scrape next — LinkedIn or Wellfound?") {
+  const existing = claudeSessions.find((s) => s.project === project);
+  if (existing) Object.assign(existing, { status, message, updatedAt: new Date().toISOString() });
+  else claudeSessions.unshift({ sessionId: uid("s"), project, cwd: `/Users/parth/${project}`, status, message, updatedAt: new Date().toISOString() });
+  emitSessions();
+}
+
+/** Demo: user fixed a word Flo typed. */
+export function mockCorrection(heard = "tory", corrected = "Tauri") {
+  const e: CorrectionEvent = { id: uid("fix"), heard, corrected, app: "Slack" };
+  mockEmit(EV.correction, e);
+  return e;
+}
+
+/** Demo: another app started using the mic for a call. */
+export function mockMeetingDetected(app = "Zoom", active = true) {
+  const e: MeetingDetectedEvent = { app, active };
+  mockEmit(EV.meetingDetected, e);
+}
 
 /** Push a fake Claude Code event (used by the island demo). */
 export function mockClaudeEvent(kind: ClaudeEvent["kind"] = "stop", project = "Flo", message = "Built the island UI — all tests pass.") {
@@ -600,6 +636,21 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
     case "repair_permissions":
       return null;
+    case "list_claude_sessions":
+      return claudeSessions.map((s) => ({ ...s }));
+    case "open_claude_by_session":
+    case "dismiss_claude_session": {
+      const i = claudeSessions.findIndex((s) => s.sessionId === args.sessionId);
+      const s = claudeSessions[i];
+      if (i >= 0 && (cmd === "dismiss_claude_session" || s.status !== "working")) claudeSessions.splice(i, 1);
+      emitSessions();
+      return cmd === "open_claude_by_session" ? (s?.appBundle ?? "") : null;
+    }
+    case "accept_correction": {
+      const e: DictionaryEntry = { id: uid("d"), word: args.heard, replacement: args.corrected };
+      dictionary.push(e);
+      return e;
+    }
     case "open_claude_session": {
       const ev = claudeEvents.find((e) => e.id === args.id);
       if (ev) ev.seen = true;

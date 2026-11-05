@@ -206,6 +206,134 @@ pub fn best_match<'a>(query: &str, candidates: &'a [(String, String)]) -> Option
     best.filter(|b| b.1 >= 0.25).map(|b| b.0)
 }
 
+fn norm_word(w: &str) -> String {
+    w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-').to_string()
+}
+
+pub fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut cur = vec![i; b.len() + 1];
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// Looks like a spelling fix of the same word (not a rewrite)?
+fn similar_word(a: &str, b: &str) -> bool {
+    let (la, lb) = (a.to_lowercase(), b.to_lowercase());
+    if la == lb {
+        return a != b; // capitalisation fix ("tauri" → "Tauri")
+    }
+    let d = levenshtein(&la, &lb);
+    let longest = la.chars().count().max(lb.chars().count());
+    longest >= 3 && (d as f64 / longest as f64) <= 0.5 || (la.chars().next() == lb.chars().next() && d <= 3 && longest >= 4)
+}
+
+/// Words the user replaced in text Flo pasted. `before` = field content right after the paste,
+/// `after` = content once the user edited it. Returns (heard, corrected) pairs.
+pub fn detect_corrections(pasted: &str, before: &str, after: &str) -> Vec<(String, String)> {
+    let pasted_words: std::collections::HashSet<String> = pasted.split_whitespace().map(|w| norm_word(w).to_lowercase()).collect();
+    let a: Vec<String> = before.split_whitespace().map(norm_word).filter(|w| !w.is_empty()).collect();
+    let b: Vec<String> = after.split_whitespace().map(norm_word).filter(|w| !w.is_empty()).collect();
+    if a.is_empty() || b.is_empty() || a.len() > 3000 || b.len() > 3000 || a == b {
+        return vec![];
+    }
+    // trim common prefix/suffix, then LCS on the middle
+    let mut s = 0;
+    while s < a.len() && s < b.len() && a[s] == b[s] {
+        s += 1;
+    }
+    let mut e = 0;
+    while e < a.len() - s && e < b.len() - s && a[a.len() - 1 - e] == b[b.len() - 1 - e] {
+        e += 1;
+    }
+    let (am, bm) = (&a[s..a.len() - e], &b[s..b.len() - e]);
+    if am.len() > 400 || bm.len() > 400 {
+        return vec![];
+    }
+    let (n, m) = (am.len(), bm.len());
+    let mut dp = vec![vec![0u16; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i][j] = if am[i] == bm[j] { dp[i + 1][j + 1] + 1 } else { dp[i + 1][j].max(dp[i][j + 1]) };
+        }
+    }
+    // walk the diff; collect runs of (deleted, inserted)
+    let (mut i, mut j) = (0, 0);
+    let mut out: Vec<(String, String)> = vec![];
+    let mut del: Vec<&String> = vec![];
+    let mut ins: Vec<&String> = vec![];
+    let flush = |del: &mut Vec<&String>, ins: &mut Vec<&String>, out: &mut Vec<(String, String)>| {
+        if !del.is_empty() && del.len() == ins.len() && del.len() <= 2 {
+            for (d, n) in del.iter().zip(ins.iter()) {
+                if d != n && pasted_words.contains(&d.to_lowercase()) && similar_word(d, n) && !out.iter().any(|(h, _)| h == *d) {
+                    out.push(((*d).clone(), (*n).clone()));
+                }
+            }
+        }
+        del.clear();
+        ins.clear();
+    };
+    while i < n || j < m {
+        if i < n && j < m && am[i] == bm[j] {
+            flush(&mut del, &mut ins, &mut out);
+            i += 1;
+            j += 1;
+        } else if j < m && (i == n || dp[i][j + 1] >= dp[i + 1][j]) {
+            ins.push(&bm[j]);
+            j += 1;
+        } else {
+            del.push(&am[i]);
+            i += 1;
+        }
+    }
+    flush(&mut del, &mut ins, &mut out);
+    out.truncate(3);
+    out
+}
+
+/// Does this transcript need LLM cleanup, or is the free local pass good enough?
+/// LLM only for: fillers/self-corrections, spoken formatting, or long dictation.
+pub fn needs_llm_cleanup(raw: &str) -> bool {
+    let words = word_count(raw);
+    if words < 4 {
+        return false;
+    }
+    let t = format!(" {} ", raw.to_lowercase());
+    const CUES: &[&str] = &[
+        " um ", " uh ", " erm ", " like, ", " you know", " i mean", " sorry,", " no wait", " no, ", " actually, ",
+        " scratch that", " new line", " new paragraph", " bullet", " number one", " comma ", " full stop", " period ",
+        " question mark", " i mean,",
+    ];
+    if CUES.iter().any(|c| t.contains(c)) {
+        return true;
+    }
+    // immediate repeats ("the the", "I I") = disfluent speech
+    let ws: Vec<&str> = raw.split_whitespace().collect();
+    if ws.windows(2).any(|p| p[0].eq_ignore_ascii_case(p[1]) && p[0].chars().all(|c| c.is_alphabetic())) {
+        return true;
+    }
+    words > 40
+}
+
+/// Should the assistant see the screen for this request? (OCR text is the biggest prompt cost.)
+pub fn wants_screen_context(query: &str) -> bool {
+    let q = format!(" {} ", query.to_lowercase());
+    const CUES: &[&str] = &[
+        " screen", " this ", " this?", " this.", " these ", " here", " above", " below", " reply", " respond",
+        " answer this", " summari", " what does it", " what is this", " explain", " translate", " this email",
+        " this message", " this page", " this doc", " on my screen", " that message", " that email",
+    ];
+    CUES.iter().any(|c| q.contains(c))
+}
+
 pub fn truncate_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -284,6 +412,52 @@ mod tests {
         ];
         assert_eq!(best_match("the deck", &c).unwrap().0, "1");
         assert!(best_match("zebra", &c).is_none());
+    }
+
+    #[test]
+    fn detects_spelling_fixes_in_pasted_text() {
+        let pasted = "I built it with tory and rust";
+        let before = "Notes: I built it with tory and rust. Thanks";
+        let after = "Notes: I built it with Tauri and rust. Thanks";
+        assert_eq!(detect_corrections(pasted, before, after), vec![("tory".to_string(), "Tauri".to_string())]);
+        // capitalisation-only fix counts
+        assert_eq!(detect_corrections("call naman", "call naman", "call Naman"), vec![("naman".into(), "Naman".into())]);
+    }
+
+    #[test]
+    fn ignores_rewrites_and_untouched_text() {
+        // completely different word → a rewrite, not a mishearing
+        assert!(detect_corrections("send the deck", "send the deck", "send the invoice").is_empty());
+        // edits outside what Flo pasted are ignored
+        assert!(detect_corrections("hello there", "Dear Jhon, hello there", "Dear John, hello there").is_empty());
+        assert!(detect_corrections("same", "same", "same").is_empty());
+        // added words aren't corrections
+        assert!(detect_corrections("ship it", "ship it", "ship it today").is_empty());
+    }
+
+    #[test]
+    fn levenshtein_basics() {
+        assert_eq!(levenshtein("tory", "tauri"), 3);
+        assert_eq!(levenshtein("", "ab"), 2);
+    }
+
+    #[test]
+    fn cleanup_gate_saves_tokens() {
+        assert!(!needs_llm_cleanup("Send the deck to Rahul by Friday."));
+        assert!(!needs_llm_cleanup("ok"));
+        assert!(needs_llm_cleanup("um so send the deck to Rahul"));
+        assert!(needs_llm_cleanup("meet at 5 no wait 6 tomorrow"));
+        assert!(needs_llm_cleanup("first point new line second point"));
+        assert!(needs_llm_cleanup("I I think we should ship"));
+        assert!(needs_llm_cleanup(&"word ".repeat(45)));
+    }
+
+    #[test]
+    fn screen_context_only_when_relevant() {
+        assert!(wants_screen_context("reply to this saying I'll join"));
+        assert!(wants_screen_context("what's on my screen"));
+        assert!(!wants_screen_context("add a to-do to Apollo: send the deck"));
+        assert!(!wants_screen_context("what's blocked across my projects"));
     }
 
     #[test]

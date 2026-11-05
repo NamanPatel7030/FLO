@@ -4,12 +4,14 @@ mod attention;
 mod audio;
 mod claude;
 mod commands;
+mod corrections;
 mod db;
 mod egress;
 mod hotkey;
 mod intents;
 mod llm;
 mod meeting;
+mod meeting_detect;
 mod model;
 mod platform;
 mod prompts;
@@ -169,10 +171,15 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
                 && cur.x <= (pos.x + size.width as i32) as f64
                 && cur.y >= pos.y as f64
                 && cur.y <= (pos.y + size.height as i32) as f64;
-            if now != inside {
-                inside = now;
-                st.emit(model::ev::HOVER, serde_json::json!({ "inside": inside }));
+            if now {
+                let scale = w.scale_factor().unwrap_or(1.0);
+                let (x, y) = ((cur.x - pos.x as f64) / scale, (cur.y - pos.y as f64) / scale);
+                st.emit(model::ev::HOVER, serde_json::json!({ "inside": true, "x": x, "y": y }));
+                let _ = app.run_on_main_thread(platform::set_pointer_cursor);
+            } else if inside {
+                st.emit(model::ev::HOVER, serde_json::json!({ "inside": false }));
             }
+            inside = now;
         }
     });
 }
@@ -194,6 +201,9 @@ fn start_hotkeys(st: Shared) {
             HotkeyEvent::Switch(_) => {}
             HotkeyEvent::Release => {
                 tauri::async_runtime::spawn(session::stop(st));
+            }
+            HotkeyEvent::Cancel => {
+                tauri::async_runtime::spawn_blocking(move || session::cancel(&st));
             }
         }
     }));
@@ -261,6 +271,10 @@ pub fn run() {
             commands::restart_app,
             commands::repair_permissions,
             commands::open_claude_session,
+            commands::list_claude_sessions,
+            commands::open_claude_by_session,
+            commands::dismiss_claude_session,
+            commands::accept_correction,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -291,7 +305,12 @@ pub fn run() {
             app.manage(st.clone());
             create_island(&handle)?;
             build_tray(&handle, st.clone())?;
+            {
+                let s = st.settings();
+                platform::set_hotkeys(hotkey::HotkeyConfig::from_strings(&s.hotkey_dictation, &s.hotkey_assistant));
+            }
             start_hotkeys(st.clone());
+            meeting_detect::spawn(st.clone());
             attention::spawn(st.clone());
             claude::refresh_if_installed(&st);
             claude::spawn_listener(st.clone());

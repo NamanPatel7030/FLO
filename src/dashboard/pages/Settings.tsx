@@ -4,12 +4,12 @@ import clsx from "clsx";
 import { Check, Download, KeyRound, Lock, Plug, RotateCcw, ShieldCheck, Trash2, X, Terminal, Keyboard } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
-import { formatNumber, relativeTime } from "../../lib/format";
-import { EV, type ClaudeHookStatus, type DictionaryEntry, type KeyProvider, type LlmProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider } from "../../lib/types";
+import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
+import { EV, type ClaudeHookStatus, type DictionaryEntry, type KeyProvider, type LlmProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo } from "../../lib/types";
 import { useStore } from "../store";
 import { Button, Card, CardTitle, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
 
-const TABS = ["General", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations"] as const;
+const TABS = ["General", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Settings() {
@@ -38,6 +38,7 @@ export default function Settings() {
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="max-w-3xl">
             {tab === "General" && <General s={settings} set={set} />}
+            {tab === "Shortcuts" && <Shortcuts s={settings} set={set} />}
             {tab === "Voice" && <Voice s={settings} set={set} />}
             {tab === "AI" && <AI s={settings} set={set} />}
             {tab === "Privacy" && <Privacy s={settings} set={set} />}
@@ -61,6 +62,64 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
         {hint && <div className="mt-0.5 text-[12px] text-muted">{hint}</div>}
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function KeyPicker({ value, other, onChange }: { value: HotkeyCombo; other: HotkeyCombo; onChange: (v: HotkeyCombo) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {HOTKEY_OPTIONS.map((k) => {
+        const active = k === value;
+        const taken = k === other;
+        return (
+          <button
+            key={k}
+            disabled={taken}
+            title={taken ? "Already used by the other shortcut" : hotkeyWords(k)}
+            onClick={() => onChange(k)}
+            className={clsx("keycap", active && "keycap-active", taken && "opacity-35")}
+          >
+            {formatHotkey(k)}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Shortcuts({ s, set }: P) {
+  const clash = s.hotkeyDictation === s.hotkeyAssistant;
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="p-5">
+        <CardTitle>Push-to-talk keys</CardTitle>
+        <p className="-mt-1 mb-4 text-[12px] text-muted">Hold the key, speak, release. Pressing any other key while holding cancels — so your normal shortcuts keep working.</p>
+        <div className="flex flex-col gap-5">
+          <div>
+            <div className="mb-2 flex items-baseline justify-between">
+              <span className="text-[13.5px] font-medium">Dictation key</span>
+              <span className="text-[12px] text-muted">types what you say into any app</span>
+            </div>
+            <KeyPicker value={s.hotkeyDictation} other={s.hotkeyAssistant} onChange={(v) => set({ hotkeyDictation: v })} />
+          </div>
+          <div>
+            <div className="mb-2 flex items-baseline justify-between">
+              <span className="text-[13.5px] font-medium">Assistant key</span>
+              <span className="text-[12px] text-muted">ask Flo or tell it to do something</span>
+            </div>
+            <KeyPicker value={s.hotkeyAssistant} other={s.hotkeyDictation} onChange={(v) => set({ hotkeyAssistant: v })} />
+          </div>
+          {clash && <p className="text-[12px] text-amber-300">Dictation and Assistant can't use the same key — pick a different one.</p>}
+          {(s.hotkeyDictation === "fn" || s.hotkeyAssistant === "fn") && (
+            <p className="text-[12px] text-faint">Using fn? Settings → Permissions → “Free the fn key” stops it from opening the emoji picker.</p>
+          )}
+        </div>
+      </Card>
+      <Card className="divide-y divide-[var(--border)] px-5 py-2">
+        <Toggle label="Detect meetings" hint="When Zoom, Meet, Teams, Slack or FaceTime starts using the mic, Flo offers to take notes." checked={s.meetingDetection} onChange={(v) => set({ meetingDetection: v })} />
+        <Toggle label="Learn from my corrections" hint="If you fix a word Flo typed, it offers to remember the right spelling." checked={s.learnCorrections} onChange={(v) => set({ learnCorrections: v })} />
+      </Card>
     </div>
   );
 }
@@ -383,7 +442,17 @@ function Privacy({ s, set }: P) {
                       </span>
                     </td>
                     <td className="px-3 py-2 text-muted">{l.purpose}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-faint">{l.bytes ? `${formatNumber(l.bytes / 1024)} KB` : "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-faint">
+                      {l.tokensIn != null || l.tokensOut != null ? (
+                        <span title={`${l.tokensIn ?? 0} tokens in · ${l.tokensOut ?? 0} tokens out`}>
+                          <span className="text-brand-300">{formatNumber(l.tokensIn ?? 0)}</span> → {formatNumber(l.tokensOut ?? 0)} tok
+                        </span>
+                      ) : l.bytes ? (
+                        `${formatNumber(l.bytes / 1024)} KB`
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {log.length === 0 && (
@@ -496,13 +565,15 @@ function Dictionary() {
   return (
     <Card className="p-5">
       <CardTitle>Personal dictionary</CardTitle>
-      <p className="-mt-1 mb-3 text-[12px] text-muted">Names, jargon and spellings Flo should always get right. Add a “heard as” to fix common mis-hearings.</p>
+      <p className="-mt-1 mb-3 text-[12px] text-muted">Names, jargon and spellings Flo should always get right. Add a “heard as” to fix common mis-hearings — Flo also learns these when you correct it.</p>
       <form
         className="mb-3 flex gap-2"
         onSubmit={async (e) => {
           e.preventDefault();
           if (!word.trim()) return;
-          await api.addDictionary(word.trim(), rep.trim() || undefined);
+          // backend applies entries as word → replacement (heard → correct)
+          if (rep.trim()) await api.addDictionary(rep.trim(), word.trim());
+          else await api.addDictionary(word.trim());
           setWord("");
           setRep("");
           load();
@@ -517,8 +588,16 @@ function Dictionary() {
       <div className="flex flex-wrap gap-2">
         {items?.map((d) => (
           <span key={d.id} className="inline-flex items-center gap-1.5 rounded-full glass-strong px-3 py-1 text-[12.5px]">
-            {d.replacement && <span className="text-faint line-through">{d.replacement}</span>}
-            {d.word}
+            {d.replacement ? (
+              <>
+                <span className="text-faint line-through">{d.word}</span>
+                <span className="text-faint">→</span>
+                <span className="font-medium text-brand-200">{d.replacement}</span>
+                <span className="rounded-full bg-brand-300/15 px-1.5 text-[10px] font-semibold uppercase tracking-wide text-brand-300">learned</span>
+              </>
+            ) : (
+              d.word
+            )}
             <button
               className="text-faint hover:text-[var(--fg)]"
               onClick={async () => {

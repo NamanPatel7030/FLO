@@ -1,4 +1,4 @@
-import type { IslandGeometry, Todo } from "./types";
+import type { ClaudeStatus, HotkeyCombo, IslandGeometry, Todo } from "./types";
 
 export function formatDuration(totalSec: number): string {
   const s = Math.max(0, Math.round(totalSec));
@@ -87,7 +87,90 @@ export type IslandVariant =
   | "meeting"
   | "meetingExpanded"
   | "card"
-  | "claude";
+  | "claude"
+  | "tray"
+  | "trayTooltip"
+  | "correction"
+  | "meetingPrompt";
+
+// ── hotkeys + statuses ───────────────────────────────────────────────────────
+export const HOTKEY_OPTIONS: HotkeyCombo[] = ["fn", "ctrl", "alt", "fn+ctrl", "ctrl+alt", "cmd+alt", "fn+shift"];
+const KEY_SYM: Record<string, string> = { fn: "fn", ctrl: "⌃", alt: "⌥", cmd: "⌘", shift: "⇧" };
+const KEY_WORD: Record<string, string> = { fn: "fn", ctrl: "control", alt: "option", cmd: "command", shift: "shift" };
+/** "fn+ctrl" → "fn + ⌃" (keycap symbols) */
+export const formatHotkey = (c: string) => c.split("+").map((k) => KEY_SYM[k] ?? k).join(" + ");
+/** "fn+ctrl" → "fn + control" (spoken / hint copy) */
+export const hotkeyWords = (c: string) => c.split("+").map((k) => KEY_WORD[k] ?? k).join(" + ");
+
+export function claudeStatusLabel(s: ClaudeStatus): string {
+  switch (s) {
+    case "working":
+      return "Working…";
+    case "done":
+      return "Done — waiting for review";
+    case "waiting_reply":
+      return "Waiting for your reply";
+    case "needs_approval":
+      return "Needs approval";
+  }
+}
+
+// ── notch tray geometry ──────────────────────────────────────────────────────
+/** Spacing per tray item (20px avatar + 4px gap). */
+export const TRAY_SLOT = 24;
+const TRAY_PAD_IN = 8; // gap between camera notch and first item
+const TRAY_PAD_OUT = 10; // gap between last item and wing edge
+const TRAY_MIN_WING = 30;
+/** Hover swell: grow each side by this much. */
+export const SWELL_X = 6;
+export const SWELL_Y = 3;
+/** Extra transparent room below a swollen island so the glow isn't clipped. */
+const GLOW_ROOM = 8;
+export const TRAY_TIP_W = 300;
+export const TRAY_TIP_H = 118;
+const TRAY_TIP_GAP = 8;
+
+export interface TraySlot {
+  side: "left" | "right";
+  /** index within its side, 0 = nearest the notch */
+  index: number;
+  /** horizontal centre relative to the window centre (logical px) */
+  cx: number;
+}
+
+const wingFor = (n: number) => (n > 0 ? TRAY_PAD_IN + n * TRAY_SLOT - 4 + TRAY_PAD_OUT : 0);
+
+/** Layout of tray items in the wings beside the notch. Window is centred on the notch. */
+export function trayLayout(geo: IslandGeometry, nLeft: number, nRight: number): { width: number; height: number; wing: number; slots: TraySlot[] } {
+  const nw = geo.notchWidth;
+  const wing = Math.max(TRAY_MIN_WING, wingFor(nLeft), wingFor(nRight));
+  const slots: TraySlot[] = [];
+  for (let i = 0; i < nLeft; i++) slots.push({ side: "left", index: i, cx: -(nw / 2 + TRAY_PAD_IN + 10 + i * TRAY_SLOT) });
+  for (let i = 0; i < nRight; i++) slots.push({ side: "right", index: i, cx: nw / 2 + TRAY_PAD_IN + 10 + i * TRAY_SLOT });
+  return { width: nw + 2 * (wing + ISLAND_EAR), height: geo.notchHeight, wing, slots };
+}
+
+/** Which tray slot is under (x, y)? (-1 = none). x/y are relative to the island window. */
+export function hitTestTray(slots: TraySlot[], winW: number, x: number, y: number, nh: number): number {
+  if (y < 0 || y > nh + 2) return -1;
+  const rel = x - winW / 2;
+  return slots.findIndex((s) => Math.abs(rel - s.cx) <= TRAY_SLOT / 2);
+}
+
+/** Tooltip card under a tray item, clamped inside the window. */
+export function tooltipRect(winW: number, cx: number, nh: number): { x: number; y: number; w: number; h: number } {
+  const x = Math.min(Math.max(winW / 2 + cx - TRAY_TIP_W / 2, 8), winW - TRAY_TIP_W - 8);
+  return { x, y: nh + TRAY_TIP_GAP, w: TRAY_TIP_W, h: TRAY_TIP_H };
+}
+
+/** Peek quick-action tile under (x, y)? Tiles share the pill width below the notch. */
+export function peekTileAt(winW: number, pillW: number, x: number, y: number, nh: number, count: number): number {
+  if (y < nh + 4) return -1;
+  const left = (winW - pillW) / 2 + 12;
+  const w = (pillW - 24) / count;
+  const i = Math.floor((x - left) / w);
+  return i >= 0 && i < count ? i : -1;
+}
 
 /** Does an error message point the user at Settings? → show a "Fix in Settings" button. */
 export const wantsFix = (msg?: string) => !!msg && /settings|api key|model|permission|grant/i.test(msg);
@@ -113,6 +196,13 @@ export interface CardContent {
   rows?: number;
   /** error has a "Fix" action button */
   action?: boolean;
+  /** tray items per wing */
+  trayLeft?: number;
+  trayRight?: number;
+  /** tooltip anchor (slot cx) for trayTooltip */
+  tipCx?: number;
+  /** hover swell (collapsed / tray) */
+  swell?: boolean;
 }
 
 /** Height of the assistant card body (below the notch) for given content. */
@@ -136,11 +226,26 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     const compact = nw + 2 * (ISLAND_WING + ISLAND_EAR);
     // dropdown row needs ~260px for "Listening…  release fn to paste"; keep wing symmetry (even extra)
     const live = Math.max(compact, nw + 2 * Math.ceil((Math.max(300, compact) - nw) / 2));
+    const tray = trayLayout(geo, content?.trayLeft ?? 0, content?.trayRight ?? 0);
+    const hasTray = (content?.trayLeft ?? 0) + (content?.trayRight ?? 0) > 0;
     switch (variant) {
       case "collapsed":
-        return { width: nw, height: nh };
+        return content?.swell
+          ? { width: nw + 2 * (SWELL_X + ISLAND_EAR), height: nh + SWELL_Y + GLOW_ROOM }
+          : { width: nw, height: nh };
+      case "tray":
+        return content?.swell ? { width: tray.width + 2 * SWELL_X, height: nh + SWELL_Y + GLOW_ROOM } : { width: tray.width, height: nh };
+      case "trayTooltip": {
+        const cx = Math.abs(content?.tipCx ?? 0);
+        const w = Math.max(tray.width, 2 * cx + TRAY_TIP_W + 16);
+        return { width: w + (w % 2), height: nh + TRAY_TIP_GAP + TRAY_TIP_H + 8 };
+      }
+      case "correction":
+        return { width: 400, height: nh + ISLAND_GAP + 98 };
+      case "meetingPrompt":
+        return { width: 380, height: nh + ISLAND_GAP + 86 };
       case "peek":
-        return { width: nw + 220, height: nh + 56 };
+        return { width: Math.max(nw + 2 * 150, hasTray ? tray.width : 0), height: nh + 72 };
       case "listening":
       case "working":
         return { width: live, height: nh + ISLAND_ROW };
@@ -169,11 +274,20 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
   }
   // floating capsule (Windows / no notch). Padding 24 for shadow.
   const pad = 24;
+  const items = (content?.trayLeft ?? 0) + (content?.trayRight ?? 0);
   switch (variant) {
     case "collapsed":
-      return { width: 64 + pad, height: 40 + pad };
+      return { width: 64 + pad + (content?.swell ? 8 : 0), height: 40 + pad + (content?.swell ? 4 : 0) };
+    case "tray":
+      return { width: Math.max(64, 28 + items * TRAY_SLOT) + pad + (content?.swell ? 8 : 0), height: 40 + pad };
+    case "trayTooltip":
+      return { width: Math.max(TRAY_TIP_W + 16, 28 + items * TRAY_SLOT) + pad, height: 40 + TRAY_TIP_GAP + TRAY_TIP_H + pad };
+    case "correction":
+      return { width: 380 + pad, height: 110 + pad };
+    case "meetingPrompt":
+      return { width: 360 + pad, height: 96 + pad };
     case "peek":
-      return { width: 248 + pad, height: 48 + pad };
+      return { width: 300 + pad, height: 64 + pad };
     case "listening":
     case "working":
     case "done":

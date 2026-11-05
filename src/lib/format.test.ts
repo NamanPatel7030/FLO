@@ -9,6 +9,15 @@ import {
   groupTodos,
   groupByDay,
   islandSize,
+  claudeStatusLabel,
+  formatHotkey,
+  hotkeyWords,
+  HOTKEY_OPTIONS,
+  hitTestTray,
+  peekTileAt,
+  trayLayout,
+  tooltipRect,
+  TRAY_TIP_W,
   ISLAND_EAR,
   ISLAND_ROW,
   ISLAND_WING,
@@ -195,5 +204,74 @@ describe("groupByDay", () => {
   });
   it("returns [] for no items", () => {
     expect(groupByDay([], now)).toEqual([]);
+  });
+});
+
+describe("tray layout (notch)", () => {
+  const geo = { platform: "macos" as const, hasNotch: true, notchWidth: 200, notchHeight: 32, screenWidth: 1512 };
+  it("sits at notch height with symmetric wings sized by the busier side", () => {
+    const l = trayLayout(geo, 3, 1);
+    expect(l.height).toBe(32);
+    expect((l.width - 200) % 2).toBe(0);
+    const two = trayLayout(geo, 1, 1);
+    expect(l.width).toBeGreaterThan(two.width);
+    const left = l.slots.filter((s) => s.side === "left");
+    expect(left).toHaveLength(3);
+    expect(left[0].cx).toBeGreaterThan(left[1].cx); // nearest the notch first
+    expect(left[0].cx).toBeLessThan(-100);
+    const right = l.slots.filter((s) => s.side === "right");
+    expect(right[0].cx).toBeGreaterThan(100);
+  });
+  it("islandSize('tray') matches the layout and swells on hover", () => {
+    const l = trayLayout(geo, 2, 1);
+    expect(islandSize("tray", geo, { trayLeft: 2, trayRight: 1 })).toEqual({ width: l.width, height: 32 });
+    const sw = islandSize("tray", geo, { trayLeft: 2, trayRight: 1, swell: true });
+    expect(sw.width).toBe(l.width + 12);
+    expect(sw.height).toBeGreaterThan(32 + 3);
+    expect(islandSize("collapsed", geo, { swell: true }).width).toBe(200 + 12 + 2 * ISLAND_EAR);
+    expect(islandSize("collapsed", geo)).toEqual({ width: 200, height: 32 });
+  });
+  it("hit-tests items by cursor position relative to the window centre", () => {
+    const l = trayLayout(geo, 2, 1);
+    const winW = l.width;
+    const s0 = l.slots[0];
+    expect(hitTestTray(l.slots, winW, winW / 2 + s0.cx, 16, 32)).toBe(0);
+    expect(hitTestTray(l.slots, winW, winW / 2, 16, 32)).toBe(-1); // over the camera
+    expect(hitTestTray(l.slots, winW, winW / 2 + s0.cx, 80, 32)).toBe(-1); // below the row
+  });
+  it("tooltip stays inside the window and below the notch", () => {
+    const l = trayLayout(geo, 4, 0);
+    const far = l.slots[3];
+    const size = islandSize("trayTooltip", geo, { trayLeft: 4, trayRight: 0, tipCx: far.cx });
+    const r = tooltipRect(size.width, far.cx, 32);
+    expect(r.x).toBeGreaterThanOrEqual(0);
+    expect(r.x + TRAY_TIP_W).toBeLessThanOrEqual(size.width);
+    expect(r.y).toBeGreaterThan(32);
+    expect(r.y + r.h).toBeLessThanOrEqual(size.height);
+  });
+  it("peek tiles are hit-tested below the notch only", () => {
+    expect(peekTileAt(500, 480, 250, 10, 32, 5)).toBe(-1);
+    expect(peekTileAt(500, 480, 30, 60, 32, 5)).toBe(0);
+    expect(peekTileAt(500, 480, 470, 60, 32, 5)).toBe(4);
+  });
+  it("correction and meeting prompt cards drop below the notch", () => {
+    expect(islandSize("correction", geo).height).toBeGreaterThan(32 + 60);
+    expect(islandSize("meetingPrompt", geo).height).toBeGreaterThan(32 + 60);
+  });
+});
+
+describe("hotkeys + status labels", () => {
+  it("formats combos as keycaps and words", () => {
+    expect(formatHotkey("fn+ctrl")).toBe("fn + ⌃");
+    expect(formatHotkey("cmd+alt")).toBe("⌘ + ⌥");
+    expect(hotkeyWords("ctrl")).toBe("control");
+    expect(hotkeyWords("fn+shift")).toBe("fn + shift");
+    expect(HOTKEY_OPTIONS).toContain("fn");
+  });
+  it("labels Claude statuses", () => {
+    expect(claudeStatusLabel("done")).toBe("Done — waiting for review");
+    expect(claudeStatusLabel("waiting_reply")).toBe("Waiting for your reply");
+    expect(claudeStatusLabel("needs_approval")).toBe("Needs approval");
+    expect(claudeStatusLabel("working")).toBe("Working…");
   });
 });

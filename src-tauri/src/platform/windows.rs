@@ -74,6 +74,17 @@ pub fn running_dev_app() -> Option<String> {
 pub fn open_app_path(_app: &str, _path: Option<&str>) -> Result<()> {
     Ok(())
 }
+pub fn set_hotkeys(_cfg: crate::hotkey::HotkeyConfig) {}
+pub fn mic_in_use() -> bool {
+    false
+}
+pub fn detect_call_app() -> String {
+    "a call".into()
+}
+pub fn set_pointer_cursor() {}
+pub fn focused_text() -> Option<(usize, String)> {
+    None
+}
 pub fn focus_session_window(_app: &str, _names: &[String]) -> Result<String> {
     Ok(String::new())
 }

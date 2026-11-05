@@ -102,6 +102,10 @@ impl Egress {
     }
 
     fn push(&self, host: &str, purpose: Purpose, allowed: bool, bytes: u64) {
+        self.push_full(host, purpose, allowed, bytes, None, None);
+    }
+
+    fn push_full(&self, host: &str, purpose: Purpose, allowed: bool, bytes: u64, tokens_in: Option<u64>, tokens_out: Option<u64>) {
         let mut log = self.log.lock();
         if log.len() >= LOG_CAP {
             log.pop_front();
@@ -112,7 +116,14 @@ impl Egress {
             purpose: purpose.as_str().to_string(),
             allowed,
             bytes,
+            tokens_in,
+            tokens_out,
         });
+    }
+
+    /// Record a completed AI call with its token usage.
+    pub fn record_usage(&self, url: &str, purpose: Purpose, bytes: u64, tokens_in: Option<u64>, tokens_out: Option<u64>) {
+        self.push_full(&host_of(url), purpose, true, bytes, tokens_in, tokens_out);
     }
 
     /// Validate a URL before a request. Logs denials.

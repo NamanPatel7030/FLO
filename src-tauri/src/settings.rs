@@ -26,6 +26,13 @@ pub fn migrate(s: &mut Settings) -> bool {
     if s.settings_version < 2 {
         s.assistant_cloud_allowed = true;
     }
+    if s.settings_version < 3 {
+        // requested layout: fn → assistant, control → dictation
+        s.hotkey_dictation = "ctrl".into();
+        s.hotkey_assistant = "fn".into();
+        s.meeting_detection = true;
+        s.learn_corrections = true;
+    }
     s.settings_version = crate::model::SETTINGS_VERSION;
     true
 }
@@ -68,6 +75,7 @@ mod tests {
         s.assistant_cloud_allowed = false;
         assert!(!migrate(&mut s));
         assert!(!s.assistant_cloud_allowed);
+        assert_eq!((s.hotkey_dictation.as_str(), s.hotkey_assistant.as_str()), ("ctrl", "fn"));
     }
 
     #[test]

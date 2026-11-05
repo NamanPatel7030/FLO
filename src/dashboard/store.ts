@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, on } from "../lib/api";
+import { formatHotkey } from "../lib/format";
 import { EV, type ClaudeEvent, type Note, type Project, type Settings, type ToastEvent, type Todo, type IslandGeometry } from "../lib/types";
 
 export type Page = "home" | "assistant" | "todos" | "projects" | "notes" | "analytics" | "history" | "settings";
@@ -96,5 +97,9 @@ export function bootStore(): () => void {
   };
 }
 
-export const hotkeyLabel = (geo: IslandGeometry | null) => (geo?.platform === "windows" ? "Right Ctrl" : "fn");
-export const assistantHotkeyLabel = (geo: IslandGeometry | null) => (geo?.platform === "windows" ? "Right Alt" : "fn + ctrl");
+/** Configured dictation key as keycaps ("⌃"), or Right Ctrl on Windows. */
+export const hotkeyLabel = (geo: IslandGeometry | null, s?: Settings | null) =>
+  geo?.platform === "windows" ? "Right Ctrl" : formatHotkey(s?.hotkeyDictation ?? "ctrl");
+/** Configured assistant key as keycaps ("fn"), or Right Alt on Windows. */
+export const assistantHotkeyLabel = (geo: IslandGeometry | null, s?: Settings | null) =>
+  geo?.platform === "windows" ? "Right Alt" : formatHotkey(s?.hotkeyAssistant ?? "fn");

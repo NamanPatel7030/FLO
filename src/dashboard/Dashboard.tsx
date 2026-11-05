@@ -12,6 +12,7 @@ import Analytics from "./pages/Analytics";
 import HistoryPage from "./pages/History";
 import Settings from "./pages/Settings";
 import { Kbd } from "./ui";
+import { Logo } from "./Logo";
 import { missingRequired, usePermissions } from "./usePermissions";
 
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
@@ -44,6 +45,7 @@ export default function Dashboard() {
   const claude = useStore((s) => s.claude);
   const notes = useStore((s) => s.notes);
   const geo = useStore((s) => s.geo);
+  const settings = useStore((s) => s.settings);
   const openTodos = todos?.filter((t) => t.status === "open").length ?? 0;
   const unseenClaude = claude?.filter((c) => !c.seen).length ?? 0;
   const liveMeeting = notes?.some((n) => n.live);
@@ -61,10 +63,10 @@ export default function Dashboard() {
         <aside className="relative z-10 flex w-[216px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--glass)] backdrop-blur-2xl">
           <div data-tauri-drag-region className={clsx("shrink-0", mac ? "h-11" : "h-3")} />
           <div data-tauri-drag-region className="mb-4 flex items-center gap-2.5 px-4">
-            <Logo />
+            <Logo size={34} />
             <div className="leading-tight">
-              <div className="text-[15px] font-semibold tracking-tight">Flo</div>
-              <div className="text-[11px] text-faint">Your Assistant</div>
+              <div className="text-[15.5px] font-semibold tracking-tight">Flo</div>
+              <div className="text-[11px] font-medium tracking-wide text-brand-300/70">Your Assistant</div>
             </div>
           </div>
           <nav className="flex flex-col gap-0.5 px-2.5">
@@ -112,7 +114,7 @@ export default function Dashboard() {
                   <div className="mb-1.5 flex items-center gap-1.5 font-medium text-[var(--fg)]">
                     <span className="h-1.5 w-1.5 rounded-full bg-brand-300 shadow-[0_0_8px_#66ceff]" /> Ready
                   </div>
-                  Hold <Kbd>{hotkeyLabel(geo)}</Kbd> anywhere to dictate.
+                  Hold <Kbd>{hotkeyLabel(geo, settings)}</Kbd> anywhere to dictate.
                 </>
               ) : (
                 <button className="w-full text-left" onClick={() => go("settings", "permissions")}>
@@ -147,18 +149,6 @@ export default function Dashboard() {
         <Toasts />
       </div>
     </MotionConfig>
-  );
-}
-
-function Logo() {
-  return (
-    <div className="relative flex h-9 w-9 items-center justify-center rounded-xl accent-gradient shadow-[0_6px_20px_-6px_rgba(61,187,255,0.8)]">
-      <div className="flex items-center gap-[2.5px]">
-        {[0.45, 0.85, 1, 0.65].map((h, i) => (
-          <span key={i} className="w-[3px] rounded-full bg-white" style={{ height: 16 * h }} />
-        ))}
-      </div>
-    </div>
   );
 }
 

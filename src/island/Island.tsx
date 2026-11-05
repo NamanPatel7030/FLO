@@ -1,20 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react";
 import { api, isTauri, on } from "../lib/api";
-import { islandSize, ISLAND_EAR, wantsFix, type CardContent, type IslandVariant } from "../lib/format";
+import {
+  formatHotkey,
+  hitTestTray,
+  islandSize,
+  ISLAND_EAR,
+  peekTileAt,
+  SWELL_X,
+  SWELL_Y,
+  tooltipRect,
+  trayLayout,
+  wantsFix,
+  type CardContent,
+  type IslandVariant,
+} from "../lib/format";
 import {
   EV,
   type AssistantResponse,
   type ClaudeEvent,
+  type ClaudeSession,
+  type CorrectionEvent,
   type Dictation,
+  type HoverEvent,
   type IslandGeometry,
+  type MeetingDetectedEvent,
   type MeetingEvent,
   type Mode,
   type Phase,
+  type Settings,
   type StateEvent,
+  type Todo,
   type TranscriptEvent,
 } from "../lib/types";
-import { IslandContent } from "./IslandContent";
+import { IslandContent, PEEK_ACTIONS } from "./IslandContent";
+import { CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, TrayTooltip, type TrayItem } from "./Tray";
 import { runDemo } from "./demo";
 
 export interface MeetingInfo {
@@ -30,7 +50,25 @@ const COLLAPSE_MS = 520;
 const DONE_MS = 1500;
 const ERROR_MS = 5000;
 const RESULT_MS = 2600;
+const DWELL_MS = 180;
+const CLAUDE_CARD_MS = 4000;
+const CORRECTION_MS = 10000;
+const MEETING_PROMPT_MS = 8000;
+const MAX_AVATARS = 5;
 
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** To-dos worth a tray badge: open & due today/overdue, or new from Attention (last 24h). */
+function urgentTodos(todos: Todo[]): Todo[] {
+  const today = todayStr();
+  const dayAgo = Date.now() - 86_400_000;
+  return todos.filter(
+    (t) => t.status === "open" && ((t.due && t.due.slice(0, 10) <= today) || (t.source === "attention" && new Date(t.createdAt).getTime() > dayAgo)),
+  );
+}
 
 export default function Island() {
   const [geo, setGeo] = useState<IslandGeometry | null>(null);
@@ -43,12 +81,26 @@ export default function Island() {
   const [claudeQueue, setClaudeQueue] = useState<ClaudeEvent[]>([]);
   const [meeting, setMeeting] = useState<MeetingInfo>({ live: false, startedAt: 0 });
   const [meetingOpen, setMeetingOpen] = useState(false);
-  const [hover, setHover] = useState(false);
+  const [sessions, setSessions] = useState<ClaudeSession[]>([]);
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [corrections, setCorrections] = useState<CorrectionEvent[]>([]);
+  const [detected, setDetected] = useState<string | null>(null);
+  const [ignoredDetect, setIgnoredDetect] = useState<string | null>(null);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  // hover: backend cursor tracking (non-activating panel) + DOM fallback
+  const [pos, setPos] = useState<HoverEvent>({ inside: false });
+  const [dwell, setDwell] = useState(false);
   const reduce = useReducedMotion();
   const modeRef = useRef<Mode>("dictation");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const hover = pos.inside;
 
   useEffect(() => {
     api.getIslandGeometry().then(setGeo);
+    api.getSettings().then(setSettings).catch(() => {});
+    api.listClaudeSessions().then(setSessions);
+    api.listTodos().then(setTodos).catch(() => {});
   }, []);
 
   // ── backend events ──────────────────────────────────────────────────────
@@ -59,12 +111,12 @@ export default function Island() {
         setMode(e.mode);
         modeRef.current = e.mode;
         setMessage(e.message);
-        if (e.mode === "meeting" && e.phase === "listening")
-          setMeeting((m) => (m.live ? m : { live: true, startedAt: Date.now() }));
+        if (e.mode === "meeting" && e.phase === "listening") setMeeting((m) => (m.live ? m : { live: true, startedAt: Date.now() }));
         if (e.phase === "listening" && e.mode !== "meeting") {
           setCard(null);
           setResult(null);
           setHistory(null);
+          api.getSettings().then(setSettings).catch(() => {});
         }
       }),
       on<TranscriptEvent>(EV.transcript, (t) => {
@@ -74,12 +126,26 @@ export default function Island() {
       on<ClaudeEvent | null>(EV.claude, (e) => {
         if (e && e.id) setClaudeQueue((q) => (q.some((x) => x.id === e.id) ? q : [...q, e]));
       }),
+      on<ClaudeSession[]>(EV.claudeSessions, (list) => setSessions(Array.isArray(list) ? list : [])),
+      on<null>(EV.todos, () => api.listTodos().then(setTodos).catch(() => {})),
+      on<CorrectionEvent>(EV.correction, (c) => c && setCorrections((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]))),
+      on<MeetingDetectedEvent>(EV.meetingDetected, (e) => {
+        if (e.active) {
+          setDetected(e.app);
+          setPromptOpen(true);
+        } else {
+          setDetected(null);
+          setPromptOpen(false);
+          setIgnoredDetect(null);
+        }
+      }),
       on<MeetingEvent>(EV.meeting, (e) => {
         if (!e.live) {
           setMeeting({ live: false, startedAt: 0 });
           setMeetingOpen(false);
           return;
         }
+        setPromptOpen(false);
         setMeeting((m) => ({
           live: true,
           noteId: e.noteId,
@@ -88,6 +154,7 @@ export default function Island() {
           summary: e.summary ?? m.summary,
         }));
       }),
+      on<HoverEvent>(EV.hover, (e) => setPos(e && typeof e === "object" ? e : { inside: false })),
     ];
     return () => offs.forEach((f) => f());
   }, []);
@@ -99,8 +166,18 @@ export default function Island() {
   // demo driver (browser only, ?demo=…)
   useEffect(() => {
     const demo = new URLSearchParams(location.search).get("demo");
-    if (!isTauri && demo) return runDemo(demo, { setHover, setMeetingOpen, openHistory });
+    if (!isTauri && demo) return runDemo(demo, { setPos, setMeetingOpen, openHistory });
   }, [openHistory]);
+
+  // ── hover dwell: swell first, then open ─────────────────────────────────
+  useEffect(() => {
+    if (!hover) {
+      setDwell(false);
+      return;
+    }
+    const t = setTimeout(() => setDwell(true), reduce ? 0 : DWELL_MS);
+    return () => clearTimeout(t);
+  }, [hover, reduce]);
 
   // ── local timers: never get stuck on done / error / result ──────────────
   useEffect(() => {
@@ -116,6 +193,86 @@ export default function Island() {
     return () => clearTimeout(t);
   }, [result, hover]);
 
+  useEffect(() => {
+    if (!card || hover) return;
+    const t = setTimeout(() => setCard(null), 8000);
+    return () => clearTimeout(t);
+  }, [card, hover]);
+
+  const headClaude = claudeQueue[0];
+  useEffect(() => {
+    if (!headClaude || hover) return;
+    const t = setTimeout(() => setClaudeQueue((q) => q.slice(1)), CLAUDE_CARD_MS);
+    return () => clearTimeout(t);
+  }, [headClaude, hover]);
+
+  const headFix = corrections[0];
+  useEffect(() => {
+    if (!headFix || hover) return;
+    const t = setTimeout(() => setCorrections((q) => q.slice(1)), CORRECTION_MS);
+    return () => clearTimeout(t);
+  }, [headFix, hover]);
+
+  useEffect(() => {
+    if (!promptOpen || hover) return;
+    const t = setTimeout(() => setPromptOpen(false), MEETING_PROMPT_MS);
+    return () => clearTimeout(t);
+  }, [promptOpen, hover]);
+
+  // ── tray items ──────────────────────────────────────────────────────────
+  const trayItems = useMemo(() => {
+    const ses: TrayItem[] = sessions.slice(0, MAX_AVATARS).map((s) => ({ id: `claude:${s.sessionId}`, kind: "claude", session: s }));
+    if (sessions.length > MAX_AVATARS) ses.push({ id: "more", kind: "more", sessions: sessions.slice(MAX_AVATARS) });
+    const others: TrayItem[] = [];
+    const urgent = urgentTodos(todos);
+    if (urgent.length) others.push({ id: "todos", kind: "todos", todos: urgent });
+    if (detected && !meeting.live && ignoredDetect !== detected) others.push({ id: "meeting", kind: "meeting", app: detected });
+    let left = ses;
+    let right = others;
+    // balance when one side is empty
+    if ((!left.length || !right.length) && left.length + right.length > 1) {
+      const all = [...left, ...right];
+      left = all.slice(0, Math.ceil(all.length / 2));
+      right = all.slice(Math.ceil(all.length / 2));
+    }
+    return { left, right, all: [...left, ...right] };
+  }, [sessions, todos, detected, meeting.live, ignoredDetect]);
+
+  const notch = !!geo && geo.platform === "macos" && geo.hasNotch;
+  const layout = geo && notch ? trayLayout(geo, trayItems.left.length, trayItems.right.length) : null;
+
+  // ── resize protocol state ───────────────────────────────────────────────
+  const [shown, setShown] = useState<IslandVariant>("collapsed");
+  const [shownContent, setShownContent] = useState<CardContent | undefined>();
+  const winSize = useRef<{ width: number; height: number } | null>(null);
+  const shrinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // hit-testing (notch): which tray item / peek tile is under the cursor
+  const winW = winSize.current?.width ?? 0;
+  const nh = geo?.notchHeight ?? 0;
+  const lastTip = useRef<number>(-1);
+  const hitItem = useMemo(() => {
+    if (!notch || !layout || !hover || pos.x === undefined || pos.y === undefined) return -1;
+    const i = hitTestTray(layout.slots, winW, pos.x, pos.y, nh);
+    if (i >= 0) return i;
+    // keep the tooltip while the cursor travels into it
+    if (shown === "trayTooltip" && lastTip.current >= 0) {
+      const s = layout.slots[lastTip.current];
+      if (s) {
+        const r = tooltipRect(winW, s.cx, nh);
+        if (pos.x >= r.x - 4 && pos.x <= r.x + r.w + 4 && pos.y >= nh - 2 && pos.y <= r.y + r.h + 4) return lastTip.current;
+      }
+    }
+    return -1;
+  }, [notch, layout, hover, pos.x, pos.y, winW, nh, shown]);
+  // DOM fallback for non-notch / browser: per-item hover
+  const [domItem, setDomItem] = useState(-1);
+  const tipIdx = notch ? hitItem : hover ? domItem : -1;
+  useEffect(() => {
+    lastTip.current = tipIdx;
+  }, [tipIdx]);
+  const tipItem = tipIdx >= 0 ? trayItems.all[tipIdx] : undefined;
+
   // ── target variant ──────────────────────────────────────────────────────
   const target: IslandVariant = useMemo(() => {
     if (mode !== "meeting" && phase === "listening") return "listening";
@@ -123,13 +280,20 @@ export default function Island() {
     if (phase === "error") return "error";
     if (result) return "result";
     if (phase === "done" && mode !== "assistant") return "done";
+    if (headFix) return "correction";
+    if (promptOpen && detected && !meeting.live) return "meetingPrompt";
     if (card) return "card";
-    if (claudeQueue.length) return "claude";
+    if (headClaude) return "claude";
     if (history) return "history";
     if (meeting.live) return meetingOpen ? "meetingExpanded" : "meeting";
-    if (hover) return "peek";
+    if (hover && dwell && tipItem) return "trayTooltip";
+    if (hover && dwell) return "peek";
+    if (trayItems.all.length) return "tray";
     return "collapsed";
-  }, [phase, mode, result, card, claudeQueue.length, history, meeting.live, meetingOpen, hover]);
+  }, [phase, mode, result, headFix, promptOpen, detected, card, headClaude, history, meeting.live, meetingOpen, hover, dwell, tipItem, trayItems.all.length]);
+
+  const swell = hover && !dwell && (target === "collapsed" || target === "tray");
+  const trayCounts = { trayLeft: trayItems.left.length, trayRight: trayItems.right.length };
 
   const contentFor = (v: IslandVariant): CardContent | undefined => {
     switch (v) {
@@ -141,18 +305,20 @@ export default function Island() {
         return { textChars: result?.length ?? 0 };
       case "history":
         return { rows: Math.max(1, history?.length ?? 1) };
+      case "collapsed":
+        return swell ? { swell: true } : undefined;
+      case "tray":
+        return { ...trayCounts, swell };
+      case "peek":
+        return trayCounts;
+      case "trayTooltip":
+        return { ...trayCounts, tipCx: layout?.slots[tipIdx]?.cx ?? 0 };
       default:
         return undefined;
     }
   };
   const content = contentFor(target);
   const contentKey = JSON.stringify(content ?? null);
-
-  // ── resize protocol: grow window first, animate, shrink window after ────
-  const [shown, setShown] = useState<IslandVariant>("collapsed");
-  const [shownContent, setShownContent] = useState<CardContent | undefined>();
-  const winSize = useRef<{ width: number; height: number } | null>(null);
-  const shrinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!geo) return;
@@ -181,31 +347,18 @@ export default function Island() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, geo, reduce, contentKey]);
 
-  // auto-dismiss assistant card after 8s (paused while hovered)
-  useEffect(() => {
-    if (!card || hover) return;
-    const t = setTimeout(() => setCard(null), 8000);
-    return () => clearTimeout(t);
-  }, [card, hover]);
-
-  // auto-collapse claude reminder after 10s
-  const headClaude = claudeQueue[0];
-  useEffect(() => {
-    if (!headClaude || hover) return;
-    const t = setTimeout(() => setClaudeQueue((q) => q.slice(1)), 10000);
-    return () => clearTimeout(t);
-  }, [headClaude, hover]);
-
   // Esc: cancel / dismiss · click-away (window blur) closes transient cards
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (phase === "listening" && mode !== "meeting") api.cancelSession();
       else if (history) setHistory(null);
+      else if (headFix) setCorrections((q) => q.slice(1));
       else if (card) setCard(null);
       else if (result) setResult(null);
       else if (phase === "error") setPhase("idle");
       else if (headClaude) setClaudeQueue((q) => q.slice(1));
+      else if (promptOpen) setPromptOpen(false);
       else setMeetingOpen(false);
     };
     const onBlur = () => {
@@ -218,7 +371,7 @@ export default function Island() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", onBlur);
     };
-  }, [phase, mode, card, headClaude, history, result]);
+  }, [phase, mode, card, headClaude, history, result, headFix, promptOpen]);
 
   const dismissClaude = useCallback((seen: boolean) => {
     setClaudeQueue((q) => {
@@ -228,45 +381,86 @@ export default function Island() {
     });
   }, []);
 
-  // Hover: the island is a non-activating panel, so DOM mouseleave is unreliable while another
-  // app is active. The backend tracks the cursor and tells us; peek also auto-closes after 4 s.
-  useEffect(() => on<{ inside: boolean }>(EV.hover, (e) => setHover(e.inside)), []);
-  useEffect(() => {
-    if (!hover) return;
-    const t = setTimeout(() => setHover(false), 4000);
-    return () => clearTimeout(t);
-  }, [hover]);
+  const removeSession = (id: string) => setSessions((list) => list.filter((s) => s.sessionId !== id));
+  const openSession = (s: ClaudeSession) => {
+    if (s.status !== "working") removeSession(s.sessionId);
+    api.openClaudeBySession(s.sessionId).catch(() => {});
+    setPos({ inside: false });
+  };
+  const dismissSession = (s: ClaudeSession) => {
+    removeSession(s.sessionId);
+    api.dismissClaudeSession(s.sessionId).catch(() => {});
+  };
+  const startNotes = (app: string) => {
+    setPromptOpen(false);
+    api.startMeeting(`${app} call`).catch(() => {});
+  };
+  const ignoreMeeting = (app: string) => {
+    setIgnoredDetect(app);
+    setPromptOpen(false);
+  };
+  const onTrayItem = (it: TrayItem) => {
+    if (it.kind === "claude") openSession(it.session);
+    else if (it.kind === "todos") api.openDashboard("todos");
+    else if (it.kind === "meeting") setPromptOpen(true);
+    else api.openDashboard("home");
+  };
+
+  // DOM mouse tracking (browser preview; harmless in Tauri alongside backend events)
+  const onMouseMove = (e: React.MouseEvent) => {
+    const r = rootRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setPos({ inside: true, x: e.clientX - r.left, y: e.clientY - r.top });
+  };
 
   if (!geo) return null;
 
-  const notch = geo.platform === "macos" && geo.hasNotch;
   const size = islandSize(shown, geo, shownContent);
-  const collapsed = shown === "collapsed";
+  const collapsed = shown === "collapsed" && !shownContent?.swell;
+  const swollen = !!shownContent?.swell;
   const EAR = ISLAND_EAR;
   const compact = shown === "done";
   const stage = !isTauri; // browser preview: draw a fake desktop behind
   const win = winSize.current ?? size;
+  const showTray = ["tray", "trayTooltip", "peek"].includes(shown) && trayItems.all.length > 0;
+  const trayW = layout?.width ?? 0;
 
-  // pill geometry
+  // pill geometry (the black shape); tooltip / glow live outside it
   const pill = notch
-    ? { width: collapsed ? size.width : size.width - EAR * 2, height: size.height }
+    ? collapsed
+      ? { width: size.width, height: size.height }
+      : shown === "collapsed" && swollen
+        ? { width: geo.notchWidth + 2 * SWELL_X, height: geo.notchHeight + SWELL_Y }
+        : shown === "tray"
+          ? { width: trayW - 2 * EAR + (swollen ? 2 * SWELL_X : 0), height: geo.notchHeight + (swollen ? SWELL_Y : 0) }
+          : shown === "trayTooltip"
+            ? { width: trayW - 2 * EAR, height: geo.notchHeight }
+            : { width: size.width - EAR * 2, height: size.height }
     : { width: size.width - 24, height: size.height - 24 };
-  const bigCard = ["card", "claude", "meetingExpanded", "peek", "history", "result", "error"].includes(shown);
-  // MacBook notch bottom corners are ~9pt; compact wings use 13pt so they read as one shape.
+  const bigCard = ["card", "claude", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt"].includes(shown);
   const radius = notch
     ? collapsed
       ? "0 0 9px 9px"
       : bigCard
         ? "0 0 22px 22px"
-        : compact
+        : compact || shown === "tray" || shown === "trayTooltip" || swollen
           ? "0 0 13px 13px"
           : "0 0 18px 18px"
     : bigCard
       ? "22px"
       : "999px";
 
+  const hotTile = shown === "peek" && pos.x !== undefined && pos.y !== undefined ? peekTileAt(win.width, pill.width, pos.x, pos.y, nh, PEEK_ACTIONS) : -1;
+  const keys = {
+    dict: geo.platform === "windows" ? "Right Ctrl" : formatHotkey(settings?.hotkeyDictation ?? "ctrl"),
+    asst: geo.platform === "windows" ? "Right Alt" : formatHotkey(settings?.hotkeyAssistant ?? "fn"),
+  };
+
+  const glow = notch && (swollen || shown === "listening");
   const island = (
     <div
+      ref={rootRef}
+      data-island-root
       className="relative"
       style={{
         width: stage ? win.width : "100vw",
@@ -277,8 +471,12 @@ export default function Island() {
         padding: notch ? 0 : 12,
         boxSizing: "border-box",
       }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseEnter={(e) => onMouseMove(e)}
+      onMouseMove={onMouseMove}
+      onMouseLeave={() => {
+        setPos({ inside: false });
+        setDomItem(-1);
+      }}
     >
       <motion.div
         layout
@@ -290,68 +488,138 @@ export default function Island() {
           notch
             ? {
                 overflow: "visible",
-                // hairline light-blue glow along the bottom edge while live
-                boxShadow:
-                  shown === "listening"
-                    ? "inset 0 -1px 0 rgba(102,206,255,0.55)"
-                    : shown === "error"
-                      ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
-                      : bigCard
-                        ? "inset 0 -1px 0 rgba(147,221,255,0.14)"
-                        : "none",
+                boxShadow: glow
+                  ? "inset 0 -1px 0 rgba(102,206,255,0.7), 0 4px 14px -4px rgba(61,187,255,0.55)"
+                  : shown === "error"
+                    ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
+                    : bigCard
+                      ? "inset 0 -1px 0 rgba(147,221,255,0.14)"
+                      : "none",
+                transition: "box-shadow 0.25s ease",
               }
             : {
                 background: "linear-gradient(180deg, rgba(10,16,24,0.80), rgba(2,4,8,0.88))",
                 backdropFilter: "blur(30px) saturate(180%)",
                 WebkitBackdropFilter: "blur(30px) saturate(180%)",
-                border: "1px solid rgba(147,221,255,0.16)",
+                border: `1px solid ${hover ? "rgba(147,221,255,0.32)" : "rgba(147,221,255,0.16)"}`,
                 boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 14px 36px -10px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(0,0,0,0.6)",
                 overflow: "hidden",
+                transition: "border-color 0.25s ease",
               }
         }
       >
         {notch && !collapsed && <Ears size={EAR} />}
         <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: radius }}>
+          {/* tiny shimmer along the bottom rim while swelling */}
+          {notch && swollen && !reduce && (
+            <span
+              className="pointer-events-none absolute bottom-0 left-0 h-px w-1/3"
+              style={{ background: "linear-gradient(90deg, transparent, #e3f6ff, transparent)", animation: "flo-shimmer-x 0.9s ease-out 1" }}
+            />
+          )}
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
-              key={shown + (shown === "claude" ? headClaude?.id : "")}
+              key={shown + (shown === "claude" ? headClaude?.id : "") + (shown === "correction" ? headFix?.id : "")}
               className="absolute inset-0"
               initial={{ opacity: 0, filter: "blur(6px)", scale: 0.97 }}
               animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
               exit={{ opacity: 0, filter: "blur(6px)", scale: 0.97 }}
               transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
             >
-              <IslandContent
-                variant={shown}
-                notch={notch}
-                geo={geo}
-                phase={phase}
-                mode={mode}
-                message={message}
-                card={card}
-                result={result}
-                history={history}
-                claude={headClaude}
-                claudeMore={Math.max(0, claudeQueue.length - 1)}
-                meeting={meeting}
-                onCloseCard={() => setCard(null)}
-                onCloseError={() => setPhase("idle")}
-                onCloseHistory={() => setHistory(null)}
-                onOpenHistory={openHistory}
-                onClaude={dismissClaude}
-                onToggleMeeting={() => setMeetingOpen((v) => !v)}
-              />
+              {shown === "correction" && headFix ? (
+                <CorrectionCard
+                  c={headFix}
+                  more={corrections.length - 1}
+                  notch={notch}
+                  geo={geo}
+                  onIgnore={() => setCorrections((q) => q.slice(1))}
+                  onSave={async () => {
+                    await api.acceptCorrection(headFix.heard, headFix.corrected).catch(() => {});
+                    setTimeout(() => setCorrections((q) => q.filter((x) => x.id !== headFix.id)), 1300);
+                  }}
+                />
+              ) : shown === "meetingPrompt" && detected ? (
+                <MeetingPromptCard app={detected} notch={notch} geo={geo} onStart={() => startNotes(detected)} onLater={() => setPromptOpen(false)} />
+              ) : shown === "tray" || shown === "trayTooltip" ? (
+                notch ? null : (
+                  <WinTray items={trayItems.all} onItem={onTrayItem} onHover={setDomItem} />
+                )
+              ) : (
+                <IslandContent
+                  variant={shown}
+                  notch={notch}
+                  geo={geo}
+                  phase={phase}
+                  mode={mode}
+                  message={message}
+                  card={card}
+                  result={result}
+                  history={history}
+                  claude={headClaude}
+                  claudeMore={Math.max(0, claudeQueue.length - 1)}
+                  meeting={meeting}
+                  hotTile={hotTile}
+                  keys={keys}
+                  onCloseCard={() => setCard(null)}
+                  onCloseError={() => setPhase("idle")}
+                  onCloseHistory={() => setHistory(null)}
+                  onOpenHistory={openHistory}
+                  onClaude={dismissClaude}
+                  onToggleMeeting={() => setMeetingOpen((v) => !v)}
+                />
+              )}
             </motion.div>
           </AnimatePresence>
+          {notch && showTray && layout && (
+            <AnimatePresence>
+              <TrayRow items={trayItems.all} slots={layout.slots} pillW={pill.width} nh={geo.notchHeight} hot={tipIdx} onItem={onTrayItem} />
+            </AnimatePresence>
+          )}
         </div>
       </motion.div>
+      <AnimatePresence>
+        {shown === "trayTooltip" && tipItem && (
+          <TrayTooltip
+            item={tipItem}
+            rect={
+              notch && layout
+                ? tooltipRect(win.width, layout.slots[tipIdx]?.cx ?? 0, geo.notchHeight)
+                : { x: Math.max(8, win.width - 12 - 300), y: 4, w: 300, h: 118 }
+            }
+            onOpen={openSession}
+            onDismiss={dismissSession}
+            onStartNotes={startNotes}
+            onIgnoreMeeting={ignoreMeeting}
+            onOpenTodos={() => api.openDashboard("todos")}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 
   return (
     <MotionConfig reducedMotion="user">
-      {stage ? <Stage notch={notch} nh={geo.notchHeight}>{island}</Stage> : island}
+      {stage ? (
+        <Stage notch={notch} nh={geo.notchHeight}>
+          {island}
+        </Stage>
+      ) : (
+        island
+      )}
     </MotionConfig>
+  );
+}
+
+/** Windows / no-notch: tray items in a row inside the capsule (DOM hover works there). */
+function WinTray({ items, onItem, onHover }: { items: TrayItem[]; onItem: (i: TrayItem) => void; onHover: (i: number) => void }) {
+  return (
+    <div className="flex h-full items-center justify-center gap-1 px-3">
+      {items.map((it, i) => (
+        <button key={it.id} className="flex h-6 w-6 items-center justify-center" onMouseEnter={() => onHover(i)} onClick={() => onItem(it)}>
+          <TrayItemView item={it} />
+        </button>
+      ))}
+    </div>
   );
 }
 

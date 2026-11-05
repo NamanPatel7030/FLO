@@ -151,6 +151,27 @@ pub fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
         .collect()
 }
 
+/// Drop leading/trailing silence (keeps 0.25 s padding). Saves cloud STT seconds and local compute.
+pub fn trim_silence(s: &[f32]) -> Vec<f32> {
+    let win = (TARGET_RATE / 50) as usize; // 20 ms
+    if s.len() < win * 4 {
+        return s.to_vec();
+    }
+    let loud = |c: &[f32]| rms(c) > 0.012;
+    let chunks: Vec<&[f32]> = s.chunks(win).collect();
+    let first = chunks.iter().position(|c| loud(c));
+    let last = chunks.iter().rposition(|c| loud(c));
+    match (first, last) {
+        (Some(a), Some(b)) => {
+            let pad = (TARGET_RATE / 4) as usize;
+            let start = (a * win).saturating_sub(pad);
+            let end = ((b + 1) * win + pad).min(s.len());
+            s[start..end].to_vec()
+        }
+        _ => s.to_vec(),
+    }
+}
+
 /// RMS of a buffer — used to skip silent recordings.
 pub fn rms(s: &[f32]) -> f32 {
     if s.is_empty() {
@@ -183,6 +204,16 @@ mod tests {
         let r = resample(&v, 48_000, 16_000);
         assert_eq!(r.len(), 16_000);
         assert!((r[100] - v[300]).abs() < 1e-3);
+    }
+
+    #[test]
+    fn trims_silence_with_padding() {
+        let mut v = vec![0.0f32; 16_000]; // 1 s silence
+        v.extend((0..8_000).map(|i| (i as f32 / 20.0).sin() * 0.3)); // 0.5 s speech
+        v.extend(vec![0.0f32; 32_000]); // 2 s silence
+        let t = trim_silence(&v);
+        assert!(t.len() <= 16_000 && t.len() > 8_000, "len {}", t.len()); // 0.5 s speech + 2×0.25 s padding
+        assert_eq!(trim_silence(&[0.0; 10]).len(), 10);
     }
 
     #[test]

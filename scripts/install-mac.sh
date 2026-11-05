@@ -30,8 +30,10 @@ codesign --verify --deep "$APP"
 
 pkill -x flo-flow 2>/dev/null || true
 sleep 1
-rm -rf "/Applications/Flo Flow.app" "/Applications/Flo.app"
-ditto "$APP" "/Applications/Flo.app"
+rm -rf "/Applications/Flo Flow.app"
+# update the installed bundle in place (keeps the same bundle on disk for macOS privacy records)
+mkdir -p "/Applications/Flo.app"
+rsync -a --delete "$APP/" "/Applications/Flo.app/"
 xattr -dr com.apple.quarantine "/Applications/Flo.app" 2>/dev/null || true
 open "/Applications/Flo.app"
 echo "Installed /Applications/Flo.app"

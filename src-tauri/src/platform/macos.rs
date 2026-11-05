@@ -1,7 +1,7 @@
 //! macOS: CGEventTap (Fn), CGEvent paste, NSWorkspace, notch geometry, NSWindow level, Vision OCR.
 #![allow(unexpected_cfgs)]
 use super::{FrontApp, HotkeyCallback};
-use crate::hotkey::Machine;
+use crate::hotkey::{HotkeyConfig, Machine, Mods};
 use crate::model::{IslandGeometry, Permissions};
 use anyhow::{anyhow, Result};
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
@@ -34,6 +34,130 @@ extern "C" {
 }
 
 static HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
+static HOTKEY_CFG: parking_lot::RwLock<Option<HotkeyConfig>> = parking_lot::RwLock::new(None);
+
+/// Apply the configured push-to-talk combos (takes effect immediately).
+pub fn set_hotkeys(cfg: HotkeyConfig) {
+    *HOTKEY_CFG.write() = Some(cfg);
+}
+
+#[link(name = "CoreAudio", kind = "framework")]
+extern "C" {
+    fn AudioObjectGetPropertyData(
+        id: u32,
+        addr: *const AudioAddr,
+        qualifier_size: u32,
+        qualifier: *const c_void,
+        size: *mut u32,
+        data: *mut c_void,
+    ) -> i32;
+}
+#[repr(C)]
+struct AudioAddr {
+    selector: u32,
+    scope: u32,
+    element: u32,
+}
+const fn fourcc(s: &[u8; 4]) -> u32 {
+    ((s[0] as u32) << 24) | ((s[1] as u32) << 16) | ((s[2] as u32) << 8) | (s[3] as u32)
+}
+
+/// Is the default microphone being used by any process right now?
+pub fn mic_in_use() -> bool {
+    unsafe {
+        let glob = fourcc(b"glob");
+        let mut dev: u32 = 0;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        let a = AudioAddr { selector: fourcc(b"dIn "), scope: glob, element: 0 };
+        if AudioObjectGetPropertyData(1, &a, 0, std::ptr::null(), &mut size, &mut dev as *mut u32 as *mut c_void) != 0 || dev == 0 {
+            return false;
+        }
+        let mut running: u32 = 0;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        let a = AudioAddr { selector: fourcc(b"gone"), scope: glob, element: 0 };
+        AudioObjectGetPropertyData(dev, &a, 0, std::ptr::null(), &mut size, &mut running as *mut u32 as *mut c_void) == 0 && running != 0
+    }
+}
+
+fn running(pattern: &str, exact: bool) -> bool {
+    std::process::Command::new("pgrep")
+        .args([if exact { "-x" } else { "-f" }, pattern])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Best guess of which call app is using the mic.
+pub fn detect_call_app() -> String {
+    if running("CptHost", true) {
+        return "Zoom".into();
+    }
+    for (pat, name) in [
+        ("MSTeams", "Teams"),
+        ("Microsoft Teams", "Teams"),
+        ("FaceTime", "FaceTime"),
+        ("Webex", "Webex"),
+        ("Slack", "Slack huddle"),
+        ("Discord", "Discord"),
+        ("zoom.us", "Zoom"),
+    ] {
+        if running(pat, true) {
+            return name.into();
+        }
+    }
+    "Google Meet".into()
+}
+
+/// Pointing-hand cursor while over the island (main thread only).
+pub fn set_pointer_cursor() {
+    unsafe {
+        let c: *mut AnyObject = msg_send![class!(NSCursor), pointingHandCursor];
+        if !c.is_null() {
+            let _: () = msg_send![c, set];
+        }
+    }
+}
+
+type AXRef = *const c_void;
+extern "C" {
+    fn AXUIElementCreateSystemWide() -> AXRef;
+    fn AXUIElementCopyAttributeValue(el: AXRef, attr: core_foundation::string::CFStringRef, out: *mut core_foundation::base::CFTypeRef) -> i32;
+    fn AXUIElementSetMessagingTimeout(el: AXRef, secs: f32) -> i32;
+    fn CFHash(cf: core_foundation::base::CFTypeRef) -> usize;
+    fn CFRelease(cf: core_foundation::base::CFTypeRef);
+}
+
+unsafe fn ax_copy(el: AXRef, attr: &str) -> Option<core_foundation::base::CFTypeRef> {
+    use core_foundation::base::TCFType;
+    let name = core_foundation::string::CFString::new(attr);
+    let mut out: core_foundation::base::CFTypeRef = std::ptr::null();
+    (AXUIElementCopyAttributeValue(el, name.as_concrete_TypeRef(), &mut out) == 0 && !out.is_null()).then_some(out)
+}
+
+unsafe fn cf_to_string(v: core_foundation::base::CFTypeRef) -> Option<String> {
+    use core_foundation::base::{CFType, TCFType};
+    let t = CFType::wrap_under_create_rule(v);
+    t.downcast::<core_foundation::string::CFString>().map(|s| s.to_string())
+}
+
+/// Text of the focused field (identity hash, value). None for secure/password fields.
+pub fn focused_text() -> Option<(usize, String)> {
+    unsafe {
+        let sys = AXUIElementCreateSystemWide();
+        if sys.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(sys, 0.5);
+        let el = ax_copy(sys, "AXFocusedUIElement");
+        CFRelease(sys);
+        let el = el?;
+        let secure = ax_copy(el, "AXSubrole").and_then(|v| cf_to_string(v)).map(|s| s == "AXSecureTextField").unwrap_or(false);
+        let id = CFHash(el);
+        let value = if secure { None } else { ax_copy(el, "AXValue").and_then(|v| cf_to_string(v)) };
+        CFRelease(el);
+        value.filter(|v| v.len() < 200_000).map(|v| (id, v))
+    }
+}
 #[link(name = "Vision", kind = "framework")]
 extern "C" {}
 #[link(name = "AVFoundation", kind = "framework")]
@@ -94,12 +218,24 @@ fn run_tap(cb: Arc<HotkeyCallback>) -> bool {
                 CGEventTapLocation::Session,
                 CGEventTapPlacement::HeadInsertEventTap,
                 CGEventTapOptions::ListenOnly,
-                vec![CGEventType::FlagsChanged],
-                move |_proxy, _ty, event| {
-                    let f = event.get_flags();
-                    let fn_down = f.contains(CGEventFlags::CGEventFlagSecondaryFn);
-                    let ctrl = f.contains(CGEventFlags::CGEventFlagControl);
-                    let ev = machine.lock().update(fn_down, ctrl);
+                vec![CGEventType::FlagsChanged, CGEventType::KeyDown],
+                move |_proxy, ty, event| {
+                    let ev = match ty {
+                        CGEventType::KeyDown => machine.lock().key_down(),
+                        CGEventType::FlagsChanged => {
+                            let f = event.get_flags();
+                            let mods = Mods {
+                                fn_: f.contains(CGEventFlags::CGEventFlagSecondaryFn),
+                                ctrl: f.contains(CGEventFlags::CGEventFlagControl),
+                                alt: f.contains(CGEventFlags::CGEventFlagAlternate),
+                                cmd: f.contains(CGEventFlags::CGEventFlagCommand),
+                                shift: f.contains(CGEventFlags::CGEventFlagShift),
+                            };
+                            let cfg = HOTKEY_CFG.read().unwrap_or_default();
+                            machine.lock().update_mods(mods, &cfg)
+                        }
+                        _ => None,
+                    };
                     if let Some(ev) = ev {
                         cb(ev);
                     }
