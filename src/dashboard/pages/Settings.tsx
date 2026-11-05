@@ -449,9 +449,13 @@ function PermissionsTab() {
               )}
             </div>
           ))}
-        <p className="px-1 pt-1 text-[11.5px] leading-relaxed text-faint">
-          Granted it but still see “Grant”? macOS ties permissions to how Flo is signed. Remove old “Flo” / “Flo Flow” entries with the – button in System Settings, add Flo again, then press Restart. Builds signed with your local Flo certificate keep permissions across updates.
-        </p>
+        <div className="mt-1 flex items-center gap-3 rounded-xl border border-brand-300/15 bg-brand-300/[0.05] p-3">
+          <div className="flex-1 text-[12px] leading-relaxed text-muted">
+            <span className="font-medium text-[var(--fg)]">Turned it on but still see “Grant”?</span> System Settings may be showing a switch from an
+            older Flo build. Repair clears Flo’s old privacy entries (only Flo’s) and restarts — then press Grant once for each.
+          </div>
+          <RepairButton />
+        </div>
       </Card>
       {geo?.platform !== "windows" && (
         <Card className="flex items-center gap-4 p-4">
@@ -605,5 +609,19 @@ function Info({ label, value, ok, mono }: { label: string; value: string; ok?: b
       <div className="text-[10.5px] uppercase tracking-wider text-faint">{label}</div>
       <div className={clsx("mt-0.5 truncate", mono && "font-mono text-[11.5px]", ok === true && "text-emerald-600 dark:text-emerald-300")}>{value}</div>
     </div>
+  );
+}
+
+function RepairButton() {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <Button size="sm" variant={armed ? "primary" : "glass"} onClick={() => (armed ? api.repairPermissions() : setArmed(true))}>
+      {armed ? "Click again to reset & restart" : "Repair permissions"}
+    </Button>
   );
 }

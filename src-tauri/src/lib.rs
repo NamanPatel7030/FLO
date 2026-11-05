@@ -201,6 +201,13 @@ fn start_hotkeys(st: Shared) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `open -n -a Flo.app --args --diag /path/out.json` → write permission probes and exit
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--diag") {
+        let out = args.get(i + 1).cloned().unwrap_or_else(|| "/tmp/flo-diag.json".into());
+        let _ = std::fs::write(&out, serde_json::to_string_pretty(&platform::diagnostics()).unwrap_or_default());
+        return;
+    }
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -252,6 +259,7 @@ pub fn run() {
             commands::install_claude_hook,
             commands::uninstall_claude_hook,
             commands::restart_app,
+            commands::repair_permissions,
             commands::open_claude_session,
         ])
         .setup(|app| {

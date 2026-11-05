@@ -284,6 +284,22 @@ pub fn open_permission_settings(kind: String) {
     platform::open_permission_settings(&kind);
 }
 
+/// User clicked "Repair permissions": clear macOS privacy records for Flo only
+/// (stale entries from older builds show as enabled but don't apply), then relaunch so
+/// every permission can be granted fresh to the current build.
+#[tauri::command]
+pub fn repair_permissions(app: tauri::AppHandle) -> R<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let id = app.config().identifier.clone();
+        let st = std::process::Command::new("tccutil").args(["reset", "All", &id]).status().map_err(e)?;
+        if !st.success() {
+            return Err("tccutil failed".into());
+        }
+    }
+    app.restart();
+}
+
 #[tauri::command]
 pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
@@ -310,18 +326,21 @@ pub fn mark_claude_seen(st: State<Shared>, id: Option<String>) -> R<()> {
 pub fn open_claude_session(app: tauri::AppHandle, st: State<Shared>, id: String) -> R<String> {
     let ev = st.db.list_claude_events(200).map_err(e)?.into_iter().find(|x| x.id == id).ok_or("session not found")?;
     let _ = st.db.mark_claude_seen(Some(&id));
-    match claude::open_target(ev.app_bundle.as_deref(), ev.terminal.as_deref()) {
-        Some((bundle, folder)) => {
-            platform::open_bundle(&bundle, if folder && !ev.cwd.is_empty() { Some(ev.cwd.as_str()) } else { None }).map_err(e)?;
-            Ok(bundle)
+    let folder_of = |editor: bool| if editor && !ev.cwd.is_empty() { Some(ev.cwd.as_str()) } else { None };
+    let target = claude::open_target(ev.app_bundle.as_deref(), ev.terminal.as_deref())
+        // unknown launcher (older events): use the editor/terminal that's running — never Finder
+        .or_else(|| platform::running_dev_app().map(|a| { let ed = claude::is_editor(&a); (a, ed) }));
+    match target {
+        Some((app_id, editor)) => {
+            if app_id.starts_with('/') {
+                platform::open_app_path(&app_id, folder_of(editor)).map_err(e)?;
+            } else {
+                platform::open_bundle(&app_id, folder_of(editor)).map_err(e)?;
+            }
+            Ok(app_id)
         }
         None => {
-            // unknown launcher (older event): reveal the project folder instead
-            if !ev.cwd.is_empty() {
-                let _ = tauri_plugin_opener::reveal_item_in_dir(&ev.cwd);
-            } else {
-                crate::show_dashboard(&app, Some("home"));
-            }
+            crate::show_dashboard(&app, Some("home"));
             Ok(String::new())
         }
     }

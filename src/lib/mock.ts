@@ -598,6 +598,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       });
       mockEmit(EV.claude, null);
       return null;
+    case "repair_permissions":
+      return null;
     case "open_claude_session": {
       const ev = claudeEvents.find((e) => e.id === args.id);
       if (ev) ev.seen = true;

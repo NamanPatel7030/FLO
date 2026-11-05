@@ -62,6 +62,18 @@ pub fn activate_app(_pid: i32) {
     // Island window is non-activating on Windows; nothing to restore.
 }
 
+pub fn diagnostics() -> serde_json::Value {
+    serde_json::json!({})
+}
+pub fn host_app_of(_pid: i32) -> Option<String> {
+    None
+}
+pub fn running_dev_app() -> Option<String> {
+    None
+}
+pub fn open_app_path(_app: &str, _path: Option<&str>) -> Result<()> {
+    Ok(())
+}
 pub fn open_bundle(_bundle: &str, path: Option<&str>) -> Result<()> {
     if let Some(p) = path {
         std::process::Command::new("explorer").arg(p).status()?;

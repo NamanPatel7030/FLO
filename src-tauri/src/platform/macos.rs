@@ -24,6 +24,7 @@ extern "C" {
     fn CGRequestScreenCaptureAccess() -> bool;
     fn CGPreflightListenEventAccess() -> bool;
     fn CGRequestListenEventAccess() -> bool;
+    fn CGPreflightPostEventAccess() -> bool;
     fn CGRequestPostEventAccess() -> bool;
     fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
 }
@@ -225,6 +226,97 @@ pub fn configure_island(ns_window: *mut c_void) {
 /// Top-left origin (logical px) for the island so it hangs from the notch.
 pub fn island_position(geo: &IslandGeometry, width: f64, _height: f64) -> (f64, f64) {
     ((geo.screen_width - width) / 2.0, 0.0)
+}
+
+/// Raw values of every permission probe, as seen from inside Flo's own process.
+pub fn diagnostics() -> serde_json::Value {
+    unsafe {
+        let cls = objc2::runtime::AnyClass::get(c"AVCaptureDevice");
+        let mic_raw: isize = match cls {
+            Some(c) => {
+                let media = NSString::from_str("soun");
+                msg_send![c, authorizationStatusForMediaType: &*media]
+            }
+            None => -1,
+        };
+        serde_json::json!({
+            "exe": std::env::current_exe().ok().map(|p| p.display().to_string()),
+            "avcapture_class_loaded": cls.is_some(),
+            "mic_status_raw(0=notDetermined,1=restricted,2=denied,3=authorized)": mic_raw,
+            "AXIsProcessTrusted": AXIsProcessTrusted(),
+            "CGPreflightListenEventAccess": CGPreflightListenEventAccess(),
+            "CGPreflightPostEventAccess": CGPreflightPostEventAccess(),
+            "CGPreflightScreenCaptureAccess": CGPreflightScreenCaptureAccess(),
+        })
+    }
+}
+
+#[link(name = "proc", kind = "dylib")]
+extern "C" {
+    fn proc_pidpath(pid: i32, buffer: *mut u8, buffersize: u32) -> i32;
+}
+
+fn pid_path(pid: i32) -> Option<String> {
+    let mut buf = vec![0u8; 4096];
+    let n = unsafe { proc_pidpath(pid, buf.as_mut_ptr(), buf.len() as u32) };
+    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).to_string())
+}
+
+fn parent_pid(pid: i32) -> Option<i32> {
+    let out = std::process::Command::new("ps").args(["-o", "ppid=", "-p", &pid.to_string()]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Walk up from `pid` to the GUI app hosting it (outermost `.app`), e.g.
+/// "/Applications/Visual Studio Code.app" or "/System/Applications/Utilities/Terminal.app".
+pub fn host_app_of(pid: i32) -> Option<String> {
+    let mut p = pid;
+    for _ in 0..24 {
+        if p <= 1 {
+            break;
+        }
+        if let Some(path) = pid_path(p) {
+            if let Some(i) = path.find(".app/") {
+                return Some(path[..i + 4].to_string());
+            }
+        }
+        p = parent_pid(p)?;
+    }
+    None
+}
+
+/// First running editor / terminal, used when an event doesn't know where it came from.
+pub fn running_dev_app() -> Option<String> {
+    const CANDIDATES: &[&str] = &[
+        "/Applications/Cursor.app",
+        "/Applications/Visual Studio Code.app",
+        "/Applications/Windsurf.app",
+        "/Applications/Zed.app",
+        "/Applications/iTerm.app",
+        "/Applications/Warp.app",
+        "/Applications/Ghostty.app",
+        "/System/Applications/Utilities/Terminal.app",
+    ];
+    CANDIDATES.iter().find(|app| {
+        std::process::Command::new("pgrep")
+            .args(["-f", &format!("{app}/Contents/MacOS/")])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }).map(|s| s.to_string())
+}
+
+/// `open -a <app path> [folder]`
+pub fn open_app_path(app: &str, path: Option<&str>) -> Result<()> {
+    let mut c = std::process::Command::new("open");
+    c.arg("-a").arg(app);
+    if let Some(p) = path {
+        c.arg(p);
+    }
+    if !c.status()?.success() {
+        return Err(anyhow!("couldn't open {app}"));
+    }
+    Ok(())
 }
 
 pub fn permissions() -> Permissions {

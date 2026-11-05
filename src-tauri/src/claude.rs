@@ -23,13 +23,25 @@ const HOOK_EVENTS: &[&str] = &["Stop", "Notification"];
 /// for GUI-launched apps' child processes) and $TERM_PROGRAM, so "Open" can jump back to it.
 pub fn hook_command(port: u16, token: &str) -> String {
     format!(
-        "curl -s -m 2 -X POST -H \"Content-Type: application/json\" --data-binary @- \"http://127.0.0.1:{port}/claude/hook?token={token}&src={MARKER}&bundle=${{__CFBundleIdentifier:-}}&term=${{TERM_PROGRAM:-}}\" >/dev/null 2>&1 || exit 0"
+        "curl -s -m 2 -X POST -H \"Content-Type: application/json\" --data-binary @- \"http://127.0.0.1:{port}/claude/hook?token={token}&src={MARKER}&bundle=${{__CFBundleIdentifier:-}}&term=${{TERM_PROGRAM:-}}&pid=$PPID\" >/dev/null 2>&1 || exit 0"
     )
 }
 
 fn safe_ident(s: &str) -> Option<String> {
     let s = s.trim();
+    if s.starts_with('/') {
+        // absolute .app path resolved from the process tree
+        return (s.ends_with(".app") && s.len() < 512 && !s.contains("..")).then(|| s.to_string());
+    }
     (!s.is_empty() && s.len() < 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))).then(|| s.to_string())
+}
+
+/// Is this app (bundle id or .app path) a code editor that should open the project folder?
+pub fn is_editor(app: &str) -> bool {
+    let a = app.to_lowercase();
+    ["visual studio code", "vscode", "cursor", "230313mzl4w4u92", "windsurf", "zed", "jetbrains", "intellij", "pycharm", "webstorm", "vscodium", "code - insiders"]
+        .iter()
+        .any(|k| a.contains(k))
 }
 
 /// Which app to bring forward for a session: (bundle id, open the cwd folder in it?).
@@ -55,8 +67,8 @@ pub fn open_target(bundle: Option<&str>, terminal: Option<&str>) -> Option<(Stri
         })
     };
     let b = bundle.and_then(safe_ident).or_else(|| terminal.and_then(from_term).map(String::from))?;
-    let is_editor = EDITORS.iter().any(|e| e.eq_ignore_ascii_case(&b)) || b.to_lowercase().contains("jetbrains");
-    Some((b, is_editor))
+    let editor = EDITORS.iter().any(|e| e.eq_ignore_ascii_case(&b)) || is_editor(&b);
+    Some((b, editor))
 }
 
 fn is_ours(entry: &Value) -> bool {
@@ -295,7 +307,11 @@ pub fn spawn_listener(st: Shared) {
                 let parsed = url::Url::parse(&format!("http://x{url}")).ok();
                 let q = |name: &str| parsed.as_ref().and_then(|u| u.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.to_string()));
                 let ok_token = q("token").as_deref() == Some(token.as_str());
-                let (bundle, term) = (q("bundle"), q("term"));
+                let (mut bundle, term) = (q("bundle"), q("term"));
+                // most reliable: walk the Claude process tree up to the hosting .app
+                if let Some(app) = q("pid").and_then(|p| p.parse::<i32>().ok()).and_then(crate::platform::host_app_of) {
+                    bundle = Some(app);
+                }
                 if req.method() != &tiny_http::Method::Post || !ok_path || !ok_token {
                     let _ = req.respond(tiny_http::Response::from_string("forbidden").with_status_code(403));
                     continue;
@@ -400,6 +416,16 @@ mod tests {
         assert_eq!(open_target(Some("bad; rm -rf"), None), None);
         assert_eq!(open_target(None, None), None);
         assert!(hook_command(1, "t").contains("bundle=${__CFBundleIdentifier:-}"));
+        assert!(hook_command(1, "t").contains("&pid=$PPID"));
+        assert_eq!(
+            open_target(Some("/Applications/Visual Studio Code.app"), None),
+            Some(("/Applications/Visual Studio Code.app".into(), true))
+        );
+        assert_eq!(
+            open_target(Some("/System/Applications/Utilities/Terminal.app"), None),
+            Some(("/System/Applications/Utilities/Terminal.app".into(), false))
+        );
+        assert_eq!(open_target(Some("/tmp/../evil.app"), None), None);
     }
 
     #[test]

@@ -324,6 +324,7 @@ export const EV = {
  *  list_models() -> LocalModel[]         download_model({id})   delete_model({id})
  *  attention_status() -> AttentionStatus set_attention_paused({paused})
  *  check_permissions() -> Permissions   (inputMonitoring = fn key listener; poll every 2s on the Permissions tab)
+ *  repair_permissions()  — macOS: reset Flo's privacy records (tccutil reset All com.flo.flow) + relaunch
  *  restart_app()  — relaunch Flo (needed after granting Accessibility / Input Monitoring / Screen Recording)
  *  open_permission_settings({kind})
  *  fix_fn_key()  — macOS: set "Press 🌐 key to: Do Nothing" so Fn is free for Flo
