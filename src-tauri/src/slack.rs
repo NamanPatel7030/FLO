@@ -91,7 +91,7 @@ pub async fn sync(st: &Shared) -> Result<usize> {
     let me = me(st).await?;
     let mut existing = st.db.open_todo_titles()?;
     let mut added = 0;
-    let mut add = |title: String, reason: String, person: String, key: String, existing: &mut Vec<String>| -> Result<bool> {
+    let add = |title: String, reason: String, person: String, key: String, existing: &mut Vec<String>| -> Result<bool> {
         {
             let mut g = CACHE.lock();
             let c = g.get_or_insert_with(Default::default);

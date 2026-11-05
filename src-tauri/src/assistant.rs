@@ -64,9 +64,38 @@ pub fn build_context(st: &Shared, query: &str, selection: Option<&str>, front: &
     c
 }
 
+/// Context of recent answers so "Go deeper" / "Search the web" reuse the same question + screen.
+#[derive(Clone)]
+struct Ctx {
+    query: String,
+    selection: Option<String>,
+    front: FrontApp,
+    screen: Option<String>,
+}
+static RECENT: parking_lot::Mutex<Vec<(String, Ctx)>> = parking_lot::Mutex::new(Vec::new());
+
+fn remember(id: &str, c: Ctx) {
+    let mut r = RECENT.lock();
+    r.push((id.to_string(), c));
+    if r.len() > 20 {
+        r.remove(0);
+    }
+}
+
+/// Re-ask a previous question in "deep" (screenshot + detailed) or "web" (search) mode.
+pub async fn followup(st: &Shared, id: &str, mode: &str) -> Result<AssistantResponse> {
+    let c = RECENT.lock().iter().rev().find(|(i, _)| i == id).map(|(_, c)| c.clone()).ok_or_else(|| anyhow!("That answer expired. Ask again."))?;
+    run_mode(st, &c.query, c.selection, &c.front, c.screen, mode).await
+}
+
 pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>) -> Result<AssistantResponse> {
+    run_mode(st, query, selection, front, screen, "quick").await
+}
+
+pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>, mode: &str) -> Result<AssistantResponse> {
+    let ctx = Ctx { query: query.to_string(), selection: selection.clone(), front: front.clone(), screen: screen.clone() };
     // 1) instant local commands ("open Slack", "google …", "play … on youtube") — no AI needed
-    if selection.is_none() {
+    if selection.is_none() && mode == "quick" {
         if let Some(intent) = crate::intents::parse(query) {
             let result = execute(st, &intent.action, front, false).await;
             let (reply, results) = match result {
@@ -80,6 +109,8 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
                 actions: vec![intent.action],
                 results,
                 created_at: chrono::Local::now().to_rfc3339(),
+                mode: "quick".into(),
+                sources: vec![],
             });
         }
     }
@@ -89,24 +120,52 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
         return Err(anyhow!("Pick an AI model in Settings → AI to ask questions (“open …” and “google …” work without one)."));
     }
     // screen OCR is the largest prompt cost — only include it when the request is about the screen
-    let screen = screen.filter(|_| text::wants_screen_context(query));
+    // (always in deep mode, where a screenshot is attached as well)
+    let screen = screen.filter(|_| mode == "deep" || text::wants_screen_context(query));
+    let s_web = mode == "web";
+    if s_web && !llm::supports_web(&s.llm_provider) {
+        // provider can't search: hand the question to Perplexity instead of guessing
+        let url = format!("https://www.perplexity.ai/search?q={}", url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>());
+        let _ = tauri_plugin_opener::open_url(&url, None::<&str>);
+        return Ok(AssistantResponse {
+            id: db::new_id(),
+            query: query.into(),
+            reply: "Your AI model can't search the web, so I opened Perplexity with your question. Claude and Gemini can search right here.".into(),
+            actions: vec![],
+            results: vec![],
+            created_at: chrono::Local::now().to_rfc3339(),
+            mode: "web".into(),
+            sources: vec![],
+        });
+    }
+    let image = if mode == "deep" && s.assistant_screen_context && crate::platform::permissions().screen {
+        tokio::task::spawn_blocking(|| crate::attention::capture_focused_jpeg(1280)).await.ok().flatten().map(|(_, b)| b)
+    } else {
+        None
+    };
     let context = build_context(st, query, selection.as_deref(), front, screen.as_deref());
     let mut system = prompts::assistant_system(&context);
+    system.push_str(prompts::assistant_mode_note(mode));
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));
     }
-    let raw = llm::chat(
+    let (raw, sources) = llm::chat_ex(
         &st.egress,
         &cfgl,
         ChatRequest {
             system: &system,
             user: query,
-            image_b64: None,
-            json: true,
+            image_b64: image.as_deref().map(|b| ("image/jpeg", b)),
+            json: !s_web,
             purpose: Purpose::Assistant,
             cloud_allowed: s.assistant_cloud_allowed,
-            max_tokens: if selection.is_some() { 1500 } else { 600 },
+            max_tokens: match mode {
+                "deep" | "web" => 2500,
+                _ if selection.is_some() => 1500,
+                _ => 600,
+            },
         },
+        llm::Extras { web: s_web, deep: mode == "deep" },
     )
     .await
     .map_err(|e| {
@@ -125,13 +184,17 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
             Err(e) => results.push(format!("⚠️ {e}")),
         }
     }
+    let id = db::new_id();
+    remember(&id, ctx);
     Ok(AssistantResponse {
-        id: db::new_id(),
+        id,
         query: query.into(),
         reply: if parsed.reply.is_empty() && !results.is_empty() { "Done.".into() } else { parsed.reply },
         actions: parsed.actions,
         results,
         created_at: chrono::Local::now().to_rfc3339(),
+        mode: mode.into(),
+        sources,
     })
 }
 

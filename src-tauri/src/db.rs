@@ -843,6 +843,8 @@ mod tests {
                 actions: vec![],
                 results: vec![],
                 created_at: format!("2026-11-05T10:0{i}:00+05:30"),
+                mode: "quick".into(),
+                sources: vec![],
             })
             .unwrap();
         }

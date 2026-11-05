@@ -21,8 +21,19 @@ pub struct ActiveSession {
     pub started: Instant,
     /// hands-free (ctrl/fn + Space): longer cap, keys released
     pub locked: bool,
+    /// dictation: sentences transcribed while still talking (on-device STT)
+    pub stream: Option<std::sync::Arc<StreamBuf>>,
+    pub stream_task: Option<tauri::async_runtime::JoinHandle<()>>,
     /// OCR text of the focused window, captured in the background (assistant only)
     pub screen: Option<tauri::async_runtime::JoinHandle<Option<String>>>,
+}
+
+/// Shared between a dictation session and its background transcriber.
+#[derive(Default)]
+pub struct StreamBuf {
+    pub committed: Mutex<Vec<String>>,
+    pub pending: Mutex<Vec<f32>>,
+    pub stop: AtomicBool,
 }
 
 pub struct MeetingHandle {

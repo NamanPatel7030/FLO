@@ -34,6 +34,18 @@ pub struct ChatRequest<'a> {
     pub max_tokens: u32,
 }
 
+/// Extras for assistant follow-ups: provider web search and a deeper reasoning budget.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Extras {
+    pub web: bool,
+    pub deep: bool,
+}
+
+/// Can this provider search the web itself?
+pub fn supports_web(provider: &str) -> bool {
+    matches!(provider, "anthropic" | "gemini")
+}
+
 /// Is this an OpenAI reasoning model (counts hidden reasoning toward the output cap)?
 fn openai_reasoning(model: &str) -> bool {
     let m = model.to_lowercase();
@@ -163,15 +175,28 @@ pub async fn list_models(egress: &Egress, cfg: &LlmConfig) -> Vec<String> {
 }
 
 pub async fn chat(egress: &Egress, cfg: &LlmConfig, req: ChatRequest<'_>) -> Result<String> {
+    chat_ex(egress, cfg, req, Extras::default()).await.map(|(t, _)| t)
+}
+
+/// Like `chat`, plus web search / deep effort; returns (text, web sources).
+pub async fn chat_ex(egress: &Egress, cfg: &LlmConfig, req: ChatRequest<'_>, ex: Extras) -> Result<(String, Vec<crate::model::Source>)> {
     if !cfg.is_configured() {
         bail!("No AI model configured. Pick one in Settings → AI.");
     }
     let model = if cfg.model.trim().is_empty() { default_model(&cfg.provider).to_string() } else { cfg.model.clone() };
     match cfg.provider.as_str() {
-        "anthropic" => anthropic(egress, &model, req).await,
-        "gemini" => gemini(egress, &model, req).await,
-        _ => openai_compat(egress, cfg, &model, req).await,
+        "anthropic" => anthropic(egress, &model, req, ex).await,
+        "gemini" => gemini(egress, &model, req, ex).await,
+        _ => openai_compat(egress, cfg, &model, req).await.map(|t| (t, vec![])),
     }
+}
+
+fn source(title: Option<&str>, url: Option<&str>) -> Option<crate::model::Source> {
+    let url = url?.to_string();
+    if !url.starts_with("http") {
+        return None;
+    }
+    Some(crate::model::Source { title: title.unwrap_or(&url).to_string(), url })
 }
 
 async fn send(egress: &Egress, url: &str, req: &ChatRequest<'_>, builder: impl FnOnce(reqwest::Client) -> reqwest::RequestBuilder, body: Value) -> Result<Value> {
@@ -249,7 +274,7 @@ async fn openai_compat(egress: &Egress, cfg: &LlmConfig, model: &str, req: ChatR
 
 /// Anthropic Messages API (raw HTTP; Rust has no official SDK). API version 2026-10-21:
 /// no temperature/top_p/top_k. Server-side refusal fallback enabled.
-async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result<String> {
+async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extras) -> Result<(String, Vec<crate::model::Source>)> {
     let url = "https://api.anthropic.com/v1/messages".to_string();
     let key = key_for("anthropic").await?.unwrap_or_default();
     let mut content = vec![];
@@ -263,9 +288,12 @@ async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result
         "max_tokens": (req.max_tokens.max(256) + 1536),
         "system": req.system,
         "messages": [{"role": "user", "content": content}],
-        // voice UX: favour latency
-        "output_config": {"effort": "low"},
+        // voice UX: favour latency; "Go deeper" thinks more
+        "output_config": {"effort": if ex.deep || ex.web { "medium" } else { "low" }},
     });
+    if ex.web {
+        body["tools"] = json!([{ "type": "web_search_20260209", "name": "web_search", "max_uses": 3 }]);
+    }
     let fallback = model.starts_with("claude-opus-5-5") || model.starts_with("claude-sonnet-5-5") || model.starts_with("claude-fable-5-1") || model.starts_with("claude-opus-5");
     if fallback {
         body["fallbacks"] = json!("default");
@@ -285,24 +313,26 @@ async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result
     if v["stop_reason"].as_str() == Some("refusal") {
         bail!("The model declined this request.");
     }
-    let text: String = v["content"]
-        .as_array()
-        .map(|blocks| {
-            blocks
-                .iter()
-                .filter(|b| b["type"] == "text")
-                .filter_map(|b| b["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .unwrap_or_default();
+    let blocks = v["content"].as_array().cloned().unwrap_or_default();
+    let text: String = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("");
+    let mut sources = vec![];
+    for b in blocks.iter().filter(|b| b["type"] == "web_search_tool_result") {
+        for r in b["content"].as_array().cloned().unwrap_or_default() {
+            if let Some(s) = source(r["title"].as_str(), r["url"].as_str()) {
+                if !sources.iter().any(|x: &crate::model::Source| x.url == s.url) {
+                    sources.push(s);
+                }
+            }
+        }
+    }
     if text.is_empty() {
         bail!("empty response from Anthropic");
     }
-    Ok(text)
+    sources.truncate(6);
+    Ok((text, sources))
 }
 
-async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result<String> {
+async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extras) -> Result<(String, Vec<crate::model::Source>)> {
     let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
     let key = key_for("gemini").await?.unwrap_or_default();
     let mut parts = vec![json!({"text": req.user})];
@@ -314,19 +344,31 @@ async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>) -> Result<St
         "contents": [{"role": "user", "parts": parts}],
     });
     let mut gen = json!({ "maxOutputTokens": req.max_tokens.max(64) });
-    if req.json {
+    if req.json && !ex.web {
         gen["responseMimeType"] = json!("application/json");
     }
-    if model.contains("flash") {
+    if model.contains("flash") && !ex.deep {
         gen["thinkingConfig"] = json!({ "thinkingBudget": 0 }); // no hidden thinking tokens
     }
     body["generationConfig"] = gen;
+    if ex.web {
+        body["tools"] = json!([{ "google_search": {} }]);
+    }
     let v = send(egress, &url, &req, |c| c.post(&url).header("x-goog-api-key", key), body).await?;
-    v["candidates"][0]["content"]["parts"]
+    let text = v["candidates"][0]["content"]["parts"]
         .as_array()
         .map(|p| p.iter().filter_map(|x| x["text"].as_str()).collect::<Vec<_>>().join(""))
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow!("unexpected response from Gemini"))
+        .ok_or_else(|| anyhow!("unexpected response from Gemini"))?;
+    let sources = v["candidates"][0]["groundingMetadata"]["groundingChunks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|c| source(c["web"]["title"].as_str(), c["web"]["uri"].as_str()))
+        .take(6)
+        .collect();
+    Ok((text, sources))
 }
 
 #[cfg(test)]
@@ -351,6 +393,14 @@ mod tests {
             let host = url::Url::parse(&openai_base(&mk(p)).unwrap()).unwrap().host_str().unwrap().to_string();
             assert!(crate::egress::is_allowed(&host, crate::egress::Purpose::Assistant, true), "{host}");
         }
+    }
+
+    #[test]
+    fn web_capable_providers() {
+        assert!(supports_web("anthropic") && supports_web("gemini"));
+        assert!(!supports_web("openai") && !supports_web("ollama"));
+        assert!(source(Some("x"), Some("ftp://a")).is_none());
+        assert_eq!(source(None, Some("https://a.b")).unwrap().title, "https://a.b");
     }
 
     #[test]

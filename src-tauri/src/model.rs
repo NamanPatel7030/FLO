@@ -190,6 +190,22 @@ pub struct AssistantResponse {
     pub actions: Vec<AssistantAction>,
     pub results: Vec<String>,
     pub created_at: String,
+    /// quick | deep | web
+    #[serde(default = "quick_mode")]
+    pub mode: String,
+    /// web sources when mode = web
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<Source>,
+}
+
+fn quick_mode() -> String {
+    "quick".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Source {
+    pub title: String,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

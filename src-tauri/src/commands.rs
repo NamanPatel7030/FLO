@@ -112,11 +112,12 @@ pub fn cancel_session(st: State<Shared>) {
 }
 
 #[tauri::command]
-pub async fn ask_assistant(st: State<'_, Shared>, text: String) -> R<AssistantResponse> {
+pub async fn ask_assistant(st: State<'_, Shared>, text: String, mode: Option<String>) -> R<AssistantResponse> {
     let st = st.inner().clone();
     st.state(Phase::Thinking, Mode::Assistant, None);
     let front = st.last_front.lock().clone();
-    let r = assistant::run(&st, &text, None, &front, None).await;
+    let mode = mode.unwrap_or_else(|| "quick".into());
+    let r = assistant::run_mode(&st, &text, None, &front, None, &mode).await;
     match &r {
         Ok(resp) => {
             let _ = st.db.insert_assistant(resp);
@@ -132,6 +133,26 @@ pub async fn ask_assistant(st: State<'_, Shared>, text: String) -> R<AssistantRe
 #[tauri::command]
 pub fn list_assistant(st: State<Shared>, limit: Option<u32>) -> R<Vec<AssistantResponse>> {
     st.db.list_assistant(limit.unwrap_or(100)).map_err(e)
+}
+
+/// "Go deeper" (screenshot + detailed answer) or "Search the web" on a previous answer.
+#[tauri::command]
+pub async fn assistant_followup(st: State<'_, Shared>, id: String, mode: String) -> R<AssistantResponse> {
+    let st = st.inner().clone();
+    if !matches!(mode.as_str(), "deep" | "web") {
+        return Err("mode must be deep or web".into());
+    }
+    st.state(Phase::Thinking, Mode::Assistant, None);
+    let r = assistant::followup(&st, &id, &mode).await;
+    match &r {
+        Ok(resp) => {
+            let _ = st.db.insert_assistant(resp);
+            st.emit(ev::ASSISTANT, resp.clone());
+            st.finish(Phase::Done, Mode::Assistant, None);
+        }
+        Err(err) => st.finish(Phase::Error, Mode::Assistant, Some(err.to_string())),
+    }
+    r.map_err(e)
 }
 
 #[tauri::command]

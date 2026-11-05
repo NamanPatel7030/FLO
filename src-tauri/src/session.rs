@@ -54,7 +54,18 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
         return Ok(());
     }
     let started = Instant::now();
-    *guard = Some(ActiveSession { mode, recorder, front, selection, started, screen, locked });
+    // speed: start loading the speech model now, in parallel with the user talking
+    let local = s.stt_provider == "local";
+    if local {
+        if let Some(path) = stt::model_path(&st.models_dir, &s.stt_model) {
+            let w = st.whisper.clone();
+            tauri::async_runtime::spawn_blocking(move || w.warm(&path));
+        }
+    }
+    // speed: transcribe finished sentences while still talking (dictation, on-device)
+    let stream = (local && mode == Mode::Dictation).then(|| std::sync::Arc::new(crate::state::StreamBuf::default()));
+    let stream_task = stream.clone().map(|buf| tauri::async_runtime::spawn(stream_while_talking(st.clone(), started, buf)));
+    *guard = Some(ActiveSession { mode, recorder, front, selection, started, screen, locked, stream, stream_task });
     // emit while holding the lock so a concurrent cancel/stop can't be overtaken by "listening"
     st.state(Phase::Listening, mode, locked.then(|| "hands-free".to_string()));
     drop(guard);
@@ -121,20 +132,81 @@ pub async fn stop(st: Shared) {
     }
 }
 
+/// Background transcriber for a dictation: commits each sentence at a natural pause, so on release
+/// only the last few seconds still need transcribing.
+async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<crate::state::StreamBuf>) {
+    use crate::livetx::{Action, Segmenter, SLICE_MS};
+    use std::sync::atomic::Ordering;
+    let mut seg = Segmenter::default();
+    let mut context = String::new();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(SLICE_MS)).await;
+        if buf.stop.load(Ordering::SeqCst) {
+            break;
+        }
+        let slice = {
+            let g = st.session.lock();
+            match g.as_ref() {
+                Some(s) if s.started == started => s.recorder.take_samples(),
+                _ => break,
+            }
+        };
+        let ms = (slice.len() as u64 * 1000) / audio::TARGET_RATE as u64;
+        let rms = audio::rms(&slice);
+        buf.pending.lock().extend_from_slice(&slice);
+        match seg.push(ms.max(1), rms) {
+            Action::Final => {
+                let audio_now = std::mem::take(&mut *buf.pending.lock());
+                let secs = audio_now.len() as f32 / audio::TARGET_RATE as f32;
+                if let Ok(t) = transcribe_with_prompt(&st, audio_now, &context).await {
+                    if !t.trim().is_empty() && !stt::is_hallucination(&t, secs) {
+                        context = text::truncate_chars(&t, 200);
+                        buf.committed.lock().push(t.trim().to_string());
+                    }
+                }
+            }
+            Action::Discard => {
+                // only drop pure silence; a short word before a pause stays for the next sentence
+                let mut p = buf.pending.lock();
+                if audio::rms(&p) < 0.006 {
+                    p.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
-    let ActiveSession { mode, recorder, front, selection, started, screen, .. } = sess;
+    let ActiveSession { mode, recorder, front, selection, started, screen, stream, stream_task, .. } = sess;
     let duration_ms = started.elapsed().as_millis() as u64;
-    let samples = tokio::task::spawn_blocking(move || recorder.stop()).await?;
-    if audio::rms(&samples) < 0.003 {
+    // let the background transcriber finish the sentence it's on, then take what's left
+    if let Some(buf) = &stream {
+        buf.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    if let Some(t) = stream_task {
+        let _ = t.await;
+    }
+    let mut samples = stream.as_ref().map(|b| std::mem::take(&mut *b.pending.lock())).unwrap_or_default();
+    samples.extend(tokio::task::spawn_blocking(move || recorder.stop()).await?);
+    let committed: Vec<String> = stream.as_ref().map(|b| b.committed.lock().clone()).unwrap_or_default();
+    if committed.is_empty() && audio::rms(&samples) < 0.003 {
         return Err(anyhow!("I didn't hear anything. Check the microphone in System Settings → Sound."));
     }
     st.state(Phase::Transcribing, mode, None);
     let t0 = Instant::now();
-    let raw = tokio::time::timeout(std::time::Duration::from_secs(60), transcribe(st, samples.clone()))
-        .await
-        .map_err(|_| anyhow!("Transcription took too long. Try a smaller speech model in Settings → Voice."))??;
     let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
-    if stt::is_hallucination(&raw, secs) {
+    let tail = if audio::rms(&samples) >= 0.003 {
+        let ctx = committed.last().map(|c| text::truncate_chars(c, 200)).unwrap_or_default();
+        tokio::time::timeout(std::time::Duration::from_secs(60), transcribe_with_prompt(st, samples, &ctx))
+            .await
+            .map_err(|_| anyhow!("Transcription took too long. Try a smaller speech model in Settings → Voice."))??
+    } else {
+        String::new()
+    };
+    let tail = if stt::is_hallucination(&tail, secs) && !committed.is_empty() { String::new() } else { tail };
+    let raw = committed.into_iter().chain(std::iter::once(tail)).filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join(" ");
+    if stt::is_hallucination(&raw, secs.max(1.0)) {
         return Err(anyhow!("Didn't catch that. Try speaking a bit longer."));
     }
     st.emit(ev::TRANSCRIPT, TranscriptEvent { text: raw.clone(), is_final: false });
@@ -184,10 +256,6 @@ fn save(st: &Shared, mode: Mode, app: &str, raw: &str, final_text: &str, duratio
 }
 
 /// STT with the configured provider. Personal dictionary words are passed as a prompt hint.
-pub async fn transcribe(st: &Shared, samples: Vec<f32>) -> Result<String> {
-    transcribe_with_prompt(st, samples, "").await
-}
-
 /// Same, with extra context (e.g. the previous sentence in a meeting) for better continuity.
 pub async fn transcribe_with_prompt(st: &Shared, samples: Vec<f32>, context: &str) -> Result<String> {
     let s = st.settings();

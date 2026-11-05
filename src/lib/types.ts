@@ -120,14 +120,20 @@ export type AssistantAction =
   /** staged — the user confirms in the notch (flo://confirm) before sending */
   | { type: "slack_send"; to: string; text: string };
 
+export type AssistantMode = "quick" | "deep" | "web";
+
 export interface AssistantResponse {
   id: string;
   query: string;
+  /** markdown; long in deep/web mode */
   reply: string;
   actions: AssistantAction[];
   /** human readable results of executed actions */
   results: string[];
   createdAt: string;
+  mode: AssistantMode;
+  /** web sources (web mode) */
+  sources?: { title: string; url: string }[];
 }
 
 export interface MeetingSegment {
@@ -426,7 +432,10 @@ export const EV = {
  *  get_island_geometry() -> IslandGeometry
  *  island_resize({width,height})         open_dashboard({route?})
  *  start_session({mode})                 stop_session()       cancel_session()
- *  ask_assistant({text}) -> AssistantResponse
+ *  ask_assistant({text, mode?}) -> AssistantResponse     (mode: quick | deep | web)
+ *  assistant_followup({id, mode: "deep"|"web"}) -> AssistantResponse  — re-ask a previous answer
+ *     deep = screenshot of the focused window + detailed markdown; web = provider web search + sources
+ *     (non-web providers: opens Perplexity and says so)
  *  list_history({limit}) -> Dictation[]  get_analytics({days}) -> Analytics
  *  list_todos() -> Todo[]                add_todo({title,projectId?,due?}) -> Todo
  *  update_todo({id,status?,title?,projectId?})   delete_todo({id})

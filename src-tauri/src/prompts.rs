@@ -58,6 +58,18 @@ pub fn meeting_update_user(previous_summary: &str, new_lines: &str) -> String {
     }
 }
 
+/// Extra instructions for "Go deeper" / "Search the web" follow-ups.
+pub fn assistant_mode_note(mode: &str) -> &'static str {
+    match mode {
+        "deep" => "\n\nDETAILED MODE: the user wants an in-depth answer. A screenshot of their screen may be attached: \
+read it carefully. Put a thorough, well-structured answer in \"reply\" using short markdown (headings, bullets, \
+code blocks when useful). Be concrete; no filler.",
+        "web" => "\n\nWEB MODE: search the web for current, factual information. Answer in markdown with the key facts \
+first, then details. You may answer in plain markdown instead of JSON.",
+        _ => "",
+    }
+}
+
 pub fn meeting_summary_system(final_pass: bool) -> String {
     let extra = if final_pass {
         "This is the final summary of the whole meeting."

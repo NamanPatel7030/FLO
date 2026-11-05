@@ -426,6 +426,8 @@ pub fn wants_screen_context(query: &str) -> bool {
         " screen", " this ", " this?", " this.", " these ", " here", " above", " below", " reply", " respond",
         " answer this", " summari", " what does it", " what is this", " explain", " translate", " this email",
         " this message", " this page", " this doc", " on my screen", " that message", " that email",
+        " what am i looking at", " what's this", " what is that", " this error", " this code", " fix this", " this chart",
+        " this table", " in front of me", " visible",
     ];
     CUES.iter().any(|c| q.contains(c))
 }

@@ -120,28 +120,41 @@ impl LocalWhisper {
         }
     }
 
+    /// Load (or reuse) the model. Called on key press so it's ready by the time you release.
     #[cfg(feature = "local-stt")]
-    pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
-        use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+    fn context(&self, model_file: &Path) -> Result<Arc<whisper_rs::WhisperContext>> {
+        use whisper_rs::{WhisperContext, WhisperContextParameters};
         if !model_file.exists() {
             bail!("Speech model not downloaded yet. Open Settings → Voice and download it.");
         }
         *self.last_used.lock() = Some(std::time::Instant::now());
         let key = model_file.to_string_lossy().to_string();
-        let ctx = {
-            let mut g = self.ctx.lock();
-            match g.as_ref() {
-                Some((k, c)) if *k == key => c.clone(),
-                _ => {
-                    let c = Arc::new(
-                        WhisperContext::new_with_params(&key, WhisperContextParameters::default())
-                            .map_err(|e| anyhow!("load model: {e:?}"))?,
-                    );
-                    *g = Some((key.clone(), c.clone()));
-                    c
-                }
+        let mut g = self.ctx.lock();
+        Ok(match g.as_ref() {
+            Some((k, c)) if *k == key => c.clone(),
+            _ => {
+                let c = Arc::new(WhisperContext::new_with_params(&key, WhisperContextParameters::default()).map_err(|e| anyhow!("load model: {e:?}"))?);
+                *g = Some((key, c.clone()));
+                c
             }
-        };
+        })
+    }
+
+    #[cfg(feature = "local-stt")]
+    pub fn warm(&self, model_file: &Path) {
+        let t = std::time::Instant::now();
+        if self.context(model_file).is_ok() {
+            log::debug!("speech model ready in {} ms", t.elapsed().as_millis());
+        }
+    }
+
+    #[cfg(not(feature = "local-stt"))]
+    pub fn warm(&self, _model_file: &Path) {}
+
+    #[cfg(feature = "local-stt")]
+    pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+        use whisper_rs::{FullParams, SamplingStrategy};
+        let ctx = self.context(model_file)?;
         let mut state = ctx.create_state().map_err(|e| anyhow!("{e:?}"))?;
         let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         let lang = if language.is_empty() { "auto" } else { language };

@@ -295,6 +295,7 @@ pub fn run() {
             commands::stop_session,
             commands::cancel_session,
             commands::ask_assistant,
+            commands::assistant_followup,
             commands::list_assistant,
             commands::list_history,
             commands::get_analytics,

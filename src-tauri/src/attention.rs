@@ -41,6 +41,23 @@ pub fn blocked_reason(s: &crate::model::Settings) -> Option<String> {
     None
 }
 
+/// Focused window as a compact JPEG (longest side ≤ `max_side`) → (app, base64). For "Go deeper".
+pub fn capture_focused_jpeg(max_side: u32) -> Option<(String, String)> {
+    use base64::Engine;
+    use xcap::image::{codecs::jpeg::JpegEncoder, DynamicImage};
+    let me = std::process::id();
+    let w = xcap::Window::all().ok()?.into_iter().find(|w| {
+        w.is_focused().unwrap_or(false) && !w.is_minimized().unwrap_or(false) && w.pid().map(|p| p != me).unwrap_or(true)
+    })?;
+    let app = w.app_name().unwrap_or_default();
+    let img = DynamicImage::ImageRgba8(w.capture_image().ok()?);
+    let img = if img.width().max(img.height()) > max_side { img.resize(max_side, max_side, xcap::image::imageops::FilterType::Triangle) } else { img };
+    let rgb = img.to_rgb8();
+    let mut buf = Vec::new();
+    JpegEncoder::new_with_quality(&mut buf, 72).encode_image(&rgb).ok()?;
+    Some((app, base64::engine::general_purpose::STANDARD.encode(buf)))
+}
+
 pub fn status(st: &Shared) -> AttentionStatus {
     let mut s = st.attention.lock().clone();
     let settings = st.settings();
