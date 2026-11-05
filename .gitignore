@@ -6,3 +6,6 @@ src-tauri/target/
 .claude/
 test-results/
 playwright-report/
+website/.env.local
+website/flo.db
+website/.next
