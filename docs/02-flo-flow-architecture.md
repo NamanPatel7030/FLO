@@ -102,3 +102,12 @@ fixture screenshots/AX dumps for to-do extraction evals, Playwright for UI.
 2. Languages you dictate in (English only? Hindi/Gujarati/code-mixed?) → model choice.
 3. Assistant: allow BYOK cloud LLM for screen-context questions, or strictly local?
 4. Windows push-to-talk key (no Fn on Windows).
+
+## 8. Decisions taken for the MVP (2026-11-05)
+- Built from scratch on Tauri 2 (Handy used only as a reference).
+- STT default: whisper.cpp Large v3 Turbo q5 (multilingual: English/Hindi/Gujarati/Hinglish), Metal on Mac; BYOK OpenAI/Groq optional.
+- Assistant may use a cloud LLM only when "Assistant may use cloud AI" is on; Attention text stays local unless its own toggle is on; images never leave the device.
+- Windows push-to-talk: Right Ctrl (dictation), Right Alt (assistant). macOS: fn, fn+ctrl.
+- UI: Dynamic Island grown out of the MacBook notch (window sized exactly to the notch when idle so the menu bar stays clickable); bottom-right frosted capsule on Windows; glassmorphism dashboard with native vibrancy (macOS sidebar material / Windows Mica).
+- Added: meeting note-taker (live transcript + rolling summary + action items → to-dos), analytics dashboard (words, WPM, time saved, streak, per-app, per-hour, meetings, to-dos), projects controllable by voice.
+- Claude Code integration: Stop/Notification hooks → `curl` → `127.0.0.1:47621/claude/hook?token=…` → island reminder + "Claude sessions" inbox; unseen reminders re-pop once after 10 min.
