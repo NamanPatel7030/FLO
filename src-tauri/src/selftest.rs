@@ -48,6 +48,40 @@ async fn transcribe(eg: &Egress, s: &crate::model::Settings, models: &Path, w: &
     }
 }
 
+/// `--bench-stt out.json`: time the installed speech model on synthetic speech with the old
+/// decode settings vs the fast profile (no network, no keychain).
+pub fn bench_stt(out: &str) {
+    let data_dir: PathBuf = dirs::data_dir().unwrap_or_default().join("com.flo.flow");
+    let s = settings::load(&data_dir);
+    let Some(path) = stt::model_path(&data_dir.join("models"), &s.stt_model) else { return };
+    let tmp = std::env::temp_dir().join(format!("flo-bench-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let phrases = [
+        "Send the deck to Rahul by Friday.",
+        "Let's meet tomorrow at six and review the launch checklist together.",
+        "I think the new build is really fast, the notch looks great, and we should ship it to the beta testers this week after one more round of testing on Windows and Linux.",
+    ];
+    let mut rows = vec![];
+    for (i, p) in phrases.iter().enumerate() {
+        let Ok(audio) = tts_to_16k(p, &tmp, &format!("b{i}")) else { continue };
+        let audio = crate::audio::trim_silence(&audio);
+        let secs = audio.len() as f32 / 16_000.0;
+        let mut row = json!({ "phrase": p, "audio_secs": (secs * 10.0).round() / 10.0 });
+        for (label, baseline) in [("baseline", true), ("fast", false)] {
+            let w = stt::LocalWhisper::default();
+            w.baseline.store(baseline, std::sync::atomic::Ordering::Relaxed);
+            w.warm(&path); // load outside the timing (the app warms on key press)
+            let _ = w.transcribe(&path, &audio, &s.language, ""); // first run compiles Metal kernels
+            let t = Instant::now();
+            let text = w.transcribe(&path, &audio, &s.language, "").unwrap_or_default();
+            row[label] = json!({ "ms": t.elapsed().as_millis(), "text": text, "similarity": (text::similarity(&text, p) * 100.0).round() / 100.0 });
+        }
+        rows.push(row);
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::write(out, serde_json::to_string_pretty(&json!({ "model": s.stt_model, "runs": rows })).unwrap_or_default());
+}
+
 pub fn run(out: &str) {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
     let report = rt.block_on(run_async());

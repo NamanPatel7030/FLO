@@ -273,6 +273,11 @@ pub fn run() {
         let _ = std::fs::write(&out, serde_json::to_string_pretty(&platform::diagnostics()).unwrap_or_default());
         return;
     }
+    if let Some(i) = args.iter().position(|a| a == "--bench-stt") {
+        let out = args.get(i + 1).cloned().unwrap_or_else(|| "/tmp/flo-bench.json".into());
+        selftest::bench_stt(&out);
+        return;
+    }
     if let Some(i) = args.iter().position(|a| a == "--selftest") {
         let out = args.get(i + 1).cloned().unwrap_or_else(|| "/tmp/flo-selftest.json".into());
         selftest::run(&out);

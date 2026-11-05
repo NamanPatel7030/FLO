@@ -76,6 +76,43 @@ pub async fn download_model(egress: &Egress, models_dir: &Path, id: &str, progre
 }
 
 /// Known whisper hallucinations on near-silence.
+/// A degenerate repetition loop (e.g. "it's it's it's…") — the failure mode of greedy decoding
+/// without temperature fallback. Returns true when one short phrase dominates the output.
+pub fn is_degenerate(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() < 12 {
+        return false;
+    }
+    // longest run of a repeating 1–3 word phrase
+    for span in 1..=3 {
+        let mut run = 1;
+        let mut i = span;
+        while i + span <= words.len() {
+            if words[i..i + span].eq_ignore_ascii_case_slice(&words[i - span..i]) {
+                run += 1;
+                if run * span >= 10 && (run * span) as f32 >= words.len() as f32 * 0.6 {
+                    return true;
+                }
+            } else {
+                run = 1;
+            }
+            i += span;
+        }
+    }
+    // unique-word ratio: heavy repetition → few distinct words
+    let distinct: std::collections::HashSet<String> = words.iter().map(|w| w.to_lowercase()).collect();
+    distinct.len() * 4 <= words.len()
+}
+
+trait EqIgnoreAsciiCaseSlice {
+    fn eq_ignore_ascii_case_slice(&self, other: &Self) -> bool;
+}
+impl EqIgnoreAsciiCaseSlice for [&str] {
+    fn eq_ignore_ascii_case_slice(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().zip(other).all(|(a, b)| a.eq_ignore_ascii_case(b))
+    }
+}
+
 pub fn is_hallucination(text: &str, seconds: f32) -> bool {
     const H: &[&str] = &[
         "thank you.", "thanks for watching!", "thank you for watching.", "you", "bye.", "[blank_audio]",
@@ -97,9 +134,18 @@ pub fn spawn_idle_unloader(w: Arc<LocalWhisper>) {
     });
 }
 
+/// Encoder window for a clip: whisper always encodes 30 s (1500 frames) unless told otherwise;
+/// a 3 s sentence only needs ~200. 50 frames/s, +1 s margin, rounded up to 64, clamped.
+pub fn audio_ctx_for(secs: f32) -> i32 {
+    let frames = ((secs + 1.0) * 50.0).ceil() as i32;
+    (((frames + 63) / 64) * 64).clamp(384, 1500)
+}
+
 #[derive(Default)]
 pub struct LocalWhisper {
     last_used: Mutex<Option<std::time::Instant>>,
+    /// use the pre-tuning decode settings (benchmark baseline only)
+    pub baseline: std::sync::atomic::AtomicBool,
     #[cfg(feature = "local-stt")]
     ctx: Mutex<Option<(String, Arc<whisper_rs::WhisperContext>)>>,
     #[cfg(not(feature = "local-stt"))]
@@ -133,7 +179,10 @@ impl LocalWhisper {
         Ok(match g.as_ref() {
             Some((k, c)) if *k == key => c.clone(),
             _ => {
-                let c = Arc::new(WhisperContext::new_with_params(&key, WhisperContextParameters::default()).map_err(|e| anyhow!("load model: {e:?}"))?);
+                let mut cp = WhisperContextParameters::default();
+                // flash attention: faster decoding on Metal (no word-level DTW needed for dictation)
+                cp.flash_attn(!self.baseline.load(std::sync::atomic::Ordering::Relaxed));
+                let c = Arc::new(WhisperContext::new_with_params(&key, cp).map_err(|e| anyhow!("load model: {e:?}"))?);
                 *g = Some((key, c.clone()));
                 c
             }
@@ -151,8 +200,24 @@ impl LocalWhisper {
     #[cfg(not(feature = "local-stt"))]
     pub fn warm(&self, _model_file: &Path) {}
 
+    /// Transcribe with the fast decoder; if it degenerates into a repetition loop, retry the clip
+    /// once with the safe decoder (temperature fallback on). Fast for the 99%, correct for the rest.
     #[cfg(feature = "local-stt")]
     pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+        let fast = self.baseline.load(std::sync::atomic::Ordering::Relaxed);
+        let out = self.decode_once(model_file, samples, language, prompt)?;
+        if !fast && is_degenerate(&out) {
+            log::warn!("fast STT degenerated; retrying this clip with the safe decoder");
+            self.baseline.store(true, std::sync::atomic::Ordering::Relaxed);
+            let safe = self.decode_once(model_file, samples, language, prompt);
+            self.baseline.store(false, std::sync::atomic::Ordering::Relaxed);
+            return safe;
+        }
+        Ok(out)
+    }
+
+    #[cfg(feature = "local-stt")]
+    fn decode_once(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
         use whisper_rs::{FullParams, SamplingStrategy};
         let ctx = self.context(model_file)?;
         let mut state = ctx.create_state().map_err(|e| anyhow!("{e:?}"))?;
@@ -166,6 +231,17 @@ impl LocalWhisper {
         p.set_print_timestamps(false);
         p.set_suppress_blank(true);
         p.set_no_context(true);
+        if !self.baseline.load(std::sync::atomic::Ordering::Relaxed) {
+            // speed: one greedy pass (no temperature fallback re-decodes), no timestamp tokens,
+            // and an encoder window sized to the clip instead of a fixed 30 s
+            p.set_temperature_inc(0.0);
+            p.set_no_timestamps(true);
+            let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
+            if secs < 28.0 {
+                p.set_single_segment(true);
+                p.set_audio_ctx(audio_ctx_for(secs));
+            }
+        }
         p.set_n_threads(std::thread::available_parallelism().map(|n| n.get().min(8) as i32).unwrap_or(4));
         if !prompt.is_empty() {
             p.set_initial_prompt(prompt);
@@ -240,6 +316,23 @@ mod tests {
         assert!(!is_hallucination("Thank you.", 6.0));
         assert!(is_hallucination("  ", 10.0));
         assert!(!is_hallucination("Send the deck", 1.0));
+    }
+
+    #[test]
+    fn audio_ctx_scales_with_clip_length() {
+        assert_eq!(audio_ctx_for(1.0), 384); // floor keeps very short clips accurate
+        assert_eq!(audio_ctx_for(6.0), 384);
+        assert_eq!(audio_ctx_for(10.0), 576);
+        assert_eq!(audio_ctx_for(40.0), 1500);
+        assert_eq!(audio_ctx_for(20.0) % 64, 0);
+    }
+
+    #[test]
+    fn detects_degenerate_repetition() {
+        assert!(is_degenerate(&"it's ".repeat(40)));
+        assert!(is_degenerate("the end of the world, it's the end of the world, it's the end of the world, it's the end"));
+        assert!(!is_degenerate("Send the deck to Rahul by Friday and let's meet at six tomorrow afternoon."));
+        assert!(!is_degenerate("okay")); // too short to judge
     }
 
     #[test]

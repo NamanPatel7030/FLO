@@ -344,43 +344,49 @@ pub fn chunk_text(s: &str, size: usize) -> Vec<String> {
 /// Pick context for a query without sending everything: pinned docs (trimmed) first, then the
 /// highest-scoring chunks by keyword overlap, within `budget` chars total.
 pub fn select_context(query: &str, docs: &[(String, String, bool)], budget: usize) -> String {
+    // `docs` are the ENABLED docs (pinned flag = priority). Every enabled doc is represented:
+    // small docs in full, large docs trimmed to their most query-relevant chunk. Pinned first.
     let q = tokens(query);
     let mut out = String::new();
     let mut used = 0usize;
-    for (title, content, pinned) in docs.iter().filter(|d| d.2) {
-        let _ = pinned;
-        let piece = truncate_chars(content.trim(), 1200.min(budget.saturating_sub(used)));
-        if piece.len() < 20 {
-            continue;
+    const SMALL: usize = 1400;
+
+    let push = |out: &mut String, used: &mut usize, title: &str, body: &str, cap: usize| {
+        let piece = truncate_chars(body.trim(), cap.min(budget.saturating_sub(*used)));
+        if piece.chars().count() >= 12 {
+            *used += piece.len();
+            out.push_str(&format!("[{title}]\n{piece}\n\n"));
         }
-        used += piece.len();
-        out.push_str(&format!("[{title}]\n{piece}\n\n"));
-    }
-    if q.is_empty() || used >= budget {
-        return out.trim_end().to_string();
-    }
-    let mut scored: Vec<(f64, &str, String)> = vec![];
-    for (title, content, pinned) in docs {
-        if *pinned {
-            continue;
+    };
+
+    // most relevant chunk of a large doc (falls back to its start)
+    let best_chunk = |content: &str| -> String {
+        if q.is_empty() {
+            return truncate_chars(content, SMALL);
         }
-        for ch in chunk_text(content, 700) {
-            let ct = tokens(&ch);
-            let hits = q.iter().filter(|w| ct.contains(*w)).count() as f64;
-            if hits == 0.0 {
-                continue;
-            }
-            let score = hits / (q.len() as f64).sqrt() + 0.2 * (tokens(title).intersection(&q).count() as f64);
-            scored.push((score, title.as_str(), ch));
-        }
-    }
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    for (_, title, ch) in scored.into_iter().take(4) {
-        if used + ch.len() > budget {
+        chunk_text(content, 700)
+            .into_iter()
+            .map(|ch| {
+                let hits = q.iter().filter(|w| tokens(&ch).contains(*w)).count();
+                (hits, ch)
+            })
+            .max_by_key(|(h, _)| *h)
+            .map(|(h, ch)| if h > 0 { ch } else { truncate_chars(content, SMALL) })
+            .unwrap_or_default()
+    };
+
+    // pinned first, then the rest — but ALL enabled docs get a slot
+    let mut ordered: Vec<&(String, String, bool)> = docs.iter().collect();
+    ordered.sort_by_key(|d| !d.2); // pinned (true) first
+    for (title, content, _) in ordered {
+        if used >= budget {
             break;
         }
-        used += ch.len();
-        out.push_str(&format!("[{title}]\n{ch}\n\n"));
+        if content.chars().count() <= SMALL {
+            push(&mut out, &mut used, title, content, SMALL);
+        } else {
+            push(&mut out, &mut used, title, &best_chunk(content), 900);
+        }
     }
     out.trim_end().to_string()
 }
@@ -556,9 +562,9 @@ mod tests {
         ];
         let c = select_context("reply to Rahul about the Apollo invoice", &docs, 2500);
         assert!(c.contains("About me")); // pinned always
-        assert!(c.contains("Rahul owns the invoice"));
-        assert!(!c.contains("Biryani")); // irrelevant → not sent
-        assert!(select_context("x", &docs, 10).len() <= 200);
+        assert!(c.contains("Rahul owns the invoice")); // small enabled doc → always in full
+        assert!(c.contains("Biryani")); // enabled small doc is included even if off-topic
+        assert!(select_context("x", &docs, 10).len() <= 200); // respects a tiny budget
     }
 
     #[test]

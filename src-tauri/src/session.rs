@@ -319,7 +319,8 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
         // output ≈ input length; ~1.4 tokens/word + headroom
         max_tokens: (text::word_count(&base) * 2 + 40).min(2000),
     };
-    match tokio::time::timeout(std::time::Duration::from_secs(8), llm::chat(&st.egress, &cfg, req)).await {
+    // speed: AI polish gets 2.5 s; otherwise paste the locally cleaned text right away
+    match tokio::time::timeout(std::time::Duration::from_millis(2500), llm::chat(&st.egress, &cfg, req)).await {
         Ok(Ok(out)) => {
             let out = text::strip_ai_dashes(&text::apply_dictionary(&text::strip_llm_wrapping(&out), &dict));
             // guard against the model answering instead of cleaning
