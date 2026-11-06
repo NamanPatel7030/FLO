@@ -36,8 +36,12 @@ export type VoiceStatus = "idle" | "listening" | "denied" | "error" | "unsupport
  * No new dependencies.
  */
 export function useVoice(onLevel?: (v: number) => void) {
-  const [status, setStatus] = useState<VoiceStatus>(() => (speechSupported() ? "idle" : "unsupported"));
+  // SSR-safe: "idle" on both server and client first render, then detect support after mount.
+  const [status, setStatus] = useState<VoiceStatus>("idle");
   const [transcript, setTranscript] = useState("");
+  useEffect(() => {
+    if (!speechSupported()) setStatus((s) => (s === "idle" ? "unsupported" : s));
+  }, []);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);

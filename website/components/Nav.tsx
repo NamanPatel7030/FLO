@@ -26,19 +26,23 @@ export function Nav({ signedIn = false }: { signedIn?: boolean }) {
       <nav
         aria-label="Main"
         className={`mx-auto flex max-w-6xl items-center justify-between rounded-full px-3 py-2 transition-all duration-300 sm:px-4 ${
-          scrolled || open ? "glass-strong" : "border border-transparent"
+          scrolled || open ? "glass-strong" : "glass"
         }`}
       >
-        <Link href="/" className="flex items-center gap-2.5 rounded-full pr-2" aria-label="Flo home">
-          <Logo size={30} />
-          <span className="text-[17px] font-semibold tracking-tight">Flo</span>
-        </Link>
-        <div className="hidden items-center gap-1 md:flex">
-          {LINKS.map((l) => (
-            <a key={l.href} href={l.href} className="rounded-full px-3.5 py-2 text-sm text-muted transition hover:bg-white/5 hover:text-ink">
-              {l.label}
-            </a>
-          ))}
+        {/* left group: logo + links. Center stays clear for the notch spine above. */}
+        <div className="flex items-center gap-1">
+          <Link href="/" className="flex items-center gap-2.5 rounded-full pr-1" aria-label="Flo home">
+            <Logo size={30} />
+            <span className="text-[17px] font-semibold tracking-tight">Flo</span>
+          </Link>
+          <span className="mx-1 hidden h-5 w-px bg-white/10 md:block" />
+          <div className="hidden items-center gap-1 md:flex">
+            {LINKS.map((l) => (
+              <a key={l.href} href={l.href} className="rounded-full px-3.5 py-2 text-sm text-muted transition hover:bg-white/5 hover:text-ink">
+                {l.label}
+              </a>
+            ))}
+          </div>
         </div>
         <div className="hidden items-center gap-2 md:flex">
           {signedIn ? (

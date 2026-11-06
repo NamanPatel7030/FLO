@@ -30,6 +30,10 @@ html {
   scroll-behavior: smooth;
   background: #000;
 }
+/* anchored sections clear the fixed nav + notch */
+section[id] {
+  scroll-margin-top: 6rem;
+}
 body {
   /* transparent so the fixed Aurora backdrop (behind content) shows through; html stays #000 */
   background: transparent;

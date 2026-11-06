@@ -212,10 +212,10 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
                 </span>{" "}
                 <Words text="does" /> <Words text="the" /> <Words text="rest." />
               </h1>
-              <Reveal delay={0.55} className="mt-6 max-w-lg text-[18px] leading-relaxed text-muted sm:text-[20px]">
+              <Reveal mount delay={0.55} className="mt-6 max-w-lg text-[18px] leading-relaxed text-muted sm:text-[20px]">
                 Private voice dictation, a screen-aware assistant, live meeting notes and to-dos — all living in your notch. Try it right here, no download.
               </Reveal>
-              <Reveal delay={0.7} className="mt-8 flex flex-wrap items-center gap-3">
+              <Reveal mount delay={0.7} className="mt-8 flex flex-wrap items-center gap-3">
                 <Magnetic>
                   <Link href={signedIn ? "/download" : "/signup?next=/download"} className="btn btn-primary px-7 py-3.5 text-[15px]" data-testid="hero-cta">
                     Download Flo for free
@@ -224,7 +224,7 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
                 <span className="text-[13px] text-faint">macOS 13+ · Windows &amp; Linux beta · No card</span>
               </Reveal>
             </div>
-            <Reveal delay={0.4}>
+            <Reveal mount delay={0.4}>
               <TalkToFlo />
             </Reveal>
           </div>

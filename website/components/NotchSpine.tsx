@@ -73,7 +73,7 @@ export function NotchSpine() {
   const size = SIZES[scene];
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-0 z-40 hidden justify-center sm:flex" aria-hidden>
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[60] hidden justify-center sm:flex" aria-hidden>
       <motion.div
         className="relative overflow-hidden rounded-b-[20px] bg-black text-white"
         style={{ boxShadow: "0 18px 50px -20px rgb(0 0 0 / 0.9), inset 0 -1px 0 rgb(102 206 255 / 0.25)" }}

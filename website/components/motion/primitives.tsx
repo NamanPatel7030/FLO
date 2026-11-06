@@ -24,6 +24,7 @@ export function Reveal({
   blur = true,
   className,
   as = "div",
+  mount = false,
 }: {
   children: ReactNode;
   delay?: number;
@@ -31,15 +32,17 @@ export function Reveal({
   blur?: boolean;
   className?: string;
   as?: "div" | "section" | "li" | "span" | "h2" | "p";
+  /** above-the-fold: animate on mount instead of on scroll (so it's never stuck invisible) */
+  mount?: boolean;
 }) {
   const reduce = useReducedMotion();
   const MotionTag = motion[as] as typeof motion.div;
+  const target = { opacity: 1, y: 0, filter: "blur(0px)" };
   return (
     <MotionTag
       className={className}
       initial={reduce ? { opacity: 0 } : { opacity: 0, y, filter: blur ? "blur(10px)" : "blur(0px)" }}
-      whileInView={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-      viewport={{ once: true, margin: "-60px" }}
+      {...(mount ? { animate: target } : { whileInView: target, viewport: { once: true, margin: "-60px" } })}
       transition={{ duration: reduce ? 0.3 : 0.7, ease: EASE_OUT, delay }}
     >
       {children}

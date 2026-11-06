@@ -12,7 +12,11 @@ export function SectionRail() {
   const activeIndex = Math.max(0, items.findIndex((s) => s.id === scene));
 
   return (
-    <div className="pointer-events-none fixed left-6 top-1/2 z-30 hidden -translate-y-1/2 flex-col gap-3 lg:flex" aria-hidden>
+    <div
+      className="pointer-events-none fixed left-6 top-1/2 z-30 hidden -translate-y-1/2 flex-col gap-3 transition-opacity duration-500 lg:flex"
+      style={{ opacity: scene === "idle" ? 0 : 1 }}
+      aria-hidden
+    >
       {items.map((s, i) => {
         const active = s.id === scene;
         return (
