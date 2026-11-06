@@ -57,38 +57,40 @@
   --s5: #f472b6;
 }
 
-/* ── light theme: soft, bright glass — a real design pass, not inverted ───── */
+/* ── light theme: airy LIGHT-BLUE glass — bright, tinted, not grey ─────────── */
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #eef3f9;
-  --menu-bg: #ffffff;
-  --sheet-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 248, 253, 0.98));
-  --scrim: rgba(20, 35, 55, 0.28);
-  --fg: #0c1826;
-  --fg-muted: rgb(18 36 58 / 0.66);
-  --fg-faint: rgb(18 36 58 / 0.42);
-  --glass: rgb(255 255 255 / 0.66);
-  --glass-strong: rgb(255 255 255 / 0.9);
-  --glass-hover: rgb(255 255 255 / 1);
-  --border: rgb(20 50 80 / 0.1);
-  --border-strong: rgb(20 50 80 / 0.18);
-  --highlight: rgb(255 255 255 / 0.9);
-  --shadow: 0 16px 44px -18px rgb(20 50 90 / 0.3);
-  --glow: 0 0 0 1px rgb(var(--accent-rgb) / 0.25), 0 10px 30px -10px rgb(var(--accent-rgb) / 0.4);
-  --chart-grid: rgb(20 50 80 / 0.08);
-  --chart-axis: rgb(18 36 58 / 0.5);
+  --bg: #eaf3fe;
+  --menu-bg: #f6fbff;
+  --sheet-bg: linear-gradient(180deg, rgba(248, 252, 255, 0.98), rgba(233, 243, 254, 0.98));
+  --scrim: rgba(16, 52, 92, 0.26);
+  --fg: #0b2440;
+  --fg-muted: rgb(13 48 84 / 0.64);
+  --fg-faint: rgb(13 48 84 / 0.40);
+  /* glass gets a faint blue cast instead of flat white/grey */
+  --glass: rgb(214 236 255 / 0.55);
+  --glass-strong: rgb(234 246 255 / 0.9);
+  --glass-hover: rgb(255 255 255 / 0.96);
+  --border: rgb(60 140 220 / 0.18);
+  --border-strong: rgb(40 120 200 / 0.3);
+  --highlight: rgb(255 255 255 / 0.95);
+  --shadow: 0 18px 46px -20px rgb(30 110 200 / 0.35);
+  --glow: 0 0 0 1px rgb(var(--accent-rgb) / 0.3), 0 12px 32px -10px rgb(var(--accent-rgb) / 0.45);
+  --chart-grid: rgb(40 120 200 / 0.12);
+  --chart-axis: rgb(13 48 84 / 0.5);
   --s1: var(--accent-deep);
   --s2: #0e9488;
   --s3: #d97706;
   --s4: #0d9488;
   --s5: #db2777;
 }
-/* light theme window fill (Tauri vibrancy underneath) */
-html.tauri[data-theme="light"] body {
+/* light theme window fill — a soft blue wash so the whole app reads light-blue */
+html.tauri[data-theme="light"] body,
+html[data-theme="light"] body {
   background:
-    radial-gradient(900px 520px at 12% -10%, rgb(var(--accent-rgb) / 0.12), transparent 60%),
-    radial-gradient(800px 600px at 105% 110%, rgb(var(--accent-2-rgb) / 0.14), transparent 60%),
-    #eef3f9;
+    radial-gradient(1000px 560px at 10% -12%, rgb(var(--accent-rgb) / 0.16), transparent 60%),
+    radial-gradient(900px 640px at 108% 112%, rgb(var(--accent-2-rgb) / 0.18), transparent 60%),
+    linear-gradient(180deg, #eef6ff, #e3effc);
 }
 
 html,

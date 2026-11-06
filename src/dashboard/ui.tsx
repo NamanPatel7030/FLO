@@ -1,7 +1,48 @@
 import { motion } from "motion/react";
 import clsx from "clsx";
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { HelpCircle } from "lucide-react";
 import type { ProjectStatus, TodoSource } from "../lib/types";
+
+/** Hover/focus tooltip. Keyboard reachable; links the trigger to the bubble via aria-describedby. */
+export function Tooltip({ text, children, side = "top" }: { text: ReactNode; children: ReactNode; side?: "top" | "bottom" }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
+      <span aria-describedby={open ? id : undefined}>{children}</span>
+      {open && (
+        <span
+          id={id}
+          role="tooltip"
+          className={clsx(
+            "pointer-events-none absolute left-1/2 z-50 w-max max-w-[260px] -translate-x-1/2 rounded-xl border border-[var(--border-strong)] px-3 py-2 text-[12px] leading-snug text-[var(--fg)] shadow-[var(--shadow)]",
+            side === "top" ? "bottom-full mb-2" : "top-full mt-2",
+          )}
+          style={{ background: "var(--menu-bg)" }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A small "?" that reveals a tooltip. Place next to a label. */
+export function InfoDot({ text }: { text: ReactNode }) {
+  return (
+    <Tooltip text={text}>
+      <button type="button" aria-label="More info" className="inline-flex text-faint transition hover:text-[var(--fg)]">
+        <HelpCircle size={13} />
+      </button>
+    </Tooltip>
+  );
+}
+
+/** Helper subtext under a field/label. */
+export function FieldHelp({ children }: { children: ReactNode }) {
+  return <p className="mt-1 text-[12px] leading-relaxed text-muted">{children}</p>;
+}
 
 export function Card({ className, children, strong, onClick }: { className?: string; children: ReactNode; strong?: boolean; onClick?: () => void }) {
   return (

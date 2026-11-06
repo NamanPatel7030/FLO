@@ -149,6 +149,33 @@ test("hovering the notch opens the glass quick menu", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Dictate" })).toHaveCount(0, { timeout: 3000 });
 });
 
+test("hover dwell: nothing opens under ~500ms; after dwell an item shows only its tooltip, not the peek menu", async ({ page }) => {
+  await openIsland(page);
+  await emit(page, "flo://claude-sessions", [
+    sess("a", "Flo", "done", "Built the notch tray"),
+    sess("b", "job-finder", "waiting_reply", "LinkedIn or Wellfound?"),
+  ]);
+  const icon = page.locator('[aria-label^="Agents:"]');
+  await icon.waitFor();
+  const box = await icon.boundingBox();
+  const win = await page.locator("[data-island-root]").boundingBox();
+  const cx = box!.x + box!.width / 2 - (win!.x + win!.width / 2);
+  const y = box!.y - win!.y + box!.height / 2;
+
+  // quick pass: hover for < 500ms, then leave — nothing should have opened
+  const keep = setInterval(() => emit(page, "flo://hover", { inside: true, cx, y, x: win!.width / 2 + cx }).catch(() => {}), 60);
+  await page.waitForTimeout(300);
+  expect(await page.getByText("LinkedIn or Wellfound?").isVisible()).toBe(false);
+  expect(await page.getByRole("button", { name: "Dictate" }).isVisible()).toBe(false);
+
+  // keep resting past the dwell: only this item's tooltip opens, not the quick-actions peek
+  await page.waitForTimeout(500);
+  clearInterval(keep);
+  await expect(page.getByText("LinkedIn or Wellfound?")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dictate" })).toHaveCount(0);
+  await emit(page, "flo://hover", { inside: false });
+});
+
 test("hands-free (ctrl/fn + space): lock badge on the icon, no text", async ({ page }) => {
   await openIsland(page);
   await emit(page, "flo://state", { phase: "listening", mode: "dictation", message: "hands-free" });

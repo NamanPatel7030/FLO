@@ -34,6 +34,7 @@ export function NotchViz({
   mode,
   leftWing,
   bright = false,
+  sim = false,
 }: {
   style?: NotchStyle;
   accent?: string;
@@ -44,14 +45,20 @@ export function NotchViz({
   mode: RibbonMode;
   leftWing: boolean;
   bright?: boolean;
+  /** synthesize a "speaking" level envelope (for gallery previews, no mic) */
+  sim?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ mode, leftWing, bright, level: 0 });
+  const live = useRef({ mode, leftWing, bright, level: 0, sim });
   live.current.mode = mode;
   live.current.leftWing = leftWing;
   live.current.bright = bright;
+  live.current.sim = sim;
 
-  useEffect(() => on<LevelEvent>(EV.level, (e) => (live.current.level = e.rms)), []);
+  useEffect(() => {
+    if (sim) return;
+    return on<LevelEvent>(EV.level, (e) => (live.current.level = e.rms));
+  }, [sim]);
 
   useEffect(() => {
     const c = canvas.current;
@@ -90,6 +97,8 @@ export function NotchViz({
       const L = live.current;
       const t = (now - t0) / 1000;
       const speed = reduce ? 0 : 1;
+      // previews: synthesize a lively speaking envelope so the style visibly moves without a mic
+      if (L.sim) L.level = 0.12 + 0.5 * Math.pow(0.5 + 0.5 * Math.sin(t * 2.3), 2) + 0.2 * Math.max(0, Math.sin(t * 5.1));
 
       // shared amplitude: adaptive gate on listen; calm targets on working; settle on done
       let target = 0.15;
@@ -168,8 +177,151 @@ function drawStyle(g: CanvasRenderingContext2D, style: NotchStyle, c: Ctx) {
       return drawOrb(g, c);
     case "aurora":
       return drawAurora(g, c);
+    case "spectrum":
+      return drawSpectrum(g, c);
+    case "comet":
+      return drawComet(g, c);
+    case "ripple":
+      return drawRipple(g, c);
+    case "liquid":
+      return drawLiquid(g, c);
+    case "constellation":
+      return drawConstellation(g, c);
     default:
       return drawRibbon(g, c);
+  }
+}
+
+// frequency bars tinted across the accent range (soft → accent → deep)
+function drawSpectrum(g: CanvasRenderingContext2D, c: Ctx) {
+  const count = Math.max(7, Math.floor(c.w / 7));
+  const gap = 2;
+  const bw = (c.w - gap * (count - 1)) / count;
+  const maxH = c.height * 0.56;
+  const mix = (t: number): [number, number, number] => {
+    const stops = [c.col.from, c.col.a, c.col.soft, c.col.to];
+    const p = t * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(p));
+    const f = p - i;
+    return [0, 1, 2].map((k) => Math.round(stops[i][k] + (stops[i + 1][k] - stops[i][k]) * f)) as [number, number, number];
+  };
+  for (let i = 0; i < count; i++) {
+    const x = c.x0 + i * (bw + gap);
+    const phase = c.t * 6 * c.speed + i * 0.55;
+    const env = 0.25 + 0.75 * Math.pow(0.5 + 0.5 * Math.sin(phase), 2);
+    const h = Math.max(2, maxH * c.amp * env + 2);
+    const y = c.mid - h / 2;
+    g.fillStyle = c.rgba(mix(i / (count - 1)), 0.92 * c.alpha);
+    g.beginPath();
+    g.roundRect(x, y, bw, h, Math.min(bw / 2, 2));
+    g.fill();
+  }
+}
+
+// a bright streak that sweeps across the wing leaving a fading trail
+function drawComet(g: CanvasRenderingContext2D, c: Ctx) {
+  const prog = (c.t * (0.35 + c.amp * 0.9) * c.speed) % 1;
+  const hx = c.x0 + c.w * prog;
+  const A = c.height * 0.22 * (0.6 + c.amp);
+  const hy = c.mid + Math.sin(c.t * 3 * c.speed) * A;
+  const trail = 14;
+  for (let i = trail; i >= 0; i--) {
+    const tp = prog - i * 0.018;
+    if (tp < 0) continue;
+    const x = c.x0 + c.w * tp;
+    const y = c.mid + Math.sin((c.t - i * 0.02) * 3 * c.speed) * A;
+    const a = (1 - i / trail) * 0.5 * c.alpha;
+    g.beginPath();
+    g.arc(x, y, 1.6 * (1 - i / trail) + 0.4, 0, Math.PI * 2);
+    g.fillStyle = c.rgba(c.col.soft, a);
+    g.fill();
+  }
+  const glow = g.createRadialGradient(hx, hy, 0, hx, hy, 7);
+  glow.addColorStop(0, c.rgba(c.col.soft, 0.95 * c.alpha));
+  glow.addColorStop(1, c.rgba(c.col.a, 0));
+  g.fillStyle = glow;
+  g.beginPath();
+  g.arc(hx, hy, 7, 0, Math.PI * 2);
+  g.fill();
+}
+
+// concentric rings expanding from the centre on sound
+function drawRipple(g: CanvasRenderingContext2D, c: Ctx) {
+  const rings = 3;
+  const maxR = Math.min(c.w, c.height * 2.2) * 0.5;
+  for (let i = 0; i < rings; i++) {
+    const phase = (c.t * (0.6 + c.amp * 1.2) * c.speed + i / rings) % 1;
+    const r = 3 + phase * maxR;
+    const a = (1 - phase) * 0.6 * c.alpha;
+    g.beginPath();
+    g.arc(c.cx, c.mid, r, 0, Math.PI * 2);
+    g.strokeStyle = c.rgba(c.col.a, a);
+    g.lineWidth = 1.5;
+    g.stroke();
+  }
+  const r0 = c.height * 0.1 * (1 + c.amp);
+  const core = g.createRadialGradient(c.cx, c.mid, 0, c.cx, c.mid, r0);
+  core.addColorStop(0, c.rgba(c.col.soft, 0.95 * c.alpha));
+  core.addColorStop(1, c.rgba(c.col.from, 0.1 * c.alpha));
+  g.fillStyle = core;
+  g.beginPath();
+  g.arc(c.cx, c.mid, r0, 0, Math.PI * 2);
+  g.fill();
+}
+
+// a gooey blob that wobbles with the level
+function drawLiquid(g: CanvasRenderingContext2D, c: Ctx) {
+  const R = c.height * 0.3 * (0.7 + c.amp * 0.9);
+  const lobes = 6;
+  const pts: [number, number][] = [];
+  const steps = 36;
+  for (let i = 0; i <= steps; i++) {
+    const ang = (i / steps) * Math.PI * 2;
+    const wob = 1 + 0.18 * Math.sin(ang * lobes + c.t * 2.4 * c.speed) + 0.12 * Math.sin(ang * 3 - c.t * 1.7 * c.speed) * c.amp * 3;
+    pts.push([c.cx + Math.cos(ang) * R * wob, c.mid + Math.sin(ang) * R * wob * 0.9]);
+  }
+  g.beginPath();
+  pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+  g.closePath();
+  const fill = g.createRadialGradient(c.cx, c.mid, 0, c.cx, c.mid, R * 1.4);
+  fill.addColorStop(0, c.rgba(c.col.soft, 0.9 * c.alpha));
+  fill.addColorStop(0.7, c.rgba(c.col.a, 0.7 * c.alpha));
+  fill.addColorStop(1, c.rgba(c.col.from, 0.15 * c.alpha));
+  g.fillStyle = fill;
+  g.fill();
+}
+
+// drifting dots that connect with lines when near
+function drawConstellation(g: CanvasRenderingContext2D, c: Ctx) {
+  const n = Math.max(4, Math.floor(c.w / 16));
+  const nodes: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const sx = c.x0 + c.w * ((i + 0.5) / n);
+    const x = sx + Math.sin(c.t * 1.2 * c.speed + i * 1.3) * 5;
+    const y = c.mid + Math.sin(c.t * 1.7 * c.speed + i * 2.1) * c.height * 0.3 * (0.5 + c.amp);
+    nodes.push([x, y]);
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const dx = nodes[i][0] - nodes[j][0];
+      const dy = nodes[i][1] - nodes[j][1];
+      const d = Math.hypot(dx, dy);
+      const lim = 34;
+      if (d < lim) {
+        g.beginPath();
+        g.moveTo(nodes[i][0], nodes[i][1]);
+        g.lineTo(nodes[j][0], nodes[j][1]);
+        g.strokeStyle = c.rgba(c.col.a, (1 - d / lim) * 0.45 * c.alpha);
+        g.lineWidth = 1;
+        g.stroke();
+      }
+    }
+  }
+  for (const [x, y] of nodes) {
+    g.beginPath();
+    g.arc(x, y, 1.8, 0, Math.PI * 2);
+    g.fillStyle = c.rgba(c.col.soft, 0.95 * c.alpha);
+    g.fill();
   }
 }
 

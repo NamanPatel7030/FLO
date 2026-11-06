@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import clsx from "clsx";
+import { api, on } from "../lib/api";
+import { EV, type ClaudeSession } from "../lib/types";
 import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Library, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info, Sun, Moon, Monitor } from "lucide-react";
 import { bootStore, hotkeyLabel, useStore, type Page } from "./store";
 import Home from "./pages/Home";
@@ -60,7 +62,14 @@ export default function Dashboard() {
   const account = useAccount();
   const signedIn = !!account.status?.signedIn || (account.offlineOk && !!account.status?.user);
   const openTodos = todos?.filter((t) => t.status === "open").length ?? 0;
-  const unseenClaude = claude?.filter((c) => !c.seen).length ?? 0;
+  // Home badge = live Claude sessions needing attention (matches the Home card), not stale events
+  const [sessions, setSessions] = useState<ClaudeSession[]>([]);
+  useEffect(() => {
+    api.listClaudeSessions().then(setSessions).catch(() => setSessions([]));
+    return on<ClaudeSession[]>(EV.claudeSessions, (l) => setSessions(Array.isArray(l) ? l : []));
+  }, []);
+  const claudeAttention = sessions.filter((s) => s.status !== "working").length;
+  void claude;
   const liveMeeting = notes?.some((n) => n.live);
   const Current = PAGES[page];
   const mac = geo?.platform !== "windows";
@@ -85,7 +94,7 @@ export default function Dashboard() {
           <nav className="flex flex-col gap-0.5 px-2.5">
             {NAV.map((n) => {
               const active = page === n.id;
-              const badge = n.id === "todos" ? openTodos : n.id === "home" ? unseenClaude : 0;
+              const badge = n.id === "todos" ? openTodos : n.id === "home" ? claudeAttention : 0;
               return (
                 <button
                   key={n.id}
@@ -107,11 +116,12 @@ export default function Dashboard() {
                   {n.id === "notes" && liveMeeting && <span className="relative ml-auto h-2 w-2 rounded-full bg-red-500 animate-pulse" />}
                   {badge > 0 && (
                     <span
+                      data-testid={`nav-badge-${n.id}`}
                       className={clsx(
                         "relative ml-auto min-w-5 rounded-full px-1.5 text-center text-[10.5px] font-semibold leading-[18px]",
                         n.id === "home" ? "bg-[#d97757] text-white" : "bg-[var(--glass-strong)] text-muted",
                       )}
-                      title={n.id === "home" ? "Unseen Claude Code sessions" : "Open to-dos"}
+                      title={n.id === "home" ? "Claude sessions needing attention" : "Open to-dos"}
                     >
                       {badge}
                     </span>

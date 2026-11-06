@@ -92,7 +92,18 @@ export interface Settings {
 }
 
 export type ThemeMode = "dark" | "light" | "system";
-export type NotchStyle = "ribbon" | "wave" | "bars" | "pulse" | "orb" | "aurora";
+export type NotchStyle =
+  | "ribbon"
+  | "wave"
+  | "bars"
+  | "pulse"
+  | "orb"
+  | "aurora"
+  | "spectrum"
+  | "comet"
+  | "ripple"
+  | "liquid"
+  | "constellation";
 
 /** Built-in accent presets (name → hex); users can also pick a custom hex. */
 export const ACCENT_PRESETS: { name: string; accent: string; gradient: [string, string] }[] = [

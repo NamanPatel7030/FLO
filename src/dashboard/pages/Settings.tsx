@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Download, KeyRound, Lock, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Sun, Moon, Monitor } from "lucide-react";
+import { Check, Download, KeyRound, Lock, Mic, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Sun, Moon, Monitor } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
@@ -9,7 +9,7 @@ import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalM
 import { NotchViz } from "../../island/Ribbon";
 import { deriveGradient, normalizeHex } from "../../lib/theme";
 import { useStore } from "../store";
-import { Button, Card, CardTitle, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
+import { Button, Card, CardTitle, FieldHelp, InfoDot, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
 import { About } from "../About";
 import { Integrations } from "../Integrations";
 import { AiProviderFields, PROVIDERS } from "../AiSetup";
@@ -173,12 +173,18 @@ const NOTCH_STYLES: { id: NotchStyle; label: string }[] = [
   { id: "pulse", label: "Pulse" },
   { id: "orb", label: "Orb" },
   { id: "aurora", label: "Aurora" },
+  { id: "spectrum", label: "Spectrum" },
+  { id: "comet", label: "Comet" },
+  { id: "ripple", label: "Ripple" },
+  { id: "liquid", label: "Liquid" },
+  { id: "constellation", label: "Constellation" },
 ];
 
-function NotchPreview({ style, accent }: { style: NotchStyle; accent: string }) {
+function NotchPreview({ style, accent, w = 176, h = 44 }: { style: NotchStyle; accent: string; w?: number; h?: number }) {
+  // `sim` drives a synthetic speaking envelope so each style visibly animates without a mic
   return (
-    <div className="relative h-11 w-full overflow-hidden rounded-xl bg-black">
-      <NotchViz style={style} accent={accent} width={176} height={44} notchWidth={0} wing={88} mode="transcribe" leftWing />
+    <div className="relative overflow-hidden rounded-xl bg-black" style={{ width: "100%", height: h }}>
+      <NotchViz style={style} accent={accent} width={w} height={h} notchWidth={0} wing={Math.round(w / 2)} mode="listen" leftWing sim />
     </div>
   );
 }
@@ -236,6 +242,11 @@ function Appearance({ s, set }: P) {
 
       <Card className="p-4">
         <CardTitle>Notch animation</CardTitle>
+        {/* big live preview of the selected style, animating a simulated voice */}
+        <div className="relative mt-3 flex h-[72px] items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-black">
+          <NotchViz key={s.notchStyle + accent} style={s.notchStyle} accent={accent} width={560} height={72} notchWidth={0} wing={280} mode="listen" leftWing sim />
+          <span className="pointer-events-none absolute bottom-1.5 right-2.5 text-[10.5px] font-medium text-white/50">Live preview</span>
+        </div>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {NOTCH_STYLES.map((n) => (
             <button
@@ -254,7 +265,7 @@ function Appearance({ s, set }: P) {
             </button>
           ))}
         </div>
-        <p className="mt-2.5 text-[12px] text-faint">Previews use your accent. Changes show in the notch the next time it lights up.</p>
+        <p className="mt-2.5 text-[12px] text-faint">Tap a style to preview and apply it. The notch uses your accent and shows it live.</p>
       </Card>
 
       <Card className="p-4">
@@ -328,6 +339,19 @@ function Voice({ s, set }: P) {
 
   return (
     <div className="flex flex-col gap-4">
+      <Card className="p-4">
+        <CardTitle icon={<Mic size={15} />}>How Flo hears you</CardTitle>
+        <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
+            <div className="mb-1 text-[12.5px] font-semibold">On-device (Whisper)</div>
+            <p className="text-[12px] leading-relaxed text-muted">Private and free, works offline. Your audio never leaves this Mac. Needs a one-time model download and can be a touch slower on older machines.</p>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
+            <div className="mb-1 text-[12.5px] font-semibold">Cloud (OpenAI / Groq)</div>
+            <p className="text-[12px] leading-relaxed text-muted">Fast and very accurate, nothing to download. Your audio is sent to that provider under your own key.</p>
+          </div>
+        </div>
+      </Card>
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
         <Row label="Speech-to-text engine" hint={s.sttProvider === "local" ? "On-device. Audio never leaves this computer." : "Uses your API key; audio is sent to the provider."}>
           <Select<SttProvider>
@@ -415,6 +439,22 @@ function AI({ s, set }: P) {
   const [testing, setTesting] = useState(false);
   return (
     <div className="flex flex-col gap-4">
+      <Card className="p-4">
+        <CardTitle icon={<Sparkles size={15} />}>Which model should Flo use?</CardTitle>
+        <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
+            <div className="mb-1 text-[12.5px] font-semibold">On-device (Ollama / LM Studio)</div>
+            <p className="text-[12px] leading-relaxed text-muted">Everything stays on your Mac. Free and private, works offline. Needs a one-time setup and a reasonably capable machine, and can be a little slower.</p>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
+            <div className="mb-1 text-[12.5px] font-semibold">Bring your own cloud key</div>
+            <p className="text-[12px] leading-relaxed text-muted">OpenAI, Anthropic, Gemini, Groq, MiniMax, Qwen or OpenRouter for the smartest, fastest replies. Your text goes directly to that provider under your key, never through Flo servers.</p>
+          </div>
+        </div>
+        <FieldHelp>
+          Good picks: Anthropic Claude and OpenAI for the best quality; Groq for very fast replies; Gemini Flash for low cost; Ollama to stay fully local.
+        </FieldHelp>
+      </Card>
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
         <AiProviderFields
           s={s}
@@ -448,7 +488,10 @@ function AI({ s, set }: P) {
         )}
       </Card>
       <Card className="p-5">
-        <CardTitle icon={<KeyRound size={15} />}>API keys</CardTitle>
+        <CardTitle icon={<KeyRound size={15} />}>
+          API keys
+          <InfoDot text="Keys are stored in your OS keychain and never leave your Mac, except the request you make directly to that provider. Flo has no server in between." />
+        </CardTitle>
         <p className="-mt-1 mb-3 text-[12px] text-muted">Stored in your {navigator.platform.includes("Win") ? "Windows Credential Manager" : "macOS Keychain"}. Never written to disk in plain text.</p>
         <div className="flex flex-col gap-2">
           {PROVIDERS.filter((p) => p.key).map((p) => (
@@ -527,9 +570,9 @@ function Privacy({ s, set }: P) {
         </div>
       </Card>
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
-        <Toggle label="Assistant may use your cloud AI (BYOK)" hint="Your request, selected text and screen text go straight to the provider you picked, with your key. Off = local models only." checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
-        <Toggle label="Assistant can see the active window" hint="A screenshot of the front window is added as context when you ask." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />
-        <Toggle label="Attention" hint="Notice things you might miss on screen and turn them into to-dos." checked={s.attentionEnabled} onChange={(v) => set({ attentionEnabled: v })} />
+        <Toggle label="Assistant may use your cloud AI (BYOK)" hint="On: your question, any selected text and screen text are sent to the cloud provider you chose (with your key). Off: the assistant uses a local model only and nothing leaves this Mac." checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
+        <Toggle label="Assistant can see the active window" hint="On: when you ask, a screenshot of the front window is read for context (sent to the cloud only if the toggle above is on). Off: the assistant never looks at your screen." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />
+        <Toggle label="Attention" hint="On: Flo quietly reads what is on screen to spot things you should do, and turns them into to-dos. Off: it never watches your screen." checked={s.attentionEnabled} onChange={(v) => set({ attentionEnabled: v })} />
         {s.attentionEnabled && (
           <>
             <Row label="Look every" hint="Also looks when you switch apps.">

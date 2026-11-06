@@ -91,6 +91,10 @@ test("sign in → wow demo → one question → personalised prompt saved → gl
   await step(page, "glimpse-meetings");
   await page.getByRole("button", { name: "Continue" }).click();
   await step(page, "typing");
+  // "Measure now" starts the test inline (not a navigate-away dead-end)
+  await page.getByRole("button", { name: "Measure now" }).click();
+  await expect(page.locator('[data-testid="typing-inline"]')).toBeVisible();
+  await expect(page.locator('[data-testid="typing-passage"]')).toBeVisible();
   await page.getByRole("button", { name: "Skip", exact: true }).click();
 
   // done

@@ -13,6 +13,17 @@ test("every dashboard page renders without errors", async ({ page }) => {
   await expect(page.getByText(/flo flow/i)).toHaveCount(0);
 });
 
+test("home badge counts live Claude sessions needing attention; Mark all seen clears recent events", async ({ page }) => {
+  await page.goto("/#/home");
+  // mock seeds 3 sessions (done, needs_approval, working) → 2 need attention
+  await expect(page.locator('[data-testid="nav-badge-home"]')).toHaveText("2");
+  // recent events list has unseen items → "Mark all seen" is offered, then clears
+  const mark = page.getByRole("button", { name: /mark all seen/i });
+  await expect(mark).toBeVisible();
+  await mark.click();
+  await expect(mark).toHaveCount(0);
+});
+
 test("assistant: quick-command style request shows a reply", async ({ page }) => {
   await page.goto("/#/assistant");
   const box = page.getByPlaceholder(/ask|tell flo/i);

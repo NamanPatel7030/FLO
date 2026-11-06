@@ -4,7 +4,7 @@ import clsx from "clsx";
 import { AlarmClock, Asterisk, Check, MousePointer2, SquareTerminal, Terminal, Webhook, X, BellRing } from "lucide-react";
 import { api, on } from "../lib/api";
 import { claudeStatusLabel, relativeTime } from "../lib/format";
-import { EV, type ClaudeSession, type Todo } from "../lib/types";
+import { EV, type ClaudeEvent, type ClaudeSession, type Todo } from "../lib/types";
 import { useStore } from "./store";
 import { Card, CardTitle, Empty, SourceBadge } from "./ui";
 
@@ -101,26 +101,45 @@ const STATUS_CHIP: Record<ClaudeSession["status"], string> = {
   needs_approval: "border-amber-300/35 bg-amber-300/10 text-amber-200",
 };
 
-/** Live Claude Code sessions (same list as the notch tray). */
+/** Live Claude Code sessions (same list as the notch tray) + recent activity you can clear. */
 export function ClaudeSessionsCard() {
   const [sessions, setSessions] = useState<ClaudeSession[] | null>(null);
+  const [events, setEvents] = useState<ClaudeEvent[]>([]);
+  const loadEvents = () => api.listClaudeEvents(12).then(setEvents).catch(() => setEvents([]));
   useEffect(() => {
     api.listClaudeSessions().then(setSessions).catch(() => setSessions([]));
-    return on<ClaudeSession[]>(EV.claudeSessions, (l) => setSessions(Array.isArray(l) ? l : []));
+    loadEvents();
+    const offS = on<ClaudeSession[]>(EV.claudeSessions, (l) => setSessions(Array.isArray(l) ? l : []));
+    const offE = on<unknown>(EV.claude, () => loadEvents());
+    return () => {
+      offS();
+      offE();
+    };
   }, []);
   const working = sessions?.filter((s) => s.status === "working").length ?? 0;
+  const unseen = events.filter((e) => !e.seen).length;
   const drop = (id: string) => setSessions((l) => (l ?? []).filter((s) => s.sessionId !== id));
+  const markAllSeen = async () => {
+    await api.markClaudeSeen().catch(() => {});
+    setEvents((es) => es.map((e) => ({ ...e, seen: true })));
+  };
+  const nothing = sessions && sessions.length === 0 && events.length === 0;
   return (
     <Card className="p-4">
       <CardTitle icon={<Terminal size={15} />}>
         Claude sessions
         {!!sessions?.length && <span className="rounded-full bg-[#d97757] px-1.5 text-[10.5px] font-semibold leading-[18px] text-white">{sessions.length}</span>}
         {working > 0 && <span className="text-[11px] font-normal text-brand-300">{working} working</span>}
+        {unseen > 0 && (
+          <button onClick={markAllSeen} className="ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium text-brand-300 transition hover:bg-[var(--glass-strong)]">
+            Mark all seen
+          </button>
+        )}
       </CardTitle>
-      {!sessions ? null : sessions.length === 0 ? (
+      {!sessions ? null : nothing ? (
         <Empty icon={<BellRing size={18} />} title="All caught up" hint="Connect Claude Code in Settings · Integrations and your sessions show up here and in the notch." />
       ) : (
-        <div className="flex max-h-[320px] flex-col gap-0.5 overflow-y-auto">
+        <div className="flex max-h-[360px] flex-col gap-0.5 overflow-y-auto">
           <AnimatePresence initial={false}>
             {sessions.map((s) => (
               <ClaudeRow
@@ -137,6 +156,23 @@ export function ClaudeSessionsCard() {
               />
             ))}
           </AnimatePresence>
+          {events.length > 0 && (
+            <>
+              <div className="mt-2 px-2 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-faint">Recent from Claude</div>
+              {events.map((e) => (
+                <div key={e.id} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
+                  <span className={clsx("h-1.5 w-1.5 shrink-0 rounded-full", e.seen ? "bg-[var(--border-strong)]" : "bg-[#d97757]")} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 text-[12.5px]">
+                      <span className="truncate font-medium">{e.project}</span>
+                      <span className="ml-auto shrink-0 text-[11px] text-faint">{relativeTime(e.at)}</span>
+                    </div>
+                    <div className="truncate text-[11.5px] text-muted">{e.message}</div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </Card>

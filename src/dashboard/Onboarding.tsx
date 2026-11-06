@@ -18,6 +18,7 @@ import { toPlainText } from "../lib/markdown";
 import { useAccount } from "../lib/account";
 import { useStore } from "./store";
 import { Button, Input, Select } from "./ui";
+import { TypingTest } from "./TypingTest";
 import { PERMISSION_ITEMS, usePermissions } from "./usePermissions";
 import { AiProviderFields, providerInfo, ProviderKey } from "./AiSetup";
 import { Ribbon, type RibbonMode } from "../island/Ribbon";
@@ -208,7 +209,7 @@ export function Onboarding() {
             {step === "glimpse-ask" && <DemoAsk keyLabel={keys.asst} onDone={() => go(1)} />}
             {step === "glimpse-tray" && <DemoTray onDone={() => go(1)} />}
             {step === "glimpse-meetings" && <DemoMeetings s={s} set={set} />}
-            {step === "typing" && <TypingOffer s={s} onMeasure={() => { set({ onboarded: true }); goPage("typing"); }} />}
+            {step === "typing" && <TypingOffer s={s} onDone={() => go(1)} />}
             {step === "done" && <Done keys={keys} />}
           </motion.div>
         </AnimatePresence>
@@ -753,13 +754,23 @@ function DemoMeetings({ s, set }: { s: Settings; set: (p: Partial<Settings>) => 
   );
 }
 
-function TypingOffer({ s, onMeasure }: { s: Settings; onMeasure: () => void }) {
+function TypingOffer({ s, onDone }: { s: Settings; onDone: () => void }) {
+  const [measuring, setMeasuring] = useState(false);
+  if (measuring) {
+    // the test runs right here; it auto-saves the measured speed and advances shortly after
+    return (
+      <div className="w-full py-2" data-testid="typing-inline">
+        <h2 className="mb-4 text-center text-[20px] font-semibold tracking-tight">Type the passage. One minute.</h2>
+        <TypingTest minutes={1} compact autoApply onApplied={() => setTimeout(onDone, 1600)} />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col items-center py-4 text-center" data-testid="typing-offer">
       <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-brand-400/25 to-brand-300/10 text-brand-200 shadow-[0_0_40px_-12px_rgba(61,187,255,0.8)]"><Gauge size={28} /></div>
       <h2 className="text-[26px] font-semibold tracking-tight">Measure your typing speed?</h2>
       <p className="mt-2 max-w-[440px] text-[14px] text-white/55">About a minute. Flo uses it to show how much time speaking saves you. Your current estimate is {s.typingWpm} wpm, and you can always do this later.</p>
-      <Button variant="primary" className="mt-6 !h-12 !px-6" icon={<Gauge size={15} />} onClick={onMeasure}>Measure now</Button>
+      <Button variant="primary" className="mt-6 !h-12 !px-6" icon={<Gauge size={15} />} onClick={() => setMeasuring(true)}>Measure now</Button>
     </div>
   );
 }

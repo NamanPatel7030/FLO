@@ -62,14 +62,17 @@ const COLLAPSE_MS = 520;
 const DONE_MS = 1500;
 const ERROR_MS = 5000;
 const RESULT_MS = 2600;
-const DWELL_MS = 180;
+/** continuous hover required before the notch opens anything (kills quick-pass flicker) */
+const DWELL_MS = 500;
+/** a different tray item must be hit this long before the tooltip switches to it */
+const TIP_SWITCH_MS = 120;
 const CLAUDE_CARD_MS = 4000;
 const CORRECTION_MS = 10000;
 const MEETING_PROMPT_MS = 8000;
 /** unanswered confirmations are cancelled (never auto-sent) */
 const CONFIRM_MS = 60000;
-/** Cursor may leave the island this long before hover state drops (no flicker at edges). */
-const LEAVE_GRACE_MS = 250;
+/** Cursor may leave the island this long before hover state drops (so moving into a tooltip through the gap doesn't close it). */
+const LEAVE_GRACE_MS = 300;
 
 const todayStr = () => {
   const d = new Date();
@@ -118,6 +121,8 @@ export default function Island() {
   const tipRef = useRef(-1);
   const hotTileRef = useRef(-1);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dwellRef = useRef(false);
+  const pendingTip = useRef<{ t: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   /** flo://hover is the single source of truth once the backend speaks (always inside Tauri).
    *  WebKit fires DOM mouseleave/mouseenter when the window resizes under a resting cursor,
    *  which used to open/close the peek menu in a loop. DOM hover is a browser-preview fallback only. */
@@ -142,12 +147,44 @@ export default function Island() {
     const e = posRef.current;
     const g = geomRef.current;
     if (!e || !e.inside || e.y === undefined) return;
+    // nothing opens (no tooltip, no tile, no resize) until the dwell timer has fired
+    if (!dwellRef.current) {
+      if (tipRef.current !== -1) {
+        tipRef.current = -1;
+        setTip(-1);
+      }
+      if (hotTileRef.current !== -1) {
+        hotTileRef.current = -1;
+        setHotTile(-1);
+      }
+      return;
+    }
     const cx = e.cx ?? (e.x ?? 0) - g.winW / 2;
-    if (g.notch && g.slots.length) {
-      const t = pickTip(tipRef.current, g.slots, cx, e.y, g.nh, g.tipH(tipRef.current));
+    const commitTip = (t: number) => {
+      if (pendingTip.current) {
+        clearTimeout(pendingTip.current.timer);
+        pendingTip.current = null;
+      }
       if (t !== tipRef.current) {
         tipRef.current = t;
         setTip(t);
+      }
+    };
+    if (g.notch && g.slots.length) {
+      const t = pickTip(tipRef.current, g.slots, cx, e.y, g.nh, g.tipH(tipRef.current));
+      if (t === tipRef.current) {
+        if (pendingTip.current) {
+          clearTimeout(pendingTip.current.timer);
+          pendingTip.current = null;
+        }
+      } else if (t >= 0 && tipRef.current >= 0) {
+        // switching from one item to another: require it to persist briefly
+        if (pendingTip.current?.t !== t) {
+          if (pendingTip.current) clearTimeout(pendingTip.current.timer);
+          pendingTip.current = { t, timer: setTimeout(() => commitTip(t), TIP_SWITCH_MS) };
+        }
+      } else {
+        commitTip(t);
       }
     }
     const tile = g.shown === "peek" ? peekTileAt(g.winW, g.pillW, g.winW / 2 + cx, e.y, g.nh, PEEK_ACTIONS) : -1;
@@ -160,8 +197,13 @@ export default function Island() {
   const leaveNow = useCallback(() => {
     if (leaveTimer.current) clearTimeout(leaveTimer.current);
     leaveTimer.current = null;
+    if (pendingTip.current) {
+      clearTimeout(pendingTip.current.timer);
+      pendingTip.current = null;
+    }
     posRef.current = null;
     hoverRef.current = false;
+    dwellRef.current = false;
     tipRef.current = -1;
     hotTileRef.current = -1;
     setHover(false);
@@ -285,15 +327,20 @@ export default function Island() {
     if (!isTauri && demo) return runDemo(demo, { setPos: (p) => handleHoverRef.current(p), setMeetingOpen, openHistory });
   }, [openHistory]);
 
-  // ── hover dwell: swell first, then open ─────────────────────────────────
+  // ── hover dwell: require ~500ms continuous hover before anything opens ────
   useEffect(() => {
     if (!hover) {
+      dwellRef.current = false;
       setDwell(false);
       return;
     }
-    const t = setTimeout(() => setDwell(true), reduce ? 0 : DWELL_MS);
+    const t = setTimeout(() => {
+      dwellRef.current = true;
+      setDwell(true);
+      recompute(); // pick the item/tile under the cursor at the moment the dwell completes
+    }, reduce ? 0 : DWELL_MS);
     return () => clearTimeout(t);
-  }, [hover, reduce]);
+  }, [hover, reduce, recompute]);
 
   // ── local timers: never get stuck on done / error / result ──────────────
   useEffect(() => {
@@ -402,7 +449,8 @@ export default function Island() {
     return "collapsed";
   }, [phase, mode, result, headConfirm, headFix, promptOpen, detected, card, headClaude, history, meeting.live, meetingOpen, hover, dwell, tipItem, trayItems.all.length]);
 
-  const swell = hover && !dwell && (target === "collapsed" || target === "tray");
+  // no expansion before the dwell completes (prevents an enter-resize that could feed back into hover)
+  const swell = false;
   const trayCounts = { trayLeft: trayItems.left.length, trayRight: trayItems.right.length };
 
   const contentFor = (v: IslandVariant): CardContent | undefined => {
