@@ -458,6 +458,50 @@ pub fn dismiss_claude_session(st: State<Shared>, session_id: String) -> R<()> {
 // ── context library ─────────────────────────────────────────────────────────
 const MAX_CONTEXT_CHARS: usize = 400_000;
 
+// ── Flo Vault ────────────────────────────────────────────────────────────────
+#[tauri::command]
+pub fn vault_graph(st: State<Shared>) -> R<VaultGraph> {
+    st.db.vault_graph().map_err(e)
+}
+
+#[tauri::command]
+pub fn vault_note(st: State<Shared>, id: String) -> R<Option<VaultNote>> {
+    st.db.vault_get(&id).map_err(e)
+}
+
+#[tauri::command]
+pub fn vault_save(st: State<Shared>, title: String, kind: Option<String>, content: String) -> R<String> {
+    let id = crate::vault::upsert(st.inner(), &title, kind.as_deref().unwrap_or("note"), &content).map_err(e)?;
+    st.emit(ev::VAULT, ());
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn vault_delete(st: State<Shared>, id: String) -> R<()> {
+    st.db.vault_delete(&id).map_err(e)?;
+    st.emit(ev::VAULT, ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn vault_search(st: State<Shared>, query: String) -> R<Vec<VaultNode>> {
+    st.db.vault_search(&query).map_err(e)
+}
+
+#[tauri::command]
+pub async fn vault_rebuild(st: State<'_, Shared>) -> R<usize> {
+    let st = st.inner().clone();
+    let n = tauri::async_runtime::spawn_blocking(move || {
+        let r = crate::vault::rebuild(&st);
+        st.emit(ev::VAULT, ());
+        r
+    })
+    .await
+    .map_err(e)?
+    .map_err(e)?;
+    Ok(n)
+}
+
 #[tauri::command]
 pub fn list_context_docs(st: State<Shared>) -> R<Vec<ContextDoc>> {
     st.db.list_context_docs().map_err(e)

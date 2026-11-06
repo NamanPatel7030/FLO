@@ -267,6 +267,12 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
         }
     }
     let _ = st.db.upsert_note(&n);
+    if st.settings().vault_auto {
+        let proj = n.project_id.as_ref().and_then(|pid| st.db.get_project(pid).ok().flatten()).map(|p| p.name);
+        let _ = crate::vault::record_meeting(st, &n, proj.as_deref());
+        let _ = crate::vault::touch_daily(st, &format!("Meeting: [[{}]]", n.title));
+        st.emit(ev::VAULT, ());
+    }
     st.emit(ev::NOTES, ());
     st.emit(ev::MEETING, MeetingEvent { note_id: n.id.clone(), segment: None, summary: Some(n.summary.clone()), elapsed_sec: elapsed, live: false, partial: None });
     st.toast("success", format!("Notes ready: {}", n.title));

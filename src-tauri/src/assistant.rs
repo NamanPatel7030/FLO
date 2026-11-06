@@ -239,6 +239,10 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
                 return Ok(format!("Project {name} already exists"));
             }
             st.db.create_project(name, description.as_deref())?;
+            if st.settings().vault_auto {
+                let _ = crate::vault::upsert(st, name, "project", description.as_deref().unwrap_or(""));
+                st.emit(ev::VAULT, ());
+            }
             st.emit(ev::PROJECTS, ());
             Ok(format!("Created project {name}"))
         }

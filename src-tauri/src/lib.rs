@@ -22,6 +22,7 @@ mod secrets;
 mod session;
 mod selftest;
 mod settings;
+mod vault;
 mod slack;
 mod state;
 mod stt;
@@ -357,6 +358,12 @@ pub fn run() {
             commands::slack_disconnect,
             commands::slack_sync_now,
             commands::confirm_action,
+            commands::vault_graph,
+            commands::vault_note,
+            commands::vault_save,
+            commands::vault_delete,
+            commands::vault_search,
+            commands::vault_rebuild,
             commands::list_context_docs,
             commands::get_context_doc,
             commands::add_context_doc,

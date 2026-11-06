@@ -66,6 +66,12 @@ impl Db {
               session_id TEXT PRIMARY KEY, project TEXT NOT NULL, cwd TEXT NOT NULL, status TEXT NOT NULL,
               message TEXT NOT NULL, updated_at TEXT NOT NULL, app_bundle TEXT, terminal TEXT,
               dismissed INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS vault_notes(
+              id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS vault_links(
+              source TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'wiki',
+              PRIMARY KEY(source, target, kind));
             CREATE TABLE IF NOT EXISTS context_docs(
               id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
               pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
@@ -429,6 +435,153 @@ impl Db {
     pub fn dismiss_claude_session(&self, id: &str) -> Result<()> {
         self.conn.lock().execute("UPDATE claude_sessions SET dismissed=1 WHERE session_id=?1", [id])?;
         Ok(())
+    }
+
+    // ── Flo Vault ─────────────────────────────────────────────────────────────
+    pub fn vault_upsert(&self, id: &str, title: &str, kind: &str, content: &str) -> Result<()> {
+        let n = now();
+        self.conn.lock().execute(
+            "INSERT INTO vault_notes (id,title,kind,content,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?5)
+             ON CONFLICT(id) DO UPDATE SET title=?2,
+               kind=CASE WHEN vault_notes.kind='topic' THEN ?3 ELSE vault_notes.kind END,
+               content=CASE WHEN ?4='' THEN vault_notes.content ELSE ?4 END, updated_at=?5",
+            params![id, title, kind, content, n],
+        )?;
+        Ok(())
+    }
+
+    pub fn vault_link(&self, source: &str, target: &str, kind: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT OR IGNORE INTO vault_links (source,target,kind) VALUES (?1,?2,?3)",
+            params![source, target, kind],
+        )?;
+        Ok(())
+    }
+
+    pub fn vault_clear_links(&self, source: &str, kind: &str) -> Result<()> {
+        self.conn.lock().execute("DELETE FROM vault_links WHERE source=?1 AND kind=?2", params![source, kind])?;
+        Ok(())
+    }
+
+    pub fn vault_get(&self, id: &str) -> Result<Option<VaultNote>> {
+        let c = self.conn.lock();
+        let row = c
+            .query_row(
+                "SELECT id,title,kind,content,created_at,updated_at FROM vault_notes WHERE id=?1",
+                [id],
+                |r| {
+                    Ok(VaultNote {
+                        id: r.get(0)?,
+                        title: r.get(1)?,
+                        kind: r.get(2)?,
+                        content: r.get(3)?,
+                        created_at: r.get(4)?,
+                        updated_at: r.get(5)?,
+                        outlinks: vec![],
+                        backlinks: vec![],
+                    })
+                },
+            )
+            .optional()?;
+        let Some(mut n) = row else { return Ok(None) };
+        drop(c);
+        n.outlinks = self.vault_neighbors(id, true)?;
+        n.backlinks = self.vault_neighbors(id, false)?;
+        Ok(Some(n))
+    }
+
+    fn vault_neighbors(&self, id: &str, outgoing: bool) -> Result<Vec<VaultNode>> {
+        let c = self.conn.lock();
+        let sql = if outgoing {
+            "SELECT n.id,n.title,n.kind,n.content,n.updated_at FROM vault_links l JOIN vault_notes n ON n.id=l.target WHERE l.source=?1"
+        } else {
+            "SELECT n.id,n.title,n.kind,n.content,n.updated_at FROM vault_links l JOIN vault_notes n ON n.id=l.source WHERE l.target=?1"
+        };
+        let mut st = c.prepare(sql)?;
+        let rows = st
+            .query_map([id], |r| {
+                let content: String = r.get(3)?;
+                let kind: String = r.get(2)?;
+                Ok(VaultNode {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    summary: crate::text::truncate_chars(content.trim().lines().next().unwrap_or(""), 100),
+                    color: Some(crate::vault::kind_color(&kind).to_string()),
+                    kind,
+                    updated_at: r.get(4)?,
+                    degree: 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn vault_graph(&self) -> Result<VaultGraph> {
+        let c = self.conn.lock();
+        let mut deg: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut links = vec![];
+        {
+            let mut st = c.prepare("SELECT source,target,kind FROM vault_links")?;
+            for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))? {
+                let (s, t, k) = row?;
+                *deg.entry(s.clone()).or_default() += 1;
+                *deg.entry(t.clone()).or_default() += 1;
+                links.push(VaultLink { source: s, target: t, kind: k });
+            }
+        }
+        let mut st = c.prepare("SELECT id,title,kind,content,updated_at FROM vault_notes")?;
+        let nodes = st
+            .query_map([], |r| {
+                let id: String = r.get(0)?;
+                let kind: String = r.get(2)?;
+                let content: String = r.get(3)?;
+                Ok(VaultNode {
+                    degree: *deg.get(&id).unwrap_or(&0),
+                    summary: crate::text::truncate_chars(content.trim().lines().next().unwrap_or(""), 100),
+                    color: Some(crate::vault::kind_color(&kind).to_string()),
+                    id,
+                    title: r.get(1)?,
+                    kind,
+                    updated_at: r.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(VaultGraph { nodes, links })
+    }
+
+    pub fn vault_search(&self, q: &str) -> Result<Vec<VaultNode>> {
+        let c = self.conn.lock();
+        let like = format!("%{}%", q.replace('%', ""));
+        let mut st = c.prepare(
+            "SELECT id,title,kind,content,updated_at FROM vault_notes WHERE title LIKE ?1 OR content LIKE ?1 ORDER BY updated_at DESC LIMIT 50",
+        )?;
+        let rows = st
+            .query_map([like], |r| {
+                let kind: String = r.get(2)?;
+                let content: String = r.get(3)?;
+                Ok(VaultNode {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    summary: crate::text::truncate_chars(content.trim().lines().next().unwrap_or(""), 100),
+                    color: Some(crate::vault::kind_color(&kind).to_string()),
+                    kind,
+                    updated_at: r.get(4)?,
+                    degree: 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn vault_delete(&self, id: &str) -> Result<()> {
+        let c = self.conn.lock();
+        c.execute("DELETE FROM vault_links WHERE source=?1 OR target=?1", [id])?;
+        c.execute("DELETE FROM vault_notes WHERE id=?1", [id])?;
+        Ok(())
+    }
+
+    pub fn vault_count(&self) -> Result<u32> {
+        Ok(self.conn.lock().query_row("SELECT COUNT(*) FROM vault_notes", [], |r| r.get(0))?)
     }
 
     // ── context library ─────────────────────────────────────────────────────
@@ -807,6 +960,24 @@ mod tests {
         db.settle_claude_session("s1", "All tests pass").unwrap();
         let s = db.list_claude_sessions().unwrap();
         assert_eq!((s[0].status.as_str(), s[0].message.as_str()), ("done", "All tests pass"));
+    }
+
+    #[test]
+    fn vault_graph_and_links() {
+        let db = Db::open_in_memory().unwrap();
+        db.vault_upsert("apollo", "Apollo", "project", "Launch [[Rahul]] owns invoice").unwrap();
+        db.vault_upsert("rahul", "Rahul", "person", "").unwrap();
+        db.vault_link("apollo", "rahul", "wiki").unwrap();
+        let g = db.vault_graph().unwrap();
+        assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.links.len(), 1);
+        assert_eq!(g.nodes.iter().find(|n| n.id == "apollo").unwrap().degree, 1);
+        let note = db.vault_get("rahul").unwrap().unwrap();
+        assert_eq!(note.backlinks.len(), 1);
+        assert_eq!(note.backlinks[0].id, "apollo");
+        assert_eq!(db.vault_search("invoice").unwrap().len(), 1);
+        db.vault_delete("apollo").unwrap();
+        assert_eq!(db.vault_graph().unwrap().links.len(), 0);
     }
 
     #[test]

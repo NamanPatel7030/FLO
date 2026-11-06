@@ -30,7 +30,7 @@ pub enum Phase {
     Error,
 }
 
-pub const SETTINGS_VERSION: u32 = 5;
+pub const SETTINGS_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -75,6 +75,8 @@ pub struct Settings {
     pub notch_style: String,
     /// two-stop gradient for the notch accent [from, to]; empty = derive from accent
     pub notch_gradient: Vec<String>,
+    /// Flo Vault: automatically grow a local knowledge graph from your activity
+    pub vault_auto: bool,
 }
 
 impl Default for Settings {
@@ -115,6 +117,7 @@ impl Default for Settings {
             accent: "#3dbbff".into(),
             notch_style: "ribbon".into(),
             notch_gradient: vec![],
+            vault_auto: true,
         }
     }
 }
@@ -224,6 +227,49 @@ fn quick_mode() -> String {
 pub struct Source {
     pub title: String,
     pub url: String,
+}
+
+// ── Flo Vault (Obsidian-style local knowledge graph) ─────────────────────────
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultNode {
+    pub id: String,
+    pub title: String,
+    /// person | project | topic | note | daily | doc
+    pub kind: String,
+    pub summary: String,
+    pub updated_at: String,
+    /// number of links (for sizing in the graph)
+    pub degree: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultLink {
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultGraph {
+    pub nodes: Vec<VaultNode>,
+    pub links: Vec<VaultLink>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultNote {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    /// markdown with [[wikilinks]]
+    pub content: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub outlinks: Vec<VaultNode>,
+    pub backlinks: Vec<VaultNode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -525,6 +571,7 @@ pub mod ev {
     pub const MODEL_PROGRESS: &str = "flo://model-progress";
     pub const TOAST: &str = "flo://toast";
     pub const CLAUDE: &str = "flo://claude";
+    pub const VAULT: &str = "flo://vault";
     pub const HOVER: &str = "flo://hover";
     pub const CLAUDE_SESSIONS: &str = "flo://claude-sessions";
     pub const CORRECTION: &str = "flo://correction";

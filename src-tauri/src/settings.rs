@@ -49,6 +49,9 @@ pub fn migrate(s: &mut Settings) -> bool {
             s.notch_style = "ribbon".into();
         }
     }
+    if s.settings_version < 6 {
+        s.vault_auto = true;
+    }
     s.settings_version = crate::model::SETTINGS_VERSION;
     true
 }
