@@ -268,6 +268,11 @@ fn save(st: &Shared, mode: Mode, app: &str, raw: &str, final_text: &str, duratio
 /// STT with the configured provider. Personal dictionary words are passed as a prompt hint.
 /// Same, with extra context (e.g. the previous sentence in a meeting) for better continuity.
 pub async fn transcribe_with_prompt(st: &Shared, samples: Vec<f32>, context: &str) -> Result<String> {
+    transcribe_lang(st, samples, context, None).await
+}
+
+/// `lang_override` forces a language ("hi"/"gu"/…) instead of the user's setting (meetings lock it).
+pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang_override: Option<String>) -> Result<String> {
     let s = st.settings();
     let vocab: Vec<String> = st.db.list_dictionary().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
     let mut prompt = vocab.join(", ");
@@ -280,7 +285,7 @@ pub async fn transcribe_with_prompt(st: &Shared, samples: Vec<f32>, context: &st
     if s.stt_provider == "local" {
         let path = stt::model_path(&st.models_dir, &s.stt_model).ok_or_else(|| anyhow!("Unknown speech model {}", s.stt_model))?;
         let w = st.whisper.clone();
-        let lang = s.language.clone();
+        let lang = lang_override.clone().unwrap_or_else(|| s.language.clone());
         let samples = audio::trim_silence(&samples);
         tokio::task::spawn_blocking(move || w.transcribe(&path, &samples, &lang, &prompt)).await?
     } else {
@@ -289,7 +294,8 @@ pub async fn transcribe_with_prompt(st: &Shared, samples: Vec<f32>, context: &st
         let key = crate::secrets::get_api_key_async(&s.stt_provider)
             .await?
             .ok_or_else(|| anyhow!("No API key for {}. Add it in Settings → AI.", s.stt_provider))?;
-        stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &s.language, &prompt).await
+        let lang = lang_override.unwrap_or_else(|| s.language.clone());
+        stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &lang, &prompt).await
     }
 }
 

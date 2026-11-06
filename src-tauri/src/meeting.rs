@@ -87,7 +87,9 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
     let recorder = Arc::new(parking_lot::Mutex::new(Some(recorder)));
     let mut seg = Segmenter::default();
     let mut pending: Vec<f32> = Vec::new();
-    let mut last_text = String::new(); // context prompt for the next segment
+    let mut last_text = String::new();
+    // lock the spoken language after the first clear chunk so it stops drifting into English
+    let mut locked_lang: Option<String> = { let l = st.settings().language; (l != "auto" && !l.is_empty()).then_some(l) }; // context prompt for the next segment
     // live previews only with on-device STT (cloud previews would cost per call)
     let local = st.settings().stt_provider == "local";
     loop {
@@ -114,7 +116,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
                 if audio::voiced_ms(&pending) < 200 {
                     continue;
                 }
-                if let Ok(t) = session::transcribe_with_prompt(&st, pending.clone(), &last_text).await {
+                if let Ok(t) = session::transcribe_lang(&st, pending.clone(), &last_text, locked_lang.clone()).await {
                     if !t.trim().is_empty() && !stt::is_degenerate(&t) {
                         st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: None, elapsed_sec: elapsed, live: true, partial: Some(t) });
                     }
@@ -126,8 +128,11 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
                 if audio::voiced_ms(&samples) < 250 {
                     continue; // no real speech in this stretch → don't invent text
                 }
-                match session::transcribe_with_prompt(&st, samples, &last_text).await {
+                match session::transcribe_lang(&st, samples, &last_text, locked_lang.clone()).await {
                     Ok(t) if !stt::is_hallucination(&t, audio_secs) && !stt::is_degenerate(&t) => {
+                        if locked_lang.is_none() {
+                            locked_lang = st.whisper.detected_lang();
+                        }
                         last_text = text::truncate_chars(&t, 200);
                         let segm = MeetingSegment { t: seg_start, text: t, speaker: Some("You".into()) };
                         if let Ok(Some(mut n)) = st.db.get_note(&note_id) {

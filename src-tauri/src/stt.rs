@@ -144,6 +144,8 @@ pub fn audio_ctx_for(secs: f32) -> i32 {
 #[derive(Default)]
 pub struct LocalWhisper {
     last_used: Mutex<Option<std::time::Instant>>,
+    /// language Whisper detected on the last "auto" decode (e.g. "hi", "gu", "en")
+    detected: Mutex<Option<String>>,
     /// use the pre-tuning decode settings (benchmark baseline only)
     pub baseline: std::sync::atomic::AtomicBool,
     #[cfg(feature = "local-stt")]
@@ -252,6 +254,11 @@ impl LocalWhisper {
             buf.resize(audio::TARGET_RATE as usize + 1600, 0.0);
         }
         state.full(p, &buf).map_err(|e| anyhow!("whisper: {e:?}"))?;
+        if lang == "auto" {
+            if let Ok(id) = state.full_lang_id_from_state() {
+                *self.detected.lock() = whisper_rs::get_lang_str(id).map(|s| s.to_string());
+            }
+        }
         let n = state.full_n_segments().map_err(|e| anyhow!("{e:?}"))?;
         let mut out = String::new();
         for i in 0..n {
@@ -260,6 +267,11 @@ impl LocalWhisper {
             }
         }
         Ok(out.trim().to_string())
+    }
+
+    /// Language Whisper last auto-detected ("hi", "gu", "en", …), if any.
+    pub fn detected_lang(&self) -> Option<String> {
+        self.detected.lock().clone()
     }
 
     #[cfg(not(feature = "local-stt"))]
