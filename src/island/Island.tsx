@@ -721,7 +721,17 @@ export default function Island() {
         }
       >
         {notch && !collapsed && <Ears size={EAR} />}
-        <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: radius }}>
+        <div
+          className="absolute inset-0 overflow-hidden"
+          style={{
+            borderRadius: radius,
+            // WebKit doesn't clip transformed children (the sheen) to border-radius unless the
+            // clip layer is composited with a solid mask; this forces the clip with no visual change.
+            transform: "translateZ(0)",
+            WebkitMaskImage: "linear-gradient(#000, #000)",
+            maskImage: "linear-gradient(#000, #000)",
+          }}
+        >
           {/* one luminous ribbon inside the wings: listening → working → done (persists across them);
               unmounted otherwise, so the idle notch / tray never draws */}
           {notch && (shown === "listening" || shown === "working" || shown === "done") && (
