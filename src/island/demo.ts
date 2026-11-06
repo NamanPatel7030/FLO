@@ -66,6 +66,12 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
     case "working":
       at(300, () => mockEmit(EV.state, { phase: "transcribing", mode: "dictation" }));
       break;
+    case "thinking":
+      at(300, () => mockEmit(EV.state, { phase: "thinking", mode: "assistant" }));
+      break;
+    case "hover":
+      for (let t = 300; t < 60000; t += 200) at(t, () => hooks.setPos({ inside: true, x: 30, y: 10 }));
+      break;
     case "result":
       pin();
       at(300, () => {

@@ -665,6 +665,8 @@ export default function Island() {
   };
 
   const glow = notch && (swollen || shown === "listening");
+  // premium hover feedback: instant accent rim-glow (no resize) the moment the cursor is on the notch
+  const hovering = notch && hover;
   const island = (
     <div
       ref={rootRef}
@@ -696,14 +698,16 @@ export default function Island() {
           notch
             ? {
                 overflow: "visible",
-                boxShadow: glow
-                  ? "inset 0 -1px 0 rgba(102,206,255,0.7), 0 4px 14px -4px rgba(61,187,255,0.55)"
-                  : shown === "error"
-                    ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
-                    : bigCard
-                      ? "inset 0 -1px 0 rgba(147,221,255,0.14)"
-                      : "none",
-                transition: "box-shadow 0.25s ease",
+                boxShadow: hovering
+                  ? "inset 0 -1.5px 0 rgba(102,206,255,0.85), inset 0 0 26px rgba(102,206,255,0.14), 0 8px 26px -6px rgba(61,187,255,0.6)"
+                  : glow
+                    ? "inset 0 -1px 0 rgba(102,206,255,0.7), 0 4px 14px -4px rgba(61,187,255,0.55)"
+                    : shown === "error"
+                      ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
+                      : bigCard
+                        ? "inset 0 -1px 0 rgba(147,221,255,0.14)"
+                        : "none",
+                transition: "box-shadow 0.28s ease",
               }
             : {
                 background: "linear-gradient(180deg, rgba(10,16,24,0.80), rgba(2,4,8,0.88))",
@@ -738,6 +742,15 @@ export default function Island() {
             <span
               className="pointer-events-none absolute bottom-0 left-0 h-px w-1/3"
               style={{ background: "linear-gradient(90deg, transparent, #e3f6ff, transparent)", animation: "flo-shimmer-x 0.9s ease-out 1" }}
+            />
+          )}
+          {/* premium hover: a single specular sheen sweeps across once on enter */}
+          {hovering && !reduce && (
+            <span
+              key="sheen"
+              aria-hidden
+              className="flo-sheen pointer-events-none absolute inset-y-0 left-0 w-1/3"
+              style={{ background: "linear-gradient(100deg, transparent, rgba(194,236,255,0.18), transparent)" }}
             />
           )}
           {/* Only the current content is rendered (enter animation only). Exit animations could leave

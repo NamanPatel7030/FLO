@@ -84,10 +84,6 @@ export function NotchViz({
     const t0 = performance.now();
     const mid = height * 0.56;
     const pad = 7;
-    const segs = () => [
-      { x0: pad, x1: wing - pad / 2, a: leftAlpha },
-      { x0: width - wing + pad / 2, x1: width - pad, a: 1 },
-    ];
 
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
@@ -123,12 +119,20 @@ export function NotchViz({
       }
       g.clearRect(0, 0, width, height);
 
-      for (const s of segs()) {
+      // while working, the two wings are a complementary PAIR, not a mirror:
+      //   transcribe → left: spinning arc · right: glyph ticks streaming (sound → text)
+      //   think      → left: breathing rings · right: a calm flowing sheen
+      const working = L.mode === "transcribe" || L.mode === "think";
+      const segList: { x0: number; x1: number; a: number; side: "left" | "right" }[] = [
+        { x0: pad, x1: wing - pad / 2, a: leftAlpha, side: "left" },
+        { x0: width - wing + pad / 2, x1: width - pad, a: 1, side: "right" },
+      ];
+      for (const s of segList) {
         if (s.a < 0.02 || s.x1 <= s.x0) continue;
         const a0 = s.a * fade * (L.bright ? 1 : 0.9);
-        const w0 = s.x1 - s.x0;
-        const cx = (s.x0 + s.x1) / 2;
-        drawStyle(g, style, { x0: s.x0, x1: s.x1, w: w0, cx, mid, height, amp, t, speed, alpha: a0, col, rgba, mode: L.mode });
+        const ctx: Ctx = { x0: s.x0, x1: s.x1, w: s.x1 - s.x0, cx: (s.x0 + s.x1) / 2, mid, height, amp, t, speed, alpha: a0, col, rgba, mode: L.mode, side: s.side };
+        if (working) drawWorking(g, ctx);
+        else drawStyle(g, style, ctx);
       }
       if (L.mode === "done" && fade <= 0) cancelAnimationFrame(raf);
     };
@@ -163,7 +167,107 @@ type Ctx = {
   col: ReturnType<typeof readAccent>;
   rgba: (c: [number, number, number], a: number) => string;
   mode: RibbonMode;
+  side?: "left" | "right";
 };
+
+// ── working-mode PAIR: left and right are intentionally different motifs ──────
+function drawWorking(g: CanvasRenderingContext2D, c: Ctx) {
+  if (c.mode === "think") (c.side === "left" ? drawCogRings : drawFlow)(g, c);
+  else (c.side === "left" ? drawOrbit : drawStream)(g, c);
+}
+
+// LEFT · transcribe — a spinning arc that reads as "processing"
+function drawOrbit(g: CanvasRenderingContext2D, c: Ctx) {
+  const r = c.height * 0.3;
+  g.lineCap = "round";
+  g.beginPath();
+  g.arc(c.cx, c.mid, r, 0, Math.PI * 2);
+  g.strokeStyle = c.rgba(c.col.a, 0.16 * c.alpha);
+  g.lineWidth = 1.5;
+  g.stroke();
+  const rot = c.t * 3.4 * c.speed;
+  const grad = g.createLinearGradient(c.cx - r, 0, c.cx + r, 0);
+  grad.addColorStop(0, c.rgba(c.col.to, 0.1 * c.alpha));
+  grad.addColorStop(1, c.rgba(c.col.soft, 0.95 * c.alpha));
+  g.beginPath();
+  g.arc(c.cx, c.mid, r, rot, rot + Math.PI * 0.7);
+  g.strokeStyle = grad;
+  g.lineWidth = 2.2;
+  g.stroke();
+  const lx = c.cx + Math.cos(rot + Math.PI * 0.7) * r;
+  const ly = c.mid + Math.sin(rot + Math.PI * 0.7) * r;
+  g.beginPath();
+  g.arc(lx, ly, 1.8, 0, Math.PI * 2);
+  g.fillStyle = c.rgba(c.col.soft, 0.95 * c.alpha);
+  g.fill();
+}
+
+// RIGHT · transcribe — short glyph ticks streaming left→right ("sound becoming text")
+function drawStream(g: CanvasRenderingContext2D, c: Ctx) {
+  const n = 9;
+  for (let i = 0; i < n; i++) {
+    const phase = (c.t * 0.9 * c.speed + i / n) % 1;
+    const x = c.x0 + phase * c.w;
+    const env = Math.sin(Math.PI * phase);
+    const h = 2 + env * c.height * 0.5;
+    g.fillStyle = c.rgba(c.col.soft, env * 0.9 * c.alpha);
+    g.beginPath();
+    g.roundRect(x, c.mid - h / 2, 2, h, 1);
+    g.fill();
+  }
+  const hx = c.x0 + ((c.t * 0.5 * c.speed) % 1) * c.w;
+  const band = g.createRadialGradient(hx, c.mid, 0, hx, c.mid, 10);
+  band.addColorStop(0, c.rgba(c.col.a, 0.3 * c.alpha));
+  band.addColorStop(1, c.rgba(c.col.a, 0));
+  g.fillStyle = band;
+  g.fillRect(c.x0, 0, c.w, c.height);
+}
+
+// LEFT · think — concentric breathing rings ("cognition")
+function drawCogRings(g: CanvasRenderingContext2D, c: Ctx) {
+  const maxR = c.height * 0.46;
+  for (let i = 0; i < 3; i++) {
+    const phase = (c.t * 0.5 * c.speed + i / 3) % 1;
+    const r = 2 + phase * maxR;
+    g.beginPath();
+    g.arc(c.cx, c.mid, r, 0, Math.PI * 2);
+    g.strokeStyle = c.rgba(c.col.a, (1 - phase) * 0.5 * c.alpha);
+    g.lineWidth = 1.3;
+    g.stroke();
+  }
+  const breath = 0.6 + 0.4 * Math.sin(c.t * 2.2 * c.speed);
+  const r0 = c.height * 0.12 * (0.8 + breath * 0.5);
+  const core = g.createRadialGradient(c.cx, c.mid, 0, c.cx, c.mid, r0);
+  core.addColorStop(0, c.rgba(c.col.soft, 0.95 * c.alpha));
+  core.addColorStop(1, c.rgba(c.col.from, 0.1 * c.alpha));
+  g.fillStyle = core;
+  g.beginPath();
+  g.arc(c.cx, c.mid, r0, 0, Math.PI * 2);
+  g.fill();
+}
+
+// RIGHT · think — a calm flowing line with a travelling sheen (no ticks)
+function drawFlow(g: CanvasRenderingContext2D, c: Ctx) {
+  const A = c.height * 0.2;
+  const n = Math.max(12, Math.round(c.w / 2));
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= n; i++) {
+    const x = c.x0 + (c.w * i) / n;
+    const env = Math.sin(Math.PI * (i / n));
+    pts.push([x, c.mid + env * A * Math.sin(x * 0.08 + c.t * 1.4 * c.speed)]);
+  }
+  const p = (c.t * 0.25 * c.speed) % 1;
+  const grad = g.createLinearGradient(c.x0, 0, c.x1, 0);
+  grad.addColorStop(Math.max(0, p - 0.3), c.rgba(c.col.from, 0.12 * c.alpha));
+  grad.addColorStop(p, c.rgba(c.col.soft, 0.9 * c.alpha));
+  grad.addColorStop(Math.min(1, p + 0.3), c.rgba(c.col.to, 0.12 * c.alpha));
+  g.beginPath();
+  pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+  g.strokeStyle = grad;
+  g.lineWidth = 1.6;
+  g.lineCap = "round";
+  g.stroke();
+}
 
 function drawStyle(g: CanvasRenderingContext2D, style: NotchStyle, c: Ctx) {
   switch (style) {
