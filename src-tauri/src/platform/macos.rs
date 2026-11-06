@@ -93,24 +93,65 @@ fn running(pattern: &str, exact: bool) -> bool {
 }
 
 /// Best guess of which call app is using the mic.
+/// Title of the frontmost app's focused window (e.g. "Meet - abc-defg" in Chrome), via AX.
+pub fn frontmost_window_title() -> Option<String> {
+    let app = frontmost_app();
+    if app.pid <= 0 {
+        return None;
+    }
+    unsafe {
+        let el = AXUIElementCreateApplication(app.pid);
+        if el.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(el, 0.4);
+        let win = ax_copy(el, "AXFocusedWindow").or_else(|| ax_copy(el, "AXMainWindow"));
+        CFRelease(el as core_foundation::base::CFTypeRef);
+        let win = win?;
+        let title = ax_copy(win as AXRef, "AXTitle").and_then(|v| cf_to_string(v));
+        CFRelease(win);
+        title.filter(|t| !t.is_empty())
+    }
+}
+
+/// Best guess of which call is live. Zoom's media host is the strongest signal; otherwise match the
+/// frontmost window title + app name (so browser calls like Google Meet are named correctly) and
+/// only attribute a Slack huddle when Slack is actually frontmost.
 pub fn detect_call_app() -> String {
     if running("CptHost", true) {
         return "Zoom".into();
     }
-    for (pat, name) in [
-        ("MSTeams", "Teams"),
-        ("Microsoft Teams", "Teams"),
-        ("FaceTime", "FaceTime"),
-        ("Webex", "Webex"),
-        ("Slack", "Slack huddle"),
-        ("Discord", "Discord"),
-        ("zoom.us", "Zoom"),
+    let front = frontmost_app().name;
+    let title = frontmost_window_title().unwrap_or_default();
+    let hay = format!("{} {}", front, title).to_lowercase();
+    for (needle, name) in [
+        ("google meet", "Google Meet"),
+        ("meet.google", "Google Meet"),
+        (" meet ", "Google Meet"),
+        ("zoom", "Zoom"),
+        ("microsoft teams", "Teams"),
+        ("teams", "Teams"),
+        ("webex", "Webex"),
+        ("whereby", "Whereby"),
+        ("google hangouts", "Google Meet"),
+        ("facetime", "FaceTime"),
+        ("discord", "Discord"),
     ] {
-        if running(pat, true) {
+        if hay.contains(needle) {
             return name.into();
         }
     }
-    "Google Meet".into()
+    // Slack huddle only when Slack is the active app (a huddle takes focus)
+    if front.to_lowercase().contains("slack") {
+        return "Slack huddle".into();
+    }
+    // a browser is frontmost but we can't name the site → generic
+    let browser = ["chrome", "safari", "arc", "brave", "edge", "firefox", "vivaldi"].iter().any(|b| front.to_lowercase().contains(b));
+    if browser || front.is_empty() {
+        "a call".into()
+    } else {
+        front
+    }
 }
 
 /// Global cursor position in points (top-left origin) — a single cheap CoreGraphics call,
@@ -135,6 +176,7 @@ pub fn set_pointer_cursor() {
 type AXRef = *const c_void;
 extern "C" {
     fn AXUIElementCreateSystemWide() -> AXRef;
+    fn AXUIElementCreateApplication(pid: i32) -> AXRef;
     fn AXUIElementCopyAttributeValue(el: AXRef, attr: core_foundation::string::CFStringRef, out: *mut core_foundation::base::CFTypeRef) -> i32;
     fn AXUIElementSetMessagingTimeout(el: AXRef, secs: f32) -> i32;
     fn CFHash(cf: core_foundation::base::CFTypeRef) -> usize;
