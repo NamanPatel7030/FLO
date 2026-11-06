@@ -167,7 +167,7 @@ async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<
                     continue;
                 }
                 if let Ok(t) = transcribe_with_prompt(&st, audio_now, &context).await {
-                    if !t.trim().is_empty() && !stt::is_hallucination(&t, secs) {
+                    if !t.trim().is_empty() && !stt::is_hallucination(&t, secs) && !stt::is_degenerate(&t) {
                         context = text::truncate_chars(&t, 200);
                         buf.committed.lock().push(t.trim().to_string());
                     }
@@ -218,6 +218,9 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     let raw = committed.into_iter().chain(std::iter::once(tail)).filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join(" ");
     if stt::is_hallucination(&raw, secs.max(1.0)) {
         return Err(anyhow!("Didn't catch that. Try speaking a bit longer."));
+    }
+    if stt::is_degenerate(&raw) {
+        return Err(anyhow!("The speech model got stuck repeating itself. Try again, or pick a different speech model in Settings → Voice."));
     }
     st.emit(ev::TRANSCRIPT, TranscriptEvent { text: raw.clone(), is_final: false });
 

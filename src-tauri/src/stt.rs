@@ -79,6 +79,11 @@ pub async fn download_model(egress: &Egress, models_dir: &Path, id: &str, progre
 /// A degenerate repetition loop (e.g. "it's it's it's…") — the failure mode of greedy decoding
 /// without temperature fallback. Returns true when one short phrase dominates the output.
 pub fn is_degenerate(text: &str) -> bool {
+    // Character-level loop: catches glued/hyphenated repeats like "a-tri-tri-tri-tri…" that have
+    // no spaces, so the word-based checks below would never see them.
+    if has_char_loop(text) {
+        return true;
+    }
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.len() < 12 {
         return false;
@@ -102,6 +107,36 @@ pub fn is_degenerate(text: &str) -> bool {
     // unique-word ratio: heavy repetition → few distinct words
     let distinct: std::collections::HashSet<String> = words.iter().map(|w| w.to_lowercase()).collect();
     distinct.len() * 4 <= words.len()
+}
+
+/// A short character pattern repeating consecutively and dominating the text — the signature of a
+/// decoder stuck in a loop (e.g. "tritritritri…" after hyphens/spaces are stripped).
+fn has_char_loop(text: &str) -> bool {
+    let c: Vec<char> = text.chars().filter(|ch| ch.is_alphanumeric()).flat_map(|ch| ch.to_lowercase()).take(2000).collect();
+    let n = c.len();
+    if n < 24 {
+        return false;
+    }
+    for p in 1..=12usize {
+        if p * 6 > n {
+            break;
+        }
+        let mut i = 0;
+        while i + p * 2 <= n {
+            let mut run = 1;
+            let mut j = i + p;
+            while j + p <= n && c[j..j + p] == c[i..i + p] {
+                run += 1;
+                j += p;
+            }
+            // ≥6 consecutive repeats of the block, covering ≥60% of the whole string
+            if run >= 6 && (run * p * 5) >= (n * 3) {
+                return true;
+            }
+            i = if run > 1 { j } else { i + 1 };
+        }
+    }
+    false
 }
 
 trait EqIgnoreAsciiCaseSlice {
@@ -234,15 +269,17 @@ impl LocalWhisper {
         p.set_suppress_blank(true);
         p.set_no_context(true);
         if !self.baseline.load(std::sync::atomic::Ordering::Relaxed) {
-            // speed: one greedy pass (no temperature fallback re-decodes), no timestamp tokens,
-            // and an encoder window sized to the clip instead of a fixed 30 s
-            p.set_temperature_inc(0.0);
             p.set_no_timestamps(true);
             let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
-            if secs < 28.0 {
+            if secs < 20.0 {
+                // short clip: max speed — one greedy pass (no temperature fallback re-decodes) and
+                // an encoder window sized to the clip instead of a fixed 30 s.
+                p.set_temperature_inc(0.0);
                 p.set_single_segment(true);
                 p.set_audio_ctx(audio_ctx_for(secs));
             }
+            // longer clips keep Whisper's default temperature fallback: greedy decoding over many
+            // seconds can get stuck repeating a token forever, and the fallback is what breaks it.
         }
         p.set_n_threads(std::thread::available_parallelism().map(|n| n.get().min(8) as i32).unwrap_or(4));
         if !prompt.is_empty() {
@@ -343,7 +380,10 @@ mod tests {
     fn detects_degenerate_repetition() {
         assert!(is_degenerate(&"it's ".repeat(40)));
         assert!(is_degenerate("the end of the world, it's the end of the world, it's the end of the world, it's the end"));
+        assert!(is_degenerate("a-tri-tri-tri-tri-tri-tri-tri-tri-tri-tri-tri-tri-tri-tri-tri-tri")); // glued, no spaces
+        assert!(is_degenerate(&"tri".repeat(30))); // fully glued loop
         assert!(!is_degenerate("Send the deck to Rahul by Friday and let's meet at six tomorrow afternoon."));
+        assert!(!is_degenerate("The quarterly report covers revenue, retention and the roadmap for next year.")); // normal long speech
         assert!(!is_degenerate("okay")); // too short to judge
     }
 
