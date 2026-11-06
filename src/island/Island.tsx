@@ -44,8 +44,10 @@ import { IslandContent, PEEK_ACTIONS } from "./IslandContent";
 import { ConfirmCard, CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, TrayTooltip, type TrayItem } from "./Tray";
 import { runDemo } from "./demo";
 import { NotchViz } from "./Ribbon";
-import { applyTheme, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
+import { Widgets } from "./Widgets";
+import { applyTheme, onNotchPreview, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
+import { playCue } from "../lib/cueSounds";
 
 export interface MeetingInfo {
   live: boolean;
@@ -113,6 +115,10 @@ export default function Island() {
   const [ignoredDetect, setIgnoredDetect] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
+  // a style preview requested from Settings: play the notch for ~3s so the user sees it live
+  const [preview, setPreview] = useState(false);
+  const previewTimer = useRef<number>(0);
+  const [widgetsOpen, setWidgetsOpen] = useState(false);
   // hover: backend cursor tracking (non-activating panel) + DOM fallback.
   // Raw positions live in refs; React state only changes when the hovered item/tile changes.
   const [hover, setHover] = useState(false);
@@ -144,6 +150,8 @@ export default function Island() {
   /** set when the user stops a meeting; cleared when a new one starts */
   const meetingStoppedRef = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const phaseRef = useRef<Phase>("idle");
+  const settingsRef = useRef<Settings | null>(null);
 
   const recompute = useCallback(() => {
     const e = posRef.current;
@@ -242,11 +250,18 @@ export default function Island() {
 
   // theme + accent: apply on change, and re-read when the dashboard window edits settings
   useEffect(() => {
+    settingsRef.current = settings;
     if (settings) applyTheme(settings);
   }, [settings?.theme, settings?.accent, settings?.notchGradient?.[0], settings?.notchGradient?.[1]]);
   useEffect(() => {
     const offs = [
       onSettingsBroadcast(() => api.getSettings().then(setSettings).catch(() => {})),
+      onNotchPreview(() => {
+        api.getSettings().then(setSettings).catch(() => {});
+        setPreview(true);
+        window.clearTimeout(previewTimer.current);
+        previewTimer.current = window.setTimeout(() => setPreview(false), 3000);
+      }),
       watchSystemTheme(() => settings && applyTheme(settings)),
     ];
     return () => offs.forEach((f) => f());
@@ -257,6 +272,15 @@ export default function Island() {
     const offs = [
       on<StateEvent>(EV.state, (e) => {
         lastStateAt.current = Date.now();
+        // push-to-talk sound cues (island only, gated on playSounds)
+        const snd = settingsRef.current?.playSounds ?? true;
+        if (e.phase !== phaseRef.current) {
+          if (e.phase === "listening") playCue("ready", snd);
+          else if (e.phase === "transcribing" || e.phase === "thinking") playCue("working", snd);
+          else if (e.phase === "done") playCue("done", snd);
+          else if (e.phase === "error") playCue("error", snd);
+          phaseRef.current = e.phase;
+        }
         setPhase(e.phase);
         setMode(e.mode);
         modeRef.current = e.mode;
@@ -329,7 +353,7 @@ export default function Island() {
   // demo driver (browser only, ?demo=…)
   useEffect(() => {
     const demo = new URLSearchParams(location.search).get("demo");
-    if (!isTauri && demo) return runDemo(demo, { setPos: (p) => handleHoverRef.current(p), setMeetingOpen, openHistory });
+    if (!isTauri && demo) return runDemo(demo, { setPos: (p) => handleHoverRef.current(p), setMeetingOpen, openHistory, openWidgets: () => setWidgetsOpen(true) });
   }, [openHistory]);
 
   // ── hover dwell: require ~500ms continuous hover before anything opens ────
@@ -448,11 +472,13 @@ export default function Island() {
     if (headClaude) return "claude";
     if (history) return "history";
     if (meeting.live) return meetingOpen ? "meetingExpanded" : "meeting";
+    if (widgetsOpen) return "widgets";
+    if (preview) return "listening"; // show the selected notch style live for ~3s
     if (hover && dwell && tipItem) return "trayTooltip";
     if (hover && dwell) return "peek";
     if (trayItems.all.length) return "tray";
     return "collapsed";
-  }, [phase, mode, result, headConfirm, headFix, promptOpen, detected, card, headClaude, history, meeting.live, meetingOpen, hover, dwell, tipItem, trayItems.all.length]);
+  }, [phase, mode, result, headConfirm, headFix, promptOpen, detected, card, headClaude, history, meeting.live, meetingOpen, widgetsOpen, preview, hover, dwell, tipItem, trayItems.all.length]);
 
   // no expansion before the dwell completes (prevents an enter-resize that could feed back into hover)
   const swell = false;
@@ -524,7 +550,8 @@ export default function Island() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (phase === "listening" && mode !== "meeting") api.cancelSession();
+      if (widgetsOpen) setWidgetsOpen(false);
+      else if (phase === "listening" && mode !== "meeting") api.cancelSession();
       else if (history) setHistory(null);
       else if (headFix) setCorrections((q) => q.slice(1));
       else if (card) setCard(null);
@@ -703,10 +730,12 @@ export default function Island() {
           notch
             ? {
                 overflow: "visible",
+                // glow is bottom-weighted + tightly clipped (negative spread) so it hugs the rounded
+                // pill instead of haloing the flat-topped notch as a rectangle.
                 boxShadow: hovering
-                  ? "inset 0 -1.5px 0 rgba(102,206,255,0.85), inset 0 0 26px rgba(102,206,255,0.14), 0 8px 26px -6px rgba(61,187,255,0.6)"
+                  ? "inset 0 -1.5px 0 rgba(102,206,255,0.9), 0 7px 20px -10px rgba(61,187,255,0.55)"
                   : glow
-                    ? "inset 0 -1px 0 rgba(102,206,255,0.7), 0 4px 14px -4px rgba(61,187,255,0.55)"
+                    ? "inset 0 -1px 0 rgba(102,206,255,0.72), 0 5px 15px -11px rgba(61,187,255,0.5)"
                     : shown === "error"
                       ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
                       : bigCard
@@ -750,6 +779,7 @@ export default function Island() {
               mode={shown === "listening" ? "listen" : shown === "done" ? "done" : phase === "thinking" ? "think" : "transcribe"}
               leftWing={shown === "working"}
               bright={message === "hands-free"}
+              sim={preview}
             />
           )}
           {/* tiny shimmer along the bottom rim while swelling */}
@@ -778,7 +808,19 @@ export default function Island() {
               animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
               transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
             >
-              {shown === "confirm" && headConfirm ? (
+              {shown === "widgets" ? (
+                <Widgets
+                  top={notch ? geo.notchHeight : 0}
+                  onAction={(a) => {
+                    setWidgetsOpen(false);
+                    if (a === "dictate") api.startSession("dictation");
+                    else if (a === "ask") api.startSession("assistant");
+                    else if (a === "meeting") api.startMeeting();
+                    else if (a === "todos") api.openDashboard("todos");
+                    else api.openDashboard();
+                  }}
+                />
+              ) : shown === "confirm" && headConfirm ? (
                 <ConfirmCard c={headConfirm} more={confirms.length - 1} notch={notch} geo={geo} onAnswer={(ok) => answerConfirm(headConfirm, ok)} />
               ) : shown === "correction" && headFix ? (
                 <CorrectionCard
@@ -833,6 +875,7 @@ export default function Island() {
                   onCloseError={() => setPhase("idle")}
                   onCloseHistory={() => setHistory(null)}
                   onOpenHistory={openHistory}
+                  onWidgets={() => setWidgetsOpen(true)}
                   onClaude={dismissClaude}
                   onToggleMeeting={() => setMeetingOpen((v) => !v)}
                   onStopMeeting={stopMeeting}

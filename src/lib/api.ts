@@ -142,6 +142,11 @@ export const api = {
   openClaudeBySession: (sessionId: string) => call<string>("open_claude_by_session", { sessionId }),
   dismissClaudeSession: (sessionId: string) => call<void>("dismiss_claude_session", { sessionId }),
   acceptCorrection: (heard: string, corrected: string) => call<DictionaryEntry>("accept_correction", { heard, corrected }),
+  // now playing / media / volume (notch widgets)
+  nowPlaying: () => call<import("./types").NowPlaying | null>("now_playing").catch(() => null),
+  mediaControl: (action: "playpause" | "next" | "previous") => call<void>("media_control", { action }),
+  getVolume: () => call<number | null>("get_volume").catch(() => null),
+  setVolume: (level: number) => call<number>("set_volume", { level }),
   claudeHookStatus: () => call<ClaudeHookStatus>("claude_hook_status"),
   installClaudeHook: () => call<ClaudeHookStatus>("install_claude_hook"),
   uninstallClaudeHook: () => call<ClaudeHookStatus>("uninstall_claude_hook"),

@@ -58,7 +58,8 @@ export function resolveTheme(mode: ThemeMode): "dark" | "light" {
 export function applyTheme(settings: Pick<Settings, "theme" | "accent" | "notchGradient">): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.dataset.theme = resolveTheme(settings.theme ?? "dark");
+  // Flo is dark-only; the light/system theme switcher was removed. Keep accent customization.
+  root.dataset.theme = "dark";
 
   const accent = normalizeHex(settings.accent || DEFAULT_ACCENT);
   const [gf, gt] = deriveGradient(settings);
@@ -100,6 +101,33 @@ export function onSettingsBroadcast(cb: () => void): () => void {
   if (typeof window === "undefined") return () => {};
   const h = (e: StorageEvent) => {
     if (e.key === SYNC_KEY) cb();
+  };
+  window.addEventListener("storage", h);
+  return () => window.removeEventListener("storage", h);
+}
+
+const PREVIEW_KEY = "flo:notch-preview";
+
+/** Ask the island window to play a notch style briefly so the user sees it in the real notch. */
+export function broadcastNotchPreview(style: string): void {
+  try {
+    localStorage.setItem(PREVIEW_KEY, JSON.stringify({ style, at: Date.now() }));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Island: run cb(style) when a preview is requested from Settings. */
+export function onNotchPreview(cb: (style: string) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const h = (e: StorageEvent) => {
+    if (e.key !== PREVIEW_KEY || !e.newValue) return;
+    try {
+      const { style } = JSON.parse(e.newValue);
+      if (typeof style === "string") cb(style);
+    } catch {
+      /* ignore */
+    }
   };
   window.addEventListener("storage", h);
   return () => window.removeEventListener("storage", h);

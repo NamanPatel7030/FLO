@@ -541,6 +541,10 @@ export const resizeLog: { w: number; h: number; at: number }[] = [];
 /** every invoke (for tests: assert which commands ran with which args) */
 export const callLog: { cmd: string; args: Record<string, any> }[] = [];
 
+// now-playing widget mock: a track that advances while 'playing'
+const np = { app: "Spotify", title: "Night Owl", artist: "Galimatias", album: "Urban Flora", playing: true, elapsed: 42 };
+let mockVolume = 55;
+
 export async function mockInvoke(cmd: string, args: Record<string, any> = {}): Promise<unknown> {
   callLog.push({ cmd, args });
   switch (cmd) {
@@ -900,6 +904,25 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       mockEmit(EV.claude, null);
       return ev?.appBundle ?? "com.microsoft.VSCode";
     }
+    case "now_playing":
+      if (!np.playing && np.elapsed === 0) return null;
+      np.elapsed = (np.elapsed + 3) % 214;
+      return { ...np };
+    case "media_control":
+      if (args.action === "playpause") np.playing = !np.playing;
+      if (args.action === "next") {
+        np.title = "Weightless";
+        np.artist = "Marconi Union";
+        np.elapsed = 0;
+        np.playing = true;
+      }
+      if (args.action === "previous") np.elapsed = 0;
+      return null;
+    case "get_volume":
+      return mockVolume;
+    case "set_volume":
+      mockVolume = Math.max(0, Math.min(100, args.level ?? mockVolume));
+      return mockVolume;
     case "claude_hook_status":
       return { ...hook };
     case "install_claude_hook":

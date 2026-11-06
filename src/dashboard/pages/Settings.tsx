@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Download, KeyRound, Lock, Mic, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Sun, Moon, Monitor } from "lucide-react";
+import { Check, Download, KeyRound, Lock, Mic, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
-import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type ThemeMode, type NotchStyle } from "../../lib/types";
+import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
-import { deriveGradient, normalizeHex } from "../../lib/theme";
+import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
 import { useStore } from "../store";
 import { Button, Card, CardTitle, FieldHelp, InfoDot, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
 import { About } from "../About";
@@ -193,34 +193,10 @@ function Appearance({ s, set }: P) {
   const accent = normalizeHex(s.accent || "#3dbbff");
   const auto = !(Array.isArray(s.notchGradient) && s.notchGradient.length === 2);
   const [gf, gt] = deriveGradient({ accent, notchGradient: s.notchGradient });
-  const themes: { id: ThemeMode; label: string; Icon: typeof Sun }[] = [
-    { id: "dark", label: "Dark", Icon: Moon },
-    { id: "light", label: "Light", Icon: Sun },
-    { id: "system", label: "System", Icon: Monitor },
-  ];
   return (
     <div className="space-y-5">
       <Card className="p-4">
-        <CardTitle icon={<Palette size={15} />}>Theme</CardTitle>
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          {themes.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              onClick={() => set({ theme: id })}
-              className={clsx(
-                "flex h-16 flex-col items-center justify-center gap-1.5 rounded-xl border transition",
-                s.theme === id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong",
-              )}
-            >
-              <Icon size={20} className={s.theme === id ? "text-[var(--accent)]" : "text-muted"} />
-              <span className="text-[12px] font-medium">{label}</span>
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <CardTitle>Accent</CardTitle>
+        <CardTitle icon={<Palette size={15} />}>Accent</CardTitle>
         <div className="mt-3 flex flex-wrap items-center gap-2.5">
           {ACCENT_PRESETS.map((pre) => (
             <button
@@ -241,7 +217,12 @@ function Appearance({ s, set }: P) {
       </Card>
 
       <Card className="p-4">
-        <CardTitle>Notch animation</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle>Notch animation</CardTitle>
+          <Button size="sm" variant="glass" icon={<Sparkles size={13} />} onClick={() => broadcastNotchPreview(s.notchStyle)}>
+            Preview in notch
+          </Button>
+        </div>
         {/* big live preview of the selected style, animating a simulated voice */}
         <div className="relative mt-3 flex h-[72px] items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-black">
           <NotchViz key={s.notchStyle + accent} style={s.notchStyle} accent={accent} width={560} height={72} notchWidth={0} wing={280} mode="listen" leftWing sim />
@@ -251,7 +232,10 @@ function Appearance({ s, set }: P) {
           {NOTCH_STYLES.map((n) => (
             <button
               key={n.id}
-              onClick={() => set({ notchStyle: n.id })}
+              onClick={() => {
+                set({ notchStyle: n.id });
+                broadcastNotchPreview(n.id);
+              }}
               className={clsx(
                 "group rounded-2xl border p-2 text-left transition",
                 s.notchStyle === n.id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong",
@@ -369,21 +353,39 @@ function Voice({ s, set }: P) {
             <Input className="w-64" value={s.sttModel} onChange={(e) => set({ sttModel: e.target.value })} />
           </Row>
         )}
-        <Row label="Language" hint="Auto-detect handles mixed languages (e.g. Hindi + English).">
-          <Select
-            value={s.language}
-            onChange={(v) => set({ language: v })}
-            options={[
-              { value: "auto", label: "Auto-detect" },
-              { value: "en", label: "English" },
-              { value: "hi", label: "Hindi" },
-              { value: "gu", label: "Gujarati" },
-              { value: "es", label: "Spanish" },
-              { value: "de", label: "German" },
-              { value: "fr", label: "French" },
-            ]}
-          />
-        </Row>
+      </Card>
+
+      <Card className="p-4">
+        <CardTitle icon={<Mic size={15} />}>Language you speak</CardTitle>
+        <FieldHelp>For best accuracy in Hindi or Gujarati, pick the language instead of Auto. Auto can drift to English on mixed or accented speech.</FieldHelp>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[
+            { value: "auto", label: "Auto-detect", native: "" },
+            { value: "en", label: "English", native: "" },
+            { value: "hi", label: "Hindi", native: "हिंदी" },
+            { value: "gu", label: "Gujarati", native: "ગુજરાતી" },
+            { value: "hi-en", label: "Hinglish", native: "" },
+            { value: "es", label: "Spanish", native: "Español" },
+            { value: "de", label: "German", native: "Deutsch" },
+            { value: "fr", label: "French", native: "Français" },
+          ].map((l) => {
+            const active = s.language === l.value;
+            return (
+              <button
+                key={l.value}
+                onClick={() => set({ language: l.value })}
+                aria-pressed={active}
+                className={clsx(
+                  "flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-[13px] font-medium transition",
+                  active ? "border-[var(--accent)] glass-strong text-[var(--fg)]" : "border-[var(--border)] glass text-muted hover:text-[var(--fg)]",
+                )}
+              >
+                {l.label}
+                {l.native && <span className={clsx("text-[12px]", active ? "text-[var(--accent)]" : "text-faint")}>{l.native}</span>}
+              </button>
+            );
+          })}
+        </div>
       </Card>
       {s.sttProvider === "local" && (
         <Card className="p-5">

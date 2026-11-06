@@ -11,6 +11,7 @@ export interface DemoHooks {
   setPos: (p: HoverEvent) => void;
   setMeetingOpen: (v: boolean) => void;
   openHistory: () => void;
+  openWidgets?: () => void;
 }
 
 const LONG_ERROR =
@@ -32,6 +33,9 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
       break;
     case "peek":
       at(300, () => hooks.setPos({ inside: true, x: 30, y: 60 }));
+      break;
+    case "widgets":
+      at(300, () => hooks.openWidgets?.());
       break;
     case "tray":
       break; // mock sessions + urgent to-dos show up on load

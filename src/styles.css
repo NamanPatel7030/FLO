@@ -607,3 +607,20 @@ html.island .selectable {
     opacity: 0;
   }
 }
+
+/* volume slider in the notch widgets */
+.flo-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.flo-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgb(var(--accent-rgb) / 0.6);
+}

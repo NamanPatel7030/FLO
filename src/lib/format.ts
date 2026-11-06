@@ -89,6 +89,7 @@ export function groupTodos(todos: Todo[], now: Date = new Date()): TodoGroups {
 export type IslandVariant =
   | "collapsed"
   | "peek"
+  | "widgets"
   | "listening"
   | "working"
   | "done"
@@ -297,7 +298,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "confirm":
         return { width: 460, height: nh + ISLAND_GAP + 98 };
       case "peek":
-        return { width: Math.max(nw + 2 * 130, hasTray ? tray.width : 0), height: nh + 54 };
+        return { width: Math.max(nw + 2 * 160, hasTray ? tray.width : 0), height: nh + 54 };
+      case "widgets":
+        return { width: 380, height: nh + ISLAND_GAP + 232 };
       // live states: icons only, flush with the notch (no text row)
       case "listening":
       case "working":
@@ -342,6 +345,8 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       return { width: 440 + pad, height: 108 + pad };
     case "peek":
       return { width: 260 + pad, height: 52 + pad };
+    case "widgets":
+      return { width: 360 + pad, height: 232 + pad };
     case "listening":
     case "working":
     case "done":

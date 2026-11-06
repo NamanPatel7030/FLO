@@ -339,3 +339,17 @@ test("hover: DOM mouseleave/enter during resizes is ignored while the backend sa
   await emit(page, "flo://hover", { inside: false });
   await expect(dictate).toHaveCount(0, { timeout: 3000 });
 });
+
+test("widgets: now-playing shows and play/pause toggles", async ({ page }) => {
+  await page.goto("/?nh=38&nw=200&demo=widgets#/island");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.locator("[data-island-root]").waitFor();
+  // the mock track is playing → Pause button shown
+  const pause = page.getByRole("button", { name: "Pause" });
+  await expect(pause).toBeVisible();
+  await expect(page.getByText("Night Owl")).toBeVisible();
+  await pause.click();
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+  // timer + today widgets render
+  await expect(page.getByText("Timer")).toBeVisible();
+});

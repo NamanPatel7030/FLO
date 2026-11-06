@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, Check, Copy, Globe, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
 import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase } from "../lib/types";
@@ -33,6 +33,7 @@ interface Props {
   onToggleMeeting: () => void;
   onStopMeeting: () => void;
   onStartMeeting: () => void;
+  onWidgets: () => void;
   /** peek tile under the cursor (backend hit-testing), -1 = none */
   hotTile?: number;
   /** configured push-to-talk keys, already formatted ("⌃", "fn") */
@@ -46,7 +47,7 @@ interface Props {
 }
 
 /** Number of quick actions in the peek menu (for hit-testing). */
-export const PEEK_ACTIONS = 5;
+export const PEEK_ACTIONS = 6;
 
 function CopyButton({ text, label = false }: { text: string; label?: boolean }) {
   const [done, setDone] = useState(false);
@@ -176,12 +177,13 @@ export function IslandContent(p: Props) {
           ? { icon: <Square size={14} fill="currentColor" className="text-red-400" />, label: "Stop meeting", run: p.onStopMeeting }
           : { icon: <Radio size={16} />, label: "Meeting", run: p.onStartMeeting },
         { icon: <History size={16} />, label: "History", run: p.onOpenHistory },
+        { icon: <LayoutGrid size={16} />, label: "Widgets", run: p.onWidgets },
         { icon: <LayoutDashboard size={16} />, label: "Open", run: () => api.openDashboard() },
       ];
       return (
         <div className="flex h-full flex-col">
           {notch && <div style={{ height: top }} />}
-          <div className={"grid flex-1 grid-cols-5 items-center gap-1.5 " + (notch ? "px-3 pb-2 pt-1" : "px-2 py-1.5")}>
+          <div className={"grid flex-1 grid-cols-6 items-center gap-1.5 " + (notch ? "px-3 pb-2 pt-1" : "px-2 py-1.5")}>
             {actions.map((a, i) => (
               <Quick key={a.label} index={i} hot={p.hotTile === i} icon={a.icon} label={a.label} onClick={a.run} />
             ))}

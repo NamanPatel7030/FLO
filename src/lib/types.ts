@@ -453,6 +453,15 @@ export interface AccountStatus {
   offline: boolean;
 }
 
+export interface NowPlaying {
+  app: string;
+  title: string;
+  artist: string;
+  album: string;
+  playing: boolean;
+  elapsed?: number;
+}
+
 /** Event names (Rust emits these to all windows) */
 export const EV = {
   state: "flo://state",

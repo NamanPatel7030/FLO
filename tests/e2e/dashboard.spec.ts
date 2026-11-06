@@ -66,13 +66,13 @@ test("network log shows tokens for AI calls", async ({ page }) => {
   await expect(page.getByText(/Network log/i)).toBeVisible();
 });
 
-test("appearance: theme light, accent and notch style apply and persist", async ({ page }) => {
+test("appearance: dark-only (no theme toggle), accent and notch style apply and persist", async ({ page }) => {
   await page.goto("/#/settings/appearance");
   await expect(page.getByText("Notch animation")).toBeVisible();
 
-  // switch to Light → html[data-theme=light]
-  await page.getByRole("button", { name: "Light" }).last().click();
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("light");
+  // the Theme switcher was removed: app is dark-only
+  await expect(page.getByRole("button", { name: "Light" })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("dark");
 
   // pick the Violet accent → --accent CSS var updates
   await page.getByLabel("Violet").click();
