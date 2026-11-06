@@ -29,7 +29,42 @@ import { TalkToFlo } from "./TalkToFlo";
 import { Playground } from "./Playground";
 import { VIGNETTES } from "./Vignettes";
 import { useSceneDock, type Scene } from "./scene";
-import { CountUp, CursorGlow, EASE_OUT, Magnetic, Reveal, ScrollProgress, Stagger, StaggerItem, TiltCard } from "./motion/primitives";
+import { CountUp, CursorGlow, EASE_OUT, Magnetic, Reveal, ScrollProgress, Stagger, StaggerItem, TiltCard, useParallax } from "./motion/primitives";
+
+/** A real app screenshot in a tasteful window frame. */
+function Shot({ src, alt, bar = true, className = "" }: { src: string; alt: string; bar?: boolean; className?: string }) {
+  return (
+    <figure className={`shot ${className}`}>
+      {bar && (
+        <div className="shot-bar" aria-hidden>
+          <span className="shot-dot" style={{ background: "#ff5f57" }} />
+          <span className="shot-dot" style={{ background: "#febc2e" }} />
+          <span className="shot-dot" style={{ background: "#28c840" }} />
+        </div>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt} loading="lazy" />
+    </figure>
+  );
+}
+
+const MARQUEE = ["Slack", "Gmail", "VS Code", "Notion", "Cursor", "Chrome", "Linear", "Figma", "Terminal", "WhatsApp", "Docs", "Claude"];
+
+function AppsMarquee() {
+  return (
+    <div className="relative overflow-hidden py-2" aria-hidden>
+      <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 bg-gradient-to-r from-black to-transparent" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-24 bg-gradient-to-l from-black to-transparent" />
+      <div className="marquee-track gap-10">
+        {[...MARQUEE, ...MARQUEE].map((a, i) => (
+          <span key={i} className="whitespace-nowrap text-[15px] font-medium text-faint">
+            {a}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const PAINS = [
   { icon: Clock, title: "Typing is slow", body: "You think at 150 words a minute and type at 40. Every email, prompt and Slack reply waits on your fingers." },
@@ -183,6 +218,7 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
   const heroDock = useSceneDock<HTMLElement>("idle");
   const painDock = useSceneDock<HTMLElement>("dictation");
   const compareDock = useSceneDock<HTMLElement>("agent");
+  const heroShot = useParallax(50);
   return (
     <>
       <ScrollProgress />
@@ -228,6 +264,24 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
               <TalkToFlo />
             </Reveal>
           </div>
+
+          {/* real product shot, floating with the live notch above it */}
+          <Reveal mount delay={0.85} className="mx-auto mt-20 max-w-5xl">
+            <motion.div ref={heroShot.ref} style={{ y: heroShot.y }} className="relative">
+              <div aria-hidden className="absolute -inset-x-10 -top-10 bottom-0 -z-10 rounded-[40px] bg-brand-500/[0.07] blur-3xl" />
+              <Shot src="/shots/home-dark.png" alt="The Flo dashboard: dictation, assistant, meeting notes and to-dos" />
+              <div className="absolute -top-6 left-1/2 w-[62%] -translate-x-1/2 overflow-hidden rounded-2xl border border-brand-300/15 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.9)] sm:-top-9 sm:w-[46%]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/shots/notch-working.png" alt="The Flo notch transcribing live" loading="lazy" className="block w-full" />
+              </div>
+            </motion.div>
+          </Reveal>
+        </section>
+
+        {/* ── APPS MARQUEE ─────────────────────────────────── */}
+        <section className="px-5 py-10">
+          <p className="mx-auto mb-5 max-w-5xl text-center text-[12.5px] uppercase tracking-[0.18em] text-faint">Types where your cursor is</p>
+          <AppsMarquee />
         </section>
 
         {/* ── STAT STRIP ───────────────────────────────────── */}
@@ -281,6 +335,50 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
               <FeatureRow key={f.scene} f={f} i={i} />
             ))}
           </div>
+        </section>
+
+        {/* ── BENTO: THE REAL APP ──────────────────────────── */}
+        <section className="px-5 py-24" id="app">
+          <Reveal className="mx-auto max-w-2xl text-center">
+            <p className="eyebrow">The app</p>
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-[46px] sm:leading-[1.05]">Not a mockup. The real thing.</h2>
+            <p className="mt-4 text-[17px] leading-relaxed text-muted">Every pixel here is Flo running. Dark or light, your accent, your notch.</p>
+          </Reveal>
+          <Stagger className="mx-auto mt-14 grid max-w-6xl auto-rows-[200px] grid-cols-2 gap-4 lg:grid-cols-4">
+            <StaggerItem className="col-span-2 row-span-2">
+              <div className="group relative h-full overflow-hidden rounded-3xl">
+                <Shot src="/shots/home-dark.png" alt="Flo dashboard in dark mode" className="h-full [&_img]:h-full [&_img]:object-cover [&_img]:object-left-top" />
+                <span className="pointer-events-none absolute bottom-4 left-5 text-[13px] font-medium text-ink/90">Your day, at a glance</span>
+              </div>
+            </StaggerItem>
+            <StaggerItem className="col-span-2 row-span-1">
+              <div className="relative h-full overflow-hidden rounded-3xl">
+                <Shot src="/shots/home-light.png" alt="Flo dashboard in a light blue theme" bar={false} className="h-full [&_img]:h-full [&_img]:object-cover [&_img]:object-left-top" />
+                <span className="pointer-events-none absolute bottom-4 left-5 text-[13px] font-medium text-[#0c1826]">Light theme, your accent</span>
+              </div>
+            </StaggerItem>
+            <StaggerItem>
+              <div className="relative h-full overflow-hidden rounded-3xl">
+                <Shot src="/shots/analytics-dark.png" alt="Analytics: words, speed and time saved" bar={false} className="h-full [&_img]:h-full [&_img]:object-cover [&_img]:object-left-top" />
+                <span className="pointer-events-none absolute bottom-3 left-4 text-[12px] font-medium text-ink/90">Time saved</span>
+              </div>
+            </StaggerItem>
+            <StaggerItem>
+              <div className="relative h-full overflow-hidden rounded-3xl">
+                <Shot src="/shots/notes-dark.png" alt="Live meeting notes with transcript and summary" bar={false} className="h-full [&_img]:h-full [&_img]:object-cover [&_img]:object-left-top" />
+                <span className="pointer-events-none absolute bottom-3 left-4 text-[12px] font-medium text-ink/90">Meeting notes</span>
+              </div>
+            </StaggerItem>
+            <StaggerItem className="col-span-2">
+              <div className="relative flex h-full flex-col justify-between overflow-hidden rounded-3xl glass p-5">
+                <div>
+                  <p className="eyebrow">Make it yours</p>
+                  <h3 className="mt-2 text-[18px] font-semibold">Six notch styles. Any accent.</h3>
+                </div>
+                <Shot src="/shots/appearance-dark.png" alt="Appearance settings: theme, accent and notch animations" bar={false} className="mt-3 [&_img]:max-h-[120px] [&_img]:object-cover [&_img]:object-left-top" />
+              </div>
+            </StaggerItem>
+          </Stagger>
         </section>
 
         {/* ── PLAYGROUND ───────────────────────────────────── */}

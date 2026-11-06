@@ -1,5 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { Space_Grotesk, Inter } from "next/font/google";
 import "./globals.css";
+
+const display = Space_Grotesk({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-display", display: "swap" });
+const sans = Inter({ subsets: ["latin"], variable: "--font-sans-loaded", display: "swap" });
 
 const site = process.env.SITE_URL || "http://localhost:3000";
 
@@ -20,7 +24,7 @@ export const viewport: Viewport = { themeColor: "#000000", width: "device-width"
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${display.variable} ${sans.variable}`}>
       <body className="min-h-dvh overflow-x-hidden">{children}</body>
     </html>
   );
