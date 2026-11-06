@@ -297,6 +297,15 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
             Ok(format!("Opened {name}"))
         }
         AssistantAction::SlackSend { to, text: body } => crate::slack::propose_send(st, to, body).await,
+        AssistantAction::Media { action } => {
+            match action.as_str() {
+                "volume_up" => { crate::media::step_volume(8)?; Ok("Volume up".into()) }
+                "volume_down" => { crate::media::step_volume(-8)?; Ok("Volume down".into()) }
+                "mute" => { crate::media::set_muted(true)?; Ok("Muted".into()) }
+                "unmute" => { crate::media::set_muted(false)?; Ok("Unmuted".into()) }
+                other => { crate::media::control(other)?; Ok(format!("{other}")) }
+            }
+        }
         AssistantAction::InsertText { text: body } => {
             platform::activate_app(front.pid);
             let b = body.clone();

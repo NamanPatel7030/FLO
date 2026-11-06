@@ -14,6 +14,7 @@ mod intents;
 mod livetx;
 mod llm;
 mod meeting;
+mod media;
 mod meeting_detect;
 mod model;
 mod platform;
@@ -358,6 +359,10 @@ pub fn run() {
             commands::slack_disconnect,
             commands::slack_sync_now,
             commands::confirm_action,
+            commands::now_playing,
+            commands::media_control,
+            commands::get_volume,
+            commands::set_volume,
             commands::vault_graph,
             commands::vault_note,
             commands::vault_save,

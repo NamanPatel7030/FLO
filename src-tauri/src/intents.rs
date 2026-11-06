@@ -152,6 +152,20 @@ pub fn parse(query: &str) -> Option<Intent> {
             }
         }
     }
+    // media + volume (instant, no AI)
+    {
+        let vol = |d: i32| Some(Intent { reply: if d > 0 { "Volume up".into() } else { "Volume down".into() }, action: AssistantAction::Media { action: if d > 0 { "volume_up".into() } else { "volume_down".into() } } });
+        match q.as_str() {
+            "volume up" | "turn up the volume" | "louder" | "turn it up" => return vol(1),
+            "volume down" | "turn down the volume" | "quieter" | "turn it down" | "lower the volume" => return vol(-1),
+            "mute" | "mute it" | "unmute" => return Some(Intent { reply: "Muted".into(), action: AssistantAction::Media { action: "mute".into() } }),
+            "pause" | "pause music" | "pause the music" | "pause song" | "pause the song" => return Some(Intent { reply: "Paused".into(), action: AssistantAction::Media { action: "playpause".into() } }),
+            "play" | "play music" | "resume" | "resume music" | "play the music" | "play song" => return Some(Intent { reply: "Playing".into(), action: AssistantAction::Media { action: "playpause".into() } }),
+            "next" | "next song" | "next track" | "skip" | "skip song" | "skip this song" => return Some(Intent { reply: "Next track".into(), action: AssistantAction::Media { action: "next".into() } }),
+            "previous" | "previous song" | "previous track" | "last song" | "go back" => return Some(Intent { reply: "Previous track".into(), action: AssistantAction::Media { action: "previous".into() } }),
+            _ => {}
+        }
+    }
     // open / launch (English) and "<x> kholo" / "<x> open karo" (Hinglish)
     for p in ["open up ", "open ", "launch ", "start ", "go to ", "show me "] {
         if let Some(what) = q.strip_prefix(p) {

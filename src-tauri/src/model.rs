@@ -200,6 +200,10 @@ pub enum AssistantAction {
         to: String,
         text: String,
     },
+    /// media / volume: volume_up | volume_down | mute | playpause | next | previous
+    Media {
+        action: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,6 +225,18 @@ pub struct AssistantResponse {
 
 fn quick_mode() -> String {
     "quick".into()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NowPlaying {
+    pub app: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub playing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

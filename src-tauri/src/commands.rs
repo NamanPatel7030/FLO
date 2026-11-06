@@ -459,6 +459,27 @@ pub fn dismiss_claude_session(st: State<Shared>, session_id: String) -> R<()> {
 const MAX_CONTEXT_CHARS: usize = 400_000;
 
 // ── Flo Vault ────────────────────────────────────────────────────────────────
+// ── now playing / media / volume (notch widget + voice control) ──────────────
+#[tauri::command]
+pub fn now_playing() -> Option<NowPlaying> {
+    crate::media::now_playing()
+}
+
+#[tauri::command]
+pub fn media_control(action: String) -> R<()> {
+    crate::media::control(&action).map_err(e)
+}
+
+#[tauri::command]
+pub fn get_volume() -> Option<u8> {
+    crate::media::get_volume()
+}
+
+#[tauri::command]
+pub fn set_volume(level: u8) -> R<u8> {
+    crate::media::set_volume(level).map_err(e)
+}
+
 #[tauri::command]
 pub fn vault_graph(st: State<Shared>) -> R<VaultGraph> {
     st.db.vault_graph().map_err(e)
