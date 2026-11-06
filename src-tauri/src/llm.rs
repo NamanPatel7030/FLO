@@ -46,6 +46,11 @@ pub fn supports_web(provider: &str) -> bool {
     matches!(provider, "anthropic" | "gemini")
 }
 
+/// Can this provider accept a screenshot (vision) for the computer-control agent?
+pub fn supports_vision(provider: &str) -> bool {
+    matches!(provider, "anthropic" | "gemini" | "openai" | "openrouter")
+}
+
 /// Is this an OpenAI reasoning model (counts hidden reasoning toward the output cap)?
 fn openai_reasoning(model: &str) -> bool {
     let m = model.to_lowercase();

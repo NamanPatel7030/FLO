@@ -1,5 +1,6 @@
 //! Flo — your assistant: local-first voice dictation, assistant, meeting notes, attention → to-dos.
 mod account;
+mod agent;
 mod agents;
 mod assistant;
 mod attention;
@@ -360,6 +361,7 @@ pub fn run() {
             commands::slack_disconnect,
             commands::slack_sync_now,
             commands::confirm_action,
+            commands::stop_agent,
             commands::now_playing,
             commands::media_control,
             commands::get_volume,
@@ -400,6 +402,7 @@ pub fn run() {
                 attention_paused: AtomicBool::new(false),
                 ptt_down: AtomicBool::new(false),
                 lock_pending: AtomicBool::new(false),
+                agent_abort: AtomicBool::new(false),
                 signed_in: AtomicBool::new(true),
                 attention_captures: AtomicU32::new(0),
                 claude_listening: AtomicBool::new(false),

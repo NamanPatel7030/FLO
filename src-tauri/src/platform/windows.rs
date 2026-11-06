@@ -91,6 +91,11 @@ pub fn focused_text() -> Option<(usize, String)> {
 pub fn focus_session_window(_app: &str, _names: &[String]) -> Result<String> {
     Ok(String::new())
 }
+pub fn click_at(_x: f64, _y: f64, _double: bool) -> Result<()> { Ok(()) }
+pub fn type_text(_t: &str) -> Result<()> { Ok(()) }
+pub fn key_press(_k: u16, _c: bool, _s: bool, _a: bool, _ct: bool) -> Result<()> { Ok(()) }
+pub fn keycode_for(_n: &str) -> Option<u16> { None }
+pub fn scroll_by(_dy: i32) -> Result<()> { Ok(()) }
 pub fn open_bundle(_bundle: &str, path: Option<&str>) -> Result<()> {
     if let Some(p) = path {
         std::process::Command::new("explorer").arg(p).status()?;

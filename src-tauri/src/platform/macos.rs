@@ -233,6 +233,91 @@ fn post_cmd_key(code: u16) -> Result<()> {
     Ok(())
 }
 
+use core_graphics::event::{CGMouseButton, ScrollEventUnit};
+use core_graphics::geometry::CGPoint;
+
+/// Move the mouse and left-click at a screen point (logical px, top-left origin).
+pub fn click_at(x: f64, y: f64, double: bool) -> Result<()> {
+    let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| anyhow!("event source"))?;
+    let pt = CGPoint::new(x, y);
+    let mv = CGEvent::new_mouse_event(src.clone(), CGEventType::MouseMoved, pt, CGMouseButton::Left).map_err(|_| anyhow!("mouse"))?;
+    mv.post(CGEventTapLocation::HID);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let mut do_click = |n: i64| -> Result<()> {
+        let down = CGEvent::new_mouse_event(src.clone(), CGEventType::LeftMouseDown, pt, CGMouseButton::Left).map_err(|_| anyhow!("mouse"))?;
+        let up = CGEvent::new_mouse_event(src.clone(), CGEventType::LeftMouseUp, pt, CGMouseButton::Left).map_err(|_| anyhow!("mouse"))?;
+        down.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, n);
+        up.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, n);
+        down.post(CGEventTapLocation::HID);
+        up.post(CGEventTapLocation::HID);
+        Ok(())
+    };
+    do_click(1)?;
+    if double {
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        do_click(2)?;
+    }
+    Ok(())
+}
+
+/// Type a unicode string wherever the cursor is.
+pub fn type_text(text: &str) -> Result<()> {
+    let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| anyhow!("event source"))?;
+    for chunk in text.chars().collect::<Vec<_>>().chunks(20) {
+        let s: String = chunk.iter().collect();
+        let ev = CGEvent::new_keyboard_event(src.clone(), 0, true).map_err(|_| anyhow!("key"))?;
+        ev.set_string(&s);
+        ev.post(CGEventTapLocation::HID);
+        std::thread::sleep(std::time::Duration::from_millis(6));
+    }
+    Ok(())
+}
+
+/// Press a key by virtual keycode with optional modifiers.
+pub fn key_press(keycode: u16, cmd: bool, shift: bool, alt: bool, ctrl: bool) -> Result<()> {
+    let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| anyhow!("event source"))?;
+    let mut flags = CGEventFlags::empty();
+    if cmd { flags |= CGEventFlags::CGEventFlagCommand; }
+    if shift { flags |= CGEventFlags::CGEventFlagShift; }
+    if alt { flags |= CGEventFlags::CGEventFlagAlternate; }
+    if ctrl { flags |= CGEventFlags::CGEventFlagControl; }
+    let down = CGEvent::new_keyboard_event(src.clone(), keycode, true).map_err(|_| anyhow!("key"))?;
+    down.set_flags(flags);
+    let up = CGEvent::new_keyboard_event(src, keycode, false).map_err(|_| anyhow!("key"))?;
+    up.set_flags(flags);
+    down.post(CGEventTapLocation::HID);
+    up.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+/// Common named keys → virtual keycode.
+pub fn keycode_for(name: &str) -> Option<u16> {
+    Some(match name.to_lowercase().as_str() {
+        "return" | "enter" => 36,
+        "tab" => 48,
+        "space" => 49,
+        "delete" | "backspace" => 51,
+        "escape" | "esc" => 53,
+        "left" => 123,
+        "right" => 124,
+        "down" => 125,
+        "up" => 126,
+        "home" => 115,
+        "end" => 119,
+        "pageup" => 116,
+        "pagedown" => 121,
+        _ => return None,
+    })
+}
+
+/// Scroll vertically by `dy` lines (positive = up).
+pub fn scroll_by(dy: i32) -> Result<()> {
+    let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| anyhow!("event source"))?;
+    let ev = CGEvent::new_scroll_event(src, ScrollEventUnit::LINE, 1, dy, 0, 0).map_err(|_| anyhow!("scroll"))?;
+    ev.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
 pub fn send_paste_shortcut() -> Result<()> {
     post_cmd_key(KEY_V)
 }

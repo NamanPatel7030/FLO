@@ -50,7 +50,7 @@ whisper-rs = { version = "0.14", optional = true }
 whisper-rs = { version = "0.14", optional = true, features = ["metal"] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSDictionary", "NSGeometry", "NSValue", "NSError"] }
-core-graphics = "0.24"
+core-graphics = { version = "0.24", features = ["highsierra"] }
 core-foundation = "0.10"
 foreign-types = "0.5"
 

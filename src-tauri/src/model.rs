@@ -204,6 +204,10 @@ pub enum AssistantAction {
     Media {
         action: String,
     },
+    /// control the computer by screen to accomplish a multi-step goal (voice "open X and do Y")
+    Automate {
+        goal: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -594,6 +598,7 @@ pub mod ev {
     pub const CLAUDE: &str = "flo://claude";
     pub const VAULT: &str = "flo://vault";
     pub const REMINDER: &str = "flo://reminder";
+    pub const AGENT: &str = "flo://agent";
     pub const HOVER: &str = "flo://hover";
     pub const CLAUDE_SESSIONS: &str = "flo://claude-sessions";
     pub const CORRECTION: &str = "flo://correction";

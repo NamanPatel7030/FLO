@@ -297,6 +297,17 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
             Ok(format!("Opened {name}"))
         }
         AssistantAction::SlackSend { to, text: body } => crate::slack::propose_send(st, to, body).await,
+        AssistantAction::Automate { goal } => {
+            let st2 = st.clone();
+            let g = goal.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::agent::run(&st2, &g).await {
+                    st2.emit(crate::model::ev::AGENT, serde_json::json!({ "kind": "error", "text": e.to_string() }));
+                    st2.toast("error", format!("Screen control: {e}"));
+                }
+            });
+            Ok(format!("On it — {goal}"))
+        }
         AssistantAction::Media { action } => {
             match action.as_str() {
                 "volume_up" => { crate::media::step_volume(8)?; Ok("Volume up".into()) }

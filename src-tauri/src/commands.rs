@@ -460,6 +460,12 @@ const MAX_CONTEXT_CHARS: usize = 400_000;
 
 // ── Flo Vault ────────────────────────────────────────────────────────────────
 // ── now playing / media / volume (notch widget + voice control) ──────────────
+/// Abort the computer-control agent.
+#[tauri::command]
+pub fn stop_agent(st: State<Shared>) {
+    st.agent_abort.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[tauri::command]
 pub fn now_playing() -> Option<NowPlaying> {
     crate::media::now_playing()
