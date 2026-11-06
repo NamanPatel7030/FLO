@@ -111,8 +111,11 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
 
         match action {
             Action::Partial if local && !stopping => {
+                if audio::voiced_ms(&pending) < 200 {
+                    continue;
+                }
                 if let Ok(t) = session::transcribe_with_prompt(&st, pending.clone(), &last_text).await {
-                    if !t.trim().is_empty() {
+                    if !t.trim().is_empty() && !stt::is_degenerate(&t) {
                         st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: None, elapsed_sec: elapsed, live: true, partial: Some(t) });
                     }
                 }
@@ -120,8 +123,11 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
             Action::Final => {
                 let audio_secs = pending.len() as f32 / audio::TARGET_RATE as f32;
                 let samples = std::mem::take(&mut pending);
+                if audio::voiced_ms(&samples) < 250 {
+                    continue; // no real speech in this stretch → don't invent text
+                }
                 match session::transcribe_with_prompt(&st, samples, &last_text).await {
-                    Ok(t) if !stt::is_hallucination(&t, audio_secs) => {
+                    Ok(t) if !stt::is_hallucination(&t, audio_secs) && !stt::is_degenerate(&t) => {
                         last_text = text::truncate_chars(&t, 200);
                         let segm = MeetingSegment { t: seg_start, text: t };
                         if let Ok(Some(mut n)) = st.db.get_note(&note_id) {

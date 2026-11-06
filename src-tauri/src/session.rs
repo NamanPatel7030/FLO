@@ -162,6 +162,10 @@ async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<
             Action::Final => {
                 let audio_now = std::mem::take(&mut *buf.pending.lock());
                 let secs = audio_now.len() as f32 / audio::TARGET_RATE as f32;
+                // never transcribe a pause that had no real speech (prevents hallucinated text)
+                if audio::voiced_ms(&audio_now) < 200 {
+                    continue;
+                }
                 if let Ok(t) = transcribe_with_prompt(&st, audio_now, &context).await {
                     if !t.trim().is_empty() && !stt::is_hallucination(&t, secs) {
                         context = text::truncate_chars(&t, 200);
@@ -194,13 +198,15 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     let mut samples = stream.as_ref().map(|b| std::mem::take(&mut *b.pending.lock())).unwrap_or_default();
     samples.extend(tokio::task::spawn_blocking(move || recorder.stop()).await?);
     let committed: Vec<String> = stream.as_ref().map(|b| b.committed.lock().clone()).unwrap_or_default();
-    if committed.is_empty() && audio::rms(&samples) < 0.003 {
+    // require real speech; a silent hold must never paste a hallucinated sentence
+    let tail_voiced = audio::voiced_ms(&samples);
+    if committed.is_empty() && tail_voiced < 250 {
         return Err(anyhow!("I didn't hear anything. Check the microphone in System Settings → Sound."));
     }
     st.state(Phase::Transcribing, mode, None);
     let t0 = Instant::now();
     let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
-    let tail = if audio::rms(&samples) >= 0.003 {
+    let tail = if tail_voiced >= 250 {
         let ctx = committed.last().map(|c| text::truncate_chars(c, 200)).unwrap_or_default();
         tokio::time::timeout(std::time::Duration::from_secs(60), transcribe_with_prompt(st, samples, &ctx))
             .await

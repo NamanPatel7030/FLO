@@ -173,6 +173,25 @@ pub fn trim_silence(s: &[f32]) -> Vec<f32> {
 }
 
 /// RMS of a buffer — used to skip silent recordings.
+/// Milliseconds of speech-level audio (voice-activity detection). We only transcribe clips with
+/// real speech so Whisper can't hallucinate a sentence out of silence/background hum.
+/// Adapts to the noise floor: a frame counts as "voiced" only if it's clearly above it.
+pub fn voiced_ms(s: &[f32]) -> u32 {
+    let win = (TARGET_RATE / 50) as usize; // 20 ms frames
+    if s.len() < win {
+        return 0;
+    }
+    let energies: Vec<f32> = s.chunks(win).map(rms).collect();
+    // noise floor = 20th percentile of frame energy
+    let mut sorted = energies.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let floor = sorted[sorted.len() / 5];
+    // voiced = clearly above the floor AND above an absolute speech threshold
+    let thresh = (floor * 3.0).max(0.015);
+    let voiced = energies.iter().filter(|e| **e > thresh).count();
+    (voiced as u32) * 20
+}
+
 pub fn rms(s: &[f32]) -> f32 {
     if s.is_empty() {
         return 0.0;
@@ -214,6 +233,17 @@ mod tests {
         let t = trim_silence(&v);
         assert!(t.len() <= 16_000 && t.len() > 8_000, "len {}", t.len()); // 0.5 s speech + 2×0.25 s padding
         assert_eq!(trim_silence(&[0.0; 10]).len(), 10);
+    }
+
+    #[test]
+    fn voiced_ms_detects_speech_not_silence() {
+        let sr = TARGET_RATE as usize;
+        // 2 s of near-silence (tiny noise) → ~0 voiced
+        let mut silence: Vec<f32> = (0..2 * sr).map(|i| ((i as f32 * 0.7).sin()) * 0.002).collect();
+        assert!(voiced_ms(&silence) < 120, "silence voiced {}", voiced_ms(&silence));
+        // add 0.5 s of loud speech-level tone → clearly voiced
+        silence.extend((0..sr / 2).map(|i| (i as f32 / 8.0).sin() * 0.25));
+        assert!(voiced_ms(&silence) >= 300, "speech voiced {}", voiced_ms(&silence));
     }
 
     #[test]
