@@ -31,7 +31,8 @@ html {
   background: #000;
 }
 body {
-  background: #000;
+  /* transparent so the fixed Aurora backdrop (behind content) shows through; html stays #000 */
+  background: transparent;
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
