@@ -292,6 +292,8 @@ pub struct VaultNote {
 pub struct MeetingSegment {
     pub t: f64,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

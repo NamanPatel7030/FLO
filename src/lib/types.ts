@@ -176,6 +176,8 @@ export interface MeetingSegment {
   /** seconds from meeting start */
   t: number;
   text: string;
+  /** who said it ("You" for your mic, "Others"/name when call audio is captured) */
+  speaker?: string;
 }
 
 export interface MeetingEvent {

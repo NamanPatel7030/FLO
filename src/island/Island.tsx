@@ -52,6 +52,8 @@ export interface MeetingInfo {
   noteId?: string;
   startedAt: number;
   lastLine?: string;
+  /** recent committed transcript lines (shown in the notch; summary lives in the app) */
+  lines?: { speaker?: string; text: string }[];
   /** live, still-changing line while someone talks */
   partial?: string;
   summary?: string;
@@ -302,6 +304,9 @@ export default function Island() {
           noteId: e.noteId,
           startedAt: m.live ? m.startedAt : Date.now() - e.elapsedSec * 1000,
           lastLine: e.segment?.text ?? m.lastLine,
+          lines: e.segment
+            ? [...(m.lines ?? []), { speaker: e.segment.speaker, text: e.segment.text }].slice(-8)
+            : m.lines,
           partial: e.partial !== undefined ? e.partial : e.segment ? "" : m.partial,
           summary: e.summary ?? m.summary,
         }));

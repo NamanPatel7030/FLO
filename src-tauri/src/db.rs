@@ -885,7 +885,7 @@ mod tests {
             title: "Sync".into(),
             kind: "meeting".into(),
             project_id: None,
-            transcript: vec![MeetingSegment { t: 1.0, text: "hi".into() }],
+            transcript: vec![MeetingSegment { t: 1.0, text: "hi".into(), speaker: None }],
             summary: "- a".into(),
             action_items: vec!["x".into()],
             duration_sec: 120.0,

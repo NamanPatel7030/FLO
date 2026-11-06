@@ -129,7 +129,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, stop: Arc<Ato
                 match session::transcribe_with_prompt(&st, samples, &last_text).await {
                     Ok(t) if !stt::is_hallucination(&t, audio_secs) && !stt::is_degenerate(&t) => {
                         last_text = text::truncate_chars(&t, 200);
-                        let segm = MeetingSegment { t: seg_start, text: t };
+                        let segm = MeetingSegment { t: seg_start, text: t, speaker: Some("You".into()) };
                         if let Ok(Some(mut n)) = st.db.get_note(&note_id) {
                             n.transcript.push(segm.clone());
                             if stop.load(Ordering::SeqCst) {
@@ -295,7 +295,7 @@ mod tests {
             title: "t".into(),
             kind: "meeting".into(),
             project_id: None,
-            transcript: vec![MeetingSegment { t: 0.0, text: "Hi".into() }, MeetingSegment { t: 75.0, text: "Ship it".into() }],
+            transcript: vec![MeetingSegment { t: 0.0, text: "Hi".into(), speaker: None }, MeetingSegment { t: 75.0, text: "Ship it".into(), speaker: None }],
             summary: String::new(),
             action_items: vec![],
             duration_sec: 80.0,

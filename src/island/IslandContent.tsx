@@ -395,16 +395,28 @@ export function IslandContent(p: Props) {
                 </button>
               </div>
             </div>
-            <div className="rounded-xl border border-brand-200/10 bg-brand-300/[0.06] p-2.5">
-              <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-brand-300">
-                <Sparkles size={11} /> Live summary
+            <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-brand-200/10 bg-brand-300/[0.05] p-2.5">
+              <div className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-brand-300">
+                <Radio size={11} /> Live transcript
               </div>
-              <p className="line-clamp-3 text-[12.5px] leading-snug text-white/85">{p.meeting.summary || "Summary appears after a minute of conversation."}</p>
+              <div className="flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden">
+                {(p.meeting.lines ?? []).slice(-4).map((ln, i) => (
+                  <p key={i} className="line-clamp-2 text-[12.5px] leading-snug text-white/85">
+                    {ln.speaker && <span className="mr-1 font-semibold text-brand-300">{ln.speaker}:</span>}
+                    {ln.text}
+                  </p>
+                ))}
+                {(p.meeting.partial || (!p.meeting.lines?.length && p.meeting.lastLine)) && (
+                  <p className="line-clamp-2 text-[12.5px] leading-snug text-white/55">
+                    {p.meeting.partial || p.meeting.lastLine}
+                    <span className="flo-caret" aria-hidden />
+                  </p>
+                )}
+                {!p.meeting.lines?.length && !p.meeting.partial && !p.meeting.lastLine && (
+                  <p className="text-[12px] text-white/40">Listening… the full summary is in the app.</p>
+                )}
+              </div>
             </div>
-            <p className="line-clamp-2 text-[12px] text-white/60">
-              {p.meeting.partial || p.meeting.lastLine || ""}
-              <span className="flo-caret" aria-hidden />
-            </p>
           </div>
         </div>
       );
