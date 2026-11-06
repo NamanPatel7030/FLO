@@ -14,6 +14,7 @@ mod intents;
 mod livetx;
 mod llm;
 mod meeting;
+mod reminders;
 mod media;
 mod meeting_detect;
 mod model;
@@ -428,6 +429,7 @@ pub fn run() {
             start_hotkeys(st.clone());
             meeting_detect::spawn(st.clone());
             slack::spawn(st.clone());
+            reminders::spawn(st.clone());
             attention::spawn(st.clone());
             claude::refresh_if_installed(&st);
             claude::spawn_listener(st.clone());

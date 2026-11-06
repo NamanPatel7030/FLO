@@ -87,6 +87,8 @@ impl Db {
             "ALTER TABLE claude_events ADD COLUMN app_bundle TEXT",
             "ALTER TABLE claude_events ADD COLUMN terminal TEXT",
             "ALTER TABLE claude_sessions ADD COLUMN transcript TEXT",
+            "ALTER TABLE todos ADD COLUMN remind_at TEXT",
+            "ALTER TABLE todos ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -194,16 +196,50 @@ impl Db {
     // ── todos ───────────────────────────────────────────────────────────────
     pub fn insert_todo(&self, t: &Todo) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO todos VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            "INSERT INTO todos (id,title,reason,person,app,source,status,project_id,due,confidence,created_at,completed_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![t.id, t.title, t.reason, t.person, t.app, t.source, t.status, t.project_id, t.due, t.confidence, t.created_at, t.completed_at],
         )?;
+        if let Some(r) = &t.remind_at {
+            self.conn.lock().execute("UPDATE todos SET remind_at=?2, reminded=0 WHERE id=?1", params![t.id, r])?;
+        }
         if let Some(p) = &t.project_id {
             self.touch_project(p)?;
         }
         Ok(())
     }
 
+    /// 5 minutes before a due time (RFC3339 with a clock time). None for date-only / no due.
+    pub fn remind_at_for(due: Option<&str>) -> Option<String> {
+        let d = due?;
+        if d.len() <= 10 {
+            return None;
+        }
+        let t = chrono::DateTime::parse_from_rfc3339(d).ok()?;
+        Some((t - Duration::minutes(5)).to_rfc3339())
+    }
+
+    /// Open to-dos whose reminder time has arrived and haven't been notified yet.
+    pub fn due_reminders(&self) -> Result<Vec<Todo>> {
+        let now = Local::now().to_rfc3339();
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT * FROM todos WHERE status='open' AND reminded=0 AND remind_at IS NOT NULL AND remind_at<=?1")?;
+        let rows = st.query_map([now], row_todo)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn mark_reminded(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute("UPDATE todos SET reminded=1 WHERE id=?1", [id])?;
+        Ok(())
+    }
+
+    /// Set/replace a reminder time directly (snooze / "remind me in N min").
+    pub fn set_remind(&self, id: &str, remind_at: Option<&str>) -> Result<()> {
+        self.conn.lock().execute("UPDATE todos SET remind_at=?2, reminded=0 WHERE id=?1", params![id, remind_at])?;
+        Ok(())
+    }
+
     pub fn add_todo(&self, title: &str, source: &str, project_id: Option<String>, due: Option<String>) -> Result<Todo> {
+        let remind_at = Self::remind_at_for(due.as_deref());
         let t = Todo {
             id: new_id(),
             title: title.trim().to_string(),
@@ -211,6 +247,7 @@ impl Db {
             status: "open".into(),
             project_id,
             due,
+            remind_at,
             created_at: now(),
             ..Default::default()
         };
@@ -821,6 +858,7 @@ fn row_todo(r: &Row) -> rusqlite::Result<Todo> {
         confidence: r.get(9)?,
         created_at: r.get(10)?,
         completed_at: r.get(11)?,
+        remind_at: r.get::<_, Option<String>>(12).unwrap_or(None),
     })
 }
 
@@ -861,6 +899,17 @@ mod tests {
 
     fn local_ts(date: NaiveDate, hour: u32) -> String {
         date.and_hms_opt(hour, 0, 0).unwrap().and_local_timezone(Local).unwrap().to_rfc3339()
+    }
+
+    #[test]
+    fn reminders_fire_five_minutes_early() {
+        let due = "2026-11-06T15:00:00+05:30";
+        let r = Db::remind_at_for(Some(due)).unwrap();
+        let rt = chrono::DateTime::parse_from_rfc3339(&r).unwrap();
+        let dt = chrono::DateTime::parse_from_rfc3339(due).unwrap();
+        assert_eq!((dt - rt).num_minutes(), 5);
+        assert!(Db::remind_at_for(Some("2026-11-06")).is_none());
+        assert!(Db::remind_at_for(None).is_none());
     }
 
     #[test]

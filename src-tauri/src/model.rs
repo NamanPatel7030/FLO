@@ -363,6 +363,9 @@ pub struct Todo {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+    /// when to notify (RFC3339), set to due-minus-5-minutes so reminders are always 5 min early
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remind_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -590,6 +593,7 @@ pub mod ev {
     pub const TOAST: &str = "flo://toast";
     pub const CLAUDE: &str = "flo://claude";
     pub const VAULT: &str = "flo://vault";
+    pub const REMINDER: &str = "flo://reminder";
     pub const HOVER: &str = "flo://hover";
     pub const CLAUDE_SESSIONS: &str = "flo://claude-sessions";
     pub const CORRECTION: &str = "flo://correction";

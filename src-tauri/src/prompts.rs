@@ -25,7 +25,7 @@ Respond with ONLY a JSON object:
 {{"reply": "<short answer for the user>", "actions": [<zero or more actions>]}}
 
 Available actions (use exact field names):
-{{"type":"add_todo","title":"...","project":"<project name, optional>","due":"<YYYY-MM-DD, optional>"}}
+{{"type":"add_todo","title":"...","project":"<project name, optional>","due":"<YYYY-MM-DD, or a full date-time YYYY-MM-DDTHH:MM:SS+TZ when the user gives a time or says 'remind me in/at ...'. Flo notifies 5 minutes before this time.>"}}
 {{"type":"complete_todo","match":"<words identifying the to-do>"}}
 {{"type":"create_project","name":"...","description":"..."}}
 {{"type":"set_project_status","project":"...","status":"active|paused|blocked|done"}}
