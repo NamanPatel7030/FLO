@@ -11,6 +11,8 @@ pub struct Intent {
 
 const SITES: &[(&str, &str)] = &[
     ("youtube", "https://youtube.com"),
+    ("google meet", "https://meet.google.com"),
+    ("gmail", "https://mail.google.com"),
     ("gmail", "https://mail.google.com"),
     ("google", "https://google.com"),
     ("github", "https://github.com"),
@@ -86,19 +88,29 @@ fn title_case(s: &str) -> String {
 
 fn open_target(target: &str) -> Option<Intent> {
     let t = target.trim().trim_start_matches("the ").trim_end_matches(" app").trim();
-    if t.is_empty() || t.split_whitespace().count() > 4 {
+    if t.is_empty() {
         return None;
     }
+    // exact known site/app first (handles multi-word names like "google meet", "visual studio code")
     if let Some((_, url)) = SITES.iter().find(|(k, _)| *k == t) {
         return Some(Intent { reply: format!("Opening {}", title_case(t)), action: AssistantAction::OpenUrl { url: url.to_string() } });
+    }
+    if let Some((_, app)) = APPS.iter().find(|(k, _)| *k == t) {
+        return Some(Intent { reply: format!("Opening {app}"), action: AssistantAction::OpenApp { name: (*app).to_string() } });
     }
     // domain-like: github.com, docs.rs/tauri
     let dom = t.replace(" dot ", ".").replace(' ', "");
     if dom.contains('.') && !dom.starts_with('.') && !dom.ends_with('.') && dom.chars().all(|c| c.is_ascii_alphanumeric() || ".-/_".contains(c)) {
         return Some(Intent { reply: format!("Opening {dom}"), action: AssistantAction::OpenUrl { url: format!("https://{dom}") } });
     }
-    let app = APPS.iter().find(|(k, _)| *k == t).map(|(_, v)| v.to_string()).unwrap_or_else(|| title_case(t));
-    Some(Intent { reply: format!("Opening {app}"), action: AssistantAction::OpenApp { name: app } })
+    // a compound phrase ("chrome search for youtube", "notes and write ...") is NOT a single app →
+    // let the assistant/agent handle it. Only treat a short bare name as an app to open.
+    let words = t.split_whitespace().count();
+    const COMPOUND: &[&str] = &["search", "and", "then", "play", "write", "find", "go", "type", "open", "for"];
+    if words > 2 || t.split_whitespace().any(|w| COMPOUND.contains(&w)) {
+        return None;
+    }
+    Some(Intent { reply: format!("Opening {}", title_case(t)), action: AssistantAction::OpenApp { name: title_case(t) } })
 }
 
 /// Recognise a short, unambiguous command. Returns None for anything else (→ LLM).
@@ -223,6 +235,16 @@ mod tests {
         );
         assert_eq!(act("ask claude about rust lifetimes"), Some(AssistantAction::OpenUrl { url: "https://claude.ai/new?q=rust+lifetimes".into() }));
         assert!(matches!(act("ask perplexity best laptops 2026"), Some(AssistantAction::OpenUrl { .. })));
+    }
+
+    #[test]
+    fn compound_open_falls_through_to_agent() {
+        // these are multi-step → None (handled by the LLM/automate agent), not a bogus app open
+        assert!(act("open chrome search for youtube").is_none());
+        assert!(act("open notes and write my ideas").is_none());
+        // simple opens still work
+        assert_eq!(act("open chrome"), Some(AssistantAction::OpenApp { name: "Google Chrome".into() }));
+        assert_eq!(act("open google meet"), Some(AssistantAction::OpenUrl { url: "https://meet.google.com".into() }));
     }
 
     #[test]
