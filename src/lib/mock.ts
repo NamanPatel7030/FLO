@@ -923,6 +923,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "set_volume":
       mockVolume = Math.max(0, Math.min(100, args.level ?? mockVolume));
       return mockVolume;
+    case "stop_agent":
+      return undefined;
     case "claude_hook_status":
       return { ...hook };
     case "install_claude_hook":

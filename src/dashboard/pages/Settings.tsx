@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Download, KeyRound, Lock, Mic, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette } from "lucide-react";
+import { Check, Download, KeyRound, Lock, Mic, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
@@ -14,6 +14,8 @@ import { About } from "../About";
 import { Integrations } from "../Integrations";
 import { AiProviderFields, PROVIDERS } from "../AiSetup";
 import { accountApi, initials, refreshAccount, useAccount } from "../../lib/account";
+import { playCue } from "../../lib/cueSounds";
+import { DEFAULT_WIDGETS, WIDGETS, loadWidgets, saveWidgets, type WidgetId } from "../../lib/widgets";
 
 const TABS = ["Account", "General", "Appearance", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
 type Tab = (typeof TABS)[number];
@@ -276,7 +278,78 @@ function Appearance({ s, set }: P) {
           </div>
         )}
       </Card>
+
+      <WidgetsCard />
     </div>
+  );
+}
+
+/** Pick and order the widgets that appear in the notch panel. Persisted + broadcast to the island. */
+function WidgetsCard() {
+  const [ids, setIds] = useState<WidgetId[]>(() => loadWidgets());
+  const apply = (next: WidgetId[]) => {
+    setIds(next);
+    saveWidgets(next);
+  };
+  const enabled = new Set(ids);
+  const toggle = (id: WidgetId) => apply(enabled.has(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= ids.length) return;
+    const next = [...ids];
+    [next[i], next[j]] = [next[j], next[i]];
+    apply(next);
+  };
+  const off = WIDGETS.filter((w) => !enabled.has(w.id));
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between">
+        <CardTitle icon={<LayoutGrid size={15} />}>Notch widgets</CardTitle>
+        <Button size="sm" variant="glass" icon={<RotateCcw size={13} />} onClick={() => apply([...DEFAULT_WIDGETS])}>
+          Reset
+        </Button>
+      </div>
+      <p className="mt-1 text-[12px] text-faint">Choose what shows in the panel below the notch, and drag the order with the arrows. Changes apply instantly.</p>
+
+      <div className="mt-3 space-y-1.5">
+        {ids.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-3 text-[12.5px] text-muted">No widgets shown. Add some below.</div>}
+        {ids.map((id, i) => {
+          const w = WIDGETS.find((x) => x.id === id);
+          if (!w) return null;
+          return (
+            <div key={id} className="flex items-center gap-2 rounded-xl glass px-3 py-2">
+              <GripVertical size={14} className="text-faint" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium">{w.label}</div>
+                <div className="truncate text-[11.5px] text-faint">{w.hint}</div>
+              </div>
+              <button aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-[var(--fg)] disabled:opacity-30">
+                <ChevronUp size={15} />
+              </button>
+              <button aria-label="Move down" disabled={i === ids.length - 1} onClick={() => move(i, 1)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-[var(--fg)] disabled:opacity-30">
+                <ChevronDown size={15} />
+              </button>
+              <button onClick={() => toggle(id)} className="ml-1 rounded-md px-2 py-1 text-[12px] font-medium text-[var(--accent)] hover:bg-white/10">
+                Remove
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {off.length > 0 && (
+        <>
+          <div className="mt-4 mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Available</div>
+          <div className="flex flex-wrap gap-2">
+            {off.map((w) => (
+              <button key={w.id} onClick={() => toggle(w.id)} className="flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-[12.5px] text-muted transition hover:glass-strong hover:text-[var(--fg)]">
+                <span className="text-[var(--accent)]">+</span> {w.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -287,6 +360,20 @@ function General({ s, set }: P) {
         <Input className="w-56" value={s.userName} onChange={(e) => set({ userName: e.target.value })} />
       </Row>
       <Toggle label="Sounds" hint="Soft chimes when recording starts and stops." checked={s.playSounds} onChange={(v) => set({ playSounds: v })} />
+      <Row label="Test sound" hint="Hear the ready, done and error cues.">
+        <Button
+          size="sm"
+          variant="glass"
+          icon={<Volume2 size={13} />}
+          onClick={() => {
+            playCue("ready", true);
+            setTimeout(() => playCue("done", true), 650);
+            setTimeout(() => playCue("error", true), 1350);
+          }}
+        >
+          Play
+        </Button>
+      </Row>
       <Row label="Setup" hint="Walk through permissions, voice, AI and shortcuts again.">
         <Button size="sm" icon={<Sparkles size={13} />} onClick={() => set({ onboarded: false })}>
           Run setup again

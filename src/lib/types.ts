@@ -485,6 +485,8 @@ export const EV = {
   confirm: "flo://confirm",
   /** payload: {signedIn, user?} — e.g. after Google sign-in completes via flo:// deep link */
   account: "flo://account",
+  /** payload: {kind: "start"|"step"|"confirm"|"done"|"aborted"|"error", text} — computer-control agent */
+  agent: "flo://agent",
 } as const;
 
 /**

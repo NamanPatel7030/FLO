@@ -90,6 +90,7 @@ export type IslandVariant =
   | "collapsed"
   | "peek"
   | "widgets"
+  | "agent"
   | "listening"
   | "working"
   | "done"
@@ -254,6 +255,12 @@ export interface CardContent {
   tipRows?: number;
   /** hover swell (collapsed / tray) */
   swell?: boolean;
+  /** exact body height for the widgets panel (depends on which widgets are enabled) */
+  widgetBody?: number;
+  /** number of streamed steps shown on the agent card */
+  agentSteps?: number;
+  /** agent card status (confirm/done/error/aborted change the body height) */
+  agentDone?: boolean;
 }
 
 /** Height of the assistant card body (below the notch) for given content. */
@@ -300,7 +307,10 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "peek":
         return { width: Math.max(nw + 2 * 160, hasTray ? tray.width : 0), height: nh + 54 };
       case "widgets":
-        return { width: 380, height: nh + ISLAND_GAP + 232 };
+        return { width: 380, height: nh + ISLAND_GAP + (content?.widgetBody ?? 232) };
+      case "agent":
+        // top gap + header row + bottom padding, then a taller body while running vs a one-line result
+        return { width: 468, height: nh + 54 + (content?.agentDone ? 28 : 58) };
       // live states: icons only, flush with the notch (no text row)
       case "listening":
       case "working":
@@ -346,7 +356,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "peek":
       return { width: 260 + pad, height: 52 + pad };
     case "widgets":
-      return { width: 360 + pad, height: 232 + pad };
+      return { width: 360 + pad, height: (content?.widgetBody ?? 232) + pad };
+    case "agent":
+      return { width: 420 + pad, height: (content?.agentDone ? 82 : 112) + pad };
     case "listening":
     case "working":
     case "done":

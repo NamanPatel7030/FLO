@@ -37,6 +37,14 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
     case "widgets":
       at(300, () => hooks.openWidgets?.());
       break;
+    case "agent":
+      pin(10, 20);
+      at(300, () => mockEmit(EV.agent, { kind: "start", text: "Open YouTube and play lofi beats" }));
+      at(1100, () => mockEmit(EV.agent, { kind: "step", text: "Opening youtube.com" }));
+      at(2100, () => mockEmit(EV.agent, { kind: "step", text: "Typing “lofi beats”" }));
+      at(3100, () => mockEmit(EV.agent, { kind: "step", text: "Clicking the first video" }));
+      at(4600, () => mockEmit(EV.agent, { kind: "done", text: "Playing the lofi video." }));
+      break;
     case "tray":
       break; // mock sessions + urgent to-dos show up on load
     case "trayTooltip":

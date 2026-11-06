@@ -147,6 +147,8 @@ export const api = {
   mediaControl: (action: "playpause" | "next" | "previous") => call<void>("media_control", { action }),
   getVolume: () => call<number | null>("get_volume").catch(() => null),
   setVolume: (level: number) => call<number>("set_volume", { level }),
+  /** abort the running computer-control agent */
+  stopAgent: () => call<void>("stop_agent").catch(() => {}),
   claudeHookStatus: () => call<ClaudeHookStatus>("claude_hook_status"),
   installClaudeHook: () => call<ClaudeHookStatus>("install_claude_hook"),
   uninstallClaudeHook: () => call<ClaudeHookStatus>("uninstall_claude_hook"),

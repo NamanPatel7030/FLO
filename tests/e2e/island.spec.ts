@@ -350,6 +350,19 @@ test("widgets: now-playing shows and play/pause toggles", async ({ page }) => {
   await expect(page.getByText("Night Owl")).toBeVisible();
   await pause.click();
   await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
-  // timer + today widgets render
-  await expect(page.getByText("Timer")).toBeVisible();
+  // stopwatch + clock widgets render alongside now-playing
+  await expect(page.getByText("Stopwatch")).toBeVisible();
+  await expect(page.getByText("Clock")).toBeVisible();
+});
+
+test("agent overlay: streams steps with a Stop button, then shows the result", async ({ page }) => {
+  await page.goto("/?nh=38&nw=200&demo=agent#/island");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.locator("[data-island-root]").waitFor();
+  // goal + a live step + the prominent Stop button
+  await expect(page.getByText("Open YouTube and play lofi beats")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  // the run completes → summary + Stop gone
+  await expect(page.getByText("Playing the lofi video.")).toBeVisible({ timeout: 6000 });
+  await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
 });

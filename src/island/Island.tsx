@@ -45,6 +45,8 @@ import { ConfirmCard, CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, 
 import { runDemo } from "./demo";
 import { NotchViz } from "./Ribbon";
 import { Widgets } from "./Widgets";
+import { AgentCard, type AgentState } from "./AgentCard";
+import { loadWidgets, onWidgetsChange, widgetsBodyHeight, type WidgetId } from "../lib/widgets";
 import { applyTheme, onNotchPreview, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
 import { playCue } from "../lib/cueSounds";
@@ -119,6 +121,8 @@ export default function Island() {
   const [preview, setPreview] = useState(false);
   const previewTimer = useRef<number>(0);
   const [widgetsOpen, setWidgetsOpen] = useState(false);
+  const [widgetIds, setWidgetIds] = useState<WidgetId[]>(() => loadWidgets());
+  const [agent, setAgent] = useState<AgentState | null>(null);
   // hover: backend cursor tracking (non-activating panel) + DOM fallback.
   // Raw positions live in refs; React state only changes when the hovered item/tile changes.
   const [hover, setHover] = useState(false);
@@ -339,9 +343,40 @@ export default function Island() {
         backendHover.current = true;
         handleHoverRef.current(e);
       }),
+      on<{ kind: string; text: string }>(EV.agent, (e) => {
+        if (!e || !e.kind) return;
+        setAgent((prev) => {
+          if (e.kind === "start") return { goal: e.text ?? "", steps: [], status: "running" };
+          const base: AgentState = prev ?? { goal: "", steps: [], status: "running" };
+          switch (e.kind) {
+            case "step":
+              return { ...base, status: "running", steps: [...base.steps, e.text].slice(-6) };
+            case "confirm":
+              return { ...base, status: "confirm", text: e.text };
+            case "done":
+              return { ...base, status: "done", text: e.text };
+            case "aborted":
+              return { ...base, status: "aborted", text: e.text };
+            case "error":
+              return { ...base, status: "error", text: e.text };
+            default:
+              return base;
+          }
+        });
+      }),
     ];
     return () => offs.forEach((f) => f());
   }, []);
+
+  // live widget customisation from the Settings window (and this window)
+  useEffect(() => onWidgetsChange(setWidgetIds), []);
+
+  // auto-dismiss the agent card a few seconds after it finishes (paused while hovered)
+  useEffect(() => {
+    if (!agent || agent.status === "running" || agent.status === "confirm" || hover) return;
+    const t = setTimeout(() => setAgent(null), 4500);
+    return () => clearTimeout(t);
+  }, [agent, hover]);
 
   const handleHoverRef = useRef(handleHover);
   handleHoverRef.current = handleHover;
@@ -467,6 +502,7 @@ export default function Island() {
     if (phase === "done" && mode !== "assistant") return "done";
     if (headConfirm) return "confirm";
     if (headFix) return "correction";
+    if (agent) return "agent";
     if (promptOpen && detected && !meeting.live) return "meetingPrompt";
     if (card) return "card";
     if (headClaude) return "claude";
@@ -478,7 +514,7 @@ export default function Island() {
     if (hover && dwell) return "peek";
     if (trayItems.all.length) return "tray";
     return "collapsed";
-  }, [phase, mode, result, headConfirm, headFix, promptOpen, detected, card, headClaude, history, meeting.live, meetingOpen, widgetsOpen, preview, hover, dwell, tipItem, trayItems.all.length]);
+  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headClaude, history, meeting.live, meetingOpen, widgetsOpen, preview, hover, dwell, tipItem, trayItems.all.length]);
 
   // no expansion before the dwell completes (prevents an enter-resize that could feed back into hover)
   const swell = false;
@@ -495,6 +531,10 @@ export default function Island() {
         return { textChars: result?.length ?? 0 };
       case "history":
         return { rows: Math.max(1, history?.length ?? 1) };
+      case "widgets":
+        return { widgetBody: widgetsBodyHeight(widgetIds) };
+      case "agent":
+        return { agentSteps: agent?.steps.length ?? 0, agentDone: !!agent && agent.status !== "running" && agent.status !== "confirm" };
       case "collapsed":
         return swell ? { swell: true } : undefined;
       case "tray":
@@ -551,6 +591,8 @@ export default function Island() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (widgetsOpen) setWidgetsOpen(false);
+      else if (agent && (agent.status === "running" || agent.status === "confirm")) api.stopAgent();
+      else if (agent) setAgent(null);
       else if (phase === "listening" && mode !== "meeting") api.cancelSession();
       else if (history) setHistory(null);
       else if (headFix) setCorrections((q) => q.slice(1));
@@ -571,7 +613,7 @@ export default function Island() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", onBlur);
     };
-  }, [phase, mode, card, headClaude, history, result, headFix, promptOpen]);
+  }, [phase, mode, card, headClaude, history, result, headFix, promptOpen, agent, widgetsOpen]);
 
   // watchdog: if the backend stopped confirming activity, return to idle (never spin forever)
   useEffect(() => {
@@ -811,15 +853,20 @@ export default function Island() {
               {shown === "widgets" ? (
                 <Widgets
                   top={notch ? geo.notchHeight : 0}
+                  ids={widgetIds}
+                  sessions={sessions}
                   onAction={(a) => {
                     setWidgetsOpen(false);
                     if (a === "dictate") api.startSession("dictation");
                     else if (a === "ask") api.startSession("assistant");
                     else if (a === "meeting") api.startMeeting();
                     else if (a === "todos") api.openDashboard("todos");
+                    else if (a === "customize") api.openDashboard("settings/appearance");
                     else api.openDashboard();
                   }}
                 />
+              ) : shown === "agent" && agent ? (
+                <AgentCard agent={agent} notch={notch} geo={geo} onStop={() => api.stopAgent()} onDismiss={() => setAgent(null)} />
               ) : shown === "confirm" && headConfirm ? (
                 <ConfirmCard c={headConfirm} more={confirms.length - 1} notch={notch} geo={geo} onAnswer={(ok) => answerConfirm(headConfirm, ok)} />
               ) : shown === "correction" && headFix ? (
