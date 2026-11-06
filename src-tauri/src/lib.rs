@@ -30,6 +30,7 @@ mod slack;
 mod state;
 mod stt;
 mod text;
+mod weather;
 
 use hotkey::HotkeyEvent;
 use model::{IslandGeometry, Mode};
@@ -363,6 +364,7 @@ pub fn run() {
             commands::confirm_action,
             commands::stop_agent,
             commands::now_playing,
+            commands::weather,
             commands::media_control,
             commands::get_volume,
             commands::set_volume,

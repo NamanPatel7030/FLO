@@ -462,6 +462,14 @@ export interface NowPlaying {
   elapsed?: number;
 }
 
+export interface Weather {
+  tempC: number;
+  /** WMO weather-interpretation code */
+  code: number;
+  isDay: boolean;
+  place: string;
+}
+
 /** Event names (Rust emits these to all windows) */
 export const EV = {
   state: "flo://state",

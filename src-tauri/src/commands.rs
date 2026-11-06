@@ -472,6 +472,11 @@ pub fn now_playing() -> Option<NowPlaying> {
 }
 
 #[tauri::command]
+pub async fn weather(st: State<'_, Shared>) -> R<crate::model::Weather> {
+    crate::weather::current(&st).await.map_err(e)
+}
+
+#[tauri::command]
 pub fn media_control(action: String) -> R<()> {
     crate::media::control(&action).map_err(e)
 }

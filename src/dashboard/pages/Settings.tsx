@@ -16,6 +16,7 @@ import { AiProviderFields, PROVIDERS } from "../AiSetup";
 import { accountApi, initials, refreshAccount, useAccount } from "../../lib/account";
 import { playCue } from "../../lib/cueSounds";
 import { DEFAULT_WIDGETS, WIDGETS, loadWidgets, saveWidgets, type WidgetId } from "../../lib/widgets";
+import { WidgetPreview } from "../../island/Widgets";
 
 const TABS = ["Account", "General", "Appearance", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
 type Tab = (typeof TABS)[number];
@@ -311,27 +312,30 @@ function WidgetsCard() {
       </div>
       <p className="mt-1 text-[12px] text-faint">Choose what shows in the panel below the notch, and drag the order with the arrows. Changes apply instantly.</p>
 
-      <div className="mt-3 space-y-1.5">
+      <div className="mt-3 space-y-2.5">
         {ids.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-3 text-[12.5px] text-muted">No widgets shown. Add some below.</div>}
         {ids.map((id, i) => {
           const w = WIDGETS.find((x) => x.id === id);
           if (!w) return null;
           return (
-            <div key={id} className="flex items-center gap-2 rounded-xl glass px-3 py-2">
-              <GripVertical size={14} className="text-faint" />
-              <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium">{w.label}</div>
-                <div className="truncate text-[11.5px] text-faint">{w.hint}</div>
+            <div key={id} className="rounded-xl glass p-2.5">
+              <div className="mb-2 flex items-center gap-2">
+                <GripVertical size={14} className="text-faint" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium">{w.label}</div>
+                  <div className="truncate text-[11.5px] text-faint">{w.hint}</div>
+                </div>
+                <button aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-[var(--fg)] disabled:opacity-30">
+                  <ChevronUp size={15} />
+                </button>
+                <button aria-label="Move down" disabled={i === ids.length - 1} onClick={() => move(i, 1)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-[var(--fg)] disabled:opacity-30">
+                  <ChevronDown size={15} />
+                </button>
+                <button onClick={() => toggle(id)} className="ml-1 rounded-md px-2 py-1 text-[12px] font-medium text-[var(--accent)] hover:bg-white/10">
+                  Remove
+                </button>
               </div>
-              <button aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-[var(--fg)] disabled:opacity-30">
-                <ChevronUp size={15} />
-              </button>
-              <button aria-label="Move down" disabled={i === ids.length - 1} onClick={() => move(i, 1)} className="rounded-md p-1 text-muted hover:bg-white/10 hover:text-[var(--fg)] disabled:opacity-30">
-                <ChevronDown size={15} />
-              </button>
-              <button onClick={() => toggle(id)} className="ml-1 rounded-md px-2 py-1 text-[12px] font-medium text-[var(--accent)] hover:bg-white/10">
-                Remove
-              </button>
+              <WidgetPreview id={id} />
             </div>
           );
         })}
@@ -339,11 +343,17 @@ function WidgetsCard() {
 
       {off.length > 0 && (
         <>
-          <div className="mt-4 mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Available</div>
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-4 mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Available — tap to add</div>
+          <div className="grid grid-cols-2 gap-2.5">
             {off.map((w) => (
-              <button key={w.id} onClick={() => toggle(w.id)} className="flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-[12.5px] text-muted transition hover:glass-strong hover:text-[var(--fg)]">
-                <span className="text-[var(--accent)]">+</span> {w.label}
+              <button key={w.id} onClick={() => toggle(w.id)} className="group rounded-xl glass p-2.5 text-left transition hover:glass-strong">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[12.5px] font-medium">{w.label}</span>
+                  <span className="rounded-full bg-[var(--accent)]/15 px-2 py-0.5 text-[11px] font-semibold text-[var(--accent)]">+ Add</span>
+                </div>
+                <div className="pointer-events-none">
+                  <WidgetPreview id={w.id} />
+                </div>
               </button>
             ))}
           </div>

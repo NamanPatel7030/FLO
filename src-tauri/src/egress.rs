@@ -17,6 +17,7 @@ pub enum HostClass {
     Local,
     Provider,
     ModelHub,
+    Weather,
     Unknown,
 }
 
@@ -30,6 +31,7 @@ pub enum Purpose {
     ModelDownload,
     Test,
     Slack,
+    Weather,
     Account,
 }
 
@@ -44,6 +46,7 @@ impl Purpose {
             Purpose::ModelDownload => "model download",
             Purpose::Test => "connection test",
             Purpose::Slack => "slack",
+            Purpose::Weather => "weather",
             Purpose::Account => "account sign-in",
         }
     }
@@ -74,6 +77,10 @@ pub fn classify_host(host: &str) -> HostClass {
     if h == "huggingface.co" || h.ends_with(".huggingface.co") || h == "hf.co" || h.ends_with(".hf.co") {
         return HostClass::ModelHub;
     }
+    // weather: key-less, privacy-friendly endpoints (approximate IP location + open-meteo forecast)
+    if h == "api.open-meteo.com" || h == "ipapi.co" {
+        return HostClass::Weather;
+    }
     HostClass::Unknown
 }
 
@@ -82,6 +89,7 @@ pub fn is_allowed(host: &str, purpose: Purpose, cloud_allowed: bool) -> bool {
         HostClass::Local => true,
         HostClass::Provider => cloud_allowed && purpose != Purpose::ModelDownload,
         HostClass::ModelHub => purpose == Purpose::ModelDownload,
+        HostClass::Weather => purpose == Purpose::Weather,
         HostClass::Unknown => false,
     }
 }

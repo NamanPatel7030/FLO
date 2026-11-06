@@ -420,6 +420,24 @@ export default function Island() {
     return () => clearTimeout(t);
   }, [result, hover]);
 
+  // widgets panel auto-closes shortly after the cursor leaves the notch — but only once it has
+  // actually been hovered (so a panel opened programmatically, or before the hover event lands,
+  // isn't closed out from under the user).
+  const widgetsHovered = useRef(false);
+  useEffect(() => {
+    if (!widgetsOpen) {
+      widgetsHovered.current = false;
+      return;
+    }
+    if (hover) {
+      widgetsHovered.current = true;
+      return;
+    }
+    if (!widgetsHovered.current) return;
+    const t = setTimeout(() => setWidgetsOpen(false), 450);
+    return () => clearTimeout(t);
+  }, [widgetsOpen, hover]);
+
   useEffect(() => {
     if (!card || hover || followup) return;
     const t = setTimeout(() => setCard(null), 8000);

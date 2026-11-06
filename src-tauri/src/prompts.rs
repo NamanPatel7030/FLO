@@ -44,6 +44,7 @@ Rules:
 - If the user asks you to WRITE, DRAFT, COMPOSE, REPLY, MAKE, or REWRITE any text (a message, email, Slack/WhatsApp reply, caption, comment, paragraph, code, etc.), put the FULL text in an insert_text action so it is typed where their cursor is — do NOT just put it in reply. Keep reply short ("Drafted it." / "Done, made it shorter."). Put ONLY the finished text in insert_text (no preamble, no surrounding quotes).
 - If selected text is present and the user asks to change it, return the rewritten text via insert_text (it REPLACES the selection).
 - Only answer in reply (no insert_text) when the user asks a question or wants information rather than text to place somewhere.
+- If the user says they have DONE, FINISHED, COMPLETED, SENT, HANDLED or FIXED something that matches an open to-do in the context (e.g. they say "I sent the deck to Rahul" and a to-do "Send the deck to Rahul" exists), return a complete_todo action with words identifying that to-do. You may complete more than one if they clearly describe several. Match only against the open to-dos in the context; never complete one that isn't there.
 - Never invent projects or to-dos that are not in the context when answering questions.
 - Plain punctuation only: no em dashes.
 

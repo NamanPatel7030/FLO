@@ -233,6 +233,19 @@ fn quick_mode() -> String {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Weather {
+    /// current temperature in °C
+    pub temp_c: f64,
+    /// WMO weather-interpretation code (0 = clear, 3 = overcast, 61 = rain, …)
+    pub code: i64,
+    /// is it currently daytime at the location
+    pub is_day: bool,
+    /// nearest place name ("Ahmedabad")
+    pub place: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NowPlaying {
     pub app: String,
     pub title: String,

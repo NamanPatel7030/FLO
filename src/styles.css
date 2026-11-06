@@ -230,6 +230,21 @@ html.hidden-doc * {
   background: transparent;
 }
 
+/* Thin, warm scrollbar for the beige notch tiles (to-do / Claude). */
+.flo-scroll-beige::-webkit-scrollbar {
+  width: 6px;
+}
+.flo-scroll-beige::-webkit-scrollbar-thumb {
+  background: rgba(79, 66, 38, 0.3);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+.flo-scroll-beige::-webkit-scrollbar-thumb:hover {
+  background: rgba(79, 66, 38, 0.5);
+  background-clip: content-box;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .shimmer {
     animation: none;

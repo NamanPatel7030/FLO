@@ -20,9 +20,9 @@ export interface WidgetMeta {
 /** Every widget Flo offers, in the order they appear in the Settings picker. */
 export const WIDGETS: WidgetMeta[] = [
   { id: "nowPlaying", label: "Now Playing", hint: "Track, transport controls and volume", span: 2, h: 78 },
-  { id: "agents", label: "Agent sessions", hint: "Live Claude Code sessions at a glance", span: 2, h: 70 },
+  { id: "agents", label: "Claude sessions", hint: "Live Claude Code sessions — scroll, hover to expand", span: 2, h: 132 },
   { id: "note", label: "Quick note", hint: "A scratch note, saved on this device", span: 2, h: 92 },
-  { id: "today", label: "Today's to-dos", hint: "Your open tasks for today", span: 1, h: 96 },
+  { id: "today", label: "Today's to-dos", hint: "Check off tasks, see why each is here — scroll, hover to expand", span: 2, h: 148 },
   { id: "timer", label: "Stopwatch", hint: "A simple count-up timer", span: 1, h: 96 },
   { id: "pomodoro", label: "Pomodoro", hint: "A 25-minute focus countdown", span: 1, h: 96 },
   { id: "clock", label: "Clock & date", hint: "The time and today's date", span: 1, h: 96 },

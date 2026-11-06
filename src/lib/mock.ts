@@ -908,6 +908,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       if (!np.playing && np.elapsed === 0) return null;
       np.elapsed = (np.elapsed + 3) % 214;
       return { ...np };
+    case "weather":
+      return { tempC: 27, code: 2, isDay: true, place: "Ahmedabad" };
     case "media_control":
       if (args.action === "playpause") np.playing = !np.playing;
       if (args.action === "next") {

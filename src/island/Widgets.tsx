@@ -18,9 +18,11 @@ import {
   Bot,
   StickyNote,
   RotateCcw,
+  Check,
+  ExternalLink,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { ClaudeSession, NowPlaying, Todo } from "../lib/types";
+import type { ClaudeSession, NowPlaying, Todo, Weather } from "../lib/types";
 import { WIDGET_META, type WidgetId } from "../lib/widgets";
 
 export type WidgetAction = "dictate" | "ask" | "meeting" | "dashboard" | "todos" | "customize";
@@ -56,6 +58,19 @@ export function Widgets({ top, ids, sessions, onAction }: { top: number; ids: Wi
           <QuickAction icon={<LayoutDashboard size={15} />} label="Open" onClick={() => onAction("dashboard")} />
           <QuickAction icon={<SettingsIcon size={15} />} label="Edit" onClick={() => onAction("customize")} />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Live preview of a single widget, rendered inside a mini dark notch panel (for Settings).
+ *  Decorative: non-interactive and hidden from the a11y tree so clicking a preview can't toggle a
+ *  real to-do or control media, and its inner controls don't leak into the page's accessible roles. */
+export function WidgetPreview({ id, sessions = [] }: { id: WidgetId; sessions?: ClaudeSession[] }) {
+  return (
+    <div aria-hidden className="pointer-events-none overflow-hidden rounded-2xl border border-white/10 bg-[#0a0c10] p-2" style={{ colorScheme: "dark" }}>
+      <div style={{ height: WIDGET_META[id]?.h }}>
+        <WidgetTile id={id} sessions={sessions} onAction={() => {}} />
       </div>
     </div>
   );
@@ -258,14 +273,78 @@ function ClockWidget() {
   );
 }
 
+/** WMO weather-code → short human label. */
+function wxLabel(code: number): string {
+  if (code === 0) return "Clear";
+  if (code <= 2) return "Partly cloudy";
+  if (code === 3) return "Overcast";
+  if (code <= 48) return "Fog";
+  if (code <= 57) return "Drizzle";
+  if (code <= 67) return "Rain";
+  if (code <= 77) return "Snow";
+  if (code <= 82) return "Showers";
+  if (code <= 86) return "Snow showers";
+  return "Thunderstorm";
+}
+
 function WeatherWidget() {
+  const [wx, setWx] = useState<Weather | null | "err">(null);
+  useEffect(() => {
+    let alive = true;
+    api
+      .weather()
+      .then((w) => alive && setWx(w ?? "err"))
+      .catch(() => alive && setWx("err"));
+    return () => {
+      alive = false;
+    };
+  }, []);
   return (
     <div className="flex h-full flex-col justify-between rounded-xl bg-white/[0.04] p-2.5">
       <TileHead icon={<Cloud size={12} />}>Weather</TileHead>
-      <div className="flex items-baseline gap-1 text-white/85">
-        <span className="text-[24px] font-semibold leading-none">—°</span>
-      </div>
-      <div className="text-[11px] text-white/40">Location setup soon</div>
+      {wx === null ? (
+        <div className="text-[12px] text-white/40">Loading…</div>
+      ) : wx === "err" ? (
+        <div className="text-[11px] text-white/40">Unavailable offline</div>
+      ) : (
+        <>
+          <div className="flex items-baseline gap-1 text-white/90">
+            <span className="text-[24px] font-semibold leading-none tabular-nums">{Math.round(wx.tempC)}°</span>
+            <span className="text-[12px] text-white/55">{wxLabel(wx.code)}</span>
+          </div>
+          <div className="truncate text-[11px] text-white/40">{wx.place || "Your location"}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** "due Sun, Nov 8" — adds the time only when it isn't midnight (date-only to-dos look cleaner). */
+function dueLabel(due: string): string {
+  const d = new Date(due);
+  const date = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  const midnight = d.getHours() === 0 && d.getMinutes() === 0;
+  return midnight ? date : `${date}, ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** A warm beige tile that lifts and grows a touch on hover (used for the to-do and Claude cards). */
+function BeigeTile({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="group relative flex h-full flex-col overflow-hidden rounded-xl p-2.5 text-left transition-[transform,box-shadow] duration-200 ease-out hover:z-20 hover:-translate-y-1 hover:scale-[1.04] hover:shadow-[0_14px_34px_rgba(0,0,0,0.55)]"
+      style={{ background: "linear-gradient(150deg, #efe7d5 0%, #e4d6bd 100%)", color: "#2f2a20" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Header for beige tiles (dark text on beige). */
+function BeigeHead({ icon, children, action }: { icon: React.ReactNode; children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider" style={{ color: "#7a6c4e" }}>
+      {icon} <span className="flex-1">{children}</span>
+      {action}
     </div>
   );
 }
@@ -273,20 +352,52 @@ function WeatherWidget() {
 function TodayWidget({ onOpen }: { onOpen: () => void }) {
   const [todos, setTodos] = useState<Todo[]>([]);
   useEffect(() => {
-    api.listTodos().then((t) => setTodos(t.filter((x) => x.status === "open"))).catch(() => {});
+    const load = () =>
+      api
+        .listTodos()
+        .then((all) => {
+          const today = new Date().toISOString().slice(0, 10);
+          // open tasks, plus anything completed today so it can still be un-checked
+          setTodos(all.filter((x) => x.status === "open" || (x.status === "done" && (x.completedAt ?? "").slice(0, 10) === today)));
+        })
+        .catch(() => {});
+    load();
   }, []);
+  const openCount = todos.filter((t) => t.status === "open").length;
+  const toggle = (t: Todo) => {
+    const next = t.status === "open" ? "done" : "open";
+    setTodos((list) => list.map((x) => (x.id === t.id ? { ...x, status: next, completedAt: next === "done" ? new Date().toISOString() : undefined } : x)));
+    api.updateTodo(t.id, { status: next }).catch(() => {});
+  };
   return (
-    <button onClick={onOpen} className="flex h-full flex-col rounded-xl bg-white/[0.04] p-2.5 text-left transition hover:bg-white/[0.07]">
-      <TileHead icon={<ListChecks size={12} />}>Today · {todos.length}</TileHead>
-      <div className="mt-1 flex-1 space-y-0.5 overflow-hidden">
-        {todos.slice(0, 3).map((t) => (
-          <div key={t.id} className="truncate text-[11.5px] text-white/80">
-            {t.title}
-          </div>
-        ))}
-        {todos.length === 0 && <div className="text-[11.5px] text-white/40">All clear</div>}
+    <BeigeTile>
+      <BeigeHead icon={<ListChecks size={12} />} action={<ExternalLink size={12} className="cursor-pointer opacity-50 hover:opacity-90" onClick={onOpen} />}>
+        Today · {openCount}
+      </BeigeHead>
+      <div className="mt-1.5 flex-1 space-y-1 overflow-y-auto pr-0.5 flo-scroll-beige">
+        {todos.map((t) => {
+          const done = t.status === "done";
+          const why = t.reason || (t.due ? `due ${dueLabel(t.due)}` : t.app ? `from ${t.app}` : t.person ? `from ${t.person}` : "");
+          return (
+            <button key={t.id} onClick={() => toggle(t)} className="flex w-full items-start gap-2 rounded-md px-1 py-1 text-left transition hover:bg-black/[0.06]">
+              <span
+                className="mt-[1px] flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-[5px] border transition"
+                style={{ borderColor: done ? "#6f8f5a" : "#b3a580", background: done ? "#6f8f5a" : "transparent" }}
+              >
+                {done && <Check size={11} strokeWidth={3} color="#fff" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={`block truncate text-[12px] font-medium leading-tight ${done ? "line-through opacity-45" : ""}`} style={{ color: "#2f2a20" }}>
+                  {t.title}
+                </span>
+                {why && <span className="mt-0.5 block truncate text-[10.5px] leading-tight" style={{ color: "#8a7c5c" }}>{why}</span>}
+              </span>
+            </button>
+          );
+        })}
+        {todos.length === 0 && <div className="pt-1 text-[12px]" style={{ color: "#8a7c5c" }}>All clear — nothing due.</div>}
       </div>
-    </button>
+    </BeigeTile>
   );
 }
 
@@ -304,20 +415,25 @@ const STATUS_DOT: Record<ClaudeSession["status"], string> = {
 };
 
 function AgentsWidget({ sessions, onOpen }: { sessions: ClaudeSession[]; onOpen: () => void }) {
-  const top = sessions[0];
   return (
-    <button onClick={onOpen} className="flex h-full flex-col justify-center rounded-xl bg-white/[0.04] p-2.5 text-left transition hover:bg-white/[0.07]">
-      <TileHead icon={<Bot size={12} />}>Agents · {sessions.length}</TileHead>
-      {top ? (
-        <div className="mt-1 flex items-center gap-2">
-          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_DOT[top.status] }} />
-          <span className="truncate text-[12px] font-medium text-white/85">{top.project}</span>
-          <span className="ml-auto shrink-0 text-[11px] text-white/45">{STATUS_LABEL[top.status]}</span>
-        </div>
-      ) : (
-        <div className="mt-1 text-[11.5px] text-white/40">No active sessions</div>
-      )}
-    </button>
+    <BeigeTile>
+      <BeigeHead icon={<Bot size={12} />} action={<ExternalLink size={12} className="cursor-pointer opacity-50 hover:opacity-90" onClick={onOpen} />}>
+        Claude · {sessions.length}
+      </BeigeHead>
+      <div className="mt-1.5 flex-1 space-y-1 overflow-y-auto pr-0.5 flo-scroll-beige">
+        {sessions.map((s) => (
+          <button key={s.sessionId} onClick={onOpen} className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition hover:bg-black/[0.06]">
+            <span className="mt-[3px] h-2 w-2 shrink-0 self-start rounded-full" style={{ background: STATUS_DOT[s.status] }} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12px] font-medium leading-tight" style={{ color: "#2f2a20" }}>{s.project}</span>
+              {s.message && <span className="mt-0.5 block truncate text-[10.5px] leading-tight" style={{ color: "#8a7c5c" }}>{s.message}</span>}
+            </span>
+            <span className="shrink-0 self-start text-[10.5px]" style={{ color: "#8a7c5c" }}>{STATUS_LABEL[s.status]}</span>
+          </button>
+        ))}
+        {sessions.length === 0 && <div className="pt-1 text-[12px]" style={{ color: "#8a7c5c" }}>No active sessions.</div>}
+      </div>
+    </BeigeTile>
   );
 }
 

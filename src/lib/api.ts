@@ -144,6 +144,7 @@ export const api = {
   acceptCorrection: (heard: string, corrected: string) => call<DictionaryEntry>("accept_correction", { heard, corrected }),
   // now playing / media / volume (notch widgets)
   nowPlaying: () => call<import("./types").NowPlaying | null>("now_playing").catch(() => null),
+  weather: () => call<import("./types").Weather | null>("weather").catch(() => null),
   mediaControl: (action: "playpause" | "next" | "previous") => call<void>("media_control", { action }),
   getVolume: () => call<number | null>("get_volume").catch(() => null),
   setVolume: (level: number) => call<number>("set_volume", { level }),
