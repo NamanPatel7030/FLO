@@ -604,17 +604,29 @@ pub fn focus(app_bundle: Option<&str>, terminal: Option<&str>, cwd: &str) -> any
 
 /// Re-write an installed hook so it uses the current command format.
 pub fn refresh_if_installed(st: &Shared) {
-    let Ok(token) = secrets::hook_token() else { return };
+    let token = match secrets::hook_token() {
+        Ok(t) => t,
+        Err(e) => {
+            log::warn!("claude hooks: no token, not refreshing ({e})");
+            return;
+        }
+    };
     let cmd = hook_command(st.claude_port, &token);
-    let perm = st.settings().claude_approvals.then(|| permission_command(st.claude_port, &token));
+    let approvals = st.settings().claude_approvals;
+    let perm = approvals.then(|| permission_command(st.claude_port, &token));
     for d in config_dirs() {
         let f = d.join("settings.json");
         let v = read_json(&f);
         if has_hooks(&v) {
             let fresh = add_hooks_with(v.clone(), &cmd, perm.as_deref());
             if fresh != v {
-                let _ = write_json(&f, &fresh);
+                match write_json(&f, &fresh) {
+                    Ok(()) => log::info!("claude hooks refreshed in {} (approvals {})", f.display(), if approvals { "on" } else { "off" }),
+                    Err(e) => log::warn!("claude hooks: couldn't write {}: {e}", f.display()),
+                }
             }
+        } else {
+            log::info!("claude hooks: not installed in {}", f.display());
         }
     }
 }

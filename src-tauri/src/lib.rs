@@ -481,8 +481,18 @@ pub fn run() {
             mcp::refresh_hosts(&st, None);
             reminders::spawn(st.clone());
             attention::spawn(st.clone());
-            claude::refresh_if_installed(&st);
-            claude::spawn_listener(st.clone());
+            // both read the hook token from the keychain, which can wait on a macOS permission
+            // prompt; never block app start (and the notch) on that
+            {
+                let st2 = st.clone();
+                std::thread::Builder::new()
+                    .name("flo-claude-setup".into())
+                    .spawn(move || {
+                        claude::refresh_if_installed(&st2);
+                        claude::spawn_listener(st2);
+                    })
+                    .ok();
+            }
             spawn_hover_tracker(handle.clone(), st.clone());
             stt::spawn_idle_unloader(st.whisper.clone());
             Ok(())
