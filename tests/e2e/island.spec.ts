@@ -423,3 +423,56 @@ test("notch size: Biggest opens the Claude session list larger", async ({ page }
   expect(biggest / big).toBeGreaterThan(1.2);
   expect(biggest / big).toBeLessThan(1.4);
 });
+
+test("widgets: the to-do list scrolls when it has more than fits", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("flo.widgets", JSON.stringify(["today", "agents", "nowPlaying"])));
+  await page.goto("/?nh=38&nw=420&demo=widgets#/island");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  const root = page.locator("[data-island-root]");
+  const box = (await root.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 60);
+  const list = page.locator(".flo-scroll-beige").first();
+  await expect(list).toBeVisible();
+  const m = await list.evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
+  expect(m.sh).toBeGreaterThan(m.ch); // more to-dos than fit → it must overflow, not be clipped
+  const lb = (await list.boundingBox())!;
+  await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2);
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+});
+
+test("to-do tray: hovering lists every to-do (not just three), scrollable, and ticks one off", async ({ page }) => {
+  await openIsland(page);
+  const many = Array.from({ length: 9 }, (_, i) => ({
+    id: `u${i}`,
+    title: `Urgent task ${i + 1}`,
+    source: "manual",
+    status: "open",
+    due: new Date().toISOString().slice(0, 10),
+    createdAt: new Date().toISOString(),
+  }));
+  await page.evaluate(async (ts) => {
+    const m = (window as any).__floMock;
+    for (const t of ts) await m.invoke("add_todo", { title: t.title, due: t.due });
+    m.emit("flo://todos", {});
+  }, many);
+  const icon = page.locator('[aria-label="todos"]');
+  const box = (await icon.boundingBox())!;
+  const win = (await page.locator("[data-island-root]").boundingBox())!;
+  const cx = box.x + box.width / 2 - (win.x + win.width / 2);
+  const y = box.y - win.y + box.height / 2;
+  const list = page.getByTestId("todo-tip-list");
+  for (let i = 0; i < 30 && !(await list.isVisible()); i++) {
+    const w = (await page.locator("[data-island-root]").boundingBox())!;
+    await emit(page, "flo://hover", { inside: true, cx, y, x: w.width / 2 + cx });
+    await page.waitForTimeout(100);
+  }
+  await expect(list).toBeVisible();
+  const rows = list.getByTestId("todo-tip-row");
+  expect(await rows.count()).toBeGreaterThan(3);
+  const m = await list.evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
+  expect(m.sh).toBeGreaterThan(m.ch);
+  const first = await rows.first().innerText();
+  await rows.first().getByRole("button").click();
+  await expect(list).not.toContainText(first.split("\n")[0]);
+});

@@ -266,6 +266,10 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
         if n.title.starts_with("Meeting ") && !s.title.trim().is_empty() {
             n.title = s.title.trim().to_string();
         }
+        // a meeting not started under a project is filed by what it was about (client, people, keywords)
+        if n.project_id.is_none() {
+            n.project_id = st.db.project_for(&format!("{} {}", n.title, n.summary));
+        }
         let existing = st.db.open_todo_titles().unwrap_or_default();
         for item in &s.action_items {
             if !text::is_duplicate_todo(item, &existing) {

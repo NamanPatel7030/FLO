@@ -85,6 +85,11 @@ const settings: Settings = {
   soundPack: "chime",
   soundVolume: 70,
   notifySound: true,
+  soundStart: "chime",
+  soundStop: "chime",
+  soundNotify: "glass",
+  startSoundOn: true,
+  stopSoundOn: true,
   systemNotifications: true,
   typingWpm: 40,
   userName: "Parth",
@@ -747,7 +752,17 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return [...projects.values()].map(projectView);
     case "create_project": {
       const palette = ["#3dbbff", "#1a9be0", "#f59e0b", "#10b981", "#ec4899", "#3b82f6"];
-      const p = { id: uid("p"), name: args.name, description: args.description, status: "active" as const, color: palette[projects.size % palette.length], updatedAt: new Date().toISOString() };
+      const p = {
+        id: uid("p"),
+        name: args.name,
+        description: args.description,
+        status: "active" as const,
+        color: palette[projects.size % palette.length],
+        updatedAt: new Date().toISOString(),
+        client: args.client,
+        clientDetails: args.clientDetails,
+        keywords: args.keywords,
+      };
       projects.set(p.id, p);
       mockEmit(EV.projects, {});
       return projectView(p);
@@ -755,7 +770,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "update_project": {
       const p = projects.get(args.id);
       if (p) {
-        for (const k of ["name", "description", "status"] as const) if (args[k] !== undefined) (p as any)[k] = args[k];
+        for (const k of ["name", "description", "status", "client", "clientDetails", "keywords"] as const) if (args[k] !== undefined) (p as any)[k] = args[k] || undefined;
         p.updatedAt = new Date().toISOString();
       }
       mockEmit(EV.projects, {});

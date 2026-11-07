@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { Asterisk, Check, CheckCircle2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
-import { claudeStatusLabel, relativeTime, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
+import { claudeStatusLabel, formatDue, relativeTime, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
 import type { ClaudeSession, ConfirmEvent, CorrectionEvent, IslandGeometry, Todo } from "../lib/types";
 import { CardRow } from "./CardRow";
 
@@ -244,6 +244,7 @@ export function TrayTooltip({
   onStartNotes,
   onIgnoreMeeting,
   onOpenTodos,
+  onDoneTodo,
   scale = 1,
 }: {
   scale?: number;
@@ -255,6 +256,8 @@ export function TrayTooltip({
   onStartNotes: (app: string) => void;
   onIgnoreMeeting: (app: string) => void;
   onOpenTodos: () => void;
+  /** tick a to-do off right in the list */
+  onDoneTodo?: (t: Todo) => void;
 }) {
   return (
     <motion.div
@@ -309,18 +312,32 @@ export function TrayTooltip({
       )}
       {item.kind === "todos" && (
         <>
-          <div className="mb-1 flex items-center gap-1.5 text-[12.5px] font-semibold">
+          <div className="mb-1 flex h-[26px] shrink-0 items-center gap-1.5 text-[12.5px] font-semibold">
             <CheckCircle2 size={13} className="text-brand-300" /> {item.todos.length} to-do{item.todos.length === 1 ? "" : "s"} need you
           </div>
-          <div className="flex min-h-0 flex-col gap-[3px] overflow-hidden">
-            {item.todos.slice(0, 3).map((t) => (
-              <div key={t.id} className="flex items-center gap-2 text-[12px] text-white/75">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-300" />
-                <span className="truncate">{t.title}</span>
-              </div>
-            ))}
+          {/* every to-do, scrollable (it used to show only the first three), each one tickable */}
+          <div className="flo-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain" style={{ maxHeight: TRAY_LIST_ROW * 6 }} data-testid="todo-tip-list">
+            {item.todos.map((t) => {
+              const why = t.reason || (t.due ? `due ${formatDue(t.due)}` : t.app ? `from ${t.app}` : t.person ? `from ${t.person}` : "");
+              return (
+                <div key={t.id} className="group flex shrink-0 items-center gap-2 rounded-lg px-1 hover:bg-white/[0.05]" style={{ height: TRAY_LIST_ROW }} data-testid="todo-tip-row">
+                  <button
+                    aria-label={`Done: ${t.title}`}
+                    title="Mark done"
+                    onClick={() => onDoneTodo?.(t)}
+                    className="flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-white/30 transition hover:border-brand-300 hover:bg-brand-300/20"
+                  >
+                    <Check size={9} strokeWidth={3.5} className="text-brand-200 opacity-0 group-hover:opacity-60" />
+                  </button>
+                  <div className="min-w-0 flex-1 leading-tight">
+                    <div className="truncate text-[12.5px] text-white/90">{t.title}</div>
+                    {why && <div className="truncate text-[10.5px] text-white/45">{why}</div>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <div className="mt-auto flex justify-end">
+          <div className="mt-auto flex shrink-0 justify-end pt-1">
             <button className={btnPrimary} onClick={onOpenTodos}>
               Open to-dos
             </button>

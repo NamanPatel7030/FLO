@@ -159,12 +159,40 @@ test("notch tab: size, new animations, sounds and notifications all save", async
   const [tb, cb] = [await tile.boundingBox(), await canvas.boundingBox()];
   expect(cb!.width).toBeGreaterThan(tb!.width - 20);
 
-  await page.getByRole("radio", { name: /Glass/ }).click();
-  await expect.poll(() => get("soundPack")).toBe("glass");
+  // start, stop and notification sounds are each their own style + switch
+  await page.getByRole("radiogroup", { name: "Start listening style" }).getByRole("radio", { name: /Pop/ }).click();
+  await expect.poll(() => get("soundStart")).toBe("pop");
+  await page.getByRole("radiogroup", { name: "Stop and done style" }).getByRole("radio", { name: /Soft/ }).click();
+  await expect.poll(() => get("soundStop")).toBe("soft");
+  await page.getByRole("radiogroup", { name: "Notifications style" }).getByRole("radio", { name: /Glass/ }).click();
+  await expect.poll(() => get("soundNotify")).toBe("glass");
+  await page.getByRole("switch", { name: "Stop and done sound" }).click();
+  await expect.poll(() => get("stopSoundOn")).toBe(false);
+  await page.getByRole("switch", { name: "Notifications sound" }).click();
+  await expect.poll(() => get("notifySound")).toBe(false);
   await page.getByLabel("Sound volume").fill("35");
   await expect.poll(() => get("soundVolume")).toBe(35);
-  await page.getByText("Notification sound", { exact: true }).click();
-  await expect.poll(() => get("notifySound")).toBe(false);
   await page.getByText("macOS notification banners", { exact: true }).click();
   await expect.poll(() => get("systemNotifications")).toBe(false);
+});
+
+test("projects: create with client details, edit them in the drawer", async ({ page }) => {
+  await page.goto("/#/projects");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.getByRole("button", { name: "New project" }).click();
+  const form = page.getByTestId("new-project");
+  await form.getByLabel("Project name").fill("Website rebuild");
+  await form.getByLabel("Client", { exact: true }).fill("Fang Studio");
+  await form.getByLabel("Client details").fill("fang@studio.cn");
+  await form.getByLabel("Keywords").fill("Ayushi, SOW");
+  await form.getByRole("button", { name: "Create" }).click();
+
+  const section = page.getByTestId("client-section");
+  await expect(section.getByLabel("Client", { exact: true })).toHaveValue("Fang Studio");
+  await expect(section.getByLabel("Keywords")).toHaveValue("Ayushi, SOW");
+  await section.getByLabel("Client details").fill("Fang Wei, fang@studio.cn, WeChat");
+  await section.getByLabel("Keywords").click(); // blur saves
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__floMock.invoke("list_projects").then((ps: any[]) => ps.find((p) => p.name === "Website rebuild")?.clientDetails)))
+    .toBe("Fang Wei, fang@studio.cn, WeChat");
 });

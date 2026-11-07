@@ -93,8 +93,9 @@ export const api = {
   snoozeTodo: (id: string, minutes: number) => call<void>("snooze_todo", { id, minutes }),
 
   listProjects: () => call<Project[]>("list_projects"),
-  createProject: (name: string, description?: string) => call<Project>("create_project", { name, description }),
-  updateProject: (id: string, patch: { name?: string; description?: string; status?: ProjectStatus }) =>
+  createProject: (name: string, description?: string, client?: { client?: string; clientDetails?: string; keywords?: string }) =>
+    call<Project>("create_project", { name, description, ...client }),
+  updateProject: (id: string, patch: { name?: string; description?: string; status?: ProjectStatus; client?: string; clientDetails?: string; keywords?: string }) =>
     call<Project>("update_project", { id, ...patch }),
   deleteProject: (id: string) => call<void>("delete_project", { id }),
 

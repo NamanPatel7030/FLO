@@ -287,10 +287,6 @@ function Notch({ s, set }: P) {
   const size = s.notchSize ?? "big";
   const pack = (s.soundPack ?? "chime") as SoundPack;
   const volume = s.soundVolume ?? 70;
-  const demo = (p: SoundPack) => {
-    playCue("ready", true, p, volume / 100);
-    setTimeout(() => playCue("done", true, p, volume / 100), 600);
-  };
   return (
     <div className="space-y-5">
       <Card className="p-4">
@@ -381,46 +377,38 @@ function Notch({ s, set }: P) {
 
       <Card className="p-4">
         <CardTitle icon={<Volume2 size={15} />}>Sounds</CardTitle>
-        <div className="divide-y divide-[var(--border)]">
-          <Toggle label="Start and stop sounds" hint="A soft cue when Flo starts listening, finishes, or hits a problem." checked={s.playSounds} onChange={(v) => set({ playSounds: v })} />
-          <Toggle label="Notification sound" hint="A gentle chime when a reminder or a Claude update appears in the notch." checked={s.notifySound ?? true} onChange={(v) => set({ notifySound: v })} />
-        </div>
-        <div className="mt-3 grid grid-cols-4 gap-2.5" role="radiogroup" aria-label="Sound style">
-          {SOUND_PACKS.map((sp) => (
-            <div
-              key={sp.id}
-              role="radio"
-              aria-checked={pack === sp.id}
-              tabIndex={0}
-              onClick={() => {
-                set({ soundPack: sp.id });
-                demo(sp.id);
-              }}
-              onKeyDown={(e) => e.key === "Enter" && (set({ soundPack: sp.id }), demo(sp.id))}
-              className={clsx(
-                "cursor-pointer rounded-2xl border p-3 transition",
-                pack === sp.id ? "border-[var(--accent)] glass-strong shadow-[0_0_0_1px_var(--accent)]" : "border-[var(--border)] glass hover:glass-strong",
-              )}
-            >
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-[13px] font-medium">
-                  {sp.label}
-                  {pack === sp.id && <Check size={13} className="text-[var(--accent)]" />}
-                </span>
-                <button
-                  aria-label={`Play ${sp.label}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    demo(sp.id);
-                  }}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-[var(--fg)] hover:bg-white/20"
-                >
-                  <Play size={11} className="ml-[1px]" />
-                </button>
-              </div>
-              <div className="mt-1 text-[11.5px] leading-snug text-faint">{sp.hint}</div>
-            </div>
-          ))}
+        <Toggle label="All sounds" hint="Turn every Flo sound on or off. Pick each one below." checked={s.playSounds} onChange={(v) => set({ playSounds: v })} />
+        <div className={clsx("mt-2 space-y-2.5 transition", !s.playSounds && "pointer-events-none opacity-40")}>
+          <SoundRow
+            label="Start listening"
+            hint="When you press Fn or Control and Flo starts listening."
+            on={s.startSoundOn ?? true}
+            onToggle={(v) => set({ startSoundOn: v })}
+            pack={(s.soundStart || pack) as SoundPack}
+            onPack={(p) => set({ soundStart: p })}
+            play={(p) => playCue("ready", true, p, volume / 100)}
+          />
+          <SoundRow
+            label="Stop and done"
+            hint="When you let go, Flo finishes, or something goes wrong."
+            on={s.stopSoundOn ?? true}
+            onToggle={(v) => set({ stopSoundOn: v })}
+            pack={(s.soundStop || pack) as SoundPack}
+            onPack={(p) => set({ soundStop: p })}
+            play={(p) => {
+              playCue("done", true, p, volume / 100);
+              setTimeout(() => playCue("error", true, p, volume / 100), 700);
+            }}
+          />
+          <SoundRow
+            label="Notifications"
+            hint="When a reminder or a Claude update appears in the notch."
+            on={s.notifySound ?? true}
+            onToggle={(v) => set({ notifySound: v })}
+            pack={(s.soundNotify || pack) as SoundPack}
+            onPack={(p) => set({ soundNotify: p })}
+            play={(p) => playCue("notify", true, p, volume / 100)}
+          />
         </div>
         <div className="mt-4 flex items-center gap-3">
           <Volume2 size={14} className="text-faint" />
@@ -1069,5 +1057,73 @@ function RepairButton() {
     <Button size="sm" variant={armed ? "primary" : "glass"} onClick={() => (armed ? api.repairPermissions() : setArmed(true))}>
       {armed ? "Click again to reset & restart" : "Repair permissions"}
     </Button>
+  );
+}
+
+/** One customizable sound: on/off, a style (Chime / Glass / Soft / Pop) and a play button. */
+function SoundRow({
+  label,
+  hint,
+  on,
+  onToggle,
+  pack,
+  onPack,
+  play,
+}: {
+  label: string;
+  hint: string;
+  on: boolean;
+  onToggle: (v: boolean) => void;
+  pack: SoundPack;
+  onPack: (p: SoundPack) => void;
+  play: (p: SoundPack) => void;
+}) {
+  return (
+    <div className="rounded-2xl glass p-3" data-testid={`sound-${label}`}>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium">{label}</div>
+          <div className="text-[11.5px] text-faint">{hint}</div>
+        </div>
+        <button
+          aria-label={`Play ${label}`}
+          onClick={() => play(pack)}
+          disabled={!on}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-[var(--fg)] transition hover:bg-white/20 disabled:opacity-40"
+        >
+          <Play size={11} className="ml-[1px]" />
+        </button>
+        <button
+          role="switch"
+          aria-checked={on}
+          aria-label={`${label} sound`}
+          onClick={() => onToggle(!on)}
+          className={clsx("relative h-6 w-10 shrink-0 rounded-full transition", on ? "bg-[var(--accent)]" : "bg-white/15")}
+        >
+          <span className={clsx("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all", on ? "left-[18px]" : "left-0.5")} />
+        </button>
+      </div>
+      <div className={clsx("mt-2.5 grid grid-cols-4 gap-1.5", !on && "pointer-events-none opacity-40")} role="radiogroup" aria-label={`${label} style`}>
+        {SOUND_PACKS.map((sp) => (
+          <button
+            key={sp.id}
+            role="radio"
+            aria-checked={pack === sp.id}
+            title={sp.hint}
+            onClick={() => {
+              onPack(sp.id);
+              play(sp.id);
+            }}
+            className={clsx(
+              "flex h-8 items-center justify-center gap-1 rounded-xl text-[12px] font-medium transition",
+              pack === sp.id ? "bg-[var(--accent)]/20 text-[var(--fg)] shadow-[0_0_0_1px_var(--accent)]" : "bg-white/[0.04] text-muted hover:bg-white/10 hover:text-[var(--fg)]",
+            )}
+          >
+            {pack === sp.id && <Check size={12} className="text-[var(--accent)]" />}
+            {sp.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

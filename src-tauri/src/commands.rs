@@ -238,15 +238,31 @@ pub fn list_projects(st: State<Shared>) -> R<Vec<Project>> {
 }
 
 #[tauri::command]
-pub fn create_project(st: State<Shared>, name: String, description: Option<String>) -> R<Project> {
+pub fn create_project(st: State<Shared>, name: String, description: Option<String>, client: Option<String>, client_details: Option<String>, keywords: Option<String>) -> R<Project> {
     let p = st.db.create_project(&name, description.as_deref()).map_err(e)?;
+    if client.is_some() || client_details.is_some() || keywords.is_some() {
+        st.db.update_project_client(&p.id, client.as_deref(), client_details.as_deref(), keywords.as_deref()).map_err(e)?;
+    }
     st.emit(ev::PROJECTS, ());
-    Ok(p)
+    Ok(st.db.get_project(&p.id).map_err(e)?.unwrap_or(p))
 }
 
 #[tauri::command]
-pub fn update_project(st: State<Shared>, id: String, name: Option<String>, description: Option<String>, status: Option<String>) -> R<()> {
+#[allow(clippy::too_many_arguments)]
+pub fn update_project(
+    st: State<Shared>,
+    id: String,
+    name: Option<String>,
+    description: Option<String>,
+    status: Option<String>,
+    client: Option<String>,
+    client_details: Option<String>,
+    keywords: Option<String>,
+) -> R<()> {
     st.db.update_project(&id, name.as_deref(), description.as_deref(), status.as_deref()).map_err(e)?;
+    if client.is_some() || client_details.is_some() || keywords.is_some() {
+        st.db.update_project_client(&id, client.as_deref(), client_details.as_deref(), keywords.as_deref()).map_err(e)?;
+    }
     st.emit(ev::PROJECTS, ());
     Ok(())
 }

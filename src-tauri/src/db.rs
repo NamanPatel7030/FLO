@@ -89,6 +89,9 @@ impl Db {
             "ALTER TABLE claude_sessions ADD COLUMN transcript TEXT",
             "ALTER TABLE todos ADD COLUMN remind_at TEXT",
             "ALTER TABLE todos ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE projects ADD COLUMN client TEXT",
+            "ALTER TABLE projects ADD COLUMN client_details TEXT",
+            "ALTER TABLE projects ADD COLUMN keywords TEXT",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -123,8 +126,9 @@ impl Db {
         let id = new_id();
         let count: i64 = self.conn.lock().query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))?;
         let color = PROJECT_COLORS[(count as usize) % PROJECT_COLORS.len()];
+        // explicit columns: positional inserts break as soon as a column is added
         self.conn.lock().execute(
-            "INSERT INTO projects VALUES (?1,?2,?3,'active',?4,?5)",
+            "INSERT INTO projects (id,name,description,status,color,updated_at) VALUES (?1,?2,?3,'active',?4,?5)",
             params![id, name.trim(), description, color, now()],
         )?;
         Ok(self.get_project(&id)?.expect("just inserted"))
@@ -140,7 +144,8 @@ impl Db {
             "SELECT p.id,p.name,p.description,p.status,p.color,p.updated_at,
                (SELECT COUNT(*) FROM todos t WHERE t.project_id=p.id AND t.status IN ('open','snoozed')),
                (SELECT COUNT(*) FROM todos t WHERE t.project_id=p.id AND t.status='done'),
-               (SELECT n.title FROM notes n WHERE n.project_id=p.id ORDER BY n.created_at DESC LIMIT 1)
+               (SELECT n.title FROM notes n WHERE n.project_id=p.id ORDER BY n.created_at DESC LIMIT 1),
+               p.client, p.client_details, p.keywords
              FROM projects p ORDER BY p.updated_at DESC",
         )?;
         let rows = st
@@ -155,10 +160,50 @@ impl Db {
                     open_todos: r.get(6)?,
                     done_todos: r.get(7)?,
                     last_note: r.get(8)?,
+                    client: r.get(9)?,
+                    client_details: r.get(10)?,
+                    keywords: r.get(11)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Set client name / details / keywords (Some("") clears a field).
+    pub fn update_project_client(&self, id: &str, client: Option<&str>, details: Option<&str>, keywords: Option<&str>) -> Result<()> {
+        let c = self.conn.lock();
+        let norm = |v: &str| (!v.trim().is_empty()).then(|| v.trim().to_string());
+        if let Some(v) = client {
+            c.execute("UPDATE projects SET client=?2 WHERE id=?1", params![id, norm(v)])?;
+        }
+        if let Some(v) = details {
+            c.execute("UPDATE projects SET client_details=?2 WHERE id=?1", params![id, norm(v)])?;
+        }
+        if let Some(v) = keywords {
+            c.execute("UPDATE projects SET keywords=?2 WHERE id=?1", params![id, norm(v)])?;
+        }
+        c.execute("UPDATE projects SET updated_at=?2 WHERE id=?1", params![id, now()])?;
+        Ok(())
+    }
+
+    /// The project a captured item belongs to, from its words (name, client, keywords).
+    pub fn project_for(&self, text: &str) -> Option<String> {
+        let projects = self.list_projects().ok()?;
+        let cands: Vec<(String, Vec<(String, u32)>)> = projects
+            .iter()
+            .filter(|p| p.status != "done")
+            .map(|p| {
+                let mut terms = vec![(p.name.clone(), 2)];
+                if let Some(c) = &p.client {
+                    terms.push((c.clone(), 2));
+                }
+                for k in p.keywords.as_deref().unwrap_or("").split(',') {
+                    terms.push((k.trim().to_string(), 1));
+                }
+                (p.id.clone(), terms)
+            })
+            .collect();
+        crate::text::match_project(text, &cands)
     }
 
     pub fn update_project(&self, id: &str, name: Option<&str>, description: Option<&str>, status: Option<&str>) -> Result<()> {
@@ -197,11 +242,18 @@ impl Db {
     pub fn insert_todo(&self, t: &Todo) -> Result<()> {
         // a deadline in the words ("by next Monday") becomes the due date + a 5-min-early reminder
         let mut owned;
-        let t = if t.due.is_none() {
+        let t = if t.due.is_none() || t.project_id.is_none() {
             owned = t.clone();
-            owned.due = Self::due_from_words(&t.title, &t.created_at);
-            if owned.remind_at.is_none() {
-                owned.remind_at = Self::remind_at_for(owned.due.as_deref());
+            if owned.due.is_none() {
+                owned.due = Self::due_from_words(&t.title, &t.created_at);
+                if owned.remind_at.is_none() {
+                    owned.remind_at = Self::remind_at_for(owned.due.as_deref());
+                }
+            }
+            // file it under the project its words point to (name, client, keywords)
+            if owned.project_id.is_none() {
+                let words = [Some(t.title.as_str()), t.reason.as_deref(), t.person.as_deref(), t.app.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" ");
+                owned.project_id = self.project_for(&words);
             }
             &owned
         } else {
@@ -926,6 +978,23 @@ fn row_note(r: &Row) -> rusqlite::Result<Note> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn todos_are_filed_under_their_clients_project() {
+        let db = Db::open_in_memory().unwrap();
+        let p = db.create_project("Website rebuild", Some("SaaS site from scratch")).unwrap();
+        db.update_project_client(&p.id, Some("Fang Studio"), Some("fang@studio.cn, WeChat"), Some("Ayushi, SOW")).unwrap();
+        let got = db.list_projects().unwrap().into_iter().find(|x| x.id == p.id).unwrap();
+        assert_eq!(got.client.as_deref(), Some("Fang Studio"));
+        assert_eq!(got.keywords.as_deref(), Some("Ayushi, SOW"));
+        let t = db.add_todo("Prepare plan and SOW with Ayushi", "meeting", None, None).unwrap();
+        let saved = db.list_todos().unwrap().into_iter().find(|x| x.id == t.id).unwrap();
+        assert_eq!(saved.project_id.as_deref(), Some(p.id.as_str()));
+        // clearing a field
+        db.update_project_client(&p.id, Some(""), None, None).unwrap();
+        assert!(db.list_projects().unwrap().into_iter().find(|x| x.id == p.id).unwrap().client.is_none());
+    }
+
 
     #[test]
     fn a_deadline_in_the_words_sets_due_and_reminder() {

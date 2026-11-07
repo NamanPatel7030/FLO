@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { FolderKanban, Plus, StickyNote, X, Trash2 } from "lucide-react";
+import { Briefcase, FolderKanban, Plus, StickyNote, X, Trash2, Wand2 } from "lucide-react";
 import { api } from "../../lib/api";
 import { formatDuration, relativeTime } from "../../lib/format";
 import type { Project, ProjectStatus } from "../../lib/types";
@@ -14,14 +14,24 @@ export default function Projects() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [client, setClient] = useState("");
+  const [details, setDetails] = useState("");
+  const [keywords, setKeywords] = useState("");
   const selected = projects?.find((p) => p.id === pageArg);
 
   const create = async () => {
     if (!name.trim()) return;
-    const p = await api.createProject(name.trim(), desc.trim() || undefined);
+    const p = await api.createProject(name.trim(), desc.trim() || undefined, {
+      client: client.trim() || undefined,
+      clientDetails: details.trim() || undefined,
+      keywords: keywords.trim() || undefined,
+    });
     setCreating(false);
     setName("");
     setDesc("");
+    setClient("");
+    setDetails("");
+    setKeywords("");
     go("projects", p.id);
   };
 
@@ -39,16 +49,30 @@ export default function Projects() {
       <AnimatePresence>
         {creating && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <Card strong className="mb-4 flex gap-2 p-3">
-              <Input autoFocus placeholder="Project name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
-              <Input placeholder="Short description (optional)" value={desc} onChange={(e) => setDesc(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
-              <Button variant="primary" onClick={create}>
-                Create
-              </Button>
-              <Button variant="ghost" onClick={() => setCreating(false)}>
-                Cancel
-              </Button>
+            <div data-testid="new-project">
+            <Card strong className="mb-4 p-4">
+              <div className="grid grid-cols-2 gap-2.5">
+                <Input autoFocus aria-label="Project name" placeholder="Project name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
+                <Input aria-label="Description" placeholder="Short description (optional)" value={desc} onChange={(e) => setDesc(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} />
+                <Input aria-label="Client" placeholder="Client or company (optional)" value={client} onChange={(e) => setClient(e.target.value)} />
+                <Input aria-label="Client details" placeholder="Contact, email, phone, website (optional)" value={details} onChange={(e) => setDetails(e.target.value)} />
+                <div className="col-span-2">
+                  <Input aria-label="Keywords" placeholder="Keywords: people, Slack channels, domains, nicknames (comma-separated)" value={keywords} onChange={(e) => setKeywords(e.target.value)} />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="flex flex-1 items-center gap-1.5 text-[12px] text-faint">
+                  <Wand2 size={13} /> To-dos and notes that mention the project, client or a keyword are filed here automatically.
+                </span>
+                <Button variant="ghost" onClick={() => setCreating(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={create}>
+                  Create
+                </Button>
+              </div>
             </Card>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -93,6 +117,11 @@ function ProjectCard({ p, onClick }: { p: Project; onClick: () => void }) {
         </ProgressRing>
       </div>
       <div className="relative mt-3 text-[16px] font-semibold tracking-tight">{p.name}</div>
+      {p.client && (
+        <div className="relative mt-0.5 flex items-center gap-1 text-[12px] text-brand-200">
+          <Briefcase size={11} /> {p.client}
+        </div>
+      )}
       <div className="relative mt-0.5 line-clamp-2 min-h-[34px] text-[12.5px] text-muted">{p.description}</div>
       <div className="relative mt-3 flex items-center justify-between">
         <StatusPill status={p.status} />
@@ -117,8 +146,9 @@ function Drawer({ p, onClose }: { p: Project; onClose: () => void }) {
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: 480, opacity: 0 }}
         transition={{ type: "spring", stiffness: 380, damping: 38 }}
-        className="glass-strong fixed bottom-3 right-3 top-3 z-40 flex w-[440px] flex-col overflow-hidden rounded-3xl"
-        style={{ background: "color-mix(in srgb, var(--bg) 82%, transparent)" }}
+        // solid surface: a translucent drawer let the project cards behind it show through its fields
+        className="fixed bottom-3 right-3 top-3 z-40 flex w-[440px] flex-col overflow-hidden rounded-3xl border border-white/10 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.85)]"
+        style={{ background: "linear-gradient(180deg, #0f1b27 0%, #0a121b 100%)" }}
       >
         <div className="relative p-5">
           <div className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full opacity-35 blur-3xl" style={{ background: p.color }} />
@@ -156,6 +186,7 @@ function Drawer({ p, onClose }: { p: Project; onClose: () => void }) {
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+          <ClientSection p={p} />
           <CardTitle>To-dos</CardTitle>
           <form
             onSubmit={async (e) => {
@@ -190,5 +221,50 @@ function Drawer({ p, onClose }: { p: Project; onClose: () => void }) {
         </div>
       </motion.aside>
     </>
+  );
+}
+
+/** Client details, edited in place (saved when a field loses focus). */
+function ClientSection({ p }: { p: Project }) {
+  const [client, setClient] = useState(p.client ?? "");
+  const [details, setDetails] = useState(p.clientDetails ?? "");
+  const [keywords, setKeywords] = useState(p.keywords ?? "");
+  useEffect(() => {
+    setClient(p.client ?? "");
+    setDetails(p.clientDetails ?? "");
+    setKeywords(p.keywords ?? "");
+  }, [p.id, p.client, p.clientDetails, p.keywords]);
+  const save = (patch: { client?: string; clientDetails?: string; keywords?: string }) => api.updateProject(p.id, patch).catch(() => {});
+  const field = "w-full rounded-xl bg-[var(--glass)] px-3 py-2 text-[13px] outline-none ring-1 ring-transparent transition placeholder:text-faint focus:ring-[var(--accent)]";
+  return (
+    <div className="mb-5 rounded-2xl glass p-3.5" data-testid="client-section">
+      <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-faint">
+        <Briefcase size={13} /> Client
+      </div>
+      <div className="space-y-2">
+        <input aria-label="Client" className={field} placeholder="Client or company" value={client} onChange={(e) => setClient(e.target.value)} onBlur={() => client !== (p.client ?? "") && save({ client })} />
+        <textarea
+          aria-label="Client details"
+          rows={2}
+          className={field + " resize-none"}
+          placeholder="Contact person, email, phone, website…"
+          value={details}
+          onChange={(e) => setDetails(e.target.value)}
+          onBlur={() => details !== (p.clientDetails ?? "") && save({ clientDetails: details })}
+        />
+        <input
+          aria-label="Keywords"
+          className={field}
+          placeholder="Keywords: people, channels, domains (comma-separated)"
+          value={keywords}
+          onChange={(e) => setKeywords(e.target.value)}
+          onBlur={() => keywords !== (p.keywords ?? "") && save({ keywords })}
+        />
+      </div>
+      <div className="mt-2 flex items-start gap-1.5 text-[11.5px] leading-snug text-faint">
+        <Wand2 size={12} className="mt-[2px] shrink-0" /> Anything Flo catches (screen, Slack, meetings, voice) that mentions {p.name}
+        {client ? `, ${client}` : ""} or a keyword lands in this project by itself.
+      </div>
+    </div>
   );
 }

@@ -84,6 +84,14 @@ pub struct Settings {
     pub sound_volume: u8,
     /// a soft chime when a reminder or a Claude card appears in the notch
     pub notify_sound: bool,
+    /// per-sound style ("chime" | "glass" | "soft" | "pop"); empty = use sound_pack
+    pub sound_start: String,
+    pub sound_stop: String,
+    pub sound_notify: String,
+    /// the "started listening" sound
+    pub start_sound_on: bool,
+    /// the "done / stopped / error" sounds
+    pub stop_sound_on: bool,
     /// macOS notification banners (reminders); the notch card shows either way
     pub system_notifications: bool,
     /// two-stop gradient for the notch accent [from, to]; empty = derive from accent
@@ -134,6 +142,11 @@ impl Default for Settings {
             sound_pack: "chime".into(),
             sound_volume: 70,
             notify_sound: true,
+            sound_start: String::new(),
+            sound_stop: String::new(),
+            sound_notify: String::new(),
+            start_sound_on: true,
+            stop_sound_on: true,
             system_notifications: true,
             notch_gradient: vec![],
             vault_auto: true,
@@ -418,6 +431,16 @@ pub struct Project {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_note: Option<String>,
     pub updated_at: String,
+    /// client / company this project is for ("Northwind")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+    /// free text: contact person, email, phone, website, anything useful
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_details: Option<String>,
+    /// comma-separated words that mean this project (people, channels, domains, aliases);
+    /// captured to-dos and notes mentioning them are filed here automatically
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

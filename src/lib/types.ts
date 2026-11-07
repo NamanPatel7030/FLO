@@ -87,6 +87,12 @@ export interface Settings {
   soundVolume?: number;
   /** chime when a reminder / Claude card appears */
   notifySound?: boolean;
+  /** per-sound style; empty/missing = soundPack */
+  soundStart?: string;
+  soundStop?: string;
+  soundNotify?: string;
+  startSoundOn?: boolean;
+  stopSoundOn?: boolean;
   /** macOS banners for reminders (the notch card shows either way) */
   systemNotifications?: boolean;
   /** Typing speed used for "time saved" analytics */
@@ -261,6 +267,12 @@ export interface Project {
   doneTodos: number;
   lastNote?: string;
   updatedAt: string;
+  /** who the project is for */
+  client?: string;
+  /** contact person, email, phone, website… */
+  clientDetails?: string;
+  /** comma-separated words that mean this project; captured items mentioning them are filed here */
+  keywords?: string;
 }
 
 export interface Note {

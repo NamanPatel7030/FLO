@@ -380,7 +380,7 @@ function TodayWidget({ onOpen }: { onOpen: () => void }) {
       <BeigeHead icon={<ListChecks size={12} />} action={<ExternalLink size={12} className="cursor-pointer opacity-50 hover:opacity-90" onClick={onOpen} />}>
         Today · {openCount}
       </BeigeHead>
-      <div className="mt-1.5 flex-1 space-y-1 overflow-y-auto pr-0.5 flo-scroll-beige">
+      <div className="mt-1.5 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-0.5 flo-scroll-beige">
         {todos.map((t) => {
           const done = t.status === "done";
           const why = t.reason || (t.due ? `due ${dueLabel(t.due)}` : t.app ? `from ${t.app}` : t.person ? `from ${t.person}` : "");
@@ -426,7 +426,7 @@ function AgentsWidget({ sessions, onOpen }: { sessions: ClaudeSession[]; onOpen:
       <BeigeHead icon={<Bot size={12} />} action={<ExternalLink size={12} className="cursor-pointer opacity-50 hover:opacity-90" onClick={onOpen} />}>
         Claude · {sessions.length}
       </BeigeHead>
-      <div className="mt-1.5 flex-1 space-y-1 overflow-y-auto pr-0.5 flo-scroll-beige">
+      <div className="mt-1.5 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-0.5 flo-scroll-beige">
         {sessions.map((s) => (
           <button key={s.sessionId} onClick={onOpen} className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition hover:bg-black/[0.06]">
             <span className="mt-[3px] h-2 w-2 shrink-0 self-start rounded-full" style={{ background: STATUS_DOT[s.status] }} />

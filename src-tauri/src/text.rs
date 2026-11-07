@@ -454,6 +454,44 @@ pub fn wants_screen_context(query: &str) -> bool {
     CUES.iter().any(|c| q.contains(c))
 }
 
+/// Which project does this text belong to? Each candidate has weighted terms (project and client
+/// names weigh 2, keywords 1); a term counts when it appears as whole words (case-insensitive,
+/// at least 3 characters). Only a single clear winner is returned, never a tie.
+pub fn match_project(text: &str, projects: &[(String, Vec<(String, u32)>)]) -> Option<String> {
+    let hay = format!(" {} ", text.to_lowercase().replace(|c: char| !c.is_alphanumeric() && c != '@' && c != '.', " "));
+    let hay = hay.split_whitespace().collect::<Vec<_>>().join(" ");
+    let hay = format!(" {hay} ");
+    let mut best: Option<(&String, u32)> = None;
+    let mut tie = false;
+    for (id, terms) in projects {
+        let mut seen = std::collections::HashSet::new();
+        let score: u32 = terms
+            .iter()
+            .filter_map(|(term, w)| {
+                let t = term.to_lowercase().replace(|c: char| !c.is_alphanumeric() && c != '@' && c != '.', " ");
+                let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+                (t.chars().count() >= 3 && seen.insert(t.clone()) && hay.contains(&format!(" {t} "))).then_some(*w)
+            })
+            .sum();
+        if score == 0 {
+            continue;
+        }
+        match best {
+            Some((_, b)) if score < b => {}
+            Some((_, b)) if score == b => tie = true,
+            _ => {
+                best = Some((id, score));
+                tie = false;
+            }
+        }
+    }
+    if tie {
+        None
+    } else {
+        best.map(|(id, _)| id.clone())
+    }
+}
+
 /// A deadline written in plain words, relative to `now`: "by next Monday", "tomorrow at 5pm",
 /// "in 2 hours", "end of week", "Nov 12", "tonight". Dates without a time get 10:00 (so the
 /// 5-minutes-early reminder lands at 9:55). None when the text names no time at all.
@@ -631,6 +669,27 @@ pub fn truncate_chars(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn captured_items_find_their_project() {
+        let t = |v: &[(&str, u32)]| v.iter().map(|(a, w)| (a.to_string(), *w)).collect::<Vec<_>>();
+        let projects = vec![
+            ("apollo".to_string(), t(&[("Apollo", 2), ("Northwind", 2), ("Ana", 1), ("#apollo-design", 1)])),
+            ("hermes".to_string(), t(&[("Hermes API", 2), ("Stripe", 1), ("Priya", 1)])),
+            ("site".to_string(), t(&[("SaaS rebuild", 2), ("Fang", 2), ("ayushi", 1)])),
+        ];
+        let m = |s: &str| match_project(s, &projects);
+        assert_eq!(m("Send updated deck to Northwind").as_deref(), Some("apollo"));
+        assert_eq!(m("Ask Priya for Stripe webhook keys").as_deref(), Some("hermes"));
+        assert_eq!(m("Prepare plan and SOW with Ayushi").as_deref(), Some("site"));
+        assert_eq!(m("Reply in #apollo-design about the cards").as_deref(), Some("apollo"));
+        // nothing relevant → nothing guessed; a tie → nothing guessed
+        assert_eq!(m("Pay electricity bill"), None);
+        assert_eq!(m("Ana and Priya to sync"), None);
+        // whole words only: "anagram" is not "Ana"
+        assert_eq!(m("solve the anagram"), None);
+    }
+
 
     fn at(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chrono::Local> {
         use chrono::TimeZone;

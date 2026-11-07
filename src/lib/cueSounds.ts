@@ -109,3 +109,34 @@ export function playCue(cue: Cue, enabled: boolean, pack: SoundPack = "chime", v
   if (!a) return;
   (PACKS[pack] ?? PACKS.chime)[cue](a);
 }
+
+/** The subset of settings that decides how a cue sounds. */
+export interface SoundPrefs {
+  playSounds?: boolean;
+  soundPack?: string;
+  soundVolume?: number;
+  soundStart?: string;
+  soundStop?: string;
+  soundNotify?: string;
+  startSoundOn?: boolean;
+  stopSoundOn?: boolean;
+  notifySound?: boolean;
+}
+
+const asPack = (v: string | undefined, fallback: SoundPack): SoundPack => (v && v in PACKS ? (v as SoundPack) : fallback);
+
+/** Which style plays a cue and whether it plays at all (start / stop / notification each customizable). */
+export function cueSetting(cue: Cue, s: SoundPrefs | null | undefined): { on: boolean; pack: SoundPack; volume: number } {
+  const base = asPack(s?.soundPack, "chime");
+  const volume = (s?.soundVolume ?? 70) / 100;
+  const master = s?.playSounds ?? true;
+  if (cue === "ready") return { on: master && (s?.startSoundOn ?? true), pack: asPack(s?.soundStart, base), volume };
+  if (cue === "notify") return { on: master && (s?.notifySound ?? true), pack: asPack(s?.soundNotify, base), volume };
+  return { on: master && (s?.stopSoundOn ?? true), pack: asPack(s?.soundStop, base), volume };
+}
+
+/** Play a cue exactly as the user configured it. */
+export function playConfigured(cue: Cue, s: SoundPrefs | null | undefined): void {
+  const c = cueSetting(cue, s);
+  playCue(cue, c.on, c.pack, c.volume);
+}
