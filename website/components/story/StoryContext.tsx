@@ -2,7 +2,64 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useReducedMotion } from "motion/react";
-import { CHAPTERS } from "./chapters";
+import { CHAPTERS, WIDGETS, type ChapterId } from "./chapters";
+
+/** What the visitor has done in the live demo. Only read while that chapter is under manual control, unless noted. */
+export type Demo = {
+  /** custom chapter; `color` is kept everywhere in the notch once chosen */
+  custom: { style: number; size: number; sound: number; color: number };
+  lang: number;
+  prompt: number;
+  learned: "pending" | "undone" | "kept";
+  todos: boolean[];
+  deadline: number;
+  reminder: "ring" | "snoozed" | "done";
+  claude: "ask" | "allowed" | "denied";
+  opened: boolean;
+  /** kept across the loop */
+  widgets: boolean[];
+  /** kept across the loop */
+  playing: boolean;
+};
+
+export const DEFAULT_DEMO: Demo = {
+  custom: { style: 0, size: 1, sound: 0, color: 0 },
+  lang: 0,
+  prompt: 0,
+  learned: "pending",
+  todos: [false, false, false],
+  deadline: 0,
+  reminder: "ring",
+  claude: "ask",
+  opened: false,
+  widgets: WIDGETS.map((_, i) => i < 4),
+  playing: true,
+};
+
+/** Resolved values for drawing a chapter at a phase: the loop's when auto-playing, the visitor's when they are driving. */
+export type Derived = Omit<Demo, "custom" | "widgets"> & { style: number; size: number; sound: number; color: number; widgets: boolean[] };
+
+export function derive(id: ChapterId | "idle", phase: number, cycle: number, d: Demo, manual: boolean): Derived {
+  const auto = !manual;
+  return {
+    ...d,
+    lang: auto ? cycle % 3 : d.lang,
+    prompt: auto ? 0 : d.prompt,
+    learned: auto ? "pending" : d.learned,
+    todos: auto ? [id === "todos" && phase === 2, false, false] : d.todos,
+    deadline: auto ? 0 : d.deadline,
+    reminder: auto ? "ring" : d.reminder,
+    claude: auto ? "ask" : d.claude,
+    opened: auto ? false : d.opened,
+    style: auto && id === "custom" ? phase : d.custom.style,
+    size: auto && id === "custom" ? ([0, 1, 2, 3, 1][phase] ?? 1) : d.custom.size,
+    sound: auto && id === "custom" ? phase % 4 : d.custom.sound,
+    color: d.custom.color,
+    widgets: d.widgets,
+  };
+}
+
+type Step = [phase: number, ms?: number];
 
 type Story = {
   /** index of the chapter in view; -1 once the visitor has scrolled past the story */
@@ -14,6 +71,16 @@ type Story = {
   pinned: boolean;
   storyRef: React.RefObject<HTMLDivElement | null>;
   goTo: (i: number) => void;
+  /** chapter the visitor is driving (auto-loop paused), or -1 */
+  manual: number;
+  demo: Demo;
+  setDemo: (patch: Partial<Demo> | ((d: Demo) => Partial<Demo>)) => void;
+  /** take over chapter `i` (pauses its loop; resumes ~8 s after the last interaction) */
+  interact: (i: number, extraMs?: number) => void;
+  /** jump chapter `i` to `phase`; `bump` restarts typing animations */
+  setPhase: (i: number, phase: number, bump?: boolean) => void;
+  /** play a short scripted sequence of phases on chapter `i` */
+  play: (i: number, steps: Step[]) => void;
 };
 
 const Ctx = createContext<Story | null>(null);
@@ -24,15 +91,19 @@ export function useStory() {
   return s;
 }
 
-/** Phase to draw for chapter `i`: the live one when active, otherwise its still frame. */
+/** Everything needed to draw chapter `i`: phase (live loop, visitor-driven, or still frame) and resolved demo values. */
 export function usePhase(i: number) {
-  const { active, loop, reduce } = useStory();
-  const live = active === i && !reduce;
+  const { active, loop, reduce, manual, demo } = useStory();
   const mine = loop.ch === i;
-  return { phase: live ? (mine ? loop.phase : 0) : CHAPTERS[i].still, cycle: live && mine ? loop.cycle : 0, live, isActive: active === i };
+  const driven = active === i && mine && (manual === i || !reduce);
+  const phase = driven ? loop.phase : active === i && !reduce ? 0 : CHAPTERS[i].still;
+  const cycle = driven ? loop.cycle : 0;
+  const isManual = manual === i && active === i;
+  return { phase, cycle, live: driven, isActive: active === i, manual: isManual, d: derive(CHAPTERS[i].id, phase, cycle, demo, isManual) };
 }
 
 const MQ = "(min-width: 768px)";
+const IDLE_MS = 8000;
 
 export function StoryProvider({ children }: { children: ReactNode }) {
   // read after mount so server and first client render agree (no hydration mismatch)
@@ -42,6 +113,17 @@ export function StoryProvider({ children }: { children: ReactNode }) {
   const storyRef = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(0);
   const [loop, setLoop] = useState({ ch: 0, phase: 0, cycle: 0 });
+  const loopRef = useRef(loop);
+  loopRef.current = loop;
+  const [manual, setManualState] = useState(-1);
+  const manualRef = useRef(-1);
+  const setManual = useCallback((i: number) => {
+    manualRef.current = i;
+    setManualState(i);
+  }, []);
+  const [demo, setDemoState] = useState<Demo>(DEFAULT_DEMO);
+  const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const seq = useRef<ReturnType<typeof setTimeout>[]>([]);
   // SSR + first paint assume desktop; corrected after mount (no window read during render)
   const [pinned, setPinned] = useState(true);
 
@@ -94,25 +176,82 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     return () => io.disconnect();
   }, [pinned]);
 
-  // Phase loop for the active chapter.
+  const clearSeq = () => {
+    seq.current.forEach(clearTimeout);
+    seq.current = [];
+  };
+  // forget transient demo state when the loop takes back over
+  const release = useCallback(() => {
+    clearSeq();
+    setManual(-1);
+    setDemoState((d) => ({ ...d, learned: "pending", reminder: "ring", claude: "ask", opened: false, todos: [false, false, false] }));
+  }, [setManual]);
+
+  // New chapter: restart its loop, drop any visitor control.
   useEffect(() => {
+    // (on mobile, touching a chapter's demo makes it the active one: keep that visitor's control)
+    if (manualRef.current === active) return;
     setLoop({ ch: active, phase: 0, cycle: 0 });
-    if (active < 0 || reduce) return;
+    clearTimeout(idle.current);
+    release();
+  }, [active, release]);
+
+  // Phase loop for the active chapter (paused while the visitor drives it).
+  useEffect(() => {
+    if (active < 0 || reduce || manual === active) return;
     const durations = CHAPTERS[active].phases;
-    let p = 0;
-    let c = 0;
     let t: ReturnType<typeof setTimeout>;
     const tick = () => {
+      const cur = loopRef.current.ch === active ? loopRef.current.phase : 0;
       t = setTimeout(() => {
-        p = (p + 1) % durations.length;
-        if (p === 0) c += 1;
-        setLoop({ ch: active, phase: p, cycle: c });
+        setLoop((l) => {
+          if (l.ch !== active) return { ch: active, phase: 0, cycle: 0 };
+          const p = (l.phase + 1) % durations.length;
+          return { ch: active, phase: p, cycle: l.cycle + (p === 0 ? 1 : 0) };
+        });
         tick();
-      }, durations[p]);
+      }, durations[cur] ?? durations[0]);
     };
     tick();
     return () => clearTimeout(t);
-  }, [active, reduce]);
+  }, [active, reduce, manual]);
+
+  useEffect(() => () => clearTimeout(idle.current), []);
+
+  const interact = useCallback(
+    (i: number, extraMs = 0) => {
+      setManual(i);
+      if (!pinned) setActive(i);
+      clearTimeout(idle.current);
+      // under reduced motion there is no loop to hand back to: the visitor's state simply stays
+      if (!reduce) idle.current = setTimeout(release, IDLE_MS + extraMs);
+    },
+    [reduce, release, pinned, setManual],
+  );
+
+  const setPhase = useCallback((i: number, phase: number, bump = false) => {
+    setLoop((l) => ({ ch: i, phase, cycle: l.ch === i ? l.cycle + (bump ? 1 : 0) : 0 }));
+  }, []);
+
+  const play = useCallback(
+    (i: number, steps: Step[]) => {
+      clearSeq();
+      const total = steps.reduce((a, [, ms]) => a + (ms ?? 0), 0);
+      interact(i, total);
+      let at = 0;
+      steps.forEach(([p, ms], k) => {
+        const run = () => setPhase(i, p, k === 0);
+        if (k === 0) run();
+        else seq.current.push(setTimeout(run, at));
+        at += ms ?? 0;
+      });
+    },
+    [interact, setPhase],
+  );
+
+  const setDemo = useCallback((patch: Partial<Demo> | ((d: Demo) => Partial<Demo>)) => {
+    setDemoState((d) => ({ ...d, ...(typeof patch === "function" ? patch(d) : patch) }));
+  }, []);
 
   const goTo = useCallback(
     (i: number) => {
@@ -128,6 +267,9 @@ export function StoryProvider({ children }: { children: ReactNode }) {
     [pinned, reduce],
   );
 
-  const value = useMemo(() => ({ active, loop, reduce, pinned, storyRef, goTo }), [active, loop, reduce, pinned, goTo]);
+  const value = useMemo(
+    () => ({ active, loop, reduce, pinned, storyRef, goTo, manual, demo, setDemo, interact, setPhase, play }),
+    [active, loop, reduce, pinned, goTo, manual, demo, setDemo, interact, setPhase, play],
+  );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

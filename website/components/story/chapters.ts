@@ -173,6 +173,60 @@ export const LANGS = [
   { code: "en", name: "English", en: "English", glyph: "A", text: "I'll send the demo to the client by ten tomorrow." },
 ] as const;
 
-export const STYLES = ["Ribbon wave", "Equalizer bars", "Neon line", "Helix", "Sparkles"] as const;
+/** All 15 listening animations; the first five are the featured chips. */
+export const STYLES = [
+  "Ribbon wave",
+  "Equalizer bars",
+  "Neon line",
+  "Helix",
+  "Sparkles",
+  "Pulse orb",
+  "Dot wave",
+  "Thin bars",
+  "Heartbeat",
+  "Orbit",
+  "Ripple",
+  "Pixel grid",
+  "Comet",
+  "Twin ribbon",
+  "Glow dots",
+] as const;
+export const FEATURED_STYLES = 5;
 export const SIZES = ["Small", "Big", "Bigger", "Biggest"] as const;
 export const SOUNDS = ["Chime", "Glass", "Soft", "Pop"] as const;
+/** Notch accent colours: hi (light), a (main), b (deep). */
+export const PALETTES = [
+  { name: "Flo blue", swatch: "#3dbbff", hi: "#e3f6ff", a: "#66ceff", b: "#1a9be0" },
+  { name: "Violet", swatch: "#a78bfa", hi: "#ede9fe", a: "#a78bfa", b: "#7c3aed" },
+  { name: "Pink", swatch: "#f472b6", hi: "#fce7f3", a: "#f472b6", b: "#db2777" },
+  { name: "Amber", swatch: "#fbbf24", hi: "#fef3c7", a: "#fbbf24", b: "#d97706" },
+  { name: "Mint", swatch: "#34d399", hi: "#d1fae5", a: "#34d399", b: "#059669" },
+  { name: "Rainbow", swatch: "conic-gradient(red,yellow,lime,cyan,blue,magenta,red)", hi: "#fde68a", a: "#f472b6", b: "#60a5fa" },
+] as const;
+
+/** Assistant: example prompts the visitor can run. */
+export const PROMPTS = [
+  {
+    say: "draft a Dhanteras wish for the team",
+    draft:
+      "Happy Dhanteras, team! Priya, Rahul and everyone, thank you for an amazing year so far. Kal 4 baje ke baad family ke saath time enjoy karo. May this festival bring good health and lots of wins.",
+  },
+  {
+    say: "summarise this thread",
+    draft: "Quick summary: office closes at 4 tomorrow for Dhanteras, and Rahul has ordered sweets for everyone. Pick yours up before you leave.",
+  },
+  {
+    say: "tell them I'll join after 5",
+    draft: "Main 5 baje ke baad join karunga! Rahul, mere liye bhi sweets bacha ke rakhna 😄 Happy Dhanteras sabko.",
+  },
+] as const;
+
+/** Deadlines: phrases Flo understands and the reminder each one becomes. */
+export const DEADLINES = [
+  { say: "by next Monday", due: "Mon, 10:00", ring: "9:55" },
+  { say: "tomorrow at 5pm", due: "Sun, 17:00", ring: "16:55" },
+  { say: "in 2 hours", due: "Today, 12:40", ring: "12:35" },
+] as const;
+
+export const WIDGETS = ["Now Playing", "Today's to-dos", "Claude sessions", "Weather", "Calendar", "Battery"] as const;
+export type WidgetName = (typeof WIDGETS)[number];

@@ -11,6 +11,8 @@ export default async function Home() {
       <Aurora />
       <Landing signedIn={signedIn} />
       <Footer />
+      {/* room for the floating dock */}
+      <div aria-hidden className="h-24" />
     </>
   );
 }

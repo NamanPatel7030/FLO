@@ -1,26 +1,26 @@
 "use client";
 
 import { MotionConfig } from "motion/react";
-import { MenuBar } from "./story/MenuBar";
+import { Dock } from "./story/Dock";
 import { Outro } from "./story/Outro";
 import { FixedNotch, Rail, Story } from "./story/Story";
 import { StoryProvider } from "./story/StoryContext";
 
 /**
- * The landing page is one story told through the notch: a menu bar with a real-looking notch in it,
- * and a scroll track where each screen is a feature. The notch morphs into the UI Flo shows for it.
+ * The landing page is one story told through the notch: a real-looking notch pinned to the top
+ * edge, a scroll track where each screen is a live, clickable feature demo, and a floating dock.
  */
 export function Landing({ signedIn }: { signedIn: boolean }) {
   return (
     <MotionConfig reducedMotion="user">
       <StoryProvider>
-        <MenuBar signedIn={signedIn} />
         <FixedNotch />
         <Rail />
         <main>
-          <Story signedIn={signedIn} />
-          <Outro signedIn={signedIn} />
+          <Story />
+          <Outro />
         </main>
+        <Dock signedIn={signedIn} />
       </StoryProvider>
     </MotionConfig>
   );

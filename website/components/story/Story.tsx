@@ -1,22 +1,31 @@
 "use client";
 
-import Link from "next/link";
 import { ArrowDown, Check, Cpu, Languages, ShieldCheck } from "lucide-react";
 import { CHAPTERS, type Chapter } from "./chapters";
-import { NotchContent, NotchShell, chapterIdAt, notchSize } from "./Notch";
+import { DownloadCTA } from "../DownloadCTA";
+import { NotchContent, NotchShell, chapterIdAt, maxNotchH, notchSize } from "./Notch";
 import { Stage } from "./stages";
 import { usePhase, useStory } from "./StoryContext";
 
-/** Desktop: the one notch, pinned under the menu bar, morphing with the chapter in view. */
+/** Desktop: the one notch, pinned to the top edge, morphing with the chapter in view. Live: its buttons work. */
 export function FixedNotch() {
-  const { active, loop, reduce } = useStory();
+  const { active, reduce, interact, setPhase } = useStory();
+  const ch = Math.max(0, active);
+  const v = usePhase(ch);
   const id = chapterIdAt(active);
-  const phase = active >= 0 && loop.ch === active && !reduce ? loop.phase : active >= 0 ? (reduce ? CHAPTERS[active].still : 0) : 0;
-  const size = notchSize(id, phase);
+  const size = notchSize(id, v.phase, true, v.d);
+  // to-dos: hovering the tray opens the list, leaving closes it (like the real notch)
+  const onHover =
+    id === "todos"
+      ? (on: boolean) => {
+          interact(ch);
+          setPhase(ch, on ? 1 : 0);
+        }
+      : undefined;
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-0 z-[60] hidden justify-center md:flex" aria-hidden>
-      <NotchShell size={size} reduce={reduce} glow={id === "hero" || id === "idle"}>
-        {id !== "idle" && <NotchContent id={id} phase={phase} cycle={active >= 0 && loop.ch === active ? loop.cycle : 0} />}
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[60] hidden justify-center md:flex" role="region" aria-label="Flo notch, live demo">
+      <NotchShell size={size} reduce={reduce} glow={id === "hero" || id === "idle"} d={v.d} id={id} onHover={onHover}>
+        {id !== "idle" && <NotchContent id={id} phase={v.phase} cycle={v.cycle} d={v.d} />}
       </NotchShell>
     </div>
   );
@@ -47,11 +56,11 @@ export function Rail() {
 
 function InlineNotch({ i }: { i: number }) {
   const c = CHAPTERS[i];
-  const { phase, cycle } = usePhase(i);
+  const { phase, cycle, d } = usePhase(i);
   return (
-    <div className="mini-screen mb-8 px-3 pb-6 md:hidden" aria-hidden>
-      <NotchShell inline size={notchSize(c.id, phase, false)}>
-        <NotchContent inline id={c.id} phase={phase} cycle={cycle} />
+    <div className="mini-screen mb-8 px-3 pb-6 md:hidden" role="region" aria-label={`Flo notch: ${c.label}`}>
+      <NotchShell inline size={notchSize(c.id, phase, false, d)} d={d} id={c.id}>
+        <NotchContent inline id={c.id} phase={phase} cycle={cycle} d={d} />
       </NotchShell>
     </div>
   );
@@ -61,7 +70,7 @@ function Copy({ c, i }: { c: Chapter; i: number }) {
   return (
     <div>
       <p className="eyebrow rise" style={{ ["--d" as string]: "0ms" }}>
-        <span className="text-brand-300/60">{String(i).padStart(2, "0")}</span> · {c.eyebrow}
+        <span className="text-brand-300/80">{String(i).padStart(2, "0")}</span> · {c.eyebrow}
       </p>
       <h2 id={`h-${c.id}`} className="rise mt-4 text-[clamp(30px,min(3.5vw,5.8vh),52px)] font-semibold leading-[1.03] text-balance" style={{ ["--d" as string]: "60ms" }}>
         {c.title}
@@ -75,7 +84,7 @@ function Copy({ c, i }: { c: Chapter; i: number }) {
       </div>
       <ul className="ch-gap ch-bullets rise mt-5 flex flex-col gap-2" style={{ ["--d" as string]: "240ms" }}>
         {c.bullets.map((b) => (
-          <li key={b} className="flex items-start gap-2.5 text-[14.5px] text-white/70">
+          <li key={b} className="flex items-start gap-2.5 text-[14.5px] text-white/80">
             <span className="mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-300/15 text-brand-200">
               <Check size={10} strokeWidth={3} />
             </span>
@@ -89,9 +98,9 @@ function Copy({ c, i }: { c: Chapter; i: number }) {
 
 function ChapterView({ i }: { i: number }) {
   const c = CHAPTERS[i];
-  const { isActive, phase, cycle, live } = usePhase(i);
+  const { isActive, phase, cycle, live, d, manual } = usePhase(i);
   // leave room for the tallest state the notch reaches in this chapter, then centre the rest
-  const top = Math.max(140, Math.max(...c.phases.map((_, p) => notchSize(c.id, p).h)) + 60);
+  const top = Math.max(140, maxNotchH(c.id) + 60);
   return (
     <article data-chapter={i} data-active={isActive} className="chapter px-4 py-16 md:px-0 md:py-0" aria-labelledby={`h-${c.id}`}>
       <InlineNotch i={i} />
@@ -101,14 +110,14 @@ function ChapterView({ i }: { i: number }) {
       <div className="ch-grid relative mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] items-center gap-8 md:h-full md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] md:gap-14 md:px-8 md:pb-10" style={{ ["--top" as string]: `${top}px` }}>
         <Copy c={c} i={i} />
         <div className="rise" style={{ ["--d" as string]: "200ms" }}>
-          <Stage id={c.id} phase={phase} cycle={cycle} live={live} />
+          <Stage id={c.id} phase={phase} cycle={cycle} live={live} d={d} manual={manual} />
         </div>
       </div>
     </article>
   );
 }
 
-function Hero({ signedIn }: { signedIn: boolean }) {
+function Hero() {
   const c = CHAPTERS[0];
   const { goTo, active } = useStory();
   return (
@@ -127,14 +136,15 @@ function Hero({ signedIn }: { signedIn: boolean }) {
           {c.what}
         </p>
         <div className="hero-in mt-9 flex flex-col items-center gap-3 sm:flex-row" style={{ animationDelay: "380ms" }}>
-          <Link href={signedIn ? "/download" : "/signup?next=/download"} className="btn btn-primary px-7 py-3.5 text-[15.5px]" data-testid="hero-get-flo">
-            Get Flo for Mac, free
-          </Link>
-          <button onClick={() => goTo(1)} className="btn btn-glass px-6 py-3.5 text-[15.5px]">
+          <DownloadCTA size="md" testId="hero-get-flo" />
+          <button onClick={() => goTo(1)} className="btn btn-glass h-12 px-6 text-[15px]">
             Watch the notch <ArrowDown size={16} />
           </button>
         </div>
-        <div className="hero-in mt-10 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[13px] text-white/50" style={{ animationDelay: "480ms" }}>
+        <div className="hero-in mt-10 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[13px] text-white/75" style={{ animationDelay: "480ms" }}>
+          <span className="flex items-center gap-1.5">
+            <Check size={14} className="text-brand-300" /> Free to download
+          </span>
           <span className="flex items-center gap-1.5">
             <Cpu size={14} className="text-brand-300" /> On-device Whisper
           </span>
@@ -145,7 +155,7 @@ function Hero({ signedIn }: { signedIn: boolean }) {
             <ShieldCheck size={14} className="text-brand-300" /> Bring your own key, or stay offline
           </span>
         </div>
-        <button onClick={() => goTo(1)} className="hero-in scroll-cue mt-14 hidden flex-col items-center gap-2 text-[12px] text-white/40 md:flex" style={{ animationDelay: "700ms" }}>
+        <button onClick={() => goTo(1)} className="hero-in scroll-cue mt-14 hidden flex-col items-center gap-2 text-[12px] text-white/60 md:flex" style={{ animationDelay: "700ms" }}>
           Scroll. The notch will show you.
           <span className="relative h-10 w-px overflow-hidden bg-white/10">
             <span className="cue-dot absolute left-0 top-0 h-3 w-px bg-brand-300" />
@@ -156,13 +166,13 @@ function Hero({ signedIn }: { signedIn: boolean }) {
   );
 }
 
-export function Story({ signedIn }: { signedIn: boolean }) {
+export function Story() {
   const { storyRef } = useStory();
   return (
     <div ref={storyRef} id="story" className="relative">
       <div className="relative md:sticky md:top-0 md:h-screen md:overflow-hidden">
         <div aria-hidden className="cone pointer-events-none absolute left-1/2 top-0 hidden h-[560px] w-[900px] -translate-x-1/2 md:block" />
-        <Hero signedIn={signedIn} />
+        <Hero />
         {CHAPTERS.slice(1).map((c, k) => (
           <ChapterView key={c.id} i={k + 1} />
         ))}

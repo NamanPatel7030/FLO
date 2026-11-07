@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { AudioLines, Minus, Plus, X } from "lucide-react";
-import { EASE_OUT, Magnetic, Reveal } from "../motion/primitives";
+import { DownloadCTA } from "../DownloadCTA";
+import { EASE_OUT, Reveal } from "../motion/primitives";
 
 /* Everything after the notch story: one look at the app, how Flo compares, who made it, FAQ, CTA. */
 type Cell = "yes" | "no" | "partial" | string;
@@ -40,7 +40,7 @@ function Mark({ v }: { v: Cell }) {
     );
   if (v === "no")
     return (
-      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-white/35" aria-label="No">
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/[0.07] text-white/55" aria-label="No">
         <X size={13} strokeWidth={2.5} />
       </span>
     );
@@ -71,7 +71,7 @@ function DrawCheck() {
   );
 }
 
-export function Outro({ signedIn }: { signedIn: boolean }) {
+export function Outro() {
   return (
     <>
       {/* ── THE APP ──────────────────────────────────────── */}
@@ -104,7 +104,7 @@ export function Outro({ signedIn }: { signedIn: boolean }) {
             <p className="mt-4 text-[17px] leading-relaxed text-muted">Everything they do, plus the things they don&apos;t, without sending your life to someone else&apos;s server.</p>
           </Reveal>
           <Reveal blur={false} className="relative mx-auto mt-14 max-w-5xl">
-            <div aria-hidden className="absolute inset-y-6 left-1/2 w-[33%] -translate-x-[6%] rounded-3xl bg-brand-500/[0.06] blur-xl" />
+            
             <div className="glass relative overflow-x-auto rounded-3xl">
               <table className="w-full min-w-[620px] text-left text-[14px]" data-testid="compare-table">
                 <thead>
@@ -133,7 +133,7 @@ export function Outro({ signedIn }: { signedIn: boolean }) {
                       transition={{ delay: i * 0.05, duration: 0.5 }}
                     >
                       <th scope="row" className="px-5 py-3.5 font-normal text-muted">{r.row}</th>
-                      <td className="bg-brand-300/[0.05] px-5 py-3.5"><Mark v={r.flo} /></td>
+                      <td className="bg-brand-300/[0.08] px-5 py-3.5"><Mark v={r.flo} /></td>
                       <td className="px-5 py-3.5"><Mark v={r.wispr} /></td>
                       <td className="px-5 py-3.5"><Mark v={r.lemon} /></td>
                     </motion.tr>
@@ -142,7 +142,7 @@ export function Outro({ signedIn }: { signedIn: boolean }) {
               </table>
             </div>
           </Reveal>
-          <p className="mx-auto mt-4 max-w-5xl px-1 text-[12px] text-faint">Based on our review of the public Wispr Flow and Lemon Mac apps in November 2026. Products change; tell us if something is out of date.</p>
+          <p className="mx-auto mt-4 max-w-5xl px-1 text-[12px] text-muted">Based on our review of the public Wispr Flow and Lemon Mac apps in November 2026. Products change; tell us if something is out of date.</p>
         </section>
 
         {/* ── MAKER ────────────────────────────────────────── */}
@@ -186,7 +186,7 @@ export function Outro({ signedIn }: { signedIn: boolean }) {
             <div className="glass-strong relative mx-auto max-w-4xl overflow-hidden rounded-[32px] px-6 py-16 text-center">
               <motion.div
                 aria-hidden
-                className="absolute -top-28 left-1/2 h-56 w-[70%] -translate-x-1/2 rounded-full bg-brand-500/25 blur-3xl"
+                className="absolute -top-36 left-1/2 h-72 w-[80%] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgb(61_187_255/0.35),transparent)]"
                 animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
                 transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
               />
@@ -194,11 +194,7 @@ export function Outro({ signedIn }: { signedIn: boolean }) {
               <h2 className="relative mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">Start speaking instead of typing</h2>
               <p className="relative mx-auto mt-3 max-w-xl text-muted">Free to download. Bring your own AI or stay fully local.</p>
               <div className="relative mt-8 flex justify-center">
-                <Magnetic>
-                  <Link href={signedIn ? "/download" : "/signup?next=/download"} className="btn btn-primary px-8 py-4 text-[16px]">
-                    Get Flo for free
-                  </Link>
-                </Magnetic>
+                <DownloadCTA size="lg" testId="cta-download" />
               </div>
             </div>
           </Reveal>
