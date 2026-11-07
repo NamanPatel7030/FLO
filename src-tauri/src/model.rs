@@ -263,6 +263,25 @@ fn quick_mode() -> String {
     "quick".into()
 }
 
+/// Something the user taught Flo to do on request ("write my Upwork proposals").
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Skill {
+    pub id: String,
+    pub name: String,
+    /// comma-separated phrases that invoke it ("upwork proposal, proposal for this job")
+    pub triggers: String,
+    /// how the user wants it done, in their own words
+    pub instructions: String,
+    /// where it works: "upwork", "slack", "gmail", "linkedin", "browser", "any"
+    pub platforms: Vec<String>,
+    /// "write" = compose text into the focused field · "do" = operate the screen
+    pub mode: String,
+    pub enabled: bool,
+    pub uses: u32,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Weather {

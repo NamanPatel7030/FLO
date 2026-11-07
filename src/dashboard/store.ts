@@ -4,7 +4,7 @@ import { formatHotkey } from "../lib/format";
 import { applyTheme, broadcastSettings, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { EV, type ClaudeEvent, type Note, type Project, type Settings, type ToastEvent, type Todo, type IslandGeometry } from "../lib/types";
 
-export type Page = "home" | "assistant" | "context" | "todos" | "projects" | "notes" | "analytics" | "history" | "settings" | "typing";
+export type Page = "home" | "assistant" | "skills" | "context" | "todos" | "projects" | "notes" | "analytics" | "history" | "settings" | "typing";
 
 interface Toast extends ToastEvent {
   id: number;
@@ -33,7 +33,7 @@ let toastId = 1;
 
 function readHash(): { page: Page; arg?: string } {
   const [, page, arg] = location.hash.replace(/^#/, "").split("/");
-  const pages: Page[] = ["home", "assistant", "context", "todos", "projects", "notes", "analytics", "history", "settings", "typing"];
+  const pages: Page[] = ["home", "assistant", "skills", "context", "todos", "projects", "notes", "analytics", "history", "settings", "typing"];
   return { page: pages.includes(page as Page) ? (page as Page) : "home", arg };
 }
 

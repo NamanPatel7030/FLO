@@ -454,6 +454,31 @@ pub fn wants_screen_context(query: &str) -> bool {
     CUES.iter().any(|c| q.contains(c))
 }
 
+/// Which skill does a spoken request invoke? A skill matches when the request contains its name
+/// or one of its trigger phrases (whole words, case-insensitive, at least 3 characters). The
+/// longest matching phrase wins, so "upwork proposal" beats "proposal". Returns the index.
+pub fn match_skill(query: &str, skills: &[(String, String)]) -> Option<usize> {
+    let norm = |s: &str| {
+        let t = s.to_lowercase().replace(|c: char| !c.is_alphanumeric(), " ");
+        format!(" {} ", t.split_whitespace().collect::<Vec<_>>().join(" "))
+    };
+    let q = norm(query);
+    let mut best: Option<(usize, usize)> = None;
+    for (i, (name, triggers)) in skills.iter().enumerate() {
+        for phrase in std::iter::once(name.as_str()).chain(triggers.split(',')) {
+            let p = norm(phrase);
+            let core = p.trim();
+            if core.chars().count() < 3 || !q.contains(&p) {
+                continue;
+            }
+            if best.map(|(_, len)| core.len() > len).unwrap_or(true) {
+                best = Some((i, core.len()));
+            }
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
 /// Which project does this text belong to? Each candidate has weighted terms (project and client
 /// names weigh 2, keywords 1); a term counts when it appears as whole words (case-insensitive,
 /// at least 3 characters). Only a single clear winner is returned, never a tie.
@@ -669,6 +694,23 @@ pub fn truncate_chars(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn spoken_requests_find_their_skill() {
+        let skills = vec![
+            ("Upwork proposal".to_string(), "proposal for this job, apply to this job".to_string()),
+            ("Slack reply".to_string(), "reply on slack".to_string()),
+            ("Proposal".to_string(), "".to_string()),
+        ];
+        let m = |q: &str| match_skill(q, &skills);
+        assert_eq!(m("use my Upwork proposal skill for this post"), Some(0));
+        assert_eq!(m("write a proposal for this job"), Some(0)); // trigger phrase
+        assert_eq!(m("reply on Slack saying I'll join"), Some(1));
+        assert_eq!(m("draft a proposal"), Some(2)); // only the short one matches
+        assert_eq!(m("what's the weather"), None);
+        assert_eq!(m("slacker"), None); // whole words only
+    }
+
 
     #[test]
     fn captured_items_find_their_project() {

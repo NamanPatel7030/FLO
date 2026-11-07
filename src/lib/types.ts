@@ -257,6 +257,21 @@ export interface Todo {
   completedAt?: string;
 }
 
+/** Something you taught Flo once and invoke by voice. */
+export interface Skill {
+  id: string;
+  name: string;
+  /** comma-separated phrases that invoke it */
+  triggers: string;
+  instructions: string;
+  platforms: string[];
+  /** write = compose into the focused field · do = operate the screen */
+  mode: "write" | "do";
+  enabled: boolean;
+  uses: number;
+  createdAt: string;
+}
+
 export interface Project {
   id: string;
   name: string;

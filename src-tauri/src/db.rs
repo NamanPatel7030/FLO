@@ -72,6 +72,10 @@ impl Db {
             CREATE TABLE IF NOT EXISTS vault_links(
               source TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'wiki',
               PRIMARY KEY(source, target, kind));
+            CREATE TABLE IF NOT EXISTS skills(
+              id TEXT PRIMARY KEY, name TEXT NOT NULL, triggers TEXT NOT NULL DEFAULT '', instructions TEXT NOT NULL DEFAULT '',
+              platforms TEXT NOT NULL DEFAULT '[]', mode TEXT NOT NULL DEFAULT 'write', enabled INTEGER NOT NULL DEFAULT 1,
+              uses INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS context_docs(
               id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
               pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
@@ -228,6 +232,56 @@ impl Db {
 
     pub fn delete_project(&self, id: &str) -> Result<()> {
         self.conn.lock().execute("DELETE FROM projects WHERE id=?1", [id])?;
+        Ok(())
+    }
+
+    // ── skills ──────────────────────────────────────────────────────────────
+    pub fn list_skills(&self) -> Result<Vec<Skill>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT id,name,triggers,instructions,platforms,mode,enabled,uses,created_at FROM skills ORDER BY uses DESC, created_at DESC")?;
+        let rows = st
+            .query_map([], |r| {
+                Ok(Skill {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    triggers: r.get(2)?,
+                    instructions: r.get(3)?,
+                    platforms: serde_json::from_str(&r.get::<_, String>(4)?).unwrap_or_default(),
+                    mode: r.get(5)?,
+                    enabled: r.get::<_, i64>(6)? != 0,
+                    uses: r.get(7)?,
+                    created_at: r.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Create (empty id) or update a skill; returns it as stored.
+    pub fn save_skill(&self, s: &Skill) -> Result<Skill> {
+        let mut s = s.clone();
+        if s.id.is_empty() {
+            s.id = new_id();
+            s.created_at = now();
+        }
+        if s.mode != "do" {
+            s.mode = "write".into();
+        }
+        self.conn.lock().execute(
+            "INSERT INTO skills (id,name,triggers,instructions,platforms,mode,enabled,uses,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+             ON CONFLICT(id) DO UPDATE SET name=?2, triggers=?3, instructions=?4, platforms=?5, mode=?6, enabled=?7",
+            params![s.id, s.name.trim(), s.triggers.trim(), s.instructions.trim(), serde_json::to_string(&s.platforms)?, s.mode, s.enabled as i64, s.uses, s.created_at],
+        )?;
+        Ok(self.list_skills()?.into_iter().find(|x| x.id == s.id).unwrap_or(s))
+    }
+
+    pub fn delete_skill(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute("DELETE FROM skills WHERE id=?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn bump_skill_use(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute("UPDATE skills SET uses=uses+1 WHERE id=?1", params![id])?;
         Ok(())
     }
 
@@ -978,6 +1032,36 @@ fn row_note(r: &Row) -> rusqlite::Result<Note> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn skills_round_trip() {
+        let db = Db::open_in_memory().unwrap();
+        let s = db
+            .save_skill(&Skill {
+                name: "Upwork proposal".into(),
+                triggers: "proposal for this job".into(),
+                instructions: "250-350 words, cite 2 matching projects, end with one question".into(),
+                platforms: vec!["upwork".into(), "browser".into()],
+                mode: "write".into(),
+                enabled: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!s.id.is_empty());
+        let mut edited = s.clone();
+        edited.mode = "do".into();
+        edited.enabled = false;
+        db.save_skill(&edited).unwrap();
+        db.bump_skill_use(&s.id).unwrap();
+        let got = db.list_skills().unwrap().into_iter().find(|x| x.id == s.id).unwrap();
+        assert_eq!(got.mode, "do");
+        assert!(!got.enabled);
+        assert_eq!(got.uses, 1);
+        assert_eq!(got.platforms, vec!["upwork".to_string(), "browser".to_string()]);
+        db.delete_skill(&s.id).unwrap();
+        assert!(db.list_skills().unwrap().is_empty());
+    }
+
 
     #[test]
     fn todos_are_filed_under_their_clients_project() {

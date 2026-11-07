@@ -3,7 +3,7 @@ import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import clsx from "clsx";
 import { api, on } from "../lib/api";
 import { EV, type ClaudeSession } from "../lib/types";
-import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Library, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info } from "lucide-react";
+import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info, Zap } from "lucide-react";
 import { bootStore, hotkeyLabel, useStore, type Page } from "./store";
 import Home from "./pages/Home";
 import Assistant from "./pages/Assistant";
@@ -13,7 +13,7 @@ import Notes from "./pages/Notes";
 import Analytics from "./pages/Analytics";
 import HistoryPage from "./pages/History";
 import Settings from "./pages/Settings";
-import ContextPage from "./pages/Context";
+import SkillsPage from "./pages/Skills";
 import Typing from "./pages/Typing";
 import { Signature } from "./Signature";
 import { Ocean } from "../island/Ocean";
@@ -27,7 +27,7 @@ import { useAccount } from "../lib/account";
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: "home", label: "Home", icon: <HomeIcon size={16} /> },
   { id: "assistant", label: "Assistant", icon: <Sparkles size={16} /> },
-  { id: "context", label: "Context", icon: <Library size={16} /> },
+  { id: "skills", label: "Skills", icon: <Zap size={16} /> },
   { id: "todos", label: "To-dos", icon: <CheckCircle2 size={16} /> },
   { id: "projects", label: "Projects", icon: <FolderKanban size={16} /> },
   { id: "notes", label: "Notes", icon: <StickyNote size={16} /> },
@@ -39,7 +39,9 @@ const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
 const PAGES: Record<Page, () => React.ReactElement> = {
   home: Home,
   assistant: Assistant,
-  context: ContextPage,
+  skills: SkillsPage,
+  // old links to Context land on Skills → Knowledge
+  context: KnowledgeRedirect,
   todos: Todos,
   projects: Projects,
   notes: Notes,
@@ -225,4 +227,11 @@ function Toasts() {
       </AnimatePresence>
     </div>
   );
+}
+
+/** Context moved into Skills as the Knowledge tab. */
+function KnowledgeRedirect() {
+  const go = useStore((st) => st.go);
+  useEffect(() => go("skills", "knowledge"), [go]);
+  return <></>;
 }

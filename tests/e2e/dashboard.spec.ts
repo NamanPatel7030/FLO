@@ -196,3 +196,29 @@ test("projects: create with client details, edit them in the drawer", async ({ p
     .poll(() => page.evaluate(() => (window as any).__floMock.invoke("list_projects").then((ps: any[]) => ps.find((p) => p.name === "Website rebuild")?.clientDetails)))
     .toBe("Fang Wei, fang@studio.cn, WeChat");
 });
+
+test("skills: create from a template, it saves with mode and platforms; Knowledge holds the old context", async ({ page }) => {
+  await page.goto("/#/skills");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  const grid = page.getByTestId("skills-grid");
+  await expect(grid).toContainText("Upwork proposal");
+  await expect(grid).toContainText("Daily standup");
+
+  await page.getByRole("button", { name: /Slack reply/ }).click();
+  const ed = page.getByTestId("skill-editor");
+  await expect(ed.getByLabel("Skill name")).toHaveValue("Slack reply");
+  await ed.getByRole("radio", { name: /Do it on screen/ }).click();
+  await ed.getByRole("button", { name: /Gmail/ }).click();
+  await ed.getByRole("button", { name: "Create skill" }).click();
+  await expect(ed).toHaveCount(0);
+  await expect(grid).toContainText("Slack reply");
+  const saved = await page.evaluate(() => (window as any).__floMock.invoke("list_skills").then((ks: any[]) => ks.find((k) => k.name === "Slack reply")));
+  expect(saved.mode).toBe("do");
+  expect(saved.platforms).toEqual(expect.arrayContaining(["slack", "gmail"]));
+
+  await page.getByRole("tab", { name: /Knowledge/ }).click();
+  await expect(page.getByRole("tab", { name: /Knowledge/ })).toHaveAttribute("aria-selected", "true");
+  // old Context links land on Skills → Knowledge
+  await page.goto("/#/context");
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/skills/knowledge");
+});

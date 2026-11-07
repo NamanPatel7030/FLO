@@ -22,8 +22,7 @@ import type {
   Project,
   Settings,
   Todo,
-  TodoStatus,
-} from "./types";
+  TodoStatus, Skill } from "./types";
 import { EV } from "./types";
 import { countWords } from "./format";
 
@@ -107,6 +106,31 @@ const projectsBase: Omit<Project, "openTodos" | "doneTodos">[] = [
   { id: "p_flo", name: "Flo", description: "Local-first voice assistant", status: "active", color: "#f59e0b", lastNote: "Notch island prototype done", updatedAt: iso(10) },
 ];
 const projects = new Map(projectsBase.map((p) => [p.id, { ...p }]));
+
+const skills: Skill[] = [
+  {
+    id: "k1",
+    name: "Upwork proposal",
+    triggers: "proposal for this job, apply to this job",
+    instructions: "Read the job post on screen. Write a 250-350 word proposal: the client's problem first, 2 matching projects, answer every question, end with one sharp question.",
+    platforms: ["upwork", "browser"],
+    mode: "write",
+    enabled: true,
+    uses: 12,
+    createdAt: iso(3000),
+  },
+  {
+    id: "k2",
+    name: "Daily standup",
+    triggers: "post my standup",
+    instructions: "Open Slack, go to #scrum, and post yesterday / today / blockers from my to-dos and notes. Ask before sending.",
+    platforms: ["slack"],
+    mode: "do",
+    enabled: true,
+    uses: 4,
+    createdAt: iso(2000),
+  },
+];
 
 const todos: Todo[] = [
   { id: "t1", title: "Reply to Rahul about the invoice", reason: "Rahul asked “can you confirm the invoice by today?”", person: "Rahul", app: "Slack", source: "attention", status: "open", confidence: 0.92, createdAt: iso(25) },
@@ -721,6 +745,26 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return history.slice(0, args.limit ?? 100);
     case "get_analytics":
       return buildAnalytics(args.days ?? 30);
+    case "list_skills":
+      return skills.map((k) => ({ ...k }));
+    case "save_skill": {
+      const k = { ...args.skill } as Skill;
+      if (!k.id) {
+        k.id = uid("k");
+        k.createdAt = new Date().toISOString();
+        k.uses = 0;
+        skills.unshift(k);
+      } else {
+        const i = skills.findIndex((x) => x.id === k.id);
+        if (i >= 0) skills[i] = { ...skills[i], ...k };
+      }
+      return { ...k };
+    }
+    case "delete_skill": {
+      const i = skills.findIndex((x) => x.id === args.id);
+      if (i >= 0) skills.splice(i, 1);
+      return null;
+    }
     case "list_todos":
       return [...todos];
     case "add_todo": {

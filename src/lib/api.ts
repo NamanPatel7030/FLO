@@ -7,6 +7,7 @@ import type {
   ClaudeHookStatus,
   ClaudeSession,
   ContextDoc,
+  Skill,
   Integration,
   Dictation,
   DictionaryEntry,
@@ -135,6 +136,9 @@ export const api = {
   slackSyncNow: () => call<number>("slack_sync_now"),
   confirmAction: (id: string, approve: boolean) => call<string>("confirm_action", { id, approve }),
   // context library
+  listSkills: () => call<Skill[]>("list_skills"),
+  saveSkill: (skill: Skill) => call<Skill>("save_skill", { skill }),
+  deleteSkill: (id: string) => call<void>("delete_skill", { id }),
   listContextDocs: () => call<ContextDoc[]>("list_context_docs").catch(() => [] as ContextDoc[]),
   getContextDoc: (id: string) => call<{ doc: ContextDoc; content: string }>("get_context_doc", { id }),
   addContextDoc: (title: string, content: string) => call<ContextDoc>("add_context_doc", { title, content }),

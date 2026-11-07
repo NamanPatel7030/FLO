@@ -114,6 +114,36 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
             });
         }
     }
+    // 2) the user's own skills ("use my Upwork proposal skill"): instructions they wrote once
+    let skill = st.db.list_skills().ok().and_then(|all| {
+        let all: Vec<_> = all.into_iter().filter(|k| k.enabled).collect();
+        let keys: Vec<(String, String)> = all.iter().map(|k| (k.name.clone(), k.triggers.clone())).collect();
+        text::match_skill(query, &keys).map(|i| all[i].clone())
+    });
+    if let Some(k) = &skill {
+        let _ = st.db.bump_skill_use(&k.id);
+        log::info!("skill: {} ({})", k.name, k.mode);
+        if k.mode == "do" {
+            // operate the screen: hand the request + the skill's steps to the computer-control agent
+            let goal = format!("{query}\n\nDo it the way my \"{}\" skill says:\n{}", k.name, k.instructions);
+            let action = AssistantAction::Automate { goal };
+            let result = execute(st, &action, front, false).await;
+            let (reply, results) = match result {
+                Ok(r) => (format!("Running your {} skill.", k.name), vec![r]),
+                Err(e) => (format!("Couldn't run {}: {e}", k.name), vec![]),
+            };
+            return Ok(AssistantResponse {
+                id: db::new_id(),
+                query: query.into(),
+                reply,
+                actions: vec![action],
+                results,
+                created_at: chrono::Local::now().to_rfc3339(),
+                mode: mode.into(),
+                sources: vec![],
+            });
+        }
+    }
     let s = st.settings();
     let cfgl = LlmConfig::from_settings(&s);
     if !cfgl.is_configured() {
@@ -121,8 +151,9 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     }
     // screen OCR is the largest prompt cost — only include it when the request is about the screen
     // (always in deep mode, where a screenshot is attached as well)
-    let drafting = text::is_writing_request(query);
-    let screen = screen.filter(|_| mode == "deep" || text::wants_screen_context(query));
+    // a "write" skill is a writing task: it reads the screen and types the result
+    let drafting = skill.is_some() || text::is_writing_request(query);
+    let screen = screen.filter(|_| mode == "deep" || drafting || text::wants_screen_context(query));
     let s_web = mode == "web";
     if s_web && !llm::supports_web(&s.llm_provider) {
         // provider can't search: hand the question to Perplexity instead of guessing
@@ -151,6 +182,9 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     system.push_str(prompts::assistant_mode_note(mode));
     if drafting {
         system.push_str(prompts::DRAFTING_NOTE);
+    }
+    if let Some(k) = &skill {
+        system.push_str(&prompts::skill_note(&k.name, &k.instructions, &k.platforms));
     }
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));

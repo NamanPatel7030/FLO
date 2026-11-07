@@ -207,6 +207,24 @@ pub fn add_todo(st: State<Shared>, title: String, project_id: Option<String>, du
     Ok(t)
 }
 
+#[tauri::command]
+pub fn list_skills(st: State<Shared>) -> R<Vec<crate::model::Skill>> {
+    st.db.list_skills().map_err(e)
+}
+
+#[tauri::command]
+pub fn save_skill(st: State<Shared>, skill: crate::model::Skill) -> R<crate::model::Skill> {
+    if skill.name.trim().is_empty() {
+        return Err("Give the skill a name".into());
+    }
+    st.db.save_skill(&skill).map_err(e)
+}
+
+#[tauri::command]
+pub fn delete_skill(st: State<Shared>, id: String) -> R<()> {
+    st.db.delete_skill(&id).map_err(e)
+}
+
 /// Remind me again in `minutes` (the notch reminder's Snooze).
 #[tauri::command]
 pub fn snooze_todo(st: State<Shared>, id: String, minutes: u32) -> R<()> {

@@ -71,6 +71,14 @@ exactly the message the user would send there:
 Return the finished text in an insert_text action (it is typed into the focused field). reply is one short
 line saying what you wrote, e.g. "Drafted a Dhanteras wish for #scrum.""#;
 
+/// Appended when the request invokes one of the user's skills.
+pub fn skill_note(name: &str, instructions: &str, platforms: &[String]) -> String {
+    let where_ = if platforms.is_empty() { "wherever the user is".to_string() } else { platforms.join(", ") };
+    format!(
+        "\n\nThe user invoked their skill \"{name}\" (used on: {where_}). Follow these instructions exactly; they override general style rules:\n\"\"\"\n{instructions}\n\"\"\"\nUse what is on screen (the screenshot and screen text) as the input for this skill. Put the finished text in an insert_text action."
+    )
+}
+
 /// Incremental update: previous summary + only the new lines (keeps cost flat as meetings grow).
 pub fn meeting_update_user(previous_summary: &str, new_lines: &str) -> String {
     if previous_summary.trim().is_empty() {
