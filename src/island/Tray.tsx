@@ -3,7 +3,7 @@
 // in Island.tsx.
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Asterisk, Check, CheckCircle2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
+import { Asterisk, Check, CheckCircle2, Trash2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
 import { claudeStatusLabel, formatDue, relativeTime, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
 import type { ClaudeSession, ConfirmEvent, CorrectionEvent, IslandGeometry, Todo } from "../lib/types";
 import { CardRow } from "./CardRow";
@@ -245,6 +245,7 @@ export function TrayTooltip({
   onIgnoreMeeting,
   onOpenTodos,
   onDoneTodo,
+  onDeleteTodo,
   scale = 1,
 }: {
   scale?: number;
@@ -258,6 +259,8 @@ export function TrayTooltip({
   onOpenTodos: () => void;
   /** tick a to-do off right in the list */
   onDoneTodo?: (t: Todo) => void;
+  /** delete a to-do from the list */
+  onDeleteTodo?: (t: Todo) => void;
 }) {
   return (
     <motion.div
@@ -333,6 +336,14 @@ export function TrayTooltip({
                     <div className="truncate text-[12.5px] text-white/90">{t.title}</div>
                     {why && <div className="truncate text-[10.5px] text-white/45">{why}</div>}
                   </div>
+                  <button
+                    aria-label={`Delete: ${t.title}`}
+                    title="Delete"
+                    onClick={() => onDeleteTodo?.(t)}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white/40 opacity-0 transition hover:bg-red-500/15 hover:text-red-300 focus:opacity-100 group-hover:opacity-100"
+                  >
+                    <Trash2 size={12} />
+                  </button>
                 </div>
               );
             })}
@@ -367,7 +378,8 @@ export function TrayTooltip({
 }
 
 /** "Send to Rahul on Slack?" — Flo never sends without this OK. */
-export function ConfirmCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent; more: number; notch: boolean; geo: IslandGeometry; onAnswer: (approve: boolean) => void }) {
+export function ConfirmCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent; more: number; notch: boolean; geo: IslandGeometry; onAnswer: (approve: boolean | "terminal") => void }) {
+  if (c.kind === "claude") return <ClaudePermissionCard c={c} more={more} notch={notch} geo={geo} onAnswer={onAnswer} />;
   return (
     <CardRow
       notch={notch}
@@ -398,6 +410,39 @@ export function ConfirmCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent
       </div>
       <p className="selectable mt-1 line-clamp-3 rounded-xl border border-white/[0.06] bg-white/[0.04] px-2.5 py-1.5 text-[12.5px] leading-[17px] text-white/85">{c.body}</p>
     </CardRow>
+  );
+}
+
+/** "Claude needs you · project — Run: npm publish" with Deny / Allow (and answer in the terminal). */
+function ClaudePermissionCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent; more: number; notch: boolean; geo: IslandGeometry; onAnswer: (a: boolean | "terminal") => void }) {
+  const [project, title] = (() => {
+    const i = c.title.indexOf("·");
+    return i >= 0 ? [c.title.slice(i + 1).trim(), c.title.slice(0, i).trim()] : ["", c.title];
+  })();
+  return (
+    <div className="absolute inset-x-0 bottom-0 px-4 pb-3" style={{ top: notch ? geo.notchHeight + 10 : 8 }} data-testid="claude-permission-card">
+      <div className="flex items-center gap-2">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inset-0 rounded-full bg-amber-400 opacity-60 [animation:ping_1.2s_cubic-bezier(0,0,0.2,1)_2]" />
+          <span className="relative h-2.5 w-2.5 rounded-full bg-amber-400" />
+        </span>
+        <span className="truncate text-[13.5px] font-semibold">{title}</span>
+        {project && <span className="truncate text-[12.5px] text-white/45">· {project}</span>}
+        {more > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
+      </div>
+      <p className="selectable mt-2 line-clamp-2 rounded-xl border border-white/[0.07] bg-white/[0.05] px-3 py-2 font-mono text-[12.5px] leading-[17px] text-white/90">{c.body}</p>
+      <div className="mt-2 flex items-center gap-1.5">
+        <button className="mr-auto rounded-full px-2 py-1 text-[11px] text-white/45 hover:bg-white/10 hover:text-white/80" onClick={() => onAnswer("terminal")} title="Answer in the terminal instead">
+          Answer in terminal
+        </button>
+        <button className={btnGhost + " flex items-center gap-1"} onClick={() => onAnswer(false)} aria-label="Deny">
+          <X size={12} /> Deny
+        </button>
+        <button className={btnPrimary + " flex items-center gap-1"} onClick={() => onAnswer(true)} aria-label="Allow">
+          <Check size={12} strokeWidth={3} /> Allow
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { AlarmClock, Asterisk, Bell, Check, Info, MousePointer2, SquareTerminal, Terminal, Webhook, X, BellRing } from "lucide-react";
+import { AlarmClock, Asterisk, Bell, Check, Info, MousePointer2, SquareTerminal, Terminal, Trash2, Webhook, X, BellRing } from "lucide-react";
 import { formatDue } from "../lib/format";
 import { TodoDetails } from "./TodoDetails";
 import { api, on } from "../lib/api";
@@ -86,6 +86,9 @@ export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
               </button>
             </>
           )}
+          <button className="rounded-lg p-1 text-faint hover:bg-red-500/15 hover:text-red-300" title="Delete" aria-label="Delete" onClick={() => api.deleteTodo(todo.id)}>
+            <Trash2 size={14} />
+          </button>
         </div>
       )}
       {details && <TodoDetails todo={todo} onClose={() => setDetails(false)} />}

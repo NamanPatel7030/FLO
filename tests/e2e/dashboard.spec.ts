@@ -250,3 +250,12 @@ test("connections: add an MCP server, test it to see its tools, save it", async 
   expect(c.command).toBe("npx");
   expect(c.args).toEqual(["-y", "@modelcontextprotocol/server-filesystem", "~/Documents"]);
 });
+
+test("to-dos: delete from a row", async ({ page }) => {
+  await page.goto("/#/todos");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  const row = page.getByText("Book flight to Bangalore").first().locator("xpath=ancestor::div[contains(@class,'group')][1]");
+  await row.hover();
+  await row.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByText("Book flight to Bangalore")).toHaveCount(0);
+});

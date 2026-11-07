@@ -137,6 +137,8 @@ export const api = {
   slackDisconnect: () => call<void>("slack_disconnect"),
   slackSyncNow: () => call<number>("slack_sync_now"),
   confirmAction: (id: string, approve: boolean) => call<string>("confirm_action", { id, approve }),
+  /** Claude Code permission prompt: allow | deny | terminal (answer it in the terminal instead) */
+  answerClaudePermission: (id: string, decision: "allow" | "deny" | "terminal") => call<void>("answer_claude_permission", { id, decision }),
   // context library
   listSkills: () => call<Skill[]>("list_skills"),
   listConnections: () => call<Connection[]>("list_connections"),

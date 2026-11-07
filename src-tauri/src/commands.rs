@@ -24,7 +24,12 @@ pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
         st.egress.allow_account_host(&h);
     }
     platform::set_hotkeys(crate::hotkey::HotkeyConfig::from_strings(&settings.hotkey_dictation, &settings.hotkey_assistant));
+    let approvals_changed = st.settings().claude_approvals != settings.claude_approvals;
     *st.settings.write() = settings;
+    // turning "Allow / Deny from the notch" on or off adds / removes the PermissionRequest hook
+    if approvals_changed {
+        crate::claude::refresh_if_installed(&st);
+    }
     Ok(())
 }
 
@@ -714,6 +719,16 @@ pub fn slack_disconnect() -> R<()> {
 #[tauri::command]
 pub async fn slack_sync_now(st: State<'_, Shared>) -> R<usize> {
     crate::slack::sync(st.inner()).await.map_err(e)
+}
+
+/// Answer a Claude Code permission question from the notch: "allow" | "deny" | "terminal".
+#[tauri::command]
+pub fn answer_claude_permission(id: String, decision: String) -> R<()> {
+    if crate::claude::answer_permission(&id, &decision) {
+        Ok(())
+    } else {
+        Err("That question was already answered.".into())
+    }
 }
 
 /// Confirm / cancel a staged action (e.g. a Slack message the assistant drafted).

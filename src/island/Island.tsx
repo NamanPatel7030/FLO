@@ -323,7 +323,12 @@ export default function Island() {
         notifyChime();
       }),
       on<null>(EV.todos, () => api.listTodos().then(setTodos).catch(() => {})),
-      on<ConfirmEvent>(EV.confirm, (c) => c && c.id && setConfirms((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]))),
+      on<ConfirmEvent>(EV.confirm, (c) => {
+        if (!c || !c.id) return;
+        setConfirms((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]));
+        if (c.kind === "claude") notifyChime();
+      }),
+      on<{ id: string }>(EV.confirmDone, (d) => d && d.id && setConfirms((q) => q.filter((x) => x.id !== d.id))),
       on<CorrectionEvent>(EV.correction, (c) => c && setCorrections((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]))),
       on<MeetingDetectedEvent>(EV.meetingDetected, (e) => {
         if (e.active) {
@@ -489,13 +494,16 @@ export default function Island() {
   }, [headClaude, hover]);
 
   const headConfirm = confirms[0];
-  const answerConfirm = useCallback((c: ConfirmEvent, approve: boolean) => {
+  const answerConfirm = useCallback((c: ConfirmEvent, approve: boolean | "terminal") => {
     setConfirms((q) => q.filter((x) => x.id !== c.id));
-    api.confirmAction(c.id, approve).catch(() => {});
+    if (c.kind === "claude") api.answerClaudePermission(c.id, approve === "terminal" ? "terminal" : approve ? "allow" : "deny").catch(() => {});
+    else api.confirmAction(c.id, approve === true).catch(() => {});
   }, []);
   useEffect(() => {
     if (!headConfirm) return;
-    const t = setTimeout(() => answerConfirm(headConfirm, false), CONFIRM_MS);
+    // never auto-deny a Claude permission: unanswered, it goes back to the terminal (the backend
+    // also times out and closes the card); a staged Slack message is simply cancelled
+    const t = setTimeout(() => answerConfirm(headConfirm, headConfirm.kind === "claude" ? "terminal" : false), CONFIRM_MS);
     return () => clearTimeout(t);
   }, [headConfirm, answerConfirm]);
 
@@ -591,6 +599,8 @@ export default function Island() {
         return { rows: Math.max(1, history?.length ?? 1) };
       case "widgets":
         return { widgetBody: widgetsBodyHeight(widgetIds), scale: getNotchScale() };
+      case "confirm":
+        return { claude: headConfirm?.kind === "claude" };
       case "agent":
         return { agentSteps: agent?.steps.length ?? 0, agentDone: !!agent && agent.status !== "running" && agent.status !== "confirm" };
       case "collapsed":
@@ -1027,6 +1037,10 @@ export default function Island() {
             onDoneTodo={(t) => {
               setTodos((list) => list.filter((x) => x.id !== t.id));
               api.updateTodo(t.id, { status: "done" }).catch(() => {});
+            }}
+            onDeleteTodo={(t) => {
+              setTodos((list) => list.filter((x) => x.id !== t.id));
+              api.deleteTodo(t.id).catch(() => {});
             }}
             scale={getNotchScale()}
           />

@@ -176,7 +176,7 @@ fn is_ours(entry: &Value) -> bool {
 /// Remove Flo's hook entries; leaves other hooks untouched.
 pub fn remove_hooks(mut settings: Value) -> Value {
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-        for ev in HOOK_EVENTS {
+        for ev in HOOK_EVENTS.iter().chain(std::iter::once(&PERMISSION_EVENT)) {
             if let Some(arr) = hooks.get_mut(*ev).and_then(|a| a.as_array_mut()) {
                 arr.retain(|e| !is_ours(e));
             }
@@ -191,6 +191,11 @@ pub fn remove_hooks(mut settings: Value) -> Value {
 
 /// Add (or refresh) Flo's hook entries.
 pub fn add_hooks(settings: Value, command: &str) -> Value {
+    add_hooks_with(settings, command, None)
+}
+
+/// Same, plus (when given) the blocking PermissionRequest hook that lets the notch Allow / Deny.
+pub fn add_hooks_with(settings: Value, command: &str, permission: Option<&str>) -> Value {
     let mut s = remove_hooks(settings);
     if !s.is_object() {
         s = json!({});
@@ -207,7 +212,96 @@ pub fn add_hooks(settings: Value, command: &str) -> Value {
         }
         arr.as_array_mut().unwrap().push(json!({ "hooks": [{ "type": "command", "command": command, "timeout": 5 }] }));
     }
+    if let Some(perm) = permission {
+        let arr = hooks.as_object_mut().unwrap().entry(PERMISSION_EVENT).or_insert_with(|| json!([]));
+        if !arr.is_array() {
+            *arr = json!([]);
+        }
+        // synchronous: Claude Code waits for the answer (Flo replies within PERMISSION_WAIT_SECS)
+        arr.as_array_mut().unwrap().push(json!({ "matcher": "*", "hooks": [{ "type": "command", "command": perm, "timeout": 600 }] }));
+    }
     s
+}
+
+/// Claude Code asks this hook before showing a permission prompt.
+pub const PERMISSION_EVENT: &str = "PermissionRequest";
+/// How long the notch waits for Allow / Deny before handing the question back to the terminal.
+pub const PERMISSION_WAIT_SECS: u64 = 120;
+
+/// The blocking hook: curl prints Flo's decision JSON to stdout (Claude Code reads it). If Flo isn't
+/// running, or you answer in the terminal, it prints nothing and exits 0, so the normal prompt shows.
+pub fn permission_command(port: u16, token: &str) -> String {
+    format!(
+        "curl -s -m 590 -X POST -H \"Content-Type: application/json\" --data-binary @- \"http://127.0.0.1:{port}/claude/permission?token={token}&src={MARKER}&bundle=${{__CFBundleIdentifier:-}}&term=${{TERM_PROGRAM:-}}&pid=$PPID\" 2>/dev/null || true"
+    )
+}
+
+/// Stdout for a decision (Claude Code hooks reference: PermissionRequest → decision.behavior).
+pub fn permission_reply(decision: &str) -> String {
+    match decision {
+        "allow" => json!({ "hookSpecificOutput": { "hookEventName": PERMISSION_EVENT, "decision": { "behavior": "allow" } } }).to_string(),
+        "deny" => json!({ "hookSpecificOutput": { "hookEventName": PERMISSION_EVENT, "decision": { "behavior": "deny", "message": "The user denied this from Flo." } } }).to_string(),
+        // anything else: no decision → Claude Code shows its normal prompt
+        _ => String::new(),
+    }
+}
+
+/// What Claude wants to do, in a few words ("Run: npm publish").
+pub fn permission_summary(tool: &str, input: &Value) -> String {
+    let s = |k: &str| input[k].as_str().unwrap_or("").trim().to_string();
+    let file = |k: &str| {
+        let p = s(k);
+        std::path::Path::new(&p).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or(p)
+    };
+    let text = match tool {
+        "Bash" => format!("Run: {}", s("command")),
+        "Edit" | "MultiEdit" => format!("Edit {}", file("file_path")),
+        "Write" => format!("Write {}", file("file_path")),
+        "NotebookEdit" => format!("Edit notebook {}", file("notebook_path")),
+        "Read" => format!("Read {}", file("file_path")),
+        "WebFetch" => format!("Open {}", s("url")),
+        "WebSearch" => format!("Search the web: {}", s("query")),
+        t if t.starts_with("mcp__") => {
+            let mut parts = t.splitn(3, "__").skip(1);
+            let server = parts.next().unwrap_or("");
+            let name = parts.next().unwrap_or(t);
+            format!("Use {name} ({server})")
+        }
+        t => format!("Use {t}"),
+    };
+    crate::text::truncate_chars(&text, 200)
+}
+
+/// Questions waiting for Allow / Deny: id → where to send the decision.
+static PENDING_PERMISSIONS: parking_lot::Mutex<Option<std::collections::HashMap<String, std::sync::mpsc::Sender<String>>>> = parking_lot::Mutex::new(None);
+
+/// The notch answered a permission question ("allow" | "deny" | "terminal").
+pub fn answer_permission(id: &str, decision: &str) -> bool {
+    let tx = PENDING_PERMISSIONS.lock().as_mut().and_then(|m| m.remove(id));
+    tx.map(|t| t.send(decision.to_string()).is_ok()).unwrap_or(false)
+}
+
+/// Hold the hook's HTTP request open on its own thread until the notch answers (or time runs out),
+/// so other Claude events keep flowing while a question waits.
+fn ask_permission(st: &Shared, req: tiny_http::Request, body: &Value) {
+    let id = crate::db::new_id();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    PENDING_PERMISSIONS.lock().get_or_insert_with(Default::default).insert(id.clone(), tx);
+    let cwd = body["cwd"].as_str().unwrap_or("");
+    let project = std::path::Path::new(cwd).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| "Claude Code".into());
+    let tool = body["tool_name"].as_str().unwrap_or("a tool");
+    let summary = permission_summary(tool, &body["tool_input"]);
+    log::info!("claude permission asked: {project}: {summary}");
+    st.emit("flo://confirm", json!({ "id": id, "kind": "claude", "title": format!("Claude needs you · {project}"), "body": summary }));
+    let st2 = st.clone();
+    std::thread::spawn(move || {
+        let decision = rx.recv_timeout(std::time::Duration::from_secs(PERMISSION_WAIT_SECS)).unwrap_or_else(|_| "terminal".into());
+        PENDING_PERMISSIONS.lock().as_mut().map(|m| m.remove(&id));
+        log::info!("claude permission answered: {decision}");
+        // close the card wherever it is (answered elsewhere, or timed out)
+        st2.emit("flo://confirm-done", json!({ "id": id }));
+        let _ = req.respond(tiny_http::Response::from_string(permission_reply(&decision)));
+    });
 }
 
 pub fn has_hooks(settings: &Value) -> bool {
@@ -357,10 +451,12 @@ pub fn install(st: &Shared) -> Result<ClaudeHookStatus> {
     if dirs.is_empty() {
         return Err(anyhow!("Claude Code config folder not found (~/.claude). Run Claude Code once first."));
     }
-    let cmd = hook_command(st.claude_port, &secrets::hook_token()?);
+    let token = secrets::hook_token()?;
+    let cmd = hook_command(st.claude_port, &token);
+    let perm = st.settings().claude_approvals.then(|| permission_command(st.claude_port, &token));
     for d in dirs {
         let f = d.join("settings.json");
-        write_json(&f, &add_hooks(read_json(&f), &cmd))?;
+        write_json(&f, &add_hooks_with(read_json(&f), &cmd, perm.as_deref()))?;
     }
     Ok(status(st))
 }
@@ -508,15 +604,14 @@ pub fn focus(app_bundle: Option<&str>, terminal: Option<&str>, cwd: &str) -> any
 
 /// Re-write an installed hook so it uses the current command format.
 pub fn refresh_if_installed(st: &Shared) {
-    let cmd = match secrets::hook_token() {
-        Ok(t) => hook_command(st.claude_port, &t),
-        Err(_) => return,
-    };
+    let Ok(token) = secrets::hook_token() else { return };
+    let cmd = hook_command(st.claude_port, &token);
+    let perm = st.settings().claude_approvals.then(|| permission_command(st.claude_port, &token));
     for d in config_dirs() {
         let f = d.join("settings.json");
         let v = read_json(&f);
         if has_hooks(&v) {
-            let fresh = add_hooks(v.clone(), &cmd);
+            let fresh = add_hooks_with(v.clone(), &cmd, perm.as_deref());
             if fresh != v {
                 let _ = write_json(&f, &fresh);
             }
@@ -592,7 +687,8 @@ pub fn spawn_listener(st: Shared) {
             for mut req in server.incoming_requests() {
                 let url = req.url().to_string();
                 let is_agent = url.starts_with("/agent/event");
-                let ok_path = url.starts_with("/claude/hook") || is_agent;
+                let is_permission = url.starts_with("/claude/permission");
+                let ok_path = url.starts_with("/claude/hook") || is_agent || is_permission;
                 let parsed = url::Url::parse(&format!("http://x{url}")).ok();
                 let q = |name: &str| parsed.as_ref().and_then(|u| u.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.to_string()));
                 let ok_token = q("token").as_deref() == Some(token.as_str());
@@ -607,8 +703,16 @@ pub fn spawn_listener(st: Shared) {
                 }
                 let mut body = String::new();
                 let _ = req.as_reader().take(1024 * 1024).read_to_string(&mut body);
-                let _ = req.respond(tiny_http::Response::from_string("ok"));
                 let v: Value = serde_json::from_str(&body).unwrap_or(json!({}));
+                if is_permission {
+                    if st.settings().claude_approvals {
+                        ask_permission(&st, req, &v); // answered on its own thread
+                    } else {
+                        let _ = req.respond(tiny_http::Response::from_string(""));
+                    }
+                    continue;
+                }
+                let _ = req.respond(tiny_http::Response::from_string("ok"));
                 let (ev, status) = if is_agent {
                     // Codex / Cursor / any tool
                     let Some((mut ev, status)) = crate::agents::parse_agent(&q("source").unwrap_or_default(), q("event").as_deref(), &v) else { continue };
@@ -669,6 +773,54 @@ pub fn spawn_listener(st: Shared) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn permission_hook_installs_blocking_and_uninstalls_cleanly() {
+        let perm = permission_command(47621, "tok");
+        let s = add_hooks_with(json!({}), &hook_command(47621, "tok"), Some(&perm));
+        let entry = &s["hooks"]["PermissionRequest"][0];
+        assert_eq!(entry["matcher"], "*");
+        assert_eq!(entry["hooks"][0]["timeout"], 600);
+        let cmd = entry["hooks"][0]["command"].as_str().unwrap();
+        assert!(cmd.contains("/claude/permission?") && cmd.ends_with("|| true"));
+        // re-adding doesn't duplicate; turning it off removes it; uninstall removes everything
+        let again = add_hooks_with(s.clone(), &hook_command(47621, "tok"), Some(&perm));
+        assert_eq!(again["hooks"]["PermissionRequest"].as_array().unwrap().len(), 1);
+        let off = add_hooks_with(s.clone(), &hook_command(47621, "tok"), None);
+        assert!(off["hooks"].get("PermissionRequest").is_none());
+        assert!(remove_hooks(s)["hooks"].is_null());
+    }
+
+    #[test]
+    fn permission_replies_follow_the_hook_format() {
+        let allow: Value = serde_json::from_str(&permission_reply("allow")).unwrap();
+        assert_eq!(allow["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
+        assert_eq!(allow["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        let deny: Value = serde_json::from_str(&permission_reply("deny")).unwrap();
+        assert_eq!(deny["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(deny["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().contains("Flo"));
+        // terminal / timeout → no output → Claude Code shows its own prompt
+        assert_eq!(permission_reply("terminal"), "");
+    }
+
+    #[test]
+    fn permission_summaries_say_what_claude_wants() {
+        assert_eq!(permission_summary("Bash", &json!({"command": "npm publish"})), "Run: npm publish");
+        assert_eq!(permission_summary("Edit", &json!({"file_path": "/Users/p/Flo/src/main.rs"})), "Edit main.rs");
+        assert_eq!(permission_summary("WebFetch", &json!({"url": "https://docs.rs"})), "Open https://docs.rs");
+        assert_eq!(permission_summary("mcp__github__create_issue", &json!({})), "Use create_issue (github)");
+        assert_eq!(permission_summary("Task", &json!({})), "Use Task");
+    }
+
+    #[test]
+    fn an_answer_reaches_the_waiting_request() {
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        PENDING_PERMISSIONS.lock().get_or_insert_with(Default::default).insert("q1".into(), tx);
+        assert!(answer_permission("q1", "allow"));
+        assert_eq!(rx.recv().unwrap(), "allow");
+        assert!(!answer_permission("q1", "deny")); // already answered
+    }
+
 
     fn line(v: Value) -> String {
         v.to_string()

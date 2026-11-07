@@ -94,6 +94,8 @@ pub struct Settings {
     pub stop_sound_on: bool,
     /// macOS notification banners (reminders); the notch card shows either way
     pub system_notifications: bool,
+    /// answer Claude Code's permission prompts (Allow / Deny) from the notch
+    pub claude_approvals: bool,
     /// two-stop gradient for the notch accent [from, to]; empty = derive from accent
     pub notch_gradient: Vec<String>,
     /// Flo Vault: automatically grow a local knowledge graph from your activity
@@ -148,6 +150,7 @@ impl Default for Settings {
             start_sound_on: true,
             stop_sound_on: true,
             system_notifications: true,
+            claude_approvals: true,
             notch_gradient: vec![],
             vault_auto: true,
         }

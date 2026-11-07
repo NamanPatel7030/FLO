@@ -90,6 +90,7 @@ const settings: Settings = {
   startSoundOn: true,
   stopSoundOn: true,
   systemNotifications: true,
+  claudeApprovals: true,
   typingWpm: 40,
   userName: "Parth",
   theme: "dark",
@@ -1038,6 +1039,9 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       if (!np.playing && np.elapsed === 0) return null;
       np.elapsed = (np.elapsed + 3) % 214;
       return { ...np };
+    case "answer_claude_permission":
+      (window as any).__floPermissions = [...((window as any).__floPermissions ?? []), { id: args.id, decision: args.decision }];
+      return null;
     case "snooze_todo": {
       const t = todos.find((x) => x.id === args.id);
       if (t) (t as any).remindAt = new Date(Date.now() + Number(args.minutes) * 60_000).toISOString();

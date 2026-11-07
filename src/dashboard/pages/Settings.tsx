@@ -434,6 +434,12 @@ function Notch({ s, set }: P) {
           checked={s.systemNotifications ?? true}
           onChange={(v) => set({ systemNotifications: v })}
         />
+        <Toggle
+          label="Allow or deny Claude Code from the notch"
+          hint="When Claude Code asks for permission, answer in the notch instead of the terminal. Unanswered after 2 minutes, it asks in the terminal as usual."
+          checked={s.claudeApprovals ?? true}
+          onChange={(v) => set({ claudeApprovals: v })}
+        />
       </Card>
 
       <WidgetsCard />

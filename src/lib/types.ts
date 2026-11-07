@@ -95,6 +95,8 @@ export interface Settings {
   stopSoundOn?: boolean;
   /** macOS banners for reminders (the notch card shows either way) */
   systemNotifications?: boolean;
+  /** answer Claude Code's permission prompts (Allow / Deny) from the notch */
+  claudeApprovals?: boolean;
   /** Typing speed used for "time saved" analytics */
   typingWpm: number;
   userName: string;
@@ -464,7 +466,8 @@ export interface Integration {
 /** Something Flo wants you to approve before it happens (e.g. send a Slack message). */
 export interface ConfirmEvent {
   id: string;
-  kind: "slack";
+  /** slack = a drafted message to send · claude = a Claude Code permission prompt */
+  kind: "slack" | "claude";
   title: string;
   body: string;
 }
@@ -567,6 +570,8 @@ export const EV = {
   meetingDetected: "flo://meeting-detected",
   /** payload: ConfirmEvent — show Send / Cancel; answer with confirm_action */
   confirm: "flo://confirm",
+  /** a confirm card was answered elsewhere or timed out → close it */
+  confirmDone: "flo://confirm-done",
   /** payload: {signedIn, user?} — e.g. after Google sign-in completes via flo:// deep link */
   account: "flo://account",
   /** payload: {kind: "start"|"step"|"confirm"|"done"|"aborted"|"error", text} — computer-control agent */

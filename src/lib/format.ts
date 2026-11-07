@@ -279,6 +279,8 @@ export const ISLAND_GAP = 6;
 export interface CardContent {
   /** notch size scale (changes re-run the resize) */
   scale?: number;
+  /** a Claude permission card (a little taller: command + three buttons) */
+  claude?: boolean;
   replyChars?: number;
   results?: number;
   /** characters of the error / result text */
@@ -344,7 +346,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "meetingPrompt":
         return { width: 400, height: nh + ISLAND_GAP + 52 };
       case "confirm":
-        return { width: 460, height: nh + ISLAND_GAP + 98 };
+        return { width: 460, height: nh + ISLAND_GAP + (content?.claude ? 112 : 98) };
       case "peek":
         return { width: Math.max(nw + 2 * 160, hasTray ? tray.width : 0), height: nh + 54 };
       case "widgets":

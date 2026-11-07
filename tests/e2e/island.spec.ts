@@ -473,6 +473,38 @@ test("to-do tray: hovering lists every to-do (not just three), scrollable, and t
   const m = await list.evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
   expect(m.sh).toBeGreaterThan(m.ch);
   const first = await rows.first().innerText();
-  await rows.first().getByRole("button").click();
+  await rows.first().getByRole("button").first().click();
   await expect(list).not.toContainText(first.split("\n")[0]);
+  // hovering a row reveals delete; it removes the to-do for good
+  const second = rows.first();
+  const title = (await second.innerText()).split("\n")[0];
+  await second.hover();
+  await second.getByRole("button", { name: /^Delete/ }).click();
+  await expect(list).not.toContainText(title);
+  const all = await page.evaluate(() => (window as any).__floMock.invoke("list_todos"));
+  expect(all.some((t: any) => t.title === title)).toBe(false);
+});
+
+test("claude permission: the notch shows what Claude wants, and Allow / terminal answer it", async ({ page }) => {
+  await openIsland(page);
+  await emit(page, "flo://confirm", { id: "q1", kind: "claude", title: "Claude needs you · api", body: "Run: npm publish" });
+  const card = page.getByTestId("claude-permission-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Claude needs you");
+  await expect(card).toContainText("api");
+  await expect(card).toContainText("Run: npm publish");
+  await card.getByRole("button", { name: "Allow" }).click();
+  await expect(card).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).__floPermissions)).toEqual([{ id: "q1", decision: "allow" }]);
+
+  // answer in the terminal instead → no decision sent as allow/deny
+  await emit(page, "flo://confirm", { id: "q2", kind: "claude", title: "Claude needs you · web", body: "Edit main.rs" });
+  await page.getByTestId("claude-permission-card").getByRole("button", { name: /terminal/i }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__floPermissions.at(-1))).toEqual({ id: "q2", decision: "terminal" });
+
+  // answered elsewhere / timed out → the backend closes the card
+  await emit(page, "flo://confirm", { id: "q3", kind: "claude", title: "Claude needs you · api", body: "Run: rm -rf dist" });
+  await expect(page.getByTestId("claude-permission-card")).toBeVisible();
+  await emit(page, "flo://confirm-done", { id: "q3" });
+  await expect(page.getByTestId("claude-permission-card")).toHaveCount(0);
 });

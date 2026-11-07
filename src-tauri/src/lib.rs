@@ -345,6 +345,7 @@ pub fn run() {
             commands::add_todo,
             commands::update_todo,
             commands::snooze_todo,
+            commands::answer_claude_permission,
             commands::list_skills,
             commands::list_connections,
             commands::save_connection,
