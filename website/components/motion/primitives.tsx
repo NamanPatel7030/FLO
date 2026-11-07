@@ -41,7 +41,7 @@ export function Reveal({
   return (
     <MotionTag
       className={className}
-      initial={reduce ? { opacity: 0 } : { opacity: 0, y, filter: blur ? "blur(10px)" : "blur(0px)" }}
+      initial={{ opacity: 0, y, filter: blur ? "blur(10px)" : "blur(0px)" }} /* same on server and client; MotionConfig reducedMotion="user" drops the movement */
       {...(mount ? { animate: target } : { whileInView: target, viewport: { once: true, margin: "-60px" } })}
       transition={{ duration: reduce ? 0.3 : 0.7, ease: EASE_OUT, delay }}
     >

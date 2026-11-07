@@ -29,7 +29,7 @@
 
 html {
   scroll-behavior: smooth;
-  background: #000;
+  background: #05070a;
 }
 /* anchored sections clear the fixed nav + notch */
 section[id] {
@@ -300,4 +300,244 @@ h1,
 h2 {
   font-family: var(--font-display);
   letter-spacing: -0.03em;
+}
+
+/* ── notch story ───────────────────────────────────────────────────────── */
+.menubar {
+  background: linear-gradient(180deg, rgb(8 12 18 / 0.78), rgb(8 12 18 / 0.62));
+  border-bottom: 1px solid rgb(150 215 255 / 0.08);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+}
+.cone {
+  background: radial-gradient(closest-side at 50% 0%, rgb(61 187 255 / 0.16), rgb(61 187 255 / 0.05) 55%, transparent 100%);
+}
+.ch-num {
+  color: transparent;
+  -webkit-text-stroke: 1px rgb(102 206 255 / 0.13);
+  letter-spacing: -0.06em;
+}
+.why {
+  background: linear-gradient(90deg, rgb(61 187 255 / 0.1), rgb(61 187 255 / 0.02));
+  border: 1px solid rgb(150 215 255 / 0.12);
+  box-shadow: inset 2px 0 0 #3dbbff;
+}
+.beige {
+  background: linear-gradient(180deg, #f7eedd, #efe2c8);
+  color: #2b2418;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6);
+}
+.stage-win {
+  background: linear-gradient(180deg, rgb(16 22 30 / 0.86), rgb(9 13 19 / 0.86));
+  border: 1px solid rgb(150 215 255 / 0.12);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 40px 90px -40px rgb(0 0 0 / 0.95), 0 0 0 1px rgb(0 0 0 / 0.4);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.stage-card {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.05), rgb(255 255 255 / 0.015));
+  border: 1px solid rgb(150 215 255 / 0.11);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/* desktop: all chapters share one pinned stage and cross-fade; only the active one is visible */
+@media (min-width: 768px) {
+  .chapter {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .chapter .rise,
+  .chapter .ch-num {
+    opacity: 0;
+    transform: translate3d(0, 26px, 0);
+    transition: opacity 0.35s ease, transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .ch-grid {
+    padding-top: var(--top, 320px);
+    align-content: safe center;
+  }
+  .chapter[data-active="true"] {
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .chapter[data-active="true"] .rise,
+  .chapter[data-active="true"] .ch-num {
+    opacity: 1;
+    transform: none;
+    transition: opacity 0.6s ease calc(var(--d, 0ms) + 120ms), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1) calc(var(--d, 0ms) + 120ms);
+  }
+  /* the hero leaves upward instead of fading in place */
+  .chapter.hero[data-active="false"] > div {
+    opacity: 0;
+    transform: translate3d(0, -40px, 0);
+  }
+  .chapter.hero > div {
+    transition: opacity 0.4s ease, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+/* above the fold: animate on mount (never waits on scroll) */
+.hero-in {
+  animation: flo-rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes flo-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0);
+  }
+}
+.notch-breathe {
+  animation: flo-breathe 3.6s ease-in-out infinite;
+}
+@keyframes flo-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleX(0.9);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scaleX(1.05);
+  }
+}
+@keyframes flo-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+.sparkle {
+  animation: flo-sparkle 1.4s ease-in-out infinite;
+}
+@keyframes flo-sparkle {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.chip-in {
+  animation: flo-chip 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes flo-chip {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.96);
+  }
+}
+.line-in {
+  animation: flo-chip 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.pointer-in {
+  animation: flo-pointer 1.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes flo-pointer {
+  from {
+    opacity: 0;
+    transform: translate(70px, 26px);
+  }
+  30% {
+    opacity: 1;
+  }
+}
+.np-progress {
+  animation: flo-np 7s linear infinite;
+}
+@keyframes flo-np {
+  from {
+    transform: scaleX(0.18);
+  }
+  to {
+    transform: scaleX(0.72);
+  }
+}
+.bell-ring {
+  animation: flo-bell 1.6s ease-in-out infinite;
+  transform-origin: 50% 10%;
+}
+@keyframes flo-bell {
+  0%,
+  60%,
+  100% {
+    transform: rotate(0);
+  }
+  10%,
+  30% {
+    transform: rotate(14deg);
+  }
+  20%,
+  40% {
+    transform: rotate(-12deg);
+  }
+}
+.spin-slow {
+  display: inline-flex;
+  animation: flo-spin 4s linear infinite;
+}
+@keyframes flo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.cue-dot {
+  animation: flo-cue 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+@keyframes flo-cue {
+  from {
+    transform: translateY(-12px);
+  }
+  to {
+    transform: translateY(40px);
+  }
+}
+
+/* mobile: each chapter shows its notch hanging from the top edge of a little "screen" */
+.mini-screen {
+  position: relative;
+}
+.mini-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -40px;
+  pointer-events: none;
+  border-radius: 22px 22px 0 0;
+  border: 1px solid rgb(150 215 255 / 0.14);
+  border-bottom: 0;
+  background: linear-gradient(180deg, rgb(120 200 255 / 0.08), rgb(120 200 255 / 0) 80%);
+  -webkit-mask-image: linear-gradient(180deg, #000 40%, transparent);
+  mask-image: linear-gradient(180deg, #000 40%, transparent);
+}
+
+/* short laptop screens: tighten the chapter copy so it never runs under the fold */
+@media (min-width: 768px) and (max-height: 800px) {
+  .ch-grid {
+    padding-top: calc(var(--top, 320px) - 16px);
+    padding-bottom: 16px;
+  }
+  .ch-what {
+    font-size: 15px;
+    margin-top: 0.75rem;
+  }
+  .ch-gap {
+    margin-top: 0.85rem;
+  }
+  .ch-bullets {
+    gap: 0.3rem;
+  }
+  .ch-bullets li {
+    font-size: 13.5px;
+  }
+  .chapter .ch-num {
+    display: none;
+  }
 }

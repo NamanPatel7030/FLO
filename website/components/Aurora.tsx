@@ -9,20 +9,18 @@ import { motion, useReducedMotion } from "motion/react";
 export function Aurora() {
   const reduce = useReducedMotion();
   const blobs = [
-    { c: "rgb(26 155 224 / 0.55)", size: 820, top: "-16%", left: "2%", dur: 20, dx: 120, dy: 60 },
-    { c: "rgb(102 206 255 / 0.42)", size: 680, top: "2%", left: "58%", dur: 26, dx: -110, dy: 90 },
-    { c: "rgb(13 90 133 / 0.6)", size: 900, top: "50%", left: "22%", dur: 32, dx: 100, dy: -80 },
-    { c: "rgb(147 221 255 / 0.30)", size: 560, top: "62%", left: "70%", dur: 24, dx: -80, dy: -60 },
-    { c: "rgb(61 187 255 / 0.32)", size: 520, top: "28%", left: "34%", dur: 29, dx: 70, dy: 80 },
+    { c: "rgb(26 155 224 / 0.22)", size: 820, top: "-30%", left: "-8%", dur: 26, dx: 120, dy: 60 },
+    { c: "rgb(102 206 255 / 0.14)", size: 680, top: "-10%", left: "62%", dur: 30, dx: -110, dy: 90 },
+    { c: "rgb(13 90 133 / 0.32)", size: 900, top: "60%", left: "20%", dur: 34, dx: 100, dy: -80 },
   ];
   return (
-    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-black">
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-[#05070a]">
       {/* base vignette */}
       <div
         className="absolute inset-0"
         style={{
           background:
-            "radial-gradient(1200px 700px at 50% -20%, rgb(26 155 224 / 0.22), transparent 65%), radial-gradient(900px 800px at 50% 120%, rgb(8 58 87 / 0.45), transparent 60%)",
+            "radial-gradient(900px 520px at 50% -12%, rgb(26 155 224 / 0.16), transparent 65%), radial-gradient(900px 800px at 50% 120%, rgb(8 58 87 / 0.3), transparent 60%)",
         }}
       />
       {blobs.map((b, i) => (
@@ -51,7 +49,7 @@ export function Aurora() {
         }}
       />
       {/* top fade so the nav floats */}
-      <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/80 to-transparent" />
+      <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-[#05070a]/80 to-transparent" />
     </div>
   );
 }
