@@ -195,6 +195,18 @@ impl Db {
 
     // ── todos ───────────────────────────────────────────────────────────────
     pub fn insert_todo(&self, t: &Todo) -> Result<()> {
+        // a deadline in the words ("by next Monday") becomes the due date + a 5-min-early reminder
+        let mut owned;
+        let t = if t.due.is_none() {
+            owned = t.clone();
+            owned.due = Self::due_from_words(&t.title, &t.created_at);
+            if owned.remind_at.is_none() {
+                owned.remind_at = Self::remind_at_for(owned.due.as_deref());
+            }
+            &owned
+        } else {
+            t
+        };
         self.conn.lock().execute(
             "INSERT INTO todos (id,title,reason,person,app,source,status,project_id,due,confidence,created_at,completed_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![t.id, t.title, t.reason, t.person, t.app, t.source, t.status, t.project_id, t.due, t.confidence, t.created_at, t.completed_at],
@@ -206,6 +218,30 @@ impl Db {
             self.touch_project(p)?;
         }
         Ok(())
+    }
+
+/// Due date (RFC3339) named in a to-do's words, relative to when it was written.
+    pub fn due_from_words(title: &str, created_at: &str) -> Option<String> {
+        let base = chrono::DateTime::parse_from_rfc3339(created_at).map(|d| d.with_timezone(&Local)).unwrap_or_else(|_| Local::now());
+        crate::text::parse_due(title, base).map(|d| d.to_rfc3339())
+    }
+
+    /// Open to-dos without a due date whose words name one ("by next Monday") get it, with a
+    /// reminder if that's still ahead. Runs at start-up; returns how many were dated.
+    pub fn backfill_due_dates(&self) -> Result<usize> {
+        let todos = self.list_todos()?;
+        let now = Local::now();
+        let mut n = 0;
+        for t in todos.into_iter().filter(|t| t.status == "open" && t.due.is_none()) {
+            let Some(due) = Self::due_from_words(&t.title, &t.created_at) else { continue };
+            let remind = Self::remind_at_for(Some(&due)).filter(|r| chrono::DateTime::parse_from_rfc3339(r).map(|r| r > now).unwrap_or(false));
+            self.conn.lock().execute("UPDATE todos SET due=?2 WHERE id=?1", params![t.id, due])?;
+            if let Some(r) = remind {
+                self.conn.lock().execute("UPDATE todos SET remind_at=?2, reminded=0 WHERE id=?1", params![t.id, r])?;
+            }
+            n += 1;
+        }
+        Ok(n)
     }
 
     /// 5 minutes before a due time (RFC3339 with a clock time). None for date-only / no due.
@@ -890,6 +926,44 @@ fn row_note(r: &Row) -> rusqlite::Result<Note> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_deadline_in_the_words_sets_due_and_reminder() {
+        let db = Db::open_in_memory().unwrap();
+        let t = db.add_todo("Send the deck to Rahul tomorrow at 3pm", "meeting", None, None).unwrap();
+        let saved = db.list_todos().unwrap().into_iter().find(|x| x.id == t.id).unwrap();
+        let due = chrono::DateTime::parse_from_rfc3339(saved.due.as_deref().expect("due set")).unwrap();
+        assert_eq!(due.format("%H:%M").to_string(), "15:00");
+        let remind = chrono::DateTime::parse_from_rfc3339(saved.remind_at.as_deref().expect("reminder set")).unwrap();
+        assert_eq!((due - remind).num_minutes(), 5);
+        // no deadline in the words → nothing invented
+        let u = db.add_todo("Prepare plan and SOW", "meeting", None, None).unwrap();
+        assert!(db.list_todos().unwrap().into_iter().find(|x| x.id == u.id).unwrap().due.is_none());
+    }
+
+    #[test]
+    fn backfill_dates_old_todos_from_when_they_were_written() {
+        let db = Db::open_in_memory().unwrap();
+        // written on Saturday 7 Nov: "next Monday" means 9 Nov, whenever the backfill runs
+        let t = Todo {
+            id: new_id(),
+            title: "Client: Send requirements to Naman by next Monday".into(),
+            source: "meeting".into(),
+            status: "open".into(),
+            created_at: "2026-11-07T08:06:00+05:30".into(),
+            ..Default::default()
+        };
+        // insert as an old row without a due date (as before this change)
+        db.conn.lock().execute(
+            "INSERT INTO todos (id,title,source,status,created_at) VALUES (?1,?2,?3,?4,?5)",
+            params![t.id, t.title, t.source, t.status, t.created_at],
+        ).unwrap();
+        assert_eq!(db.backfill_due_dates().unwrap(), 1);
+        let due = db.list_todos().unwrap().into_iter().find(|x| x.id == t.id).unwrap().due.unwrap();
+        assert!(due.starts_with("2026-11-09T10:00"), "{due}");
+        assert_eq!(db.backfill_due_dates().unwrap(), 0); // idempotent
+    }
+
     use super::*;
 
     fn dict(ts: &str, app: &str, words: u32, ms: u64, mode: Mode) -> Dictation {

@@ -73,6 +73,33 @@ export interface TodoGroups {
 }
 
 /** Open attention items go to "screen"; open with future due → upcoming; other open → today. */
+const DAY_FMT = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric" });
+const TIME_FMT = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
+const FULL_FMT = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+
+/** "Today, 5:00 PM", "Tomorrow, 10:00 AM", "Mon, Nov 9, 10:00 AM"; date-only values → just the day. */
+export function formatDue(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const dayDiff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000);
+  const day = dayDiff === 0 ? "Today" : dayDiff === 1 ? "Tomorrow" : dayDiff === -1 ? "Yesterday" : DAY_FMT.format(d);
+  return dateOnly ? day : `${day}, ${TIME_FMT.format(d)}`;
+}
+
+/** Full date and time, e.g. "Sat, Nov 7, 2026, 8:06 AM". */
+export function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : FULL_FMT.format(d);
+}
+
+/** Open to-dos with a reminder still ahead, soonest first. */
+export function upcomingReminders(todos: Todo[], now: Date = new Date()): Todo[] {
+  return todos
+    .filter((t) => t.status === "open" && t.remindAt && Date.parse(t.remindAt) > now.getTime())
+    .sort((a, b) => Date.parse(a.remindAt!) - Date.parse(b.remindAt!));
+}
+
 export function groupTodos(todos: Todo[], now: Date = new Date()): TodoGroups {
   const today = localDay(now);
   const g: TodoGroups = { today: [], upcoming: [], screen: [], done: [] };

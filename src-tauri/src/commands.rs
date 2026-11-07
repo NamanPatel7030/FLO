@@ -197,6 +197,10 @@ pub fn list_todos(st: State<Shared>) -> R<Vec<Todo>> {
 
 #[tauri::command]
 pub fn add_todo(st: State<Shared>, title: String, project_id: Option<String>, due: Option<String>) -> R<Todo> {
+    // "+ To-do" on a meeting action item that the meeting already added → the same to-do, not a copy
+    if let Some(t) = st.db.list_todos().map_err(e)?.into_iter().find(|t| t.status == "open" && crate::text::is_duplicate_todo(&title, &[t.title.clone()])) {
+        return Ok(t);
+    }
     let t = st.db.add_todo(&title, "manual", project_id, due).map_err(e)?;
     st.emit(ev::TODOS, ());
     st.emit(ev::PROJECTS, ());

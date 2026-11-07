@@ -85,7 +85,11 @@ export function Button({
   disabled,
   className,
   type = "button",
+  "aria-label": ariaLabel,
+  title,
 }: {
+  "aria-label"?: string;
+  title?: string;
   children?: ReactNode;
   onClick?: () => void;
   variant?: "primary" | "glass" | "ghost" | "danger";
@@ -101,6 +105,8 @@ export function Button({
       whileTap={{ scale: 0.96 }}
       disabled={disabled}
       onClick={onClick}
+      aria-label={ariaLabel}
+      title={title}
       className={clsx(
         "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl font-medium transition disabled:opacity-40",
         size === "sm" ? "h-7 px-2.5 text-[12px]" : "h-9 px-3.5 text-[13px]",

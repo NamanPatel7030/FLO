@@ -112,6 +112,17 @@ const todos: Todo[] = [
   { id: "t11", title: "Fix waveform jitter on Windows", source: "voice", status: "done", projectId: "p_flo", createdAt: iso(1600), completedAt: iso(100) },
   { id: "t12", title: "Follow up with Karan re: contract", person: "Karan", app: "Mail", source: "attention", status: "open", confidence: 0.68, createdAt: iso(400), projectId: "p_apollo" },
 ];
+// a timed to-do with its reminder still ahead (Reminders section, notch reminder)
+{
+  const t8 = todos.find((t) => t.id === "t8");
+  if (t8) {
+    const due = new Date(Date.now() + 3 * 3600_000);
+    t8.due = due.toISOString();
+    t8.remindAt = new Date(due.getTime() - 5 * 60_000).toISOString();
+  }
+  const t4 = todos.find((t) => t.id === "t4");
+  if (t4) t4.person = "Rahul";
+}
 
 const notes: Note[] = [
   {

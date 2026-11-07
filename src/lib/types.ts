@@ -230,6 +230,8 @@ export interface Todo {
   status: TodoStatus;
   projectId?: string;
   due?: string;
+  /** when Flo will remind you (5 minutes before a timed due date, or after a snooze) */
+  remindAt?: string;
   confidence?: number;
   createdAt: string;
   completedAt?: string;

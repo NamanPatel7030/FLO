@@ -464,6 +464,11 @@ pub fn run() {
             start_hotkeys(st.clone());
             meeting_detect::spawn(st.clone());
             slack::spawn(st.clone());
+            match st.db.backfill_due_dates() {
+                Ok(n) if n > 0 => log::info!("dated {n} to-do(s) from their words"),
+                Err(e) => log::warn!("backfill due dates: {e}"),
+                _ => {}
+            }
             reminders::spawn(st.clone());
             attention::spawn(st.clone());
             claude::refresh_if_installed(&st);

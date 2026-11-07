@@ -86,3 +86,43 @@ test("appearance: dark-only (no theme toggle), accent and notch style apply and 
     .poll(() => page.evaluate(() => (window as any).__floMock.invoke("get_settings").then((s: any) => s.notchStyle)))
     .toBe("bars");
 });
+
+test("to-dos: reminders section, per-to-do details, and bulk actions", async ({ page }) => {
+  await page.goto("/#/todos");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  // Reminders: the timed to-do shows with its reminder time
+  const reminders = page.getByTestId("reminders");
+  await expect(reminders).toContainText("Pay electricity bill");
+
+  // Details: who, where, when, and the transcript lines it came from
+  const row = page.getByText("Ask Priya for Stripe webhook keys").first().locator("xpath=ancestor::div[contains(@class,'group')][1]");
+  await row.hover();
+  await row.getByRole("button", { name: "Details" }).click();
+  const d = page.getByTestId("todo-details");
+  await expect(d).toBeVisible();
+  await expect(d).toContainText("Who said it");
+  await expect(d).toContainText("Rahul");
+  await expect(d).toContainText("A meeting");
+  await expect(d.getByTestId("todo-excerpt")).toContainText("webhook keys from Stripe");
+  await expect(d.getByRole("button", { name: /Open the full meeting note/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(d).toHaveCount(0);
+
+  // Mark all done asks once in place, then completes every open to-do in view
+  const mark = page.getByRole("button", { name: "Mark all done" });
+  await mark.click();
+  await expect(mark).toContainText(/Mark \d+ done\?/);
+  await mark.click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__floMock.invoke("list_todos").then((t: any[]) => t.filter((x) => x.status === "open").length)))
+    .toBe(0);
+
+  // Clear done deletes the finished ones, also after a confirm click
+  const clear = page.getByRole("button", { name: "Clear done" });
+  await clear.click();
+  await expect(clear).toContainText(/Delete \d+ done\?/);
+  await clear.click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__floMock.invoke("list_todos").then((t: any[]) => t.filter((x) => x.status === "done").length)))
+    .toBe(0);
+});

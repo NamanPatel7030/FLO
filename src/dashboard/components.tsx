@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { AlarmClock, Asterisk, Check, MousePointer2, SquareTerminal, Terminal, Webhook, X, BellRing } from "lucide-react";
+import { AlarmClock, Asterisk, Bell, Check, Info, MousePointer2, SquareTerminal, Terminal, Webhook, X, BellRing } from "lucide-react";
+import { formatDue } from "../lib/format";
+import { TodoDetails } from "./TodoDetails";
 import { api, on } from "../lib/api";
 import { claudeStatusLabel, relativeTime } from "../lib/format";
 import { EV, type ClaudeEvent, type ClaudeSession, type Todo } from "../lib/types";
@@ -11,8 +13,10 @@ import { Card, CardTitle, Empty, SourceBadge } from "./ui";
 export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
   const projects = useStore((s) => s.projects);
   const [completing, setCompleting] = useState(false);
+  const [details, setDetails] = useState(false);
   const project = projects?.find((p) => p.id === todo.projectId);
   const done = todo.status === "done";
+  const reminder = !done && todo.remindAt && Date.parse(todo.remindAt) > Date.now() ? todo.remindAt : undefined;
 
   const complete = async () => {
     if (done) {
@@ -48,7 +52,7 @@ export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
       </button>
       <div className="min-w-0 flex-1">
         <div className={clsx("text-[13.5px] leading-snug", done && "text-faint line-through")}>{todo.title}</div>
-        {!compact && (todo.reason || project || todo.due || todo.source) && (
+        {!compact && (todo.reason || project || todo.due || todo.source || reminder) && (
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-faint">
             <SourceBadge source={todo.source} app={todo.app} />
             {project && (
@@ -57,21 +61,34 @@ export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
                 {project.name}
               </span>
             )}
-            {todo.due && <span>· due {new Date(todo.due).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</span>}
+            {todo.due && <span>· due {formatDue(todo.due)}</span>}
+            {reminder && (
+              <span className="inline-flex items-center gap-1 text-brand-300" title="Flo reminds you 5 minutes early">
+                · <Bell size={11} /> {formatDue(reminder)}
+              </span>
+            )}
             {todo.reason && <span className="truncate">· {todo.reason}</span>}
           </div>
         )}
       </div>
-      {!done && !compact && (
-        <div className="flex shrink-0 gap-0.5 opacity-0 transition group-hover:opacity-100">
-          <button className="rounded-lg p-1 text-faint hover:bg-[var(--glass-strong)] hover:text-[var(--fg)]" title="Snooze" onClick={() => api.updateTodo(todo.id, { status: "snoozed" })}>
-            <AlarmClock size={14} />
+      {!compact && (
+        <div className="flex shrink-0 gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+          <button className="rounded-lg p-1 text-faint hover:bg-[var(--glass-strong)] hover:text-[var(--fg)]" title="Details: who, where, when" aria-label="Details" onClick={() => setDetails(true)}>
+            <Info size={14} />
           </button>
-          <button className="rounded-lg p-1 text-faint hover:bg-[var(--glass-strong)] hover:text-[var(--fg)]" title="Dismiss" onClick={() => api.updateTodo(todo.id, { status: "dismissed" })}>
-            <X size={14} />
-          </button>
+          {!done && (
+            <>
+              <button className="rounded-lg p-1 text-faint hover:bg-[var(--glass-strong)] hover:text-[var(--fg)]" title="Snooze" onClick={() => api.updateTodo(todo.id, { status: "snoozed" })}>
+                <AlarmClock size={14} />
+              </button>
+              <button className="rounded-lg p-1 text-faint hover:bg-[var(--glass-strong)] hover:text-[var(--fg)]" title="Dismiss" onClick={() => api.updateTodo(todo.id, { status: "dismissed" })}>
+                <X size={14} />
+              </button>
+            </>
+          )}
         </div>
       )}
+      {details && <TodoDetails todo={todo} onClose={() => setDetails(false)} />}
     </motion.div>
   );
 }

@@ -454,6 +454,171 @@ pub fn wants_screen_context(query: &str) -> bool {
     CUES.iter().any(|c| q.contains(c))
 }
 
+/// A deadline written in plain words, relative to `now`: "by next Monday", "tomorrow at 5pm",
+/// "in 2 hours", "end of week", "Nov 12", "tonight". Dates without a time get 10:00 (so the
+/// 5-minutes-early reminder lands at 9:55). None when the text names no time at all.
+pub fn parse_due(text: &str, now: chrono::DateTime<chrono::Local>) -> Option<chrono::DateTime<chrono::Local>> {
+    use chrono::{Datelike, Duration, NaiveTime, TimeZone, Weekday};
+    let lower = format!(" {} ", text.to_lowercase().replace([',', '.', ';', '!', '?', '(', ')'], " "));
+    let words: Vec<&str> = lower.split_whitespace().collect();
+    let has = |p: &str| lower.contains(&format!(" {p} "));
+    let today = now.date_naive();
+
+    // ── relative offsets: "in 2 hours", "in 30 min", "in an hour", "in 3 days", "in 2 weeks"
+    for (i, w) in words.iter().enumerate() {
+        if *w != "in" || i + 2 >= words.len() + 1 {
+            continue;
+        }
+        let (n, unit) = match (words.get(i + 1), words.get(i + 2)) {
+            (Some(n), Some(u)) => (if *n == "an" || *n == "a" { Some(1) } else { n.parse::<i64>().ok() }, *u),
+            _ => continue,
+        };
+        let Some(n) = n.filter(|n| *n > 0 && *n < 1000) else { continue };
+        let d = if unit.starts_with("min") {
+            Duration::minutes(n)
+        } else if unit.starts_with("hour") || unit.starts_with("hr") {
+            Duration::hours(n)
+        } else if unit.starts_with("day") {
+            Duration::days(n)
+        } else if unit.starts_with("week") || unit.starts_with("wk") {
+            Duration::weeks(n)
+        } else {
+            continue;
+        };
+        return Some(now + d);
+    }
+
+    // ── time of day
+    let mut time: Option<NaiveTime> = None;
+    if has("noon") || has("midday") {
+        time = NaiveTime::from_hms_opt(12, 0, 0);
+    } else if has("eod") || lower.contains("end of day") || lower.contains("end of the day") {
+        time = NaiveTime::from_hms_opt(17, 0, 0);
+    } else if has("tonight") {
+        time = NaiveTime::from_hms_opt(20, 0, 0);
+    }
+    for (i, w) in words.iter().enumerate() {
+        if time.is_some() {
+            break;
+        }
+        // "5pm", "5:30pm", "17:30", or "5 pm" / "at 5"
+        let (body, mut suffix) = if let Some(b) = w.strip_suffix("pm") {
+            (b, Some("pm"))
+        } else if let Some(b) = w.strip_suffix("am") {
+            (b, Some("am"))
+        } else {
+            (*w, None)
+        };
+        if suffix.is_none() {
+            if let Some(n) = words.get(i + 1) {
+                if *n == "pm" || *n == "am" || *n == "p.m" || *n == "a.m" {
+                    suffix = Some(if n.starts_with('p') { "pm" } else { "am" });
+                }
+            }
+        }
+        let (h, m) = match body.split_once(':') {
+            Some((h, m)) => (h.parse::<u32>().ok(), m.parse::<u32>().ok()),
+            None => (body.parse::<u32>().ok(), Some(0)),
+        };
+        let (Some(mut h), Some(m)) = (h, m) else { continue };
+        let at_before = i > 0 && words[i - 1] == "at";
+        let colon = body.contains(':');
+        if suffix.is_none() && !colon && !at_before {
+            continue; // a bare number ("3 files") isn't a time
+        }
+        if m > 59 || h > 23 {
+            continue;
+        }
+        match suffix {
+            Some("pm") if h < 12 => h += 12,
+            Some("am") if h == 12 => h = 0,
+            // "at 5" with no am/pm: working hours → afternoon
+            None if !colon && (1..=7).contains(&h) => h += 12,
+            _ => {}
+        }
+        time = NaiveTime::from_hms_opt(h, m, 0);
+    }
+
+    // ── date
+    const DAYS: [(&str, Weekday); 7] = [
+        ("monday", Weekday::Mon),
+        ("tuesday", Weekday::Tue),
+        ("wednesday", Weekday::Wed),
+        ("thursday", Weekday::Thu),
+        ("friday", Weekday::Fri),
+        ("saturday", Weekday::Sat),
+        ("sunday", Weekday::Sun),
+    ];
+    const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    let next_weekday = |wd: Weekday| {
+        let mut d = today + Duration::days(1);
+        while d.weekday() != wd {
+            d += Duration::days(1);
+        }
+        d
+    };
+    let mut date = None;
+    if lower.contains("day after tomorrow") {
+        date = Some(today + Duration::days(2));
+    } else if has("tomorrow") || has("tmrw") || has("tmr") {
+        date = Some(today + Duration::days(1));
+    } else if has("today") || has("tonight") || (time.is_some() && (has("eod") || lower.contains("end of day"))) {
+        date = Some(today);
+    } else if lower.contains("end of week") || lower.contains("end of the week") || has("this week") {
+        date = Some(if today.weekday() == Weekday::Fri { today } else { next_weekday(Weekday::Fri) });
+        time = time.or(NaiveTime::from_hms_opt(17, 0, 0));
+    } else if has("next week") {
+        date = Some(next_weekday(Weekday::Mon));
+    } else if lower.contains("end of month") || lower.contains("end of the month") {
+        let (y, mo) = if today.month() == 12 { (today.year() + 1, 1) } else { (today.year(), today.month() + 1) };
+        date = chrono::NaiveDate::from_ymd_opt(y, mo, 1).map(|d| d - Duration::days(1));
+        time = time.or(NaiveTime::from_hms_opt(17, 0, 0));
+    }
+    if date.is_none() {
+        // weekday names (full, or abbreviated right after by/on/next/this/till/until)
+        for (i, w) in words.iter().enumerate() {
+            let w = w.trim_end_matches("'s");
+            let cue = i > 0 && matches!(words[i - 1], "by" | "on" | "next" | "this" | "till" | "until" | "before");
+            if let Some((_, wd)) = DAYS.iter().find(|(name, _)| w == *name || (cue && w.len() == 3 && name.starts_with(w))) {
+                date = Some(next_weekday(*wd));
+                break;
+            }
+        }
+    }
+    if date.is_none() {
+        // "Nov 12", "November 12th", "12 Nov", "12th of November"
+        let day_of = |t: &str| t.trim_end_matches(|c: char| c.is_alphabetic()).parse::<u32>().ok().filter(|d| (1..=31).contains(d));
+        for (i, w) in words.iter().enumerate() {
+            let Some(mi) = MONTHS.iter().position(|m| w.starts_with(m) && (w.len() == 3 || (w.len() > 3 && "januaryfebruarymarchaprilmayjunejulyaugustseptemberoctobernovemberdecember".contains(*w)))) else {
+                continue;
+            };
+            let day = words.get(i + 1).and_then(|t| day_of(t)).or_else(|| {
+                let back = if i >= 2 && words[i - 1] == "of" { words.get(i - 2) } else if i >= 1 { words.get(i - 1) } else { None };
+                back.and_then(|t| day_of(t))
+            });
+            let Some(day) = day else { continue }; // "may" / "march" as words, not dates
+            let mut y = today.year();
+            let mut d = chrono::NaiveDate::from_ymd_opt(y, mi as u32 + 1, day);
+            if d.map(|d| d < today).unwrap_or(false) {
+                y += 1;
+                d = chrono::NaiveDate::from_ymd_opt(y, mi as u32 + 1, day);
+            }
+            if d.is_some() {
+                date = d;
+                break;
+            }
+        }
+    }
+
+    let (date, time) = match (date, time) {
+        (Some(d), t) => (d, t.unwrap_or_else(|| NaiveTime::from_hms_opt(10, 0, 0).unwrap())),
+        // time only: today if it's still ahead, else tomorrow
+        (None, Some(t)) => (if now.time() < t { today } else { today + Duration::days(1) }, t),
+        (None, None) => return None,
+    };
+    chrono::Local.from_local_datetime(&date.and_time(time)).earliest()
+}
+
 pub fn truncate_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -466,6 +631,33 @@ pub fn truncate_chars(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    fn at(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chrono::Local> {
+        use chrono::TimeZone;
+        chrono::Local.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()
+    }
+
+    #[test]
+    fn deadlines_in_plain_words() {
+        // Saturday 7 Nov 2026, 08:06 (the meeting in the screenshot)
+        let now = at(2026, 11, 7, 8, 6);
+        let due = |t: &str| parse_due(t, now);
+        assert_eq!(due("Client: Send requirements to Naman by next Monday"), Some(at(2026, 11, 9, 10, 0)));
+        assert_eq!(due("send the deck by Friday"), Some(at(2026, 11, 13, 10, 0)));
+        assert_eq!(due("call the bank tomorrow at 11am"), Some(at(2026, 11, 8, 11, 0)));
+        assert_eq!(due("review PR at 5"), Some(at(2026, 11, 7, 17, 0)));
+        assert_eq!(due("pay rent tonight"), Some(at(2026, 11, 7, 20, 0)));
+        assert_eq!(due("ping Priya in 2 hours"), Some(at(2026, 11, 7, 10, 6)));
+        assert_eq!(due("ship it end of week"), Some(at(2026, 11, 13, 17, 0)));
+        assert_eq!(due("demo on Nov 12 at 3:30pm"), Some(at(2026, 11, 12, 15, 30)));
+        assert_eq!(due("renewal due 4th December"), Some(at(2026, 12, 4, 10, 0)));
+        assert_eq!(due("standup 09:30"), Some(at(2026, 11, 7, 9, 30)));
+        // no deadline → no guess
+        assert_eq!(due("Prepare plan and SOW after receiving requirements"), None);
+        assert_eq!(due("We may march on with 3 files"), None);
+        assert_eq!(due("Message and call the client on Microsoft Teams"), None);
+    }
+
     use super::*;
 
     #[test]
