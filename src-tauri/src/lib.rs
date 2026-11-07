@@ -16,6 +16,7 @@ mod livetx;
 mod llm;
 mod meeting;
 mod reminders;
+mod mcp;
 mod media;
 mod meeting_detect;
 mod model;
@@ -345,6 +346,10 @@ pub fn run() {
             commands::update_todo,
             commands::snooze_todo,
             commands::list_skills,
+            commands::list_connections,
+            commands::save_connection,
+            commands::delete_connection,
+            commands::test_connection,
             commands::save_skill,
             commands::delete_skill,
             commands::delete_todo,
@@ -472,6 +477,7 @@ pub fn run() {
                 Err(e) => log::warn!("backfill due dates: {e}"),
                 _ => {}
             }
+            mcp::refresh_hosts(&st, None);
             reminders::spawn(st.clone());
             attention::spawn(st.clone());
             claude::refresh_if_installed(&st);

@@ -197,28 +197,56 @@ test("projects: create with client details, edit them in the drawer", async ({ p
     .toBe("Fang Wei, fang@studio.cn, WeChat");
 });
 
-test("skills: create from a template, it saves with mode and platforms; Knowledge holds the old context", async ({ page }) => {
+test("skills: build on the canvas from a template, attach an MCP server, and it saves the generated skill", async ({ page }) => {
   await page.goto("/#/skills");
   await page.waitForFunction(() => !!(window as any).__floMock);
   const grid = page.getByTestId("skills-grid");
   await expect(grid).toContainText("Upwork proposal");
-  await expect(grid).toContainText("Daily standup");
 
   await page.getByRole("button", { name: /Slack reply/ }).click();
   const ed = page.getByTestId("skill-editor");
   await expect(ed.getByLabel("Skill name")).toHaveValue("Slack reply");
-  await ed.getByRole("radio", { name: /Do it on screen/ }).click();
-  await ed.getByRole("button", { name: /Gmail/ }).click();
+  // the template is laid out as connected nodes
+  await expect(ed.getByTestId("node-trigger")).toBeVisible();
+  await expect(ed.getByTestId("node-step")).toBeVisible();
+  await expect(ed.getByTestId("node-output")).toBeVisible();
+  await expect(ed.getByTestId("node-platform")).toBeVisible();
+
+  // add an MCP server node from the palette and pick a server
+  await ed.getByRole("button", { name: "Add MCP server" }).click();
+  await ed.getByRole("combobox", { name: "MCP server", exact: true }).selectOption({ label: "Notion" });
+  await expect(ed.getByTestId("generated-skill")).toContainText("tools from: Notion");
+  // switch the output to doing it on screen
+  await ed.getByTestId("node-output").getByRole("radio", { name: /Do it/ }).click();
+  await expect(ed.getByTestId("generated-skill")).toContainText("Does it on screen");
+
   await ed.getByRole("button", { name: "Create skill" }).click();
   await expect(ed).toHaveCount(0);
-  await expect(grid).toContainText("Slack reply");
   const saved = await page.evaluate(() => (window as any).__floMock.invoke("list_skills").then((ks: any[]) => ks.find((k) => k.name === "Slack reply")));
   expect(saved.mode).toBe("do");
-  expect(saved.platforms).toEqual(expect.arrayContaining(["slack", "gmail"]));
+  expect(saved.platforms).toEqual(["slack"]);
+  expect(saved.connections).toContain("c1");
+  expect(JSON.parse(saved.graph).nodes.some((n: any) => n.type === "mcp")).toBe(true);
 
-  await page.getByRole("tab", { name: /Knowledge/ }).click();
-  await expect(page.getByRole("tab", { name: /Knowledge/ })).toHaveAttribute("aria-selected", "true");
   // old Context links land on Skills → Knowledge
   await page.goto("/#/context");
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/skills/knowledge");
+});
+
+test("connections: add an MCP server, test it to see its tools, save it", async ({ page }) => {
+  await page.goto("/#/skills/connections");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await expect(page.getByTestId("connections-grid")).toContainText("Notion");
+  await page.getByRole("button", { name: "MCP server" }).click();
+  const ed = page.getByTestId("connection-editor");
+  await ed.getByLabel("Connection name").fill("Files");
+  await ed.getByLabel("Command").fill("npx -y @modelcontextprotocol/server-filesystem ~/Documents");
+  await ed.getByRole("button", { name: "Test" }).click();
+  await expect(ed.getByTestId("connection-test")).toContainText("Connected · 2 tools");
+  await expect(ed.getByTestId("connection-test")).toContainText("search_pages");
+  await ed.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByTestId("connections-grid")).toContainText("Files");
+  const c = await page.evaluate(() => (window as any).__floMock.invoke("list_connections").then((cs: any[]) => cs.find((x) => x.name === "Files")));
+  expect(c.command).toBe("npx");
+  expect(c.args).toEqual(["-y", "@modelcontextprotocol/server-filesystem", "~/Documents"]);
 });

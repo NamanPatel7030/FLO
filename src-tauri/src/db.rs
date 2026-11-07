@@ -1,5 +1,7 @@
 //! Local storage: SQLCipher-encrypted SQLite. Key lives in the OS keychain.
 use crate::model::*;
+// the model's Connection (a user's MCP server / platform), not rusqlite's
+use crate::model::Connection as UserConnection;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Local, NaiveDate, Timelike};
 use parking_lot::Mutex;
@@ -76,6 +78,11 @@ impl Db {
               id TEXT PRIMARY KEY, name TEXT NOT NULL, triggers TEXT NOT NULL DEFAULT '', instructions TEXT NOT NULL DEFAULT '',
               platforms TEXT NOT NULL DEFAULT '[]', mode TEXT NOT NULL DEFAULT 'write', enabled INTEGER NOT NULL DEFAULT 1,
               uses INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS connections(
+              id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, transport TEXT NOT NULL DEFAULT 'stdio',
+              command TEXT NOT NULL DEFAULT '', args TEXT NOT NULL DEFAULT '[]', url TEXT NOT NULL DEFAULT '',
+              env TEXT NOT NULL DEFAULT '{}', description TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS context_docs(
               id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
               pinned INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
@@ -96,6 +103,8 @@ impl Db {
             "ALTER TABLE projects ADD COLUMN client TEXT",
             "ALTER TABLE projects ADD COLUMN client_details TEXT",
             "ALTER TABLE projects ADD COLUMN keywords TEXT",
+            "ALTER TABLE skills ADD COLUMN graph TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE skills ADD COLUMN connections TEXT NOT NULL DEFAULT '[]'",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -238,7 +247,7 @@ impl Db {
     // ── skills ──────────────────────────────────────────────────────────────
     pub fn list_skills(&self) -> Result<Vec<Skill>> {
         let c = self.conn.lock();
-        let mut st = c.prepare("SELECT id,name,triggers,instructions,platforms,mode,enabled,uses,created_at FROM skills ORDER BY uses DESC, created_at DESC")?;
+        let mut st = c.prepare("SELECT id,name,triggers,instructions,platforms,mode,enabled,uses,created_at,graph,connections FROM skills ORDER BY uses DESC, created_at DESC")?;
         let rows = st
             .query_map([], |r| {
                 Ok(Skill {
@@ -251,6 +260,8 @@ impl Db {
                     enabled: r.get::<_, i64>(6)? != 0,
                     uses: r.get(7)?,
                     created_at: r.get(8)?,
+                    graph: r.get(9)?,
+                    connections: serde_json::from_str(&r.get::<_, String>(10)?).unwrap_or_default(),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -268,11 +279,84 @@ impl Db {
             s.mode = "write".into();
         }
         self.conn.lock().execute(
-            "INSERT INTO skills (id,name,triggers,instructions,platforms,mode,enabled,uses,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
-             ON CONFLICT(id) DO UPDATE SET name=?2, triggers=?3, instructions=?4, platforms=?5, mode=?6, enabled=?7",
-            params![s.id, s.name.trim(), s.triggers.trim(), s.instructions.trim(), serde_json::to_string(&s.platforms)?, s.mode, s.enabled as i64, s.uses, s.created_at],
+            "INSERT INTO skills (id,name,triggers,instructions,platforms,mode,enabled,uses,created_at,graph,connections) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+             ON CONFLICT(id) DO UPDATE SET name=?2, triggers=?3, instructions=?4, platforms=?5, mode=?6, enabled=?7, graph=?10, connections=?11",
+            params![
+                s.id,
+                s.name.trim(),
+                s.triggers.trim(),
+                s.instructions.trim(),
+                serde_json::to_string(&s.platforms)?,
+                s.mode,
+                s.enabled as i64,
+                s.uses,
+                s.created_at,
+                s.graph,
+                serde_json::to_string(&s.connections)?
+            ],
         )?;
         Ok(self.list_skills()?.into_iter().find(|x| x.id == s.id).unwrap_or(s))
+    }
+
+    // ── connections (custom platforms + MCP servers) ────────────────────────
+    pub fn list_connections(&self) -> Result<Vec<UserConnection>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT id,name,kind,transport,command,args,url,env,description,enabled,created_at FROM connections ORDER BY created_at")?;
+        let rows = st
+            .query_map([], |r| {
+                Ok(UserConnection {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    kind: r.get(2)?,
+                    transport: r.get(3)?,
+                    command: r.get(4)?,
+                    args: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
+                    url: r.get(6)?,
+                    env: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
+                    description: r.get(8)?,
+                    enabled: r.get::<_, i64>(9)? != 0,
+                    created_at: r.get(10)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn save_connection(&self, c: &UserConnection) -> Result<UserConnection> {
+        let mut c = c.clone();
+        if c.id.is_empty() {
+            c.id = new_id();
+            c.created_at = now();
+        }
+        if c.kind != "mcp" {
+            c.kind = "platform".into();
+        }
+        if c.transport != "http" {
+            c.transport = "stdio".into();
+        }
+        self.conn.lock().execute(
+            "INSERT INTO connections (id,name,kind,transport,command,args,url,env,description,enabled,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+             ON CONFLICT(id) DO UPDATE SET name=?2, kind=?3, transport=?4, command=?5, args=?6, url=?7, env=?8, description=?9, enabled=?10",
+            params![
+                c.id,
+                c.name.trim(),
+                c.kind,
+                c.transport,
+                c.command.trim(),
+                serde_json::to_string(&c.args)?,
+                c.url.trim(),
+                serde_json::to_string(&c.env)?,
+                c.description.trim(),
+                c.enabled as i64,
+                c.created_at
+            ],
+        )?;
+        Ok(self.list_connections()?.into_iter().find(|x| x.id == c.id).unwrap_or(c))
+    }
+
+    pub fn delete_connection(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute("DELETE FROM connections WHERE id=?1", params![id])?;
+        Ok(())
     }
 
     pub fn delete_skill(&self, id: &str) -> Result<()> {

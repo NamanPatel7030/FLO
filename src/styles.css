@@ -650,3 +650,16 @@ html.island .selectable {
   background: var(--accent);
   box-shadow: 0 0 8px rgb(var(--accent-rgb) / 0.6);
 }
+
+/* Skill canvas: our node type "output" shares React Flow's built-in .react-flow__node-output
+   class, whose default box (background, border, padding, width) drew a stray rectangle. */
+.react-flow__node-output,
+.react-flow__node-input,
+.react-flow__node-default {
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+  width: auto !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}

@@ -208,6 +208,34 @@ pub fn add_todo(st: State<Shared>, title: String, project_id: Option<String>, du
 }
 
 #[tauri::command]
+pub fn list_connections(st: State<Shared>) -> R<Vec<crate::model::Connection>> {
+    st.db.list_connections().map_err(e)
+}
+
+#[tauri::command]
+pub fn save_connection(st: State<Shared>, connection: crate::model::Connection) -> R<crate::model::Connection> {
+    if connection.name.trim().is_empty() {
+        return Err("Give the connection a name".into());
+    }
+    let c = st.db.save_connection(&connection).map_err(e)?;
+    crate::mcp::refresh_hosts(&st, None);
+    Ok(c)
+}
+
+#[tauri::command]
+pub fn delete_connection(st: State<Shared>, id: String) -> R<()> {
+    st.db.delete_connection(&id).map_err(e)?;
+    crate::mcp::refresh_hosts(&st, None);
+    Ok(())
+}
+
+/// Connect to an MCP server (saved or not yet saved) and list its tools.
+#[tauri::command]
+pub async fn test_connection(st: State<'_, Shared>, connection: crate::model::Connection) -> R<Vec<crate::model::McpTool>> {
+    crate::mcp::probe(&st, &connection).await.map_err(|err| format!("{err:#}"))
+}
+
+#[tauri::command]
 pub fn list_skills(st: State<Shared>) -> R<Vec<crate::model::Skill>> {
     st.db.list_skills().map_err(e)
 }

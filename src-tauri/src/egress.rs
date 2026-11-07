@@ -32,6 +32,8 @@ pub enum Purpose {
     Test,
     Slack,
     Weather,
+    /// a user-added MCP server (only the hosts the user configured)
+    Mcp,
     Account,
 }
 
@@ -47,6 +49,7 @@ impl Purpose {
             Purpose::Test => "connection test",
             Purpose::Slack => "slack",
             Purpose::Weather => "weather",
+            Purpose::Mcp => "mcp server",
             Purpose::Account => "account sign-in",
         }
     }
@@ -108,6 +111,8 @@ pub struct Egress {
     log: Arc<Mutex<VecDeque<NetworkLogEntry>>>,
     /// the one account server host (Purpose::Account only)
     account_host: Arc<Mutex<Option<String>>>,
+    /// hosts of MCP servers the user added (Purpose::Mcp only)
+    mcp_hosts: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Default for Egress {
@@ -118,7 +123,7 @@ impl Default for Egress {
 
 impl Egress {
     pub fn new() -> Self {
-        Self { log: Arc::new(Mutex::new(VecDeque::new())), account_host: Arc::new(Mutex::new(None)) }
+        Self { log: Arc::new(Mutex::new(VecDeque::new())), account_host: Arc::new(Mutex::new(None)), mcp_hosts: Arc::new(Mutex::new(Default::default())) }
     }
 
     fn push(&self, host: &str, purpose: Purpose, allowed: bool, bytes: u64) {
@@ -151,7 +156,13 @@ impl Egress {
     }
 
     fn is_account_host(&self, host: &str, purpose: Purpose) -> bool {
-        purpose == Purpose::Account && self.account_host.lock().as_deref() == Some(host.to_ascii_lowercase().as_str())
+        (purpose == Purpose::Account && self.account_host.lock().as_deref() == Some(host.to_ascii_lowercase().as_str()))
+            || (purpose == Purpose::Mcp && self.mcp_hosts.lock().contains(&host.to_ascii_lowercase()))
+    }
+
+    /// Replace the set of user-configured MCP hosts (reachable for Purpose::Mcp only).
+    pub fn set_mcp_hosts(&self, hosts: impl IntoIterator<Item = String>) {
+        *self.mcp_hosts.lock() = hosts.into_iter().map(|h| h.to_ascii_lowercase()).collect();
     }
 
     /// Validate a URL before a request. Logs denials.
@@ -212,6 +223,15 @@ impl Egress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_hosts_only_for_mcp() {
+        let e = Egress::new();
+        e.set_mcp_hosts(["mcp.example.com".to_string()]);
+        assert!(e.check("https://mcp.example.com/mcp", Purpose::Mcp, false).is_ok());
+        assert!(e.check("https://mcp.example.com/mcp", Purpose::Assistant, true).is_err());
+        assert!(e.check("https://other.example.com/mcp", Purpose::Mcp, false).is_err());
+    }
 
     #[test]
     fn localhost_always_allowed() {

@@ -22,7 +22,7 @@ import type {
   Project,
   Settings,
   Todo,
-  TodoStatus, Skill } from "./types";
+  TodoStatus, Skill, Connection } from "./types";
 import { EV } from "./types";
 import { countWords } from "./format";
 
@@ -106,6 +106,22 @@ const projectsBase: Omit<Project, "openTodos" | "doneTodos">[] = [
   { id: "p_flo", name: "Flo", description: "Local-first voice assistant", status: "active", color: "#f59e0b", lastNote: "Notch island prototype done", updatedAt: iso(10) },
 ];
 const projects = new Map(projectsBase.map((p) => [p.id, { ...p }]));
+
+const connections: Connection[] = [
+  {
+    id: "c1",
+    name: "Notion",
+    kind: "mcp",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@notionhq/notion-mcp-server"],
+    url: "",
+    env: {},
+    description: "",
+    enabled: true,
+    createdAt: iso(4000),
+  },
+];
 
 const skills: Skill[] = [
   {
@@ -745,6 +761,33 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return history.slice(0, args.limit ?? 100);
     case "get_analytics":
       return buildAnalytics(args.days ?? 30);
+    case "list_connections":
+      return connections.map((c) => ({ ...c }));
+    case "save_connection": {
+      const c = { ...args.connection } as Connection;
+      if (!c.id) {
+        c.id = uid("c");
+        c.createdAt = new Date().toISOString();
+        connections.push(c);
+      } else {
+        const i = connections.findIndex((x) => x.id === c.id);
+        if (i >= 0) connections[i] = c;
+      }
+      return { ...c };
+    }
+    case "delete_connection": {
+      const i = connections.findIndex((x) => x.id === args.id);
+      if (i >= 0) connections.splice(i, 1);
+      return null;
+    }
+    case "test_connection": {
+      const c = args.connection as Connection;
+      if (c.transport === "stdio" && !c.command) throw new Error("Add the command that starts this MCP server");
+      return [
+        { name: "search_pages", description: "Search pages in your workspace", inputSchema: { type: "object" } },
+        { name: "create_page", description: "Create a page", inputSchema: { type: "object" } },
+      ];
+    }
     case "list_skills":
       return skills.map((k) => ({ ...k }));
     case "save_skill": {

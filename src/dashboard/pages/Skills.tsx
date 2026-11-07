@@ -6,22 +6,16 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { BookText, Briefcase, Globe, Mail, Users, MessageSquare, MonitorSmartphone, MousePointerClick, PenLine, Plus, Sparkles, Trash2, Wand2, X, Zap } from "lucide-react";
+import { BookText, CheckCircle2, Loader2, MousePointerClick, PenLine, Plug, Plus, Sparkles, Trash2, X, Zap } from "lucide-react";
 import { api } from "../../lib/api";
-import type { Skill } from "../../lib/types";
+import type { Connection, McpTool, Skill } from "../../lib/types";
+import { SkillCanvasEditor } from "../SkillCanvas";
 import { useStore } from "../store";
-import { Button, Card, Empty, PageHeader, Skeleton, Toggle } from "../ui";
+import { Button, Card, Empty, PageHeader, Skeleton } from "../ui";
 import ContextPage from "./Context";
 
-export const PLATFORMS: { id: string; label: string; icon: React.ReactNode }[] = [
-  { id: "upwork", label: "Upwork", icon: <Briefcase size={13} /> },
-  { id: "slack", label: "Slack", icon: <MessageSquare size={13} /> },
-  { id: "gmail", label: "Gmail", icon: <Mail size={13} /> },
-  { id: "linkedin", label: "LinkedIn", icon: <Users size={13} /> },
-  { id: "whatsapp", label: "WhatsApp", icon: <MessageSquare size={13} /> },
-  { id: "browser", label: "Any website", icon: <Globe size={13} /> },
-  { id: "any", label: "Any app", icon: <MonitorSmartphone size={13} /> },
-];
+export { PLATFORMS } from "../platforms";
+import { PLATFORMS } from "../platforms";
 
 /** Starting points: tap one to prefill the editor. */
 const TEMPLATES: Omit<Skill, "id" | "uses" | "createdAt">[] = [
@@ -60,15 +54,15 @@ const TEMPLATES: Omit<Skill, "id" | "uses" | "createdAt">[] = [
   },
 ];
 
-const EMPTY: Skill = { id: "", name: "", triggers: "", instructions: "", platforms: [], mode: "write", enabled: true, uses: 0, createdAt: "" };
+const EMPTY: Skill = { id: "", name: "", triggers: "", instructions: "", platforms: [], mode: "write", enabled: true, uses: 0, createdAt: "", graph: "", connections: [] };
 
 export default function SkillsPage() {
   const { pageArg, go } = useStore();
-  const tab: "skills" | "knowledge" = pageArg === "knowledge" ? "knowledge" : "skills";
+  const tab: "skills" | "connections" | "knowledge" = pageArg === "knowledge" ? "knowledge" : pageArg === "connections" ? "connections" : "skills";
   return (
     <div>
       <div className="mb-5 inline-flex rounded-xl glass p-1" role="tablist" aria-label="Skills sections">
-        {(["skills", "knowledge"] as const).map((t) => (
+        {(["skills", "connections", "knowledge"] as const).map((t) => (
           <button
             key={t}
             role="tab"
@@ -78,13 +72,13 @@ export default function SkillsPage() {
           >
             {tab === t && <motion.span layoutId="skills-tab" className="absolute inset-0 rounded-lg glass-strong" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
             <span className="relative flex items-center gap-1.5">
-              {t === "skills" ? <Zap size={13} /> : <BookText size={13} />}
-              {t === "skills" ? "Skills" : "Knowledge"}
+              {t === "skills" ? <Zap size={13} /> : t === "connections" ? <Plug size={13} /> : <BookText size={13} />}
+              {t === "skills" ? "Skills" : t === "connections" ? "Connections" : "Knowledge"}
             </span>
           </button>
         ))}
       </div>
-      {tab === "skills" ? <SkillsList /> : <ContextPage />}
+      {tab === "skills" ? <SkillsList /> : tab === "connections" ? <ConnectionsPanel /> : <ContextPage />}
     </div>
   );
 }
@@ -141,13 +135,23 @@ function SkillsList() {
       {createPortal(
         <AnimatePresence>
           {editing && (
-            <SkillEditor
+            <SkillCanvasEditor
               initial={editing}
               onClose={() => setEditing(null)}
-              onSaved={() => {
+              onSave={async (k) => {
+                await api.saveSkill(k);
                 setEditing(null);
                 load();
               }}
+              onDelete={
+                editing.id
+                  ? async () => {
+                      await api.deleteSkill(editing.id);
+                      setEditing(null);
+                      load();
+                    }
+                  : undefined
+              }
             />
           )}
         </AnimatePresence>,
@@ -190,125 +194,215 @@ function SkillCard({ k, onEdit }: { k: Skill; onEdit: () => void }) {
   );
 }
 
-function SkillEditor({ initial, onClose, onSaved }: { initial: Skill; onClose: () => void; onSaved: () => void }) {
-  const [k, setK] = useState<Skill>(initial);
-  const [err, setErr] = useState("");
-  const set = (patch: Partial<Skill>) => setK((x) => ({ ...x, ...patch }));
+const EMPTY_CONN: Connection = { id: "", name: "", kind: "mcp", transport: "stdio", command: "", args: [], url: "", env: {}, description: "", enabled: true, createdAt: "" };
+
+/** Custom platforms and MCP servers that skills can use. */
+function ConnectionsPanel() {
+  const [list, setList] = useState<Connection[] | null>(null);
+  const [editing, setEditing] = useState<Connection | null>(null);
+  const load = () => api.listConnections().then(setList).catch(() => setList([]));
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  const save = async () => {
-    if (!k.name.trim()) return setErr("Give the skill a name.");
-    if (!k.instructions.trim()) return setErr("Tell Flo what to do.");
-    try {
-      await api.saveSkill(k);
-      onSaved();
-    } catch (e) {
-      setErr(String(e));
-    }
+    load();
+  }, []);
+  return (
+    <div>
+      <PageHeader
+        title="Connections"
+        subtitle="Add MCP servers and your own platforms. Skills can then use their tools: wire them in on the skill canvas."
+        actions={
+          <div className="flex gap-2">
+            <Button icon={<Plus size={15} />} onClick={() => setEditing({ ...EMPTY_CONN, kind: "platform" })}>
+              Platform
+            </Button>
+            <Button variant="primary" icon={<Plug size={15} />} onClick={() => setEditing({ ...EMPTY_CONN })}>
+              MCP server
+            </Button>
+          </div>
+        }
+      />
+      {!list ? (
+        <Skeleton className="h-32" />
+      ) : list.length === 0 ? (
+        <Card className="p-6">
+          <Empty icon={<Plug size={18} />} title="No connections yet" hint="Add an MCP server (a local command or a URL) or a platform Flo doesn't know yet." />
+        </Card>
+      ) : (
+        <div className="grid grid-cols-2 gap-4" data-testid="connections-grid">
+          {list.map((c) => (
+            <Card key={c.id} onClick={() => setEditing(c)} className={clsx("p-4", !c.enabled && "opacity-55")}>
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#a78bfa]/15 text-[#cbbcff]">{c.kind === "mcp" ? <Plug size={15} /> : <Sparkles size={15} />}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[14px] font-semibold">{c.name}</div>
+                  <div className="truncate text-[11.5px] text-faint">
+                    {c.kind === "mcp" ? (c.transport === "http" ? c.url : [c.command, ...c.args].join(" ")) : c.url || c.description || "Custom platform"}
+                  </div>
+                </div>
+                <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10.5px] text-muted">{c.kind === "mcp" ? (c.transport === "http" ? "MCP · URL" : "MCP · local") : "Platform"}</span>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      {createPortal(
+        <AnimatePresence>
+          {editing && (
+            <ConnectionEditor
+              initial={editing}
+              onClose={() => setEditing(null)}
+              onSaved={() => {
+                setEditing(null);
+                load();
+              }}
+            />
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+/** "KEY=value" lines ↔ a map (env vars for local servers, headers for URL servers). */
+const toLines = (m: Record<string, string>) => Object.entries(m).map(([k, v]) => `${k}=${v}`).join("\n");
+const fromLines = (t: string) =>
+  Object.fromEntries(
+    t
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.includes("="))
+      .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()]),
+  );
+/** Split a command line the way a shell would for simple cases ("quoted args" kept together). */
+export const splitArgs = (t: string) => (t.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((a) => a.replace(/^["']|["']$/g, ""));
+
+function ConnectionEditor({ initial, onClose, onSaved }: { initial: Connection; onClose: () => void; onSaved: () => void }) {
+  const [c, setC] = useState<Connection>(initial);
+  const [cmdLine, setCmdLine] = useState([initial.command, ...initial.args].filter(Boolean).join(" "));
+  const [envText, setEnvText] = useState(toLines(initial.env));
+  const [test, setTest] = useState<{ busy: boolean; tools?: McpTool[]; error?: string }>({ busy: false });
+  const [err, setErr] = useState("");
+  const set = (patch: Partial<Connection>) => setC((x) => ({ ...x, ...patch }));
+  const built = (): Connection => {
+    const parts = splitArgs(cmdLine);
+    return { ...c, command: parts[0] ?? "", args: parts.slice(1), env: fromLines(envText) };
   };
   const field = "w-full rounded-xl bg-white/[0.05] px-3 py-2.5 text-[13.5px] outline-none ring-1 ring-white/10 transition placeholder:text-faint focus:ring-[var(--accent)]";
+  const isMcp = c.kind === "mcp";
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" role="dialog" aria-modal="true" aria-label="Skill editor" data-testid="skill-editor">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" role="dialog" aria-modal="true" aria-label="Connection" data-testid="connection-editor">
       <motion.div className="absolute inset-0 bg-black/70 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
       <motion.div
         initial={{ opacity: 0, y: 14, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 8, scale: 0.98 }}
         transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-        className="relative max-h-[90vh] w-full max-w-[640px] overflow-y-auto rounded-2xl border border-white/10 p-6 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.85)]"
+        className="relative max-h-[90vh] w-full max-w-[600px] overflow-y-auto rounded-2xl border border-white/10 p-6 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.85)]"
         style={{ background: "linear-gradient(180deg, #0f1b27 0%, #0a121b 100%)" }}
       >
         <div className="flex items-start justify-between">
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-faint">{initial.id ? "Edit skill" : "New skill"}</div>
-            <h2 className="mt-1 text-[18px] font-semibold">{k.name || "Untitled skill"}</h2>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-faint">{isMcp ? "MCP server" : "Custom platform"}</div>
+            <h2 className="mt-1 text-[18px] font-semibold">{c.name || (isMcp ? "New MCP server" : "New platform")}</h2>
           </div>
           <button onClick={onClose} aria-label="Close" className="rounded-lg p-1.5 text-faint hover:bg-white/10 hover:text-[var(--fg)]">
             <X size={16} />
           </button>
         </div>
-
         <div className="mt-5 space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-[12px] font-medium text-muted">Name</span>
-            <input aria-label="Skill name" className={field} placeholder="Upwork proposal" value={k.name} onChange={(e) => set({ name: e.target.value })} />
+            <input aria-label="Connection name" className={field} placeholder={isMcp ? "Notion" : "Fiverr"} value={c.name} onChange={(e) => set({ name: e.target.value })} />
           </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[12px] font-medium text-muted">Say this to use it</span>
-            <input aria-label="Trigger phrases" className={field} placeholder="proposal for this job, apply to this job" value={k.triggers} onChange={(e) => set({ triggers: e.target.value })} />
-            <span className="mt-1 block text-[11.5px] text-faint">Comma-separated. Saying the skill's name always works too.</span>
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[12px] font-medium text-muted">What should Flo do?</span>
-            <textarea
-              aria-label="Instructions"
-              rows={6}
-              className={field + " resize-y leading-relaxed"}
-              placeholder="Read the job post on screen. Write a 250-350 word proposal that…"
-              value={k.instructions}
-              onChange={(e) => set({ instructions: e.target.value })}
-            />
-          </label>
-
-          <div>
-            <span className="mb-1.5 block text-[12px] font-medium text-muted">How</span>
-            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Skill mode">
-              {(
-                [
-                  { id: "write", title: "Write it for me", hint: "Reads your screen and types the result where your cursor is.", icon: <PenLine size={15} /> },
-                  { id: "do", title: "Do it on screen", hint: "Operates your Mac: opens apps, clicks, types. Asks before sending or buying.", icon: <MousePointerClick size={15} /> },
-                ] as const
-              ).map((m) => (
-                <button
-                  key={m.id}
-                  role="radio"
-                  aria-checked={k.mode === m.id}
-                  onClick={() => set({ mode: m.id })}
-                  className={clsx(
-                    "rounded-2xl border p-3 text-left transition",
-                    k.mode === m.id ? "border-[var(--accent)] bg-[var(--accent)]/10 shadow-[0_0_0_1px_var(--accent)]" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]",
-                  )}
-                >
-                  <div className="flex items-center gap-1.5 text-[13px] font-medium">
-                    <span className="text-brand-300">{m.icon}</span> {m.title}
-                  </div>
-                  <div className="mt-1 text-[11.5px] leading-snug text-faint">{m.hint}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <span className="mb-1.5 block text-[12px] font-medium text-muted">Works on</span>
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Platforms">
-              {PLATFORMS.map((p) => {
-                const on = k.platforms.includes(p.id);
-                return (
+          {isMcp ? (
+            <>
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="How to reach it">
+                {(
+                  [
+                    { id: "stdio", title: "Local command", hint: "Flo starts it on your Mac (npx, uvx, python…)" },
+                    { id: "http", title: "URL", hint: "A remote server (Streamable HTTP)" },
+                  ] as const
+                ).map((t) => (
                   <button
-                    key={p.id}
-                    aria-pressed={on}
-                    onClick={() => set({ platforms: on ? k.platforms.filter((x) => x !== p.id) : [...k.platforms, p.id] })}
-                    className={clsx(
-                      "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] transition",
-                      on ? "bg-[var(--accent)]/20 text-[var(--fg)] shadow-[0_0_0_1px_var(--accent)]" : "bg-white/[0.05] text-muted hover:bg-white/10 hover:text-[var(--fg)]",
-                    )}
+                    key={t.id}
+                    role="radio"
+                    aria-checked={c.transport === t.id}
+                    onClick={() => set({ transport: t.id })}
+                    className={clsx("rounded-2xl border p-3 text-left transition", c.transport === t.id ? "border-[var(--accent)] bg-[var(--accent)]/10 shadow-[0_0_0_1px_var(--accent)]" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]")}
                   >
-                    {p.icon} {p.label}
+                    <div className="text-[13px] font-medium">{t.title}</div>
+                    <div className="mt-0.5 text-[11.5px] text-faint">{t.hint}</div>
                   </button>
-                );
-              })}
-            </div>
-            <span className="mt-1.5 flex items-center gap-1 text-[11.5px] text-faint">
-              <Wand2 size={11} /> Flo uses your existing connections (Slack in Integrations, your browser and apps). Nothing new to sign in to.
-            </span>
-          </div>
-
-          <Toggle label="Enabled" hint="Off: Flo ignores this skill's phrases." checked={k.enabled} onChange={(v) => set({ enabled: v })} />
+                ))}
+              </div>
+              {c.transport === "http" ? (
+                <label className="block">
+                  <span className="mb-1.5 block text-[12px] font-medium text-muted">Server URL</span>
+                  <input aria-label="Server URL" className={field + " font-mono text-[12.5px]"} placeholder="https://mcp.example.com/mcp" value={c.url} onChange={(e) => set({ url: e.target.value })} />
+                </label>
+              ) : (
+                <label className="block">
+                  <span className="mb-1.5 block text-[12px] font-medium text-muted">Command</span>
+                  <input aria-label="Command" className={field + " font-mono text-[12.5px]"} placeholder="npx -y @modelcontextprotocol/server-filesystem ~/Documents" value={cmdLine} onChange={(e) => setCmdLine(e.target.value)} />
+                </label>
+              )}
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-muted">{c.transport === "http" ? "Headers (one per line)" : "Environment (one per line)"}</span>
+                <textarea
+                  aria-label="Environment"
+                  rows={3}
+                  className={field + " resize-y font-mono text-[12px]"}
+                  placeholder={c.transport === "http" ? "Authorization=Bearer …" : "NOTION_TOKEN=secret_…"}
+                  value={envText}
+                  onChange={(e) => setEnvText(e.target.value)}
+                />
+                <span className="mt-1 block text-[11px] text-faint">Stored encrypted on this Mac. Only sent to this server.</span>
+              </label>
+              <div className="rounded-2xl bg-white/[0.03] p-3 ring-1 ring-white/10" data-testid="connection-test">
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-[12.5px] text-muted">{test.tools ? `Connected · ${test.tools.length} tool${test.tools.length === 1 ? "" : "s"}` : test.error ? "Couldn't connect" : "Check that Flo can reach it and see its tools."}</span>
+                  <Button
+                    size="sm"
+                    icon={test.busy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                    disabled={test.busy}
+                    onClick={async () => {
+                      setTest({ busy: true });
+                      try {
+                        setTest({ busy: false, tools: await api.testConnection(built()) });
+                      } catch (e) {
+                        setTest({ busy: false, error: String(e) });
+                      }
+                    }}
+                  >
+                    Test
+                  </Button>
+                </div>
+                {test.error && <div className="mt-2 text-[12px] text-red-300">{test.error}</div>}
+                {test.tools && test.tools.length > 0 && (
+                  <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                    {test.tools.map((t) => (
+                      <div key={t.name} className="flex gap-2 text-[12px]">
+                        <span className="shrink-0 font-mono text-[#cbbcff]">{t.name}</span>
+                        <span className="truncate text-faint">{t.description}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-muted">Website or app</span>
+                <input aria-label="Website" className={field} placeholder="https://www.fiverr.com" value={c.url} onChange={(e) => set({ url: e.target.value })} />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[12px] font-medium text-muted">Notes for Flo</span>
+                <textarea aria-label="Notes" rows={3} className={field + " resize-y"} placeholder="Where things are, how you use it…" value={c.description} onChange={(e) => set({ description: e.target.value })} />
+              </label>
+            </>
+          )}
         </div>
-
         {err && <div className="mt-3 text-[12.5px] text-red-300">{err}</div>}
         <div className="mt-5 flex items-center gap-2">
           {initial.id && (
@@ -317,7 +411,7 @@ function SkillEditor({ initial, onClose, onSaved }: { initial: Skill; onClose: (
               size="sm"
               icon={<Trash2 size={13} />}
               onClick={async () => {
-                await api.deleteSkill(initial.id);
+                await api.deleteConnection(initial.id);
                 onSaved();
               }}
             >
@@ -328,8 +422,19 @@ function SkillEditor({ initial, onClose, onSaved }: { initial: Skill; onClose: (
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={save}>
-            {initial.id ? "Save" : "Create skill"}
+          <Button
+            variant="primary"
+            onClick={async () => {
+              if (!c.name.trim()) return setErr("Give it a name.");
+              try {
+                await api.saveConnection(built());
+                onSaved();
+              } catch (e) {
+                setErr(String(e));
+              }
+            }}
+          >
+            {initial.id ? "Save" : "Add"}
           </Button>
         </div>
       </motion.div>

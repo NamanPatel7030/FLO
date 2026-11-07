@@ -263,6 +263,38 @@ fn quick_mode() -> String {
     "quick".into()
 }
 
+/// A user-added platform or MCP server that skills can use.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Connection {
+    pub id: String,
+    pub name: String,
+    /// "platform" (a site or app skills can target) | "mcp" (a Model Context Protocol server)
+    pub kind: String,
+    /// mcp: "stdio" (a local command) | "http" (a URL)
+    pub transport: String,
+    /// stdio: the program to run ("npx") …
+    pub command: String,
+    /// … and its arguments (["-y", "@modelcontextprotocol/server-filesystem", "~/Documents"])
+    pub args: Vec<String>,
+    /// http MCP server URL, or the platform's website
+    pub url: String,
+    /// stdio: environment variables; http: extra request headers (e.g. Authorization)
+    pub env: std::collections::BTreeMap<String, String>,
+    pub description: String,
+    pub enabled: bool,
+    pub created_at: String,
+}
+
+/// A tool an MCP server offers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
 /// Something the user taught Flo to do on request ("write my Upwork proposals").
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -280,6 +312,10 @@ pub struct Skill {
     pub enabled: bool,
     pub uses: u32,
     pub created_at: String,
+    /// the canvas (nodes + edges) the skill was built on, as JSON
+    pub graph: String,
+    /// ids of the MCP servers / custom platforms (Connections) this skill uses
+    pub connections: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

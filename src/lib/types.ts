@@ -270,6 +270,33 @@ export interface Skill {
   enabled: boolean;
   uses: number;
   createdAt: string;
+  /** the canvas it was built on (JSON of nodes + edges) */
+  graph?: string;
+  /** MCP servers / custom platforms it uses ("doc:<id>" = an attached knowledge doc) */
+  connections?: string[];
+}
+
+/** A custom platform or MCP server the user added (Skills → Connections). */
+export interface Connection {
+  id: string;
+  name: string;
+  kind: "platform" | "mcp";
+  /** mcp: stdio = a local command · http = a URL */
+  transport: "stdio" | "http";
+  command: string;
+  args: string[];
+  url: string;
+  /** stdio: environment variables · http: request headers */
+  env: Record<string, string>;
+  description: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
 }
 
 export interface Project {

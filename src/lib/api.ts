@@ -8,6 +8,8 @@ import type {
   ClaudeSession,
   ContextDoc,
   Skill,
+  Connection,
+  McpTool,
   Integration,
   Dictation,
   DictionaryEntry,
@@ -137,6 +139,11 @@ export const api = {
   confirmAction: (id: string, approve: boolean) => call<string>("confirm_action", { id, approve }),
   // context library
   listSkills: () => call<Skill[]>("list_skills"),
+  listConnections: () => call<Connection[]>("list_connections"),
+  saveConnection: (connection: Connection) => call<Connection>("save_connection", { connection }),
+  deleteConnection: (id: string) => call<void>("delete_connection", { id }),
+  /** connect to an MCP server and list its tools (works before saving) */
+  testConnection: (connection: Connection) => call<McpTool[]>("test_connection", { connection }),
   saveSkill: (skill: Skill) => call<Skill>("save_skill", { skill }),
   deleteSkill: (id: string) => call<void>("delete_skill", { id }),
   listContextDocs: () => call<ContextDoc[]>("list_context_docs").catch(() => [] as ContextDoc[]),
