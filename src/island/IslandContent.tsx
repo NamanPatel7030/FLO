@@ -144,8 +144,9 @@ function useClock(startedAt: number, live: boolean) {
   return live ? Math.max(0, (now - startedAt) / 1000) : 0;
 }
 
+const HHMM = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
 function timeOf(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return HHMM.format(new Date(iso));
 }
 
 const CheckBadge = () => (

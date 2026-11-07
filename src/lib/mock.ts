@@ -69,6 +69,7 @@ const settings: Settings = {
   sttProvider: "local",
   sttModel: "large-v3-turbo-q5_0",
   language: "auto",
+  autoLanguages: ["en", "hi", "gu"],
   llmProvider: "ollama",
   llmModel: "qwen3:8b",
   localLlmUrl: "http://localhost:11434",

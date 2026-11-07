@@ -22,9 +22,17 @@ const CASES: &[Case] = &[
 ];
 
 fn tts_to_16k(text_in: &str, dir: &Path, name: &str) -> anyhow::Result<Vec<f32>> {
+    tts_voice_to_16k(text_in, None, dir, name)
+}
+
+fn tts_voice_to_16k(text_in: &str, voice: Option<&str>, dir: &Path, name: &str) -> anyhow::Result<Vec<f32>> {
     let aiff = dir.join(format!("{name}.aiff"));
     let wav = dir.join(format!("{name}.wav"));
-    let ok = std::process::Command::new("say").arg("-o").arg(&aiff).arg(text_in).status()?.success();
+    let mut cmd = std::process::Command::new("say");
+    if let Some(v) = voice {
+        cmd.arg("-v").arg(v);
+    }
+    let ok = cmd.arg("-o").arg(&aiff).arg(text_in).status()?.success();
     anyhow::ensure!(ok, "say failed");
     let ok = std::process::Command::new("afconvert")
         .args(["-f", "WAVE", "-d", "LEI16@16000", "-c", "1"])
@@ -48,38 +56,64 @@ async fn transcribe(eg: &Egress, s: &crate::model::Settings, models: &Path, w: &
     }
 }
 
-/// `--bench-stt out.json`: time the installed speech model on synthetic speech with the old
-/// decode settings vs the fast profile (no network, no keychain).
+/// `--bench-stt out.json`: the installed speech model on synthetic speech (macOS `say`, incl.
+/// the Hindi voice), no network, no keychain. Reports, per clip:
+///  * confidence when decoded in the right vs the wrong language (calibrates `stt::CONFIDENT`)
+///  * the adaptive "auto" path as a user would hit it (clips in order, language remembered)
 pub fn bench_stt(out: &str) {
     let data_dir: PathBuf = dirs::data_dir().unwrap_or_default().join("com.flo.flow");
     let s = settings::load(&data_dir);
     let Some(path) = stt::model_path(&data_dir.join("models"), &s.stt_model) else { return };
     let tmp = std::env::temp_dir().join(format!("flo-bench-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmp);
-    let phrases = [
-        "Send the deck to Rahul by Friday.",
-        "Let's meet tomorrow at six and review the launch checklist together.",
-        "I think the new build is really fast, the notch looks great, and we should ship it to the beta testers this week after one more round of testing on Windows and Linux.",
+    // (voice, phrase, language) — order mimics a real day: English, then Hindi, then back
+    let phrases: [(Option<&str>, &str, &str); 7] = [
+        (None, "Send the deck to Rahul by Friday.", "en"),
+        (Some("Rishi"), "Can you draft a message to the team wishing everyone a happy Dhanteras?", "en"),
+        (Some("Aman"), "Remind me to call the bank tomorrow at eleven.", "en"),
+        (Some("Lekha"), "कल सुबह दस बजे मीटिंग है, सबको याद दिला देना।", "hi"),
+        (Some("Lekha"), "मुझे राहुल को इनवॉइस भेजना है।", "hi"),
+        (Some("Lekha"), "आज का काम पूरा हो गया, अब घर जा रहा हूँ।", "hi"),
+        (Some("Rishi"), "Okay, mark the invoice task as done and open Slack.", "en"),
     ];
+    let w = stt::LocalWhisper::default();
+    *w.auto_langs.lock() = vec!["en".into(), "hi".into(), "gu".into()];
+    w.warm(&path); // load outside the timing (the app warms on key press)
+    let mut clips = vec![];
+    for (i, (voice, p, lang)) in phrases.iter().enumerate() {
+        if let Ok(audio) = tts_voice_to_16k(p, *voice, &tmp, &format!("b{i}")) {
+            clips.push((*p, *lang, crate::audio::trim_silence(&audio)));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    if let Some((_, l, a)) = clips.first() {
+        let _ = w.transcribe(&path, a, l, ""); // first run compiles Metal kernels
+    }
     let mut rows = vec![];
-    for (i, p) in phrases.iter().enumerate() {
-        let Ok(audio) = tts_to_16k(p, &tmp, &format!("b{i}")) else { continue };
-        let audio = crate::audio::trim_silence(&audio);
-        let secs = audio.len() as f32 / 16_000.0;
-        let mut row = json!({ "phrase": p, "audio_secs": (secs * 10.0).round() / 10.0 });
-        for (label, baseline) in [("baseline", true), ("fast", false)] {
-            let w = stt::LocalWhisper::default();
-            w.baseline.store(baseline, std::sync::atomic::Ordering::Relaxed);
-            w.warm(&path); // load outside the timing (the app warms on key press)
-            let _ = w.transcribe(&path, &audio, &s.language, ""); // first run compiles Metal kernels
-            let t = Instant::now();
-            let text = w.transcribe(&path, &audio, &s.language, "").unwrap_or_default();
-            row[label] = json!({ "ms": t.elapsed().as_millis(), "text": text, "similarity": (text::similarity(&text, p) * 100.0).round() / 100.0 });
+    // 1) confidence: right vs wrong language
+    for (p, lang, audio) in &clips {
+        let wrong = if *lang == "en" { "hi" } else { "en" };
+        let mut row = json!({ "phrase": p, "lang": lang, "audio_secs": ((audio.len() as f32 / 16_000.0) * 10.0).round() / 10.0 });
+        for (label, l) in [("right", *lang), ("wrong", wrong)] {
+            let text = w.transcribe(&path, audio, l, "").unwrap_or_default();
+            let t = *w.last_timing.lock();
+            row[label] = json!({ "ms": t.total_ms, "conf": (t.confidence * 100.0).round() / 100.0, "text": text });
         }
         rows.push(row);
     }
-    let _ = std::fs::remove_dir_all(&tmp);
-    let _ = std::fs::write(out, serde_json::to_string_pretty(&json!({ "model": s.stt_model, "runs": rows })).unwrap_or_default());
+    // 2) adaptive auto, in order, starting with no remembered language
+    w.forget_language();
+    let mut seq = vec![];
+    for (p, lang, audio) in &clips {
+        let text = w.transcribe(&path, audio, "auto", "").unwrap_or_default();
+        let t = *w.last_timing.lock();
+        seq.push(json!({
+            "phrase": p, "expected": lang, "got": w.detected_lang(), "ms": t.total_ms, "detect_ms": t.detect_ms,
+            "detected": t.detected, "conf": (t.confidence * 100.0).round() / 100.0, "text": text,
+            "similarity": (text::similarity(&text, p) * 100.0).round() / 100.0,
+        }));
+    }
+    let _ = std::fs::write(out, serde_json::to_string_pretty(&json!({ "model": s.stt_model, "calibration": rows, "auto_sequence": seq })).unwrap_or_default());
 }
 
 pub fn run(out: &str) {

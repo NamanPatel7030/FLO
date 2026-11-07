@@ -54,6 +54,9 @@ pub struct Settings {
     pub stt_provider: String,
     pub stt_model: String,
     pub language: String,
+    /// with language "auto": only these languages are considered (stops Hindi being heard as
+    /// Urdu/Marathi/Nepali, or short English clips as Welsh). Empty = all 99.
+    pub auto_languages: Vec<String>,
     pub llm_provider: String,
     pub llm_model: String,
     pub local_llm_url: String,
@@ -95,6 +98,7 @@ impl Default for Settings {
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),
             language: "auto".into(),
+            auto_languages: vec!["en".into(), "hi".into(), "gu".into()],
             llm_provider: "ollama".into(),
             llm_model: "qwen3:8b".into(),
             local_llm_url: "http://127.0.0.1:11434".into(),

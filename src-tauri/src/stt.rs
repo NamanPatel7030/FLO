@@ -75,6 +75,88 @@ pub async fn download_model(egress: &Egress, models_dir: &Path, id: &str, progre
     Ok(())
 }
 
+/// The decoder sometimes emits the whole sentence twice in a row ("A. A."); keep one copy.
+/// Only an exact back-to-back repeat of the full text (≥ 3 words) is collapsed.
+pub fn collapse_repeat(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let n = words.len();
+    if n >= 6 && n % 2 == 0 {
+        let norm = |w: &[&str]| w.iter().map(|x| x.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).collect::<Vec<_>>();
+        if norm(&words[..n / 2]) == norm(&words[n / 2..]) {
+            return words[..n / 2].join(" ");
+        }
+    }
+    text.to_string()
+}
+
+/// Mean token probability at or above which a decode in the remembered language is kept.
+/// Measured with `--bench-stt` on large-v3-turbo: right-language decodes 0.90–0.98, wrong-language
+/// ones 0.24–0.81 — the high wrong ones were empty or one word repeated, which `plausible` rejects.
+/// Too high only costs a detection pass (~0.6 s), never a wrong transcript.
+pub const CONFIDENT: f32 = 0.7;
+
+/// Does `text` look like a real transcript in `lang`? Rejects empty output, a single word repeated
+/// ("झाल झाल झाल झाल"), and text in the wrong script (Hindi decoded as English letters or vice versa).
+pub fn plausible(text: &str, lang: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let words: Vec<String> = t.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).filter(|w| !w.is_empty()).collect();
+    if words.len() >= 3 && words.iter().all(|w| *w == words[0]) {
+        return false;
+    }
+    let devanagari = t.chars().any(|c| ('\u{0900}'..='\u{097F}').contains(&c));
+    let gujarati = t.chars().any(|c| ('\u{0A80}'..='\u{0AFF}').contains(&c));
+    match lang {
+        "hi" | "mr" | "ne" => devanagari,
+        "gu" => gujarati,
+        "en" => !devanagari && !gujarati,
+        _ => true,
+    }
+}
+
+/// Timing / confidence of the last `transcribe` (diagnostics + benchmark).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DecodeTiming {
+    pub detect_ms: u128,
+    pub total_ms: u128,
+    /// language detection ran for this clip
+    pub detected: bool,
+    pub confidence: f32,
+}
+
+/// Mean of token probabilities (0 when there are none — an empty decode is never "confident").
+pub fn mean_confidence(probs: &[f32]) -> f32 {
+    if probs.is_empty() {
+        0.0
+    } else {
+        probs.iter().sum::<f32>() / probs.len() as f32
+    }
+}
+
+fn threads() -> usize {
+    std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4)
+}
+
+/// Whisper needs ≥1 s of audio.
+fn padded(samples: &[f32]) -> Vec<f32> {
+    let mut buf = samples.to_vec();
+    if buf.len() < audio::TARGET_RATE as usize {
+        buf.resize(audio::TARGET_RATE as usize + 1600, 0.0);
+    }
+    buf
+}
+
+/// Pure helper (unit-tested): highest-probability candidate whose language id is known.
+pub fn best_candidate(probs: &[f32], cands: &[String], id_of: impl Fn(&str) -> Option<usize>) -> Option<String> {
+    cands
+        .iter()
+        .filter_map(|c| Some((c, *probs.get(id_of(c)?)?)))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(c, _)| c.clone())
+}
+
 /// Known whisper hallucinations on near-silence.
 /// A degenerate repetition loop (e.g. "it's it's it's…") — the failure mode of greedy decoding
 /// without temperature fallback. Returns true when one short phrase dominates the output.
@@ -183,6 +265,10 @@ pub struct LocalWhisper {
     detected: Mutex<Option<String>>,
     /// use the pre-tuning decode settings (benchmark baseline only)
     pub baseline: std::sync::atomic::AtomicBool,
+    /// language "auto" only chooses among these (empty = Whisper's own pick out of 99)
+    pub auto_langs: Mutex<Vec<String>>,
+    /// last transcribe: timing + confidence (diagnostics / benchmark)
+    pub last_timing: Mutex<DecodeTiming>,
     #[cfg(feature = "local-stt")]
     ctx: Mutex<Option<(String, Arc<whisper_rs::WhisperContext>)>>,
     #[cfg(not(feature = "local-stt"))]
@@ -237,29 +323,94 @@ impl LocalWhisper {
     #[cfg(not(feature = "local-stt"))]
     pub fn warm(&self, _model_file: &Path) {}
 
-    /// Transcribe with the fast decoder; if it degenerates into a repetition loop, retry the clip
-    /// once with the safe decoder (temperature fallback on). Fast for the 99%, correct for the rest.
+    /// Transcribe a clip.
+    ///
+    /// `language` "auto" is adaptive: decode straight away in the language used last (~200 ms) and
+    /// keep it if Whisper is confident; otherwise detect the language among `auto_langs` on a
+    /// *separate* state and decode again. Whisper is never asked to auto-detect inside the decoding
+    /// state — its detector encodes a full 30 s window while the fast decoder uses a clip-sized one,
+    /// and mixing the two corrupted output ("Remind me to call the bank…" → "and the") and cost ~2.4 s.
     #[cfg(feature = "local-stt")]
     pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
-        let fast = self.baseline.load(std::sync::atomic::Ordering::Relaxed);
-        let out = self.decode_once(model_file, samples, language, prompt)?;
-        if !fast && is_degenerate(&out) {
+        let t0 = std::time::Instant::now();
+        let mut timing = DecodeTiming::default();
+        let lang_in = if language.is_empty() { "auto" } else { language };
+        let (text, confidence) = if lang_in != "auto" {
+            self.decode_checked(model_file, samples, lang_in, prompt)?
+        } else {
+            let cands = self.auto_langs.lock().clone();
+            let sticky = self.detected.lock().clone().filter(|l| cands.is_empty() || cands.contains(l));
+            let first = match &sticky {
+                Some(l) => Some((l.clone(), self.decode_checked(model_file, samples, l, prompt)?)),
+                None => None,
+            };
+            match first {
+                Some((l, r)) if r.1 >= CONFIDENT && plausible(&r.0, &l) => r,
+                first => {
+                    let td = std::time::Instant::now();
+                    let lang = self.detect_language(model_file, samples, &cands)?;
+                    timing.detect_ms = td.elapsed().as_millis();
+                    timing.detected = true;
+                    *self.detected.lock() = Some(lang.clone());
+                    match first {
+                        // detection agrees with the sticky language → the first decode stands
+                        Some((l, r)) if l == lang => r,
+                        _ => self.decode_checked(model_file, samples, &lang, prompt)?,
+                    }
+                }
+            }
+        };
+        timing.total_ms = t0.elapsed().as_millis();
+        timing.confidence = confidence;
+        *self.last_timing.lock() = timing;
+        log::info!(
+            "stt: {} ms (detect {} ms) lang={:?} conf={:.2}",
+            timing.total_ms,
+            timing.detect_ms,
+            self.detected.lock().clone(),
+            confidence
+        );
+        Ok(text)
+    }
+
+    /// One decode in a known language; if the fast decoder degenerates into a repetition loop,
+    /// retry once with the safe decoder (temperature fallback on). Returns (text, confidence).
+    #[cfg(feature = "local-stt")]
+    fn decode_checked(&self, model_file: &Path, samples: &[f32], lang: &str, prompt: &str) -> Result<(String, f32)> {
+        let safe_mode = self.baseline.load(std::sync::atomic::Ordering::Relaxed);
+        let out = self.decode_once(model_file, samples, lang, prompt, safe_mode)?;
+        if !safe_mode && is_degenerate(&out.0) {
             log::warn!("fast STT degenerated; retrying this clip with the safe decoder");
-            self.baseline.store(true, std::sync::atomic::Ordering::Relaxed);
-            let safe = self.decode_once(model_file, samples, language, prompt);
-            self.baseline.store(false, std::sync::atomic::Ordering::Relaxed);
-            return safe;
+            return self.decode_once(model_file, samples, lang, prompt, true);
         }
         Ok(out)
     }
 
+    /// Most likely language among `cands` (all languages if empty), on a fresh state so the
+    /// decoding state never sees the detector's full-window encode.
     #[cfg(feature = "local-stt")]
-    fn decode_once(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+    fn detect_language(&self, model_file: &Path, samples: &[f32], cands: &[String]) -> Result<String> {
+        let ctx = self.context(model_file)?;
+        let mut state = ctx.create_state().map_err(|e| anyhow!("{e:?}"))?;
+        let threads = threads();
+        let buf = padded(samples);
+        state.pcm_to_mel(&buf, threads).map_err(|e| anyhow!("mel: {e:?}"))?;
+        let (top, probs) = state.lang_detect(0, threads).map_err(|e| anyhow!("language detect: {e:?}"))?;
+        let picked = if cands.is_empty() {
+            whisper_rs::get_lang_str(top).map(|s| s.to_string())
+        } else {
+            best_candidate(&probs, cands, |c| whisper_rs::get_lang_id(c).map(|i| i as usize))
+        };
+        Ok(picked.unwrap_or_else(|| "en".into()))
+    }
+
+    #[cfg(feature = "local-stt")]
+    fn decode_once(&self, model_file: &Path, samples: &[f32], lang: &str, prompt: &str, safe_mode: bool) -> Result<(String, f32)> {
         use whisper_rs::{FullParams, SamplingStrategy};
         let ctx = self.context(model_file)?;
         let mut state = ctx.create_state().map_err(|e| anyhow!("{e:?}"))?;
+        let buf = padded(samples);
         let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        let lang = if language.is_empty() { "auto" } else { language };
         p.set_language(Some(lang));
         p.set_translate(false);
         p.set_print_progress(false);
@@ -268,7 +419,7 @@ impl LocalWhisper {
         p.set_print_timestamps(false);
         p.set_suppress_blank(true);
         p.set_no_context(true);
-        if !self.baseline.load(std::sync::atomic::Ordering::Relaxed) {
+        if !safe_mode {
             p.set_no_timestamps(true);
             let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
             if secs < 20.0 {
@@ -281,34 +432,38 @@ impl LocalWhisper {
             // longer clips keep Whisper's default temperature fallback: greedy decoding over many
             // seconds can get stuck repeating a token forever, and the fallback is what breaks it.
         }
-        p.set_n_threads(std::thread::available_parallelism().map(|n| n.get().min(8) as i32).unwrap_or(4));
+        p.set_n_threads(threads() as i32);
         if !prompt.is_empty() {
             p.set_initial_prompt(prompt);
         }
-        // whisper needs ≥1s of audio
-        let mut buf = samples.to_vec();
-        if buf.len() < audio::TARGET_RATE as usize {
-            buf.resize(audio::TARGET_RATE as usize + 1600, 0.0);
-        }
         state.full(p, &buf).map_err(|e| anyhow!("whisper: {e:?}"))?;
-        if lang == "auto" {
-            if let Ok(id) = state.full_lang_id_from_state() {
-                *self.detected.lock() = whisper_rs::get_lang_str(id).map(|s| s.to_string());
-            }
-        }
+        let eot = ctx.token_eot();
         let n = state.full_n_segments().map_err(|e| anyhow!("{e:?}"))?;
         let mut out = String::new();
+        let mut probs = vec![];
         for i in 0..n {
             if let Ok(t) = state.full_get_segment_text(i) {
                 out.push_str(&t);
             }
+            for j in 0..state.full_n_tokens(i).unwrap_or(0) {
+                if let Ok(d) = state.full_get_token_data(i, j) {
+                    if d.id < eot {
+                        probs.push(d.p);
+                    }
+                }
+            }
         }
-        Ok(out.trim().to_string())
+        Ok((collapse_repeat(out.trim()), mean_confidence(&probs)))
     }
 
     /// Language Whisper last auto-detected ("hi", "gu", "en", …), if any.
     pub fn detected_lang(&self) -> Option<String> {
         self.detected.lock().clone()
+    }
+
+    /// Forget the remembered language: the next "auto" clip runs detection.
+    pub fn forget_language(&self) {
+        *self.detected.lock() = None;
     }
 
     #[cfg(not(feature = "local-stt"))]
@@ -385,6 +540,51 @@ mod tests {
         assert!(!is_degenerate("Send the deck to Rahul by Friday and let's meet at six tomorrow afternoon."));
         assert!(!is_degenerate("The quarterly report covers revenue, retention and the roadmap for next year.")); // normal long speech
         assert!(!is_degenerate("okay")); // too short to judge
+    }
+
+    #[test]
+    fn collapses_a_sentence_said_twice() {
+        assert_eq!(
+            collapse_repeat("आज का काम पूरा हो गया, अब घर जा रहा हूं. आज का काम पूरा हो गया, अब घर जा रहा हूं."),
+            "आज का काम पूरा हो गया, अब घर जा रहा हूं."
+        );
+        // a real repeated phrase inside a longer sentence is left alone
+        assert_eq!(collapse_repeat("very very good idea"), "very very good idea");
+        assert_eq!(collapse_repeat("Send the deck to Rahul by Friday."), "Send the deck to Rahul by Friday.");
+    }
+
+    #[test]
+    fn plausibility_catches_wrong_language_decodes() {
+        // real wrong-language outputs from the benchmark
+        assert!(!plausible("झाल झाल झाल झाल", "hi"));
+        assert!(!plausible("", "hi"));
+        assert!(!plausible("Today's work is full of people. I'm going to go home.", "hi"));
+        assert!(!plausible("जो द्राफ एक टेम विशिंग एक बाप्पी धनते रस?", "en"));
+        // right-language outputs pass, including Hinglish (English words inside Hindi)
+        assert!(plausible("मुझी राहुल को invoice भेजना है।", "hi"));
+        assert!(plausible("Send the deck to Rahul by Friday", "en"));
+        assert!(plausible("કાલે મીટિંગ છે", "gu"));
+        assert!(plausible("ok", "en"));
+    }
+
+    #[test]
+    fn empty_decode_is_never_confident() {
+        assert_eq!(mean_confidence(&[]), 0.0);
+        assert!((mean_confidence(&[0.9, 0.7]) - 0.8).abs() < 1e-6);
+        assert!(mean_confidence(&[0.2, 0.3]) < CONFIDENT);
+    }
+
+    #[test]
+    fn best_candidate_ignores_languages_outside_the_set() {
+        // ids: en=0, hi=1, ur=2, gu=3 — Urdu scores highest but isn't a candidate → Hindi wins
+        let probs = [0.10, 0.30, 0.55, 0.05];
+        let id = |c: &str| ["en", "hi", "ur", "gu"].iter().position(|x| *x == c);
+        let cands: Vec<String> = ["en", "hi", "gu"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(best_candidate(&probs, &cands, id).as_deref(), Some("hi"));
+        // unknown codes are skipped, not a panic
+        let odd: Vec<String> = vec!["xx".into(), "en".into()];
+        assert_eq!(best_candidate(&probs, &odd, id).as_deref(), Some("en"));
+        assert_eq!(best_candidate(&probs, &[], id), None);
     }
 
     #[test]

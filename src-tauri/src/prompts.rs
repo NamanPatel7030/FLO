@@ -53,6 +53,24 @@ Context:
     )
 }
 
+/// Appended to the assistant system prompt when the user asked for text to be written.
+pub const DRAFTING_NOTE: &str = r#"
+
+This is a WRITING task. First read the screen (the screenshot and the screen text): find the app, the
+conversation/thread/document the user is in, who they are writing to, and what was said last. Then write
+exactly the message the user would send there:
+- Respond to or continue what is actually on screen. Use real names, dates and details you can see.
+  Never use placeholders like [Name] or [Your company].
+- Fit the place: Slack/WhatsApp/Teams are short and conversational; email gets a greeting and a sign-off
+  with the user's name; a doc or form gets clean prose.
+- Match the thread's language and script (English, Hindi, Gujarati, or the Hinglish mix they use) and its
+  tone and formality.
+- Sound like a person, not an AI: no "I hope this message finds you well", no filler, no em dashes,
+  emoji only if the thread uses them.
+- Include every point the user dictated.
+Return the finished text in an insert_text action (it is typed into the focused field). reply is one short
+line saying what you wrote, e.g. "Drafted a Dhanteras wish for #scrum.""#;
+
 /// Incremental update: previous summary + only the new lines (keeps cost flat as meetings grow).
 pub fn meeting_update_user(previous_summary: &str, new_lines: &str) -> String {
     if previous_summary.trim().is_empty() {

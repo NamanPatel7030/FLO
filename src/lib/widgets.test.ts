@@ -3,8 +3,9 @@ import { DEFAULT_WIDGETS, loadWidgets, packWidgetRows, saveWidgets, widgetsBodyH
 
 describe("packWidgetRows", () => {
   it("gives span-2 widgets their own row and pairs span-1 widgets", () => {
-    // nowPlaying(2), today(1), timer(1), clock(1)
-    expect(packWidgetRows(["nowPlaying", "today", "timer", "clock"])).toEqual([["nowPlaying"], ["today", "timer"], ["clock"]]);
+    // nowPlaying(2), today(2: the scrollable to-do card), timer(1), clock(1)
+    expect(packWidgetRows(["nowPlaying", "today", "timer", "clock"])).toEqual([["nowPlaying"], ["today"], ["timer", "clock"]]);
+    expect(packWidgetRows(["timer", "pomodoro", "clock"])).toEqual([["timer", "pomodoro"], ["clock"]]);
   });
   it("breaks a span-1 pair when a span-2 interrupts", () => {
     expect(packWidgetRows(["today", "nowPlaying", "timer"])).toEqual([["today"], ["nowPlaying"], ["timer"]]);

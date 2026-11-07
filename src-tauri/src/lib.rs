@@ -185,8 +185,10 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
         let mut last: (f64, f64) = (f64::NAN, f64::NAN);
         let mut outside_streak = 0u8;
         loop {
-            // idle: 5 Hz; over the island: ~12 Hz
-            tokio::time::sleep(std::time::Duration::from_millis(if inside { 80 } else { 200 })).await;
+            // over the island: ~60 Hz so hover highlights/tooltips follow the cursor without visible
+            // steps (12 Hz read as stutter); elsewhere 20 Hz so entering feels instant. One cheap
+            // CoreGraphics call per tick.
+            tokio::time::sleep(std::time::Duration::from_millis(if inside { 16 } else { 50 })).await;
             // fast path (macOS): CoreGraphics cursor + cached island rect, all in logical points
             let sample = match (platform::cursor_location(), *ISLAND_RECT.lock()) {
                 (Some((cx_, cy_)), Some((rx, ry, rw, rh))) => Some((cx_ - rx, cy_ - ry, rw, rh)),
@@ -213,7 +215,7 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
                     true
                 } else {
                     outside_streak += 1;
-                    outside_streak < 2
+                    outside_streak < 5 // ~80 ms at 60 Hz
                 }
             } else {
                 strictly_in
@@ -225,8 +227,11 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
                 if !inside || (cx - last.0).abs() >= 1.0 || (y - last.1).abs() >= 1.0 {
                     last = (cx, y);
                     st.emit(model::ev::HOVER, serde_json::json!({ "inside": true, "x": x, "y": y, "cx": cx }));
+                    // only hop to the main thread when the cursor actually moved (it can be reset
+                    // by the app underneath on movement); doing it every tick competed with the
+                    // web view's rendering on the main thread
+                    let _ = app.run_on_main_thread(platform::set_pointer_cursor);
                 }
-                let _ = app.run_on_main_thread(platform::set_pointer_cursor);
             } else if inside {
                 last = (f64::NAN, f64::NAN);
                 st.emit(model::ev::HOVER, serde_json::json!({ "inside": false }));
@@ -269,6 +274,29 @@ fn start_hotkeys(st: Shared) {
     }));
 }
 
+/// Log to ~/Library/Logs/Flo/flo.log (or the platform's data dir) so failures from an app launched
+/// from Finder/Applications — where stderr goes nowhere — can be diagnosed. Rotated at 5 MB.
+fn init_logging() {
+    let mut b = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    let dir = if cfg!(target_os = "macos") {
+        dirs::home_dir().map(|h| h.join("Library/Logs/Flo"))
+    } else {
+        dirs::data_local_dir().map(|d| d.join("Flo").join("logs"))
+    };
+    if let Some(dir) = dir {
+        let path = dir.join("flo.log");
+        if std::fs::metadata(&path).map(|m| m.len() > 5 * 1024 * 1024).unwrap_or(false) {
+            let _ = std::fs::rename(&path, dir.join("flo.old.log"));
+        }
+        if std::fs::create_dir_all(&dir).is_ok() {
+            if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                b.target(env_logger::Target::Pipe(Box::new(f)));
+            }
+        }
+    }
+    let _ = b.try_init();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // `open -n -a Flo.app --args --diag /path/out.json` → write permission probes and exit
@@ -288,7 +316,7 @@ pub fn run() {
         selftest::run(&out);
         return;
     }
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
+    init_logging();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())

@@ -262,8 +262,8 @@ function ClockWidget() {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
-  const time = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const date = now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  const time = DUE_TIME.format(now);
+  const date = DUE_DATE.format(now);
   return (
     <div className="flex h-full flex-col justify-between rounded-xl bg-white/[0.04] p-2.5">
       <TileHead icon={<Clock size={12} />}>Clock</TileHead>
@@ -320,11 +320,16 @@ function WeatherWidget() {
 }
 
 /** "due Sun, Nov 8" — adds the time only when it isn't midnight (date-only to-dos look cleaner). */
+// Intl formatters are expensive to build (~5–10 ms each on a busy machine); toLocale*String()
+// builds a new one per call, which made the to-do tile stall the panel's opening animation.
+const DUE_DATE = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric" });
+const DUE_TIME = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
 function dueLabel(due: string): string {
   const d = new Date(due);
-  const date = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  if (Number.isNaN(d.getTime())) return "";
+  const date = DUE_DATE.format(d);
   const midnight = d.getHours() === 0 && d.getMinutes() === 0;
-  return midnight ? date : `${date}, ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  return midnight ? date : `${date}, ${DUE_TIME.format(d)}`;
 }
 
 /** A warm beige tile that lifts and grows a touch on hover (used for the to-do and Claude cards). */

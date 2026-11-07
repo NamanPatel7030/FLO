@@ -61,6 +61,8 @@ export interface Settings {
   sttModel: string;
   /** ISO code or "auto" */
   language: string;
+  /** with language "auto": only these are considered (default en, hi, gu) */
+  autoLanguages?: string[];
   llmProvider: LlmProvider;
   llmModel: string;
   /** Base URL for ollama / lmstudio */

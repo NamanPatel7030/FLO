@@ -121,6 +121,7 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     }
     // screen OCR is the largest prompt cost — only include it when the request is about the screen
     // (always in deep mode, where a screenshot is attached as well)
+    let drafting = text::is_writing_request(query);
     let screen = screen.filter(|_| mode == "deep" || text::wants_screen_context(query));
     let s_web = mode == "web";
     if s_web && !llm::supports_web(&s.llm_provider) {
@@ -138,7 +139,9 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
             sources: vec![],
         });
     }
-    let image = if mode == "deep" && s.assistant_screen_context && crate::platform::permissions().screen {
+    // a screenshot for deep answers, and for drafts so the model reads the conversation it replies to
+    let wants_image = mode == "deep" || (drafting && llm::supports_vision(&s.llm_provider));
+    let image = if wants_image && s.assistant_screen_context && crate::platform::permissions().screen {
         tokio::task::spawn_blocking(|| crate::attention::capture_focused_jpeg(1280)).await.ok().flatten().map(|(_, b)| b)
     } else {
         None
@@ -146,6 +149,9 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     let context = build_context(st, query, selection.as_deref(), front, screen.as_deref());
     let mut system = prompts::assistant_system(&context);
     system.push_str(prompts::assistant_mode_note(mode));
+    if drafting {
+        system.push_str(prompts::DRAFTING_NOTE);
+    }
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));
     }
@@ -161,7 +167,7 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
             cloud_allowed: s.assistant_cloud_allowed,
             max_tokens: match mode {
                 "deep" | "web" => 2500,
-                _ if selection.is_some() => 1500,
+                _ if selection.is_some() || drafting => 1500,
                 _ => 600,
             },
         },

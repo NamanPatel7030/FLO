@@ -204,17 +204,53 @@ fn source(title: Option<&str>, url: Option<&str>) -> Option<crate::model::Source
     Some(crate::model::Source { title: title.unwrap_or(&url).to_string(), url })
 }
 
-async fn send(egress: &Egress, url: &str, req: &ChatRequest<'_>, builder: impl FnOnce(reqwest::Client) -> reqwest::RequestBuilder, body: Value) -> Result<Value> {
+/// Retries after a failed attempt (so up to 3 attempts), like the official SDKs.
+const MAX_RETRIES: u32 = 2;
+
+/// Status codes worth retrying: timeout, conflict, rate limit, and server-side errors
+/// (incl. Anthropic's 529 "overloaded") — the same set the official SDKs retry.
+pub fn retryable_status(code: u16) -> bool {
+    matches!(code, 408 | 409 | 429) || code >= 500
+}
+
+/// How long to wait before retry `attempt` (0-based): the server's `retry-after` when given
+/// (capped so a voice request never hangs), else 0.5 s, 1 s.
+pub fn retry_delay(attempt: u32, retry_after: Option<&str>) -> Duration {
+    let server = retry_after.and_then(|v| v.trim().parse::<f64>().ok()).filter(|s| s.is_finite() && *s >= 0.0);
+    match server {
+        Some(secs) => Duration::from_millis((secs * 1000.0).min(4000.0) as u64),
+        None => Duration::from_millis(500 * (1 << attempt.min(3)) as u64),
+    }
+}
+
+async fn send(egress: &Egress, url: &str, req: &ChatRequest<'_>, builder: impl Fn(reqwest::Client) -> reqwest::RequestBuilder, body: Value) -> Result<Value> {
     egress.check(url, req.purpose, req.cloud_allowed)?;
     let bytes = body.to_string().len() as u64;
     let client = egress.client(req.purpose, req.cloud_allowed);
-    let resp = builder(client).json(&body).timeout(Duration::from_secs(90)).send().await.map_err(|e| {
-        if e.is_connect() && url.contains("127.0.0.1") {
-            anyhow!("Can't reach your local model at {url}. Is Ollama / LM Studio running?")
-        } else {
-            anyhow!(e)
+    let local = url.contains("127.0.0.1") || url.contains("localhost");
+    let mut attempt = 0;
+    let resp = loop {
+        match builder(client.clone()).json(&body).timeout(Duration::from_secs(90)).send().await {
+            Ok(r) if retryable_status(r.status().as_u16()) && attempt < MAX_RETRIES => {
+                let wait = retry_delay(attempt, r.headers().get("retry-after").and_then(|v| v.to_str().ok()));
+                log::warn!("AI provider returned {}; retrying in {} ms", r.status(), wait.as_millis());
+                tokio::time::sleep(wait).await;
+            }
+            Ok(r) => break r,
+            Err(e) if !local && (e.is_connect() || e.is_timeout() || e.is_request()) && attempt < MAX_RETRIES => {
+                let wait = retry_delay(attempt, None);
+                log::warn!("AI request failed ({e}); retrying in {} ms", wait.as_millis());
+                tokio::time::sleep(wait).await;
+            }
+            Err(e) if local && e.is_connect() => bail!("Can't reach your local model at {url}. Is Ollama / LM Studio running?"),
+            Err(e) if e.is_connect() || e.is_request() => {
+                bail!("Couldn't reach the AI provider after {} tries. Check your internet connection. ({e})", attempt + 1)
+            }
+            Err(e) if e.is_timeout() => bail!("The AI provider didn't answer in time (tried {} times). Try again.", attempt + 1),
+            Err(e) => return Err(anyhow!(e)),
         }
-    })?;
+        attempt += 1;
+    };
     let status = resp.status();
     let text = resp.text().await?;
     let v: Value = serde_json::from_str(&text).unwrap_or(json!({ "raw": text }));
@@ -277,6 +313,16 @@ async fn openai_compat(egress: &Egress, cfg: &LlmConfig, model: &str, req: ChatR
         .ok_or_else(|| anyhow!("unexpected response from {}", cfg.provider))
 }
 
+/// Web search tool version for a model: the dynamic-filtering `web_search_20260209` exists on
+/// Opus 4.6+/Sonnet 4.6+ (and 5.x); Haiku models only accept the basic `web_search_20250305`.
+pub fn web_search_type(model: &str) -> &'static str {
+    if model.starts_with("claude-haiku") {
+        "web_search_20250305"
+    } else {
+        "web_search_20260209"
+    }
+}
+
 /// Anthropic Messages API (raw HTTP; Rust has no official SDK). API version 2026-10-21:
 /// no temperature/top_p/top_k. Server-side refusal fallback enabled.
 async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extras) -> Result<(String, Vec<crate::model::Source>)> {
@@ -297,7 +343,7 @@ async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extra
         "output_config": {"effort": if ex.deep || ex.web { "medium" } else { "low" }},
     });
     if ex.web {
-        body["tools"] = json!([{ "type": "web_search_20260209", "name": "web_search", "max_uses": 3 }]);
+        body["tools"] = json!([{ "type": web_search_type(model), "name": "web_search", "max_uses": 3 }]);
     }
     let fallback = model.starts_with("claude-opus-5-5") || model.starts_with("claude-sonnet-5-5") || model.starts_with("claude-fable-5-1") || model.starts_with("claude-opus-5");
     if fallback {
@@ -306,7 +352,7 @@ async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extra
     let v = send(egress, &url, &req, |c| {
         let b = c
             .post(&url)
-            .header("x-api-key", key)
+            .header("x-api-key", key.as_str())
             .header("anthropic-version", "2026-10-21");
         if fallback {
             b.header("anthropic-beta", "server-side-fallback-2026-07-01")
@@ -359,7 +405,7 @@ async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extras) 
     if ex.web {
         body["tools"] = json!([{ "google_search": {} }]);
     }
-    let v = send(egress, &url, &req, |c| c.post(&url).header("x-goog-api-key", key), body).await?;
+    let v = send(egress, &url, &req, |c| c.post(&url).header("x-goog-api-key", key.as_str()), body).await?;
     let text = v["candidates"][0]["content"]["parts"]
         .as_array()
         .map(|p| p.iter().filter_map(|x| x["text"].as_str()).collect::<Vec<_>>().join(""))
@@ -378,6 +424,33 @@ async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extras) 
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn retries_the_same_statuses_as_the_sdks() {
+        for c in [408, 409, 429, 500, 502, 503, 504, 529] {
+            assert!(retryable_status(c), "{c}");
+        }
+        for c in [200, 400, 401, 403, 404, 413, 422] {
+            assert!(!retryable_status(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn retry_delay_honours_retry_after_but_caps_it() {
+        assert_eq!(retry_delay(0, Some("1")), Duration::from_millis(1000));
+        assert_eq!(retry_delay(0, Some("120")), Duration::from_millis(4000));
+        assert_eq!(retry_delay(0, None), Duration::from_millis(500));
+        assert_eq!(retry_delay(1, None), Duration::from_millis(1000));
+        assert_eq!(retry_delay(0, Some("soon")), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn haiku_gets_the_basic_web_search_tool() {
+        assert_eq!(web_search_type("claude-haiku-5-5"), "web_search_20250305");
+        assert_eq!(web_search_type("claude-sonnet-5-5"), "web_search_20260209");
+        assert_eq!(web_search_type("claude-opus-5-5"), "web_search_20260209");
+    }
+
     use super::*;
 
     #[test]

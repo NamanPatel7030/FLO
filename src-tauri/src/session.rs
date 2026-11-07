@@ -66,8 +66,9 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
             tauri::async_runtime::spawn_blocking(move || w.warm(&path));
         }
     }
-    // speed: transcribe finished sentences while still talking (dictation, on-device)
-    let stream = (local && mode == Mode::Dictation).then(|| std::sync::Arc::new(crate::state::StreamBuf::default()));
+    // speed: transcribe finished sentences while still talking (dictation and assistant, on-device),
+    // so on release only the last few seconds still need decoding
+    let stream = (local && matches!(mode, Mode::Dictation | Mode::Assistant)).then(|| std::sync::Arc::new(crate::state::StreamBuf::default()));
     let stream_task = stream.clone().map(|buf| tauri::async_runtime::spawn(stream_while_talking(st.clone(), started, buf)));
     *guard = Some(ActiveSession { mode, recorder, front, selection, started, screen, locked, stream, stream_task });
     // emit while holding the lock so a concurrent cancel/stop can't be overtaken by "listening"
@@ -188,6 +189,9 @@ async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<
 async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     let ActiveSession { mode, recorder, front, selection, started, screen, stream, stream_task, .. } = sess;
     let duration_ms = started.elapsed().as_millis() as u64;
+    // the notch flips to "transcribing" the instant the key is released — before we wait on the
+    // background decoder or stop the mic — so release always feels immediate
+    st.state(Phase::Transcribing, mode, None);
     // let the background transcriber finish the sentence it's on, then take what's left
     if let Some(buf) = &stream {
         buf.stop.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -288,6 +292,7 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
     if s.stt_provider == "local" {
         let path = stt::model_path(&st.models_dir, &s.stt_model).ok_or_else(|| anyhow!("Unknown speech model {}", s.stt_model))?;
         let w = st.whisper.clone();
+        *w.auto_langs.lock() = s.auto_languages.clone();
         let lang = lang_override.clone().unwrap_or_else(|| s.language.clone());
         let samples = audio::trim_silence(&samples);
         tokio::task::spawn_blocking(move || w.transcribe(&path, &samples, &lang, &prompt)).await?

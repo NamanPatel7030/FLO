@@ -426,7 +426,23 @@ pub fn needs_llm_cleanup(raw: &str) -> bool {
 }
 
 /// Should the assistant see the screen for this request? (OCR text is the biggest prompt cost.)
+/// "Draft / write / reply / wish …" — the user wants text written for the place they're in.
+/// These always get the screen (text + screenshot) so the draft answers what's actually there.
+pub fn is_writing_request(query: &str) -> bool {
+    let q = format!(" {} ", query.to_lowercase());
+    const CUES: &[&str] = &[
+        " draft", " write", " compose", " reply", " respond", " rewrite", " rephrase", " polish",
+        " message", " email", " e-mail", " mail ", " dm ", " wish", " congratulat", " caption", " tweet",
+        " post ", " comment", " follow up", " follow-up", " tell them", " tell him", " tell her",
+        " text him", " text her", " answer him", " answer her", " make it ", " make a message",
+    ];
+    CUES.iter().any(|c| q.contains(c))
+}
+
 pub fn wants_screen_context(query: &str) -> bool {
+    if is_writing_request(query) {
+        return true;
+    }
     let q = format!(" {} ", query.to_lowercase());
     const CUES: &[&str] = &[
         " screen", " this ", " this?", " this.", " these ", " here", " above", " below", " reply", " respond",
@@ -592,6 +608,19 @@ mod tests {
         assert!(wants_screen_context("what's on my screen"));
         assert!(!wants_screen_context("add a to-do to Apollo: send the deck"));
         assert!(!wants_screen_context("what's blocked across my projects"));
+        // drafting always sees the screen (the request that used to go out blind)
+        assert!(wants_screen_context("draft a message to the team for happy Dhanteras"));
+    }
+
+    #[test]
+    fn writing_requests_are_recognised() {
+        assert!(is_writing_request("draft a message to the team for happy Dhanteras"));
+        assert!(is_writing_request("write an email to Rahul about the invoice"));
+        assert!(is_writing_request("reply saying I'll join at six"));
+        assert!(is_writing_request("wish everyone a happy Diwali"));
+        assert!(!is_writing_request("open Slack"));
+        assert!(!is_writing_request("what's the weather"));
+        assert!(!is_writing_request("add a to-do to Apollo: send the deck"));
     }
 
     #[test]

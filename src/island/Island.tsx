@@ -388,6 +388,8 @@ export default function Island() {
   // demo driver (browser only, ?demo=…)
   useEffect(() => {
     const demo = new URLSearchParams(location.search).get("demo");
+    // browser-only hook for perf probes / tests (never present inside the app)
+    if (!isTauri) (window as unknown as { __floOpenWidgets?: () => void }).__floOpenWidgets = () => setWidgetsOpen(true);
     if (!isTauri && demo) return runDemo(demo, { setPos: (p) => handleHoverRef.current(p), setMeetingOpen, openHistory, openWidgets: () => setWidgetsOpen(true) });
   }, [openHistory]);
 
@@ -781,7 +783,6 @@ export default function Island() {
       }}
     >
       <motion.div
-        layout
         initial={false}
         animate={{ width: pill.width, height: pill.height, borderRadius: radius }}
         transition={SPRING}
@@ -864,9 +865,12 @@ export default function Island() {
             <motion.div
               key={shown + (shown === "claude" ? headClaude?.id : "") + (shown === "correction" ? headFix?.id : "")}
               className="absolute inset-0"
-              initial={{ opacity: 0, filter: "blur(6px)", scale: 0.97 }}
-              animate={{ opacity: 1, filter: "blur(0px)", scale: 1 }}
-              transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
+              // opacity + transform only: both run on the compositor (an animated blur filter
+              // repaints the whole card every frame and was the main source of stutter)
+              initial={{ opacity: 0, y: -4, scale: 0.985 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+              style={{ willChange: "opacity, transform", transformOrigin: "50% 0%" }}
             >
               {shown === "widgets" ? (
                 <Widgets
