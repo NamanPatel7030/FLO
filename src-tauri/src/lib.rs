@@ -383,6 +383,7 @@ pub fn run() {
             commands::open_claude_by_session,
             commands::dismiss_claude_session,
             commands::accept_correction,
+            commands::undo_correction,
             commands::list_integrations,
             commands::install_integration,
             commands::uninstall_integration,

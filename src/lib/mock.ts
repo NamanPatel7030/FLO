@@ -899,6 +899,12 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       dictionary.push(e);
       return e;
     }
+    case "undo_correction": {
+      for (let i = dictionary.length - 1; i >= 0; i--) {
+        if (dictionary[i].word.toLowerCase() === String(args.heard).toLowerCase()) dictionary.splice(i, 1);
+      }
+      return null;
+    }
     case "open_claude_session": {
       const ev = claudeEvents.find((e) => e.id === args.id);
       if (ev) ev.seen = true;

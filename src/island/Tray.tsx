@@ -387,6 +387,7 @@ export function CorrectionCard({
   geo,
   onSave,
   onIgnore,
+  onUndo,
 }: {
   c: CorrectionEvent;
   more: number;
@@ -394,8 +395,12 @@ export function CorrectionCard({
   geo: IslandGeometry;
   onSave: () => Promise<void>;
   onIgnore: () => void;
+  /** undo a correction Flo already saved */
+  onUndo: () => Promise<void>;
 }) {
-  const [saved, setSaved] = useState(false);
+  // learned automatically → apologise and offer Undo; otherwise ask (older behaviour)
+  const [state, setState] = useState<"learned" | "ask" | "saved" | "undone">(c.saved ? "learned" : "ask");
+  const learned = state === "learned" || state === "undone";
   return (
     <CardRow
       notch={notch}
@@ -403,10 +408,29 @@ export function CorrectionCard({
       testId="correction-card"
       icon={<Sparkles size={15} className="text-brand-300" />}
       actions={
-        saved ? (
+        state === "saved" ? (
           <motion.span initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-1 text-[11.5px] font-medium text-brand-200">
             <Check size={12} strokeWidth={3} /> Saved
           </motion.span>
+        ) : state === "undone" ? (
+          <motion.span initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="text-[11.5px] font-medium text-white/60">
+            Undone
+          </motion.span>
+        ) : state === "learned" ? (
+          <>
+            <button
+              className={btnGhost}
+              onClick={async () => {
+                await onUndo();
+                setState("undone");
+              }}
+            >
+              Undo
+            </button>
+            <button className={btnPrimary} onClick={onIgnore} aria-label="Got it">
+              Got it
+            </button>
+          </>
         ) : (
           <>
             <button className={btnGhost} onClick={onIgnore}>
@@ -418,7 +442,7 @@ export function CorrectionCard({
               title="Save to dictionary"
               onClick={async () => {
                 await onSave();
-                setSaved(true);
+                setState("saved");
               }}
             >
               Save
@@ -427,16 +451,17 @@ export function CorrectionCard({
         )
       }
     >
-      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white/55">
-        Did I mishear?
-        <span className="truncate font-normal text-white/35">· {c.app}</span>
-        {more > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
+      <div className="flex items-center gap-1.5">
+        <span className="truncate text-[13px] font-semibold">{learned ? "Sorry, my mistake" : "Did I mishear?"}</span>
+        {more > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10.5px] text-white/70">+{more}</span>}
       </div>
-      <div className="flex min-w-0 items-baseline gap-2 text-[14.5px]">
-        <span className="truncate text-white/40 line-through decoration-white/40">{c.heard}</span>
-        <span className="text-white/35">→</span>
-        <span className="truncate font-semibold text-brand-200 drop-shadow-[0_0_10px_rgba(102,206,255,0.45)]">{c.corrected}</span>
-      </div>
+      <p className="truncate text-[12.5px] leading-snug text-white/70">
+        {learned ? "Updated: " : ""}
+        <span className="text-white/45 line-through decoration-white/30">{c.heard}</span>
+        <span className="mx-1.5 text-white/40">→</span>
+        <span className="font-medium text-brand-200">{c.corrected}</span>
+        {learned && <span className="text-white/45"> from now on</span>}
+      </p>
     </CardRow>
   );
 }

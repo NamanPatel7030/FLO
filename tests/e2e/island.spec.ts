@@ -131,6 +131,22 @@ test("correction: 'Did I mishear?' → Save to dictionary", async ({ page }) => 
   expect(dict.some((d: any) => d.word === "tory" && d.replacement === "Tauri")).toBe(true);
 });
 
+test("correction: a fix Flo learned says sorry, shows old → new, and Undo removes it", async ({ page }) => {
+  await openIsland(page);
+  // the backend already saved it (auto-learn); the mock dictionary mirrors that
+  await page.evaluate(() => (window as any).__floMock.invoke("accept_correction", { heard: "tory", corrected: "Tauri" }));
+  await emit(page, "flo://correction", { id: "c2", heard: "tory", corrected: "Tauri", app: "Slack", saved: true });
+  const card = page.getByTestId("correction-card");
+  await expect(card).toContainText("Sorry, my mistake");
+  await expect(card).toContainText("tory");
+  await expect(card).toContainText("Tauri");
+  await expect(card).toContainText("from now on");
+  await card.getByRole("button", { name: "Undo" }).click();
+  await expect(card).toContainText("Undone");
+  const dict = await page.evaluate(() => (window as any).__floMock.invoke("list_dictionary"));
+  expect(dict.some((d: any) => d.word === "tory")).toBe(false);
+});
+
 test("meeting detection: prompt → Start notes starts a meeting", async ({ page }) => {
   await openIsland(page);
   await emit(page, "flo://meeting-detected", { app: "Zoom", active: true });

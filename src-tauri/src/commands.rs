@@ -594,6 +594,12 @@ pub fn accept_correction(st: State<Shared>, heard: String, corrected: String) ->
     st.db.add_dictionary(&heard, Some(&corrected)).map_err(e)
 }
 
+/// Undo a correction Flo learned automatically.
+#[tauri::command]
+pub fn undo_correction(st: State<Shared>, heard: String, corrected: String) -> R<()> {
+    crate::corrections::undo(&st, &heard, &corrected).map_err(e)
+}
+
 // ── integrations (Claude Code, Codex, Cursor, webhook) + Slack ───────────────
 #[tauri::command]
 pub fn list_integrations(st: State<Shared>) -> Vec<crate::agents::Integration> {

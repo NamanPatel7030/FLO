@@ -928,6 +928,10 @@ export default function Island() {
                     await api.acceptCorrection(headFix.heard, headFix.corrected).catch(() => {});
                     setTimeout(() => setCorrections((q) => q.filter((x) => x.id !== headFix.id)), 1300);
                   }}
+                  onUndo={async () => {
+                    await api.undoCorrection(headFix.heard, headFix.corrected).catch(() => {});
+                    setTimeout(() => setCorrections((q) => q.filter((x) => x.id !== headFix.id)), 1300);
+                  }}
                 />
               ) : shown === "meetingPrompt" && detected ? (
                 <MeetingPromptCard app={detected} notch={notch} geo={geo} onStart={() => startNotes(detected)} onLater={() => setPromptOpen(false)} />

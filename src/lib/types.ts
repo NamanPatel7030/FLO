@@ -407,6 +407,8 @@ export interface CorrectionEvent {
   /** what you changed it to */
   corrected: string;
   app: string;
+  /** Flo already saved it to the dictionary (the card offers Undo) */
+  saved?: boolean;
 }
 
 /** Another app started (active=true) or stopped using the microphone for a call. */

@@ -584,6 +584,9 @@ pub struct CorrectionEvent {
     pub heard: String,
     pub corrected: String,
     pub app: String,
+    /// already saved to the dictionary (the notch offers Undo instead of Save)
+    #[serde(default)]
+    pub saved: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
