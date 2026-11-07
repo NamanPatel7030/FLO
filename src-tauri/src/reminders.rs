@@ -30,7 +30,9 @@ pub fn spawn(st: Shared) {
                 let _ = st.db.mark_reminded(&t.id);
                 let when = t.due.as_deref().and_then(friendly_time).unwrap_or_default();
                 let body = if when.is_empty() { t.title.clone() } else { format!("{} · due {when}", t.title) };
-                notify("Reminder", &body);
+                if st.settings().system_notifications {
+                    notify("Reminder", &body);
+                }
                 // also surface it in the app + notch
                 st.emit(ev::TOAST, ToastEvent { kind: "info".into(), text: format!("Reminder: {body}") });
                 st.emit(ev::REMINDER, &t);

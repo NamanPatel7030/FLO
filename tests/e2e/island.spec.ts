@@ -404,3 +404,22 @@ test("reminder: card offers Done and Snooze, and each answers the to-do", async 
   const todos = await page.evaluate(() => (window as any).__floMock.invoke("list_todos"));
   expect(todos.find((t: any) => t.id === "t5").status).toBe("done");
 });
+
+test("notch size: Biggest opens the Claude session list larger", async ({ page }) => {
+  const width = async (size: string) => {
+    await page.goto(`${ISLAND.replace("#", `&notchSize=${size}#`)}`);
+    await page.waitForFunction(() => !!(window as any).__floMock);
+    await page.locator("[data-island-root]").waitFor();
+    await page.locator('[aria-label="todos"]').waitFor();
+    await page.waitForTimeout(150);
+    await emit(page, "flo://claude-sessions", [sess("a", "Flo", "done", "Built the notch tray"), sess("b", "api", "needs_approval", "Allow npm publish?")]);
+    const list = page.locator('[data-testid="session-list"]');
+    await hoverAgents(page, () => list.isVisible());
+    await expect(list).toBeVisible();
+    return (await page.locator(".island-tip").first().boundingBox())!.width;
+  };
+  const big = await width("big");
+  const biggest = await width("biggest");
+  expect(biggest / big).toBeGreaterThan(1.2);
+  expect(biggest / big).toBeLessThan(1.4);
+});

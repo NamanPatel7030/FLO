@@ -76,6 +76,16 @@ pub struct Settings {
     pub accent: String,
     /// notch animation: "ribbon" | "wave" | "bars" | "pulse" | "orb" | "aurora"
     pub notch_style: String,
+    /// how big hover panels (to-dos, Claude sessions, widgets) open: small | big | bigger | biggest
+    pub notch_size: String,
+    /// sound character: chime | glass | soft | pop
+    pub sound_pack: String,
+    /// 0–100
+    pub sound_volume: u8,
+    /// a soft chime when a reminder or a Claude card appears in the notch
+    pub notify_sound: bool,
+    /// macOS notification banners (reminders); the notch card shows either way
+    pub system_notifications: bool,
     /// two-stop gradient for the notch accent [from, to]; empty = derive from accent
     pub notch_gradient: Vec<String>,
     /// Flo Vault: automatically grow a local knowledge graph from your activity
@@ -120,6 +130,11 @@ impl Default for Settings {
             theme: "dark".into(),
             accent: "#3dbbff".into(),
             notch_style: "ribbon".into(),
+            notch_size: "big".into(),
+            sound_pack: "chime".into(),
+            sound_volume: 70,
+            notify_sound: true,
+            system_notifications: true,
             notch_gradient: vec![],
             vault_auto: true,
         }

@@ -50,6 +50,7 @@ import { loadWidgets, onWidgetsChange, widgetsBodyHeight, type WidgetId } from "
 import { applyTheme, onNotchPreview, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
 import { playCue } from "../lib/cueSounds";
+import { getNotchScale, setNotchScale } from "../lib/format";
 
 export interface MeetingInfo {
   live: boolean;
@@ -92,6 +93,12 @@ function urgentTodos(todos: Todo[]): Todo[] {
   return todos.filter(
     (t) => t.status === "open" && ((t.due && t.due.slice(0, 10) <= today) || (t.source === "attention" && new Date(t.createdAt).getTime() > dayAgo)),
   );
+}
+
+// chime for a new reminder / Claude card (Settings → Notch → Sounds); set from the component
+let notifyPrefs: { on: boolean; pack: "chime" | "glass" | "soft" | "pop"; vol: number } = { on: true, pack: "chime", vol: 0.7 };
+function notifyChime() {
+  playCue("notify", notifyPrefs.on, notifyPrefs.pack, notifyPrefs.vol);
 }
 
 export default function Island() {
@@ -258,7 +265,9 @@ export default function Island() {
   useEffect(() => {
     settingsRef.current = settings;
     if (settings) applyTheme(settings);
-  }, [settings?.theme, settings?.accent, settings?.notchGradient?.[0], settings?.notchGradient?.[1]]);
+    setNotchScale(settings?.notchSize);
+    notifyPrefs = { on: settings?.notifySound ?? true, pack: settings?.soundPack ?? "chime", vol: (settings?.soundVolume ?? 70) / 100 };
+  }, [settings?.theme, settings?.accent, settings?.notchGradient?.[0], settings?.notchGradient?.[1], settings?.notchSize, settings?.soundPack, settings?.soundVolume, settings?.notifySound]);
   useEffect(() => {
     const offs = [
       onSettingsBroadcast(() => api.getSettings().then(setSettings).catch(() => {})),
@@ -280,11 +289,13 @@ export default function Island() {
         lastStateAt.current = Date.now();
         // push-to-talk sound cues (island only, gated on playSounds)
         const snd = settingsRef.current?.playSounds ?? true;
+        const pack = settingsRef.current?.soundPack ?? "chime";
+        const vol = (settingsRef.current?.soundVolume ?? 70) / 100;
         if (e.phase !== phaseRef.current) {
-          if (e.phase === "listening") playCue("ready", snd);
-          else if (e.phase === "transcribing" || e.phase === "thinking") playCue("working", snd);
-          else if (e.phase === "done") playCue("done", snd);
-          else if (e.phase === "error") playCue("error", snd);
+          if (e.phase === "listening") playCue("ready", snd, pack, vol);
+          else if (e.phase === "transcribing" || e.phase === "thinking") playCue("working", snd, pack, vol);
+          else if (e.phase === "done") playCue("done", snd, pack, vol);
+          else if (e.phase === "error") playCue("error", snd, pack, vol);
           phaseRef.current = e.phase;
         }
         setPhase(e.phase);
@@ -306,10 +317,12 @@ export default function Island() {
       on<AssistantResponse>(EV.assistant, (r) => setCard(r)),
       on<ClaudeEvent | null>(EV.claude, (e) => {
         if (e && e.id) setClaudeQueue((q) => (q.some((x) => x.id === e.id) ? q : [...q, e]));
+        if (e && e.id) notifyChime();
       }),
       on<ClaudeSession[]>(EV.claudeSessions, (list) => setSessions(Array.isArray(list) ? list : [])),
       on<Todo>(EV.reminder, (t) => {
         if (t && t.id) setReminders((q) => (q.some((x) => x.id === t.id) ? q : [...q, t]));
+        notifyChime();
       }),
       on<null>(EV.todos, () => api.listTodos().then(setTodos).catch(() => {})),
       on<ConfirmEvent>(EV.confirm, (c) => c && c.id && setConfirms((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]))),
@@ -565,6 +578,8 @@ export default function Island() {
   const swell = false;
   const trayCounts = { trayLeft: trayItems.left.length, trayRight: trayItems.right.length };
 
+  // sizes below read the notch scale; set it during render so a size change applies on this render
+  setNotchScale(settings?.notchSize);
   const contentFor = (v: IslandVariant): CardContent | undefined => {
     switch (v) {
       case "card":
@@ -577,7 +592,7 @@ export default function Island() {
       case "history":
         return { rows: Math.max(1, history?.length ?? 1) };
       case "widgets":
-        return { widgetBody: widgetsBodyHeight(widgetIds) };
+        return { widgetBody: widgetsBodyHeight(widgetIds), scale: getNotchScale() };
       case "agent":
         return { agentSteps: agent?.steps.length ?? 0, agentDone: !!agent && agent.status !== "running" && agent.status !== "confirm" };
       case "collapsed":
@@ -587,7 +602,7 @@ export default function Island() {
       case "peek":
         return trayCounts;
       case "trayTooltip":
-        return { ...trayCounts, tipCx: layout?.slots[tipIdx]?.cx ?? 0, tipRows: tipItem?.kind === "agents" ? tipItem.sessions.length : undefined };
+        return { ...trayCounts, tipCx: layout?.slots[tipIdx]?.cx ?? 0, tipRows: tipItem?.kind === "agents" ? tipItem.sessions.length : undefined, scale: getNotchScale() };
       default:
         return undefined;
     }
@@ -776,7 +791,7 @@ export default function Island() {
     nh,
     tipH: (i: number) => {
       const it = trayItems.all[i];
-      return it && it.kind === "agents" ? trayTipHeight(it.sessions.length) : TRAY_TIP_H;
+      return it && it.kind === "agents" ? trayTipHeight(it.sessions.length) : trayTipHeight();
     },
   };
   const keys = {
@@ -900,6 +915,7 @@ export default function Island() {
             >
               {shown === "widgets" ? (
                 <Widgets
+                  scale={getNotchScale()}
                   top={notch ? geo.notchHeight : 0}
                   ids={widgetIds}
                   sessions={sessions}
@@ -1010,6 +1026,7 @@ export default function Island() {
             onStartNotes={startNotes}
             onIgnoreMeeting={ignoreMeeting}
             onOpenTodos={() => api.openDashboard("todos")}
+            scale={getNotchScale()}
           />
         )}
       </AnimatePresence>

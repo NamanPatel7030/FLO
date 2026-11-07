@@ -80,6 +80,15 @@ export interface Settings {
   /** Allow Attention text (never images) to reach a cloud LLM. Default false. */
   attentionCloudAllowed: boolean;
   playSounds: boolean;
+  /** hover panels size: small | big | bigger | biggest */
+  notchSize?: NotchSize;
+  soundPack?: "chime" | "glass" | "soft" | "pop";
+  /** 0–100 */
+  soundVolume?: number;
+  /** chime when a reminder / Claude card appears */
+  notifySound?: boolean;
+  /** macOS banners for reminders (the notch card shows either way) */
+  systemNotifications?: boolean;
   /** Typing speed used for "time saved" analytics */
   typingWpm: number;
   userName: string;
@@ -94,6 +103,7 @@ export interface Settings {
 }
 
 export type ThemeMode = "dark" | "light" | "system";
+export type NotchSize = "small" | "big" | "bigger" | "biggest";
 export type NotchStyle =
   | "ribbon"
   | "wave"
@@ -105,7 +115,11 @@ export type NotchStyle =
   | "comet"
   | "ripple"
   | "liquid"
-  | "constellation";
+  | "constellation"
+  | "helix"
+  | "neon"
+  | "sparkle"
+  | "equalizer";
 
 /** Built-in accent presets (name → hex); users can also pick a custom hex. */
 export const ACCENT_PRESETS: { name: string; accent: string; gradient: [string, string] }[] = [

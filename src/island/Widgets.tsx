@@ -28,11 +28,12 @@ import { WIDGET_META, type WidgetId } from "../lib/widgets";
 export type WidgetAction = "dictate" | "ask" | "meeting" | "dashboard" | "todos" | "customize";
 
 /** The panel that hangs below the notch. Renders the user's chosen widgets (customised in Settings). */
-export function Widgets({ top, ids, sessions, onAction }: { top: number; ids: WidgetId[]; sessions: ClaudeSession[]; onAction: (a: WidgetAction) => void }) {
+export function Widgets({ top, ids, sessions, onAction, scale = 1 }: { top: number; ids: WidgetId[]; sessions: ClaudeSession[]; onAction: (a: WidgetAction) => void; scale?: number }) {
   return (
     <div className="flex h-full flex-col">
       <div style={{ height: top }} />
-      <div className="flex-1 px-3 pb-3 pt-1">
+      {/* laid out at base size, zoomed to Settings → Notch size (the window is sized to match) */}
+      <div className="px-3 pb-3 pt-1" style={{ zoom: scale, width: `${100 / scale}%` }}>
         {ids.length === 0 ? (
           <button
             onClick={() => onAction("customize")}

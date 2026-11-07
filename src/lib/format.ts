@@ -1,4 +1,4 @@
-import type { ClaudeSession, ClaudeStatus, HotkeyCombo, IslandGeometry, Todo } from "./types";
+import type { ClaudeSession, ClaudeStatus, HotkeyCombo, IslandGeometry, Todo, NotchSize } from "./types";
 
 const URGENCY: Record<ClaudeStatus, number> = { needs_approval: 0, waiting_reply: 1, done: 2, working: 3 };
 /** Most urgent first: needs_approval > waiting_reply > done > working; newest first within a status. */
@@ -169,13 +169,22 @@ export const SWELL_Y = 3;
 /** Extra transparent room below a swollen island so the glow isn't clipped. */
 const GLOW_ROOM = 8;
 export const TRAY_TIP_W = 340;
+
+/** Settings → Notch → Size: how big hover panels (to-do / Claude lists, widgets) open. */
+export const NOTCH_SCALES: Record<NotchSize, number> = { small: 0.88, big: 1, bigger: 1.15, biggest: 1.3 };
+let notchScale = 1;
+/** One scale for every piece of hover-panel geometry, so sizing and hit-testing always agree. */
+export function setNotchScale(size: NotchSize | undefined) {
+  notchScale = NOTCH_SCALES[size ?? "big"] ?? 1;
+}
+export const getNotchScale = () => notchScale;
 export const TRAY_TIP_H = 118;
 const TRAY_TIP_GAP = 8;
 /** Row height in the all-sessions list tooltip. */
 export const TRAY_LIST_ROW = 36;
 /** Tooltip height: single item card, or a list of `rows` sessions (max 6 visible). */
 /** session list: header 38 + rows (max 6, then scroll) + footer 32 ("Clear done") */
-export const trayTipHeight = (rows?: number) => (rows ? 38 + Math.min(rows, 6) * TRAY_LIST_ROW + 38 : TRAY_TIP_H);
+export const trayTipHeight = (rows?: number) => Math.round((rows ? 38 + Math.min(rows, 6) * TRAY_LIST_ROW + 38 : TRAY_TIP_H) * notchScale);
 
 export interface TraySlot {
   side: "left" | "right";
@@ -213,7 +222,8 @@ export function hitTestTray(slots: TraySlot[], winW: number, x: number, y: numbe
 
 /** Tooltip rect in centre-relative coordinates (left/right are offsets from the window centre). */
 export function tipRectC(slotCx: number, nh: number, h: number = TRAY_TIP_H) {
-  return { left: slotCx - TRAY_TIP_W / 2, right: slotCx + TRAY_TIP_W / 2, top: nh + TRAY_TIP_GAP, bottom: nh + TRAY_TIP_GAP + h };
+  const w = TRAY_TIP_W * notchScale;
+  return { left: slotCx - w / 2, right: slotCx + w / 2, top: nh + TRAY_TIP_GAP, bottom: nh + TRAY_TIP_GAP + h };
 }
 
 /**
@@ -237,8 +247,9 @@ export function pickTip(prev: number, slots: TraySlot[], cx: number, y: number, 
 
 /** Tooltip card under a tray item (window-relative). The window is sized to fit it centred. */
 export function tooltipRect(winW: number, cx: number, nh: number, h: number = TRAY_TIP_H): { x: number; y: number; w: number; h: number } {
-  const x = Math.min(Math.max(winW / 2 + cx - TRAY_TIP_W / 2, 8), Math.max(8, winW - TRAY_TIP_W - 8));
-  return { x, y: nh + TRAY_TIP_GAP, w: TRAY_TIP_W, h };
+  const w = Math.round(TRAY_TIP_W * notchScale);
+  const x = Math.min(Math.max(winW / 2 + cx - w / 2, 8), Math.max(8, winW - w - 8));
+  return { x, y: nh + TRAY_TIP_GAP, w, h };
 }
 
 /** Peek quick-action tile under (x, y)? Tiles share the pill width below the notch. */
@@ -266,6 +277,8 @@ export const ISLAND_GAP = 6;
 
 /** Content hints used to size cards so nothing is ever clipped. */
 export interface CardContent {
+  /** notch size scale (changes re-run the resize) */
+  scale?: number;
   replyChars?: number;
   results?: number;
   /** characters of the error / result text */
@@ -322,7 +335,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
         return content?.swell ? { width: tray.width + 2 * SWELL_X, height: nh + SWELL_Y + GLOW_ROOM } : { width: tray.width, height: nh };
       case "trayTooltip": {
         const cx = Math.abs(content?.tipCx ?? 0);
-        const w = Math.max(tray.width, 2 * cx + TRAY_TIP_W + 16);
+        const w = Math.max(tray.width, Math.round(2 * cx + TRAY_TIP_W * notchScale + 16));
         return { width: w + (w % 2), height: nh + TRAY_TIP_GAP + trayTipHeight(content?.tipRows) + 8 };
       }
       // content cards: notch row empty, then ONE row (icon + text + actions)
@@ -335,7 +348,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "peek":
         return { width: Math.max(nw + 2 * 160, hasTray ? tray.width : 0), height: nh + 54 };
       case "widgets":
-        return { width: 380, height: nh + ISLAND_GAP + (content?.widgetBody ?? 232) };
+        return { width: Math.round(380 * notchScale), height: nh + ISLAND_GAP + Math.round((content?.widgetBody ?? 232) * notchScale) };
       case "agent":
         // top gap + header row + bottom padding, then a taller body while running vs a one-line result
         return { width: 468, height: nh + 54 + (content?.agentDone ? 28 : 58) };

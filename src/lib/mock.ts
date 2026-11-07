@@ -81,6 +81,11 @@ const settings: Settings = {
   attentionDenylist: ["1Password", "Keychain Access", "Banking"],
   attentionCloudAllowed: false,
   playSounds: true,
+  notchSize: "big",
+  soundPack: "chime",
+  soundVolume: 70,
+  notifySound: true,
+  systemNotifications: true,
   typingWpm: 40,
   userName: "Parth",
   theme: "dark",
@@ -484,6 +489,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── account (signed out by default; ?signedin=1 or localStorage flo.mock.signedin=1 bypasses) ──
 const qs = () => (typeof location === "undefined" ? new URLSearchParams() : new URLSearchParams(location.search));
+// demos / tests can open the island at a notch size: ?notchSize=biggest
+{
+  const z = qs().get("notchSize");
+  if (z === "small" || z === "big" || z === "bigger" || z === "biggest") settings.notchSize = z;
+}
 const mockSignedIn = (() => {
   try {
     return qs().has("signedin") || localStorage.getItem("flo.mock.signedin") === "1";

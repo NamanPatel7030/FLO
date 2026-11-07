@@ -35,6 +35,7 @@ export function NotchViz({
   leftWing,
   bright = false,
   sim = false,
+  single = false,
 }: {
   style?: NotchStyle;
   accent?: string;
@@ -47,6 +48,8 @@ export function NotchViz({
   bright?: boolean;
   /** synthesize a "speaking" level envelope (for gallery previews, no mic) */
   sim?: boolean;
+  /** one segment across the whole width (previews), instead of two wings around the notch */
+  single?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const live = useRef({ mode, leftWing, bright, level: 0, sim });
@@ -123,10 +126,12 @@ export function NotchViz({
       //   transcribe → left: spinning arc · right: glyph ticks streaming (sound → text)
       //   think      → left: breathing rings · right: a calm flowing sheen
       const working = L.mode === "transcribe" || L.mode === "think";
-      const segList: { x0: number; x1: number; a: number; side: "left" | "right" }[] = [
-        { x0: pad, x1: wing - pad / 2, a: leftAlpha, side: "left" },
-        { x0: width - wing + pad / 2, x1: width - pad, a: 1, side: "right" },
-      ];
+      const segList: { x0: number; x1: number; a: number; side: "left" | "right" }[] = single
+        ? [{ x0: pad * 2, x1: width - pad * 2, a: 1, side: "right" }]
+        : [
+            { x0: pad, x1: wing - pad / 2, a: leftAlpha, side: "left" },
+            { x0: width - wing + pad / 2, x1: width - pad, a: 1, side: "right" },
+          ];
       for (const s of segList) {
         if (s.a < 0.02 || s.x1 <= s.x0) continue;
         const a0 = s.a * fade * (L.bright ? 1 : 0.9);
@@ -138,7 +143,7 @@ export function NotchViz({
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [width, height, notchWidth, wing, style, accent]);
+  }, [width, height, notchWidth, wing, style, accent, single]);
 
   return (
     <canvas
@@ -289,6 +294,14 @@ function drawStyle(g: CanvasRenderingContext2D, style: NotchStyle, c: Ctx) {
       return drawRipple(g, c);
     case "liquid":
       return drawLiquid(g, c);
+    case "helix":
+      return drawHelix(g, c);
+    case "neon":
+      return drawNeon(g, c);
+    case "sparkle":
+      return drawSparkle(g, c);
+    case "equalizer":
+      return drawEqualizer(g, c);
     case "constellation":
       return drawConstellation(g, c);
     default:
@@ -574,4 +587,120 @@ function drawAurora(g: CanvasRenderingContext2D, c: Ctx) {
 /** Back-compat alias: the original ribbon style. Used by Onboarding / SignIn. */
 export function Ribbon(props: Omit<Parameters<typeof NotchViz>[0], "style">) {
   return <NotchViz style="ribbon" {...props} />;
+}
+
+// ── newer styles ────────────────────────────────────────────────────────────
+const frac = (v: number) => v - Math.floor(v);
+const mixRgb = (a: [number, number, number], b: [number, number, number], p: number): [number, number, number] => [
+  Math.round(a[0] + (b[0] - a[0]) * p),
+  Math.round(a[1] + (b[1] - a[1]) * p),
+  Math.round(a[2] + (b[2] - a[2]) * p),
+];
+
+// two strands twisting around each other; the front strand is brighter, rungs join them
+function drawHelix(g: CanvasRenderingContext2D, c: Ctx) {
+  const n = Math.max(12, Math.floor(c.w / 8));
+  const A = c.height * 0.24 * (0.45 + c.amp * 1.4);
+  for (let i = 0; i <= n; i++) {
+    const p = i / n;
+    const x = c.x0 + c.w * p;
+    const ph = p * Math.PI * 4 + c.t * 2.2 * c.speed;
+    const y1 = c.mid + Math.sin(ph) * A;
+    const y2 = c.mid - Math.sin(ph) * A;
+    const z = (Math.cos(ph) + 1) / 2; // 0 back … 1 front
+    const edge = Math.sin(Math.PI * p);
+    if (i % 2 === 0) {
+      g.strokeStyle = c.rgba(c.col.a, 0.22 * c.alpha * edge);
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(x, y1);
+      g.lineTo(x, y2);
+      g.stroke();
+    }
+    for (const [y, front, col] of [
+      [y1, z, c.col.soft],
+      [y2, 1 - z, c.col.from],
+    ] as [number, number, [number, number, number]][]) {
+      g.fillStyle = c.rgba(col, (0.35 + 0.6 * front) * c.alpha * edge);
+      g.beginPath();
+      g.arc(x, y, 1 + 1.2 * front, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+}
+
+// a single glowing tube of light that breathes with your voice
+function drawNeon(g: CanvasRenderingContext2D, c: Ctx) {
+  const A = c.height * 0.3 * (0.2 + c.amp * 1.3);
+  const path = () => {
+    g.beginPath();
+    for (let x = c.x0; x <= c.x1; x += 2) {
+      const p = (x - c.x0) / c.w;
+      const env = Math.sin(Math.PI * p);
+      const y = c.mid + Math.sin(p * Math.PI * 3 + c.t * 3 * c.speed) * A * env * (0.7 + 0.3 * Math.sin(p * 9 - c.t * 5 * c.speed));
+      if (x === c.x0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+  };
+  g.save();
+  g.lineCap = "round";
+  g.lineJoin = "round";
+  g.shadowColor = c.rgba(c.col.a, 0.9 * c.alpha);
+  g.shadowBlur = 10;
+  g.strokeStyle = c.rgba(c.col.a, 0.5 * c.alpha);
+  g.lineWidth = 3.4;
+  path();
+  g.stroke();
+  g.shadowBlur = 0;
+  g.strokeStyle = c.rgba(c.col.soft, 0.95 * c.alpha);
+  g.lineWidth = 1.2;
+  path();
+  g.stroke();
+  g.restore();
+}
+
+// twinkling particles that rise faster and brighter the louder you speak
+function drawSparkle(g: CanvasRenderingContext2D, c: Ctx) {
+  const n = Math.round(10 + c.w / 12);
+  for (let i = 0; i < n; i++) {
+    const r = frac(Math.sin(i * 12.9898) * 43758.5453);
+    const r2 = frac(Math.sin(i * 78.233) * 24634.6345);
+    const x = c.x0 + c.w * r;
+    const life = frac(c.t * (0.22 + r2 * 0.35) * c.speed + r);
+    const y = c.height * 0.88 - life * c.height * 0.75 * (0.55 + c.amp);
+    const tw = Math.sin(life * Math.PI);
+    const size = (0.6 + r2 * 1.3) * (0.7 + c.amp);
+    const a = tw * c.alpha * (0.35 + 0.65 * Math.min(1, c.amp * 2));
+    g.fillStyle = c.rgba(r2 > 0.5 ? c.col.soft : c.col.a, a);
+    g.beginPath();
+    g.arc(x, y, size, 0, Math.PI * 2);
+    g.fill();
+    if (r2 > 0.62) {
+      g.strokeStyle = c.rgba(c.col.soft, a * 0.6);
+      g.lineWidth = 0.7;
+      g.beginPath();
+      g.moveTo(x - size * 3, y);
+      g.lineTo(x + size * 3, y);
+      g.moveTo(x, y - size * 3);
+      g.lineTo(x, y + size * 3);
+      g.stroke();
+    }
+  }
+}
+
+// mirrored rounded bars around the centre line, coloured across the accent gradient
+function drawEqualizer(g: CanvasRenderingContext2D, c: Ctx) {
+  const n = Math.max(8, Math.floor(c.w / 7));
+  const bw = Math.max(2, (c.w / n) * 0.55);
+  for (let i = 0; i < n; i++) {
+    const p = (i + 0.5) / n;
+    const x = c.x0 + c.w * p;
+    const env = 0.35 + 0.65 * Math.sin(Math.PI * p);
+    const jitter = 0.55 + 0.45 * Math.abs(Math.sin(i * 1.7 + c.t * (4 + (i % 3)) * c.speed));
+    const h = Math.max(1.5, c.height * 0.4 * env * (0.12 + c.amp * 1.1) * jitter);
+    g.fillStyle = c.rgba(mixRgb(c.col.from, c.col.to, p), 0.9 * c.alpha);
+    g.beginPath();
+    g.roundRect(x - bw / 2, c.mid - h, bw, h * 2, bw / 2);
+    g.fill();
+  }
 }

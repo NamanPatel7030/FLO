@@ -244,7 +244,9 @@ export function TrayTooltip({
   onStartNotes,
   onIgnoreMeeting,
   onOpenTodos,
+  scale = 1,
 }: {
+  scale?: number;
   item: TrayItem;
   rect: { x: number; y: number; w: number; h: number };
   onOpen: (s: ClaudeSession) => void;
@@ -261,10 +263,12 @@ export function TrayTooltip({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -4, scale: 0.98 }}
       transition={{ type: "spring", stiffness: 480, damping: 34 }}
-      className="island-tip absolute z-20 flex flex-col overflow-hidden rounded-2xl px-3 py-2.5 text-white"
+      className="island-tip absolute z-20 overflow-hidden rounded-2xl text-white"
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, transformOrigin: "top center" }}
       onClick={(e) => e.stopPropagation()}
     >
+      {/* content laid out at base size, zoomed to the Settings → Notch size (rect is already scaled) */}
+      <div className="flex flex-col px-3 py-2.5" style={{ width: rect.w / scale, height: rect.h / scale, zoom: scale }}>
       {item.kind === "agents" && (
         <div className="flex h-full flex-col" data-testid="session-list">
           <div className="mb-1 flex h-[26px] shrink-0 items-center gap-1.5 text-[12px] font-semibold text-white/85">
@@ -340,6 +344,7 @@ export function TrayTooltip({
           </div>
         </>
       )}
+      </div>
     </motion.div>
   );
 }
