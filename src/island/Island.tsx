@@ -107,6 +107,8 @@ export default function Island() {
   const [result, setResult] = useState<string | null>(null);
   const [history, setHistory] = useState<Dictation[] | null>(null);
   const [claudeQueue, setClaudeQueue] = useState<ClaudeEvent[]>([]);
+  /** to-do reminders waiting for Done / Snooze (oldest first) */
+  const [reminders, setReminders] = useState<Todo[]>([]);
   const [meeting, setMeeting] = useState<MeetingInfo>({ live: false, startedAt: 0 });
   const [meetingOpen, setMeetingOpen] = useState(false);
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
@@ -306,6 +308,9 @@ export default function Island() {
         if (e && e.id) setClaudeQueue((q) => (q.some((x) => x.id === e.id) ? q : [...q, e]));
       }),
       on<ClaudeSession[]>(EV.claudeSessions, (list) => setSessions(Array.isArray(list) ? list : [])),
+      on<Todo>(EV.reminder, (t) => {
+        if (t && t.id) setReminders((q) => (q.some((x) => x.id === t.id) ? q : [...q, t]));
+      }),
       on<null>(EV.todos, () => api.listTodos().then(setTodos).catch(() => {})),
       on<ConfirmEvent>(EV.confirm, (c) => c && c.id && setConfirms((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]))),
       on<CorrectionEvent>(EV.correction, (c) => c && setCorrections((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]))),
@@ -446,6 +451,25 @@ export default function Island() {
     return () => clearTimeout(t);
   }, [card, hover, followup]);
 
+  const headReminder = reminders[0];
+  // a reminder waits for an answer; it only steps aside after 2 minutes (paused while hovered)
+  useEffect(() => {
+    if (!headReminder || hover) return;
+    const t = setTimeout(() => setReminders((q) => q.slice(1)), 120_000);
+    return () => clearTimeout(t);
+  }, [headReminder, hover]);
+  const answerReminder = useCallback((a: "done" | "snooze" | "open" | "dismiss") => {
+    setReminders((q) => {
+      const t = q[0];
+      if (t) {
+        if (a === "done") api.updateTodo(t.id, { status: "done" }).catch(() => {});
+        else if (a === "snooze") api.snoozeTodo(t.id, 10).catch(() => {});
+        else if (a === "open") api.openDashboard("todos");
+      }
+      return q.slice(1);
+    });
+  }, []);
+
   const headClaude = claudeQueue[0];
   useEffect(() => {
     if (!headClaude || hover) return;
@@ -525,6 +549,7 @@ export default function Island() {
     if (agent) return "agent";
     if (promptOpen && detected && !meeting.live) return "meetingPrompt";
     if (card) return "card";
+    if (headReminder) return "reminder";
     if (headClaude) return "claude";
     if (history) return "history";
     if (meeting.live) return meetingOpen ? "meetingExpanded" : "meeting";
@@ -534,7 +559,7 @@ export default function Island() {
     if (hover && dwell) return "peek";
     if (trayItems.all.length) return "tray";
     return "collapsed";
-  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headClaude, history, meeting.live, meetingOpen, widgetsOpen, preview, hover, dwell, tipItem, trayItems.all.length]);
+  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headReminder, headClaude, history, meeting.live, meetingOpen, widgetsOpen, preview, hover, dwell, tipItem, trayItems.all.length]);
 
   // no expansion before the dwell completes (prevents an enter-resize that could feed back into hover)
   const swell = false;
@@ -619,6 +644,7 @@ export default function Island() {
       else if (card) setCard(null);
       else if (result) setResult(null);
       else if (phase === "error") setPhase("idle");
+      else if (headReminder) setReminders((q) => q.slice(1));
       else if (headClaude) setClaudeQueue((q) => q.slice(1));
       else if (promptOpen) setPromptOpen(false);
       else setMeetingOpen(false);
@@ -633,7 +659,7 @@ export default function Island() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", onBlur);
     };
-  }, [phase, mode, card, headClaude, history, result, headFix, promptOpen, agent, widgetsOpen]);
+  }, [phase, mode, card, headReminder, headClaude, history, result, headFix, promptOpen, agent, widgetsOpen]);
 
   // watchdog: if the backend stopped confirming activity, return to idle (never spin forever)
   useEffect(() => {
@@ -727,7 +753,7 @@ export default function Island() {
             ? { width: trayW - 2 * EAR, height: geo.notchHeight }
             : { width: size.width - EAR * 2, height: size.height }
     : { width: size.width - 24, height: size.height - 24 };
-  const bigCard = ["card", "claude", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm"].includes(shown);
+  const bigCard = ["card", "claude", "reminder", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm"].includes(shown);
   const radius = notch
     ? collapsed
       ? "0 0 9px 9px"
@@ -921,6 +947,8 @@ export default function Island() {
                   result={result}
                   history={history}
                   claude={headClaude}
+                  reminder={headReminder}
+                  onReminder={answerReminder}
                   claudeMore={Math.max(0, claudeQueue.length - 1)}
                   meeting={meeting}
                   hotTile={hotTile}

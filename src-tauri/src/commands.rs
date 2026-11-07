@@ -203,6 +203,15 @@ pub fn add_todo(st: State<Shared>, title: String, project_id: Option<String>, du
     Ok(t)
 }
 
+/// Remind me again in `minutes` (the notch reminder's Snooze).
+#[tauri::command]
+pub fn snooze_todo(st: State<Shared>, id: String, minutes: u32) -> R<()> {
+    let at = (chrono::Local::now() + chrono::Duration::minutes(minutes.clamp(1, 24 * 60) as i64)).to_rfc3339();
+    st.db.set_remind(&id, Some(&at)).map_err(e)?;
+    st.emit(ev::TODOS, ());
+    Ok(())
+}
+
 #[tauri::command]
 pub fn update_todo(st: State<Shared>, id: String, status: Option<String>, title: Option<String>, project_id: Option<Option<String>>) -> R<()> {
     st.db.update_todo(&id, status.as_deref(), title.as_deref(), project_id).map_err(e)?;

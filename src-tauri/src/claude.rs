@@ -280,7 +280,15 @@ pub fn parse_hook_from(body: &Value, transcript: Option<&str>, bundle: Option<St
 }
 
 /// Seconds a "working" session's transcript may stay untouched before we call it finished.
-pub const WORKING_IDLE_SECS: u64 = 150;
+/// Long: a foreground command (a build, a test run) writes nothing to the transcript while it runs,
+/// and 150 s used to call those sessions "done" mid-build.
+pub const WORKING_IDLE_SECS: u64 = 600;
+/// …and while background tasks it launched are still unreported (e.g. a dev server left running).
+pub const WORKING_IDLE_PENDING_SECS: u64 = 1800;
+/// A Stop is only announced as "Claude finished" if Claude stays quiet this long afterwards.
+pub const STOP_CONFIRM_SECS: u64 = 15;
+/// A "done" session whose transcript is written this long after it finished is working again.
+const REVIVE_AFTER_SECS: i64 = 20;
 
 /// Sessions marked "working" whose transcript has gone quiet are actually done (a Stop event can be
 /// missed — e.g. Flo restarting, or background sessions reporting under another id).
@@ -289,9 +297,14 @@ pub fn settle_idle_sessions(st: &Shared) {
     for s in list.into_iter().filter(|s| s.status == "working") {
         let Some(path) = s.transcript_path.as_deref() else { continue };
         let Ok(meta) = std::fs::metadata(path) else { continue };
-        let quiet = meta.modified().ok().and_then(|m| m.elapsed().ok()).map(|d| d.as_secs() >= WORKING_IDLE_SECS).unwrap_or(false);
-        if quiet {
-            let last = safe_transcript(path).and_then(|t| last_assistant_text(&t)).map(|m| headline(&m)).unwrap_or_default();
+        let idle = meta.modified().ok().and_then(|m| m.elapsed().ok()).map(|d| d.as_secs()).unwrap_or(0);
+        if idle < WORKING_IDLE_SECS {
+            continue;
+        }
+        let tail = safe_transcript(path);
+        let pending = tail.as_deref().map(pending_background).unwrap_or(0);
+        if pending == 0 || idle >= WORKING_IDLE_PENDING_SECS {
+            let last = tail.and_then(|t| last_assistant_text(&t)).map(|m| headline(&m)).unwrap_or_default();
             let _ = st.db.settle_claude_session(&s.session_id, &last);
         }
     }
@@ -374,10 +387,109 @@ fn safe_transcript(path: &str) -> Option<String> {
     if !canon.starts_with(&home) || canon.extension().and_then(|e| e.to_str()) != Some("jsonl") {
         return None;
     }
-    // only the tail matters
-    let data = std::fs::read(&canon).ok()?;
-    let start = data.len().saturating_sub(512 * 1024);
-    Some(String::from_utf8_lossy(&data[start..]).to_string())
+    // only the tail matters (transcripts grow to tens of MB; don't read all of it)
+    read_from(&canon, std::fs::metadata(&canon).ok()?.len().saturating_sub(512 * 1024))
+}
+
+/// Path of a transcript the hook named, only if it's a .jsonl under the home dir.
+fn checked_transcript(path: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let canon = PathBuf::from(path).canonicalize().ok()?;
+    (canon.starts_with(&home) && canon.extension().and_then(|e| e.to_str()) == Some("jsonl")).then_some(canon)
+}
+
+/// Text of a file from byte `offset` (at most 512 KB).
+fn read_from(path: &Path, offset: u64) -> Option<String> {
+    use std::io::{Read as _, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    let mut buf = Vec::new();
+    f.take(512 * 1024).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).to_string())
+}
+
+/// Did Claude do anything in these transcript lines (a reply, a tool call or its result, a task
+/// notification)? Bookkeeping lines Claude Code appends after a Stop don't count.
+pub fn has_activity(jsonl: &str) -> bool {
+    jsonl.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).any(|v| v["type"] == "assistant" || v["type"] == "user")
+}
+
+/// Is this transcript line a prompt the user typed (not a tool result, task notification or
+/// injected reminder)? A new prompt starts a new turn.
+fn is_user_prompt(v: &Value) -> bool {
+    if v["type"] != "user" || v["isMeta"].as_bool() == Some(true) {
+        return false;
+    }
+    let looks_injected = |t: &str| {
+        let t = t.trim_start();
+        t.starts_with("<task-notification>") || t.starts_with("<system-reminder>") || t.starts_with("<local-command")
+    };
+    match &v["message"]["content"] {
+        Value::String(s) => !looks_injected(s),
+        Value::Array(blocks) => {
+            !blocks.iter().any(|b| b["type"] == "tool_result")
+                && blocks.iter().filter(|b| b["type"] == "text").any(|b| !looks_injected(b["text"].as_str().unwrap_or("")))
+        }
+        _ => false,
+    }
+}
+
+/// IDs that follow `marker` in `text` (alphanumeric runs).
+fn ids_after<'a>(text: &'a str, marker: &str) -> Vec<&'a str> {
+    text.match_indices(marker)
+        .filter_map(|(i, _)| {
+            let rest = &text[i + marker.len()..];
+            let end = rest.find(|c: char| !c.is_ascii_alphanumeric()).unwrap_or(rest.len());
+            (end > 0).then(|| &rest[..end])
+        })
+        .collect()
+}
+
+/// Background work (run_in_background commands, background subagents) launched in the current
+/// turn that hasn't reported a final status yet. Claude Code fires Stop when Claude ends its turn
+/// to wait for these, then resumes when they finish, so the session isn't really done. Only the
+/// current turn counts, so a dev server started long ago doesn't keep a session "working" forever.
+pub fn pending_background(jsonl: &str) -> usize {
+    const FINAL: &[&str] = &["completed", "failed", "stopped", "killed", "cancelled", "canceled", "error", "timeout"];
+    let mut launched: Vec<String> = vec![];
+    let mut finished: HashSet<String> = HashSet::new();
+    for line in jsonl.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        if v["type"] != "user" {
+            continue;
+        }
+        if is_user_prompt(&v) {
+            launched.clear();
+        }
+        let text = v["message"]["content"].to_string();
+        for marker in ["Command running in background with ID: ", "agentId: "] {
+            launched.extend(ids_after(&text, marker).into_iter().map(String::from));
+        }
+        for note in text.split("<task-notification>").skip(1) {
+            let id = note.split("<task-id>").nth(1).and_then(|r| r.split("</task-id>").next());
+            let status = note.split("<status>").nth(1).and_then(|r| r.split("</status>").next());
+            if let (Some(id), Some(status)) = (id, status) {
+                if FINAL.contains(&status.trim()) {
+                    finished.insert(id.trim().to_string());
+                }
+            }
+        }
+    }
+    launched.iter().filter(|id| !finished.contains(*id)).collect::<HashSet<_>>().len()
+}
+
+/// "done" sessions whose transcript moved well after they finished → working again.
+pub fn revive_resumed_sessions(st: &Shared) {
+    let Ok(list) = st.db.list_claude_sessions() else { return };
+    for s in list.into_iter().filter(|s| s.status == "done") {
+        let Some(path) = s.transcript_path.as_deref().and_then(checked_transcript) else { continue };
+        let Some(modified) = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok()) else { continue };
+        let Ok(done_at) = chrono::DateTime::parse_from_rfc3339(&s.updated_at) else { continue };
+        let modified: chrono::DateTime<chrono::Local> = modified.into();
+        if modified.signed_duration_since(done_at).num_seconds() >= REVIVE_AFTER_SECS {
+            let _ = st.db.revive_claude_session(&s.session_id);
+        }
+    }
 }
 
 pub fn emit_sessions(st: &Shared) {
@@ -410,6 +522,50 @@ pub fn refresh_if_installed(st: &Shared) {
             }
         }
     }
+}
+
+/// Claude ended a turn. That is not always "finished": it also ends a turn to wait for background
+/// work, and resumes when that reports back. So: background work pending → still working, no card;
+/// otherwise wait a few seconds and only announce "Claude finished" if it stayed quiet.
+fn on_stop(st: &Shared, ev: ClaudeEvent, transcript: Option<&str>, transcript_path: Option<&str>) {
+    let pending = transcript.map(pending_background).unwrap_or(0);
+    if pending > 0 {
+        let mut waiting = ev;
+        waiting.message = format!("Waiting on {pending} background task{}", if pending == 1 { "" } else { "s" });
+        if let Err(e) = st.db.apply_claude_event(&waiting, Some("working")) {
+            log::error!("claude session: {e}");
+        }
+        log::info!("claude {}: stop with {pending} background task(s) pending; still working", waiting.project);
+        emit_sessions(st);
+        return;
+    }
+    let path = transcript_path.and_then(checked_transcript);
+    let offset = path.as_deref().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
+    let st = st.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(STOP_CONFIRM_SECS)).await;
+        // a newer event for this session (a new prompt, a permission request) supersedes this Stop
+        if let Ok(Some(s)) = st.db.get_claude_session(&ev.session_id) {
+            if s.updated_at > ev.at {
+                return;
+            }
+        }
+        // Claude carried on after stopping (replied, called a tool, got a task notification)
+        if let (Some(p), Some(off)) = (path.as_deref(), offset) {
+            if read_from(p, off).map(|t| has_activity(&t)).unwrap_or(false) {
+                log::info!("claude {}: stop superseded by more activity; not announcing", ev.project);
+                return;
+            }
+        }
+        if let Err(e) = st.db.apply_claude_event(&ev, Some("done")) {
+            log::error!("claude session: {e}");
+        }
+        emit_sessions(&st);
+        if let Err(e) = st.db.insert_claude_event(&ev) {
+            log::error!("store claude event: {e}");
+        }
+        st.emit(ev::CLAUDE, ev);
+    });
 }
 
 pub fn spawn_listener(st: Shared) {
@@ -462,6 +618,10 @@ pub fn spawn_listener(st: Shared) {
                     let transcript = v["transcript_path"].as_str().and_then(safe_transcript);
                     let ev = parse_hook_from(&v, transcript.as_deref(), bundle, term);
                     let Some(status) = session_status(&ev) else { continue };
+                    if ev.kind == "stop" {
+                        on_stop(&st, ev, transcript.as_deref(), v["transcript_path"].as_str());
+                        continue;
+                    }
                     (ev, status)
                 };
                 if let Err(e) = st.db.apply_claude_event(&ev, status) {
@@ -487,6 +647,7 @@ pub fn spawn_listener(st: Shared) {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             // working → done when the transcript went quiet (missed Stop events)
             let before = st2.db.list_claude_sessions().unwrap_or_default();
+            revive_resumed_sessions(&st2);
             settle_idle_sessions(&st2);
             if st2.db.list_claude_sessions().unwrap_or_default() != before {
                 emit_sessions(&st2);
@@ -494,7 +655,10 @@ pub fn spawn_listener(st: Shared) {
             let Ok(events) = st2.db.list_claude_events(20) else { continue };
             let cutoff = (chrono::Local::now() - chrono::Duration::minutes(10)).to_rfc3339();
             let day_ago = (chrono::Local::now() - chrono::Duration::hours(12)).to_rfc3339();
-            for e in events.into_iter().filter(|e| !e.seen && e.at < cutoff && e.at > day_ago) {
+            let done: HashSet<String> =
+                st2.db.list_claude_sessions().unwrap_or_default().into_iter().filter(|s| s.status == "done").map(|s| s.session_id).collect();
+            // only re-remind about a finish that still stands (Claude may have carried on since)
+            for e in events.into_iter().filter(|e| !e.seen && e.at < cutoff && e.at > day_ago && (e.kind != "stop" || done.contains(&e.session_id))) {
                 if reminded.insert(e.id.clone()) {
                     st2.emit(ev::CLAUDE, e);
                 }
@@ -505,6 +669,80 @@ pub fn spawn_listener(st: Shared) {
 
 #[cfg(test)]
 mod tests {
+
+    fn line(v: Value) -> String {
+        v.to_string()
+    }
+    fn prompt(t: &str) -> String {
+        line(json!({"type":"user","message":{"role":"user","content": t}}))
+    }
+    fn tool_result(t: &str) -> String {
+        line(json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content": t}]}}))
+    }
+    fn notification(id: &str, status: &str) -> String {
+        line(json!({"type":"user","message":{"role":"user","content": format!("<task-notification>\n<task-id>{id}</task-id>\n<status>{status}</status>\n</task-notification>")}}))
+    }
+    fn assistant(t: &str) -> String {
+        line(json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text": t}]}}))
+    }
+
+    #[test]
+    fn stop_while_background_work_runs_is_not_finished() {
+        let t = [
+            prompt("build and install it"),
+            tool_result("Command running in background with ID: b6ptjo4yr. Output is being written to: /tmp/x"),
+            tool_result("Async agent launched successfully.\nagentId: aa5af4e4b8af30d94 (internal ID)"),
+            assistant("Started the build; I'll report back when it finishes."),
+        ]
+        .join("\n");
+        assert_eq!(pending_background(&t), 2);
+        // one finishes → still one pending; both finish → really done
+        let one = format!("{t}\n{}", notification("b6ptjo4yr", "completed"));
+        assert_eq!(pending_background(&one), 1);
+        let both = format!("{one}\n{}", notification("aa5af4e4b8af30d94", "failed"));
+        assert_eq!(pending_background(&both), 0);
+    }
+
+    #[test]
+    fn only_the_current_turn_counts() {
+        // a dev server started in an earlier turn and never stopped must not block "done" forever
+        let t = [
+            prompt("run the website"),
+            tool_result("Command running in background with ID: bilfjf0ai. Output is being written to: /tmp/y"),
+            assistant("It's running on :3000."),
+            prompt("now fix the header"),
+            assistant("Fixed."),
+        ]
+        .join("\n");
+        assert_eq!(pending_background(&t), 0);
+    }
+
+    #[test]
+    fn notifications_and_reminders_are_not_new_prompts() {
+        // the task notification that wakes Claude up is not a user prompt, so it doesn't reset the turn
+        let t = [
+            prompt("run tests in the background"),
+            tool_result("Command running in background with ID: aaa111. Output is being written to: /tmp/z"),
+            tool_result("Command running in background with ID: bbb222. Output is being written to: /tmp/w"),
+            notification("aaa111", "completed"),
+            line(json!({"type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>x</system-reminder>"}})),
+        ]
+        .join("\n");
+        assert_eq!(pending_background(&t), 1);
+        // a progress note (non-final status) doesn't finish a task
+        let running = format!("{t}\n{}", notification("bbb222", "running"));
+        assert_eq!(pending_background(&running), 1);
+    }
+
+    #[test]
+    fn activity_after_stop_is_detected() {
+        assert!(has_activity(&assistant("continuing")));
+        assert!(has_activity(&notification("x", "completed")));
+        // bookkeeping Claude Code appends after a Stop is not activity
+        assert!(!has_activity(&line(json!({"type":"system","subtype":"stop_hook_summary"}))));
+        assert!(!has_activity(""));
+    }
+
     use super::*;
 
     #[test]

@@ -37,6 +37,11 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
     case "widgets":
       at(300, () => hooks.openWidgets?.());
       break;
+    case "reminder":
+      at(300, () =>
+        mockEmit(EV.reminder, { id: "t8", title: "Pay electricity bill", source: "manual", status: "open", due: new Date(Date.now() + 5 * 60_000).toISOString(), createdAt: new Date().toISOString() }),
+      );
+      break;
     case "agent":
       pin(10, 20);
       at(300, () => mockEmit(EV.agent, { kind: "start", text: "Open YouTube and play lofi beats" }));

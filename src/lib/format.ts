@@ -101,6 +101,7 @@ export type IslandVariant =
   | "meetingExpanded"
   | "card"
   | "claude"
+  | "reminder"
   | "tray"
   | "trayTooltip"
   | "correction"
@@ -334,6 +335,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "card":
         return { width: 520, height: nh + cardBody(content, 62) };
       case "claude":
+      case "reminder":
         return { width: 460, height: nh + ISLAND_GAP + 64 };
     }
   }
@@ -376,6 +378,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "card":
       return { width: 440 + pad, height: Math.min(240, cardBody(content, 52) + 12) + pad };
     case "claude":
+    case "reminder":
       return { width: 380 + pad, height: 74 + pad };
   }
 }

@@ -343,6 +343,7 @@ pub fn run() {
             commands::list_todos,
             commands::add_todo,
             commands::update_todo,
+            commands::snooze_todo,
             commands::delete_todo,
             commands::list_projects,
             commands::create_project,

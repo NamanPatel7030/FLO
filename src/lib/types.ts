@@ -485,6 +485,8 @@ export const EV = {
   modelProgress: "flo://model-progress",
   toast: "flo://toast",
   claude: "flo://claude",
+  /** a to-do's reminder fired (5 min before it's due, or after a snooze) */
+  reminder: "flo://reminder",
   /** backend cursor tracking for the island: {inside: boolean} */
   hover: "flo://hover",
   /** payload: ClaudeSession[] (full current list, not dismissed) */

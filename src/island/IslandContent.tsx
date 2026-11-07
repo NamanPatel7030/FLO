@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, AlarmClock, Bell, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
 import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
-import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase } from "../lib/types";
+import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase, Todo } from "../lib/types";
 import { FlowWave, Waveform } from "./Waveform";
 import type { MeetingInfo } from "./Island";
 import { copyText } from "../lib/clipboard";
@@ -23,6 +23,8 @@ interface Props {
   result: string | null;
   history: Dictation[] | null;
   claude?: ClaudeEvent;
+  /** a to-do reminder waiting for Done / Snooze */
+  reminder?: Todo;
   claudeMore: number;
   meeting: MeetingInfo;
   onCloseCard: () => void;
@@ -30,6 +32,7 @@ interface Props {
   onCloseHistory: () => void;
   onOpenHistory: () => void;
   onClaude: (seen: boolean) => void;
+  onReminder: (a: "done" | "snooze" | "open" | "dismiss") => void;
   onToggleMeeting: () => void;
   onStopMeeting: () => void;
   onStartMeeting: () => void;
@@ -509,6 +512,50 @@ export function IslandContent(p: Props) {
             </div>
           </div>
         </div>
+      );
+    }
+
+    case "reminder": {
+      const t = p.reminder;
+      if (!t) return null;
+      const due = t.due ? new Date(t.due) : null;
+      const when = due && !Number.isNaN(due.getTime()) ? `due ${HHMM.format(due)}` : "now";
+      return (
+        <CardRow
+          notch={notch}
+          geo={geo}
+          testId="reminder-card"
+          icon={
+            <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-[var(--accent)]/15 text-[var(--accent)]">
+              <span className="absolute inset-0 rounded-full bg-[var(--accent)]/25 [animation:ping_1.2s_cubic-bezier(0,0,0.2,1)_2]" />
+              <Bell size={13} className="relative" />
+            </span>
+          }
+          actions={
+            <>
+              <button className="flex h-7 w-7 items-center justify-center rounded-full text-white/50 hover:bg-white/10 hover:text-white" onClick={() => p.onReminder("dismiss")} aria-label="Dismiss" title="Dismiss">
+                <X size={13} />
+              </button>
+              <button
+                className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[11.5px] font-medium text-white/85 hover:bg-white/20"
+                onClick={() => p.onReminder("snooze")}
+                title="Remind me again in 10 minutes"
+              >
+                <AlarmClock size={12} /> 10 min
+              </button>
+              <button className="flex items-center gap-1 rounded-full bg-[var(--accent)] px-3 py-1 text-[11.5px] font-semibold text-black hover:brightness-110" onClick={() => p.onReminder("done")}>
+                <Check size={12} strokeWidth={3} /> Done
+              </button>
+            </>
+          }
+        >
+          <button className="block w-full min-w-0 text-left" onClick={() => p.onReminder("open")} title="Open in To-dos">
+            <span className="block truncate text-[13px] font-semibold">
+              Reminder <span className="font-normal text-white/50">· {when}</span>
+            </span>
+            <span className="block truncate text-[12.5px] leading-snug text-white/75">{t.title}</span>
+          </button>
+        </CardRow>
       );
     }
 

@@ -909,6 +909,12 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       if (!np.playing && np.elapsed === 0) return null;
       np.elapsed = (np.elapsed + 3) % 214;
       return { ...np };
+    case "snooze_todo": {
+      const t = todos.find((x) => x.id === args.id);
+      if (t) (t as any).remindAt = new Date(Date.now() + Number(args.minutes) * 60_000).toISOString();
+      (window as any).__floSnoozed = { id: args.id, minutes: args.minutes };
+      return null;
+    }
     case "weather":
       return { tempC: 27, code: 2, isDay: true, place: "Ahmedabad" };
     case "media_control":

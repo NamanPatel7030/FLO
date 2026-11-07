@@ -366,3 +366,25 @@ test("agent overlay: streams steps with a Stop button, then shows the result", a
   await expect(page.getByText("Playing the lofi video.")).toBeVisible({ timeout: 6000 });
   await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
 });
+
+test("reminder: card offers Done and Snooze, and each answers the to-do", async ({ page }) => {
+  await page.goto("/?nh=38&nw=200&demo=reminder#/island");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  const card = page.getByTestId("reminder-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Pay electricity bill");
+  await expect(card).toContainText("due");
+  await expect(card.getByRole("button", { name: /Done/ })).toBeVisible();
+  await card.getByRole("button", { name: /10 min/ }).click();
+  await expect(card).toHaveCount(0);
+  const snoozed = await page.evaluate(() => (window as any).__floSnoozed);
+  expect(snoozed).toEqual({ id: "t8", minutes: 10 });
+
+  // a second reminder → Done marks the to-do done
+  await page.evaluate(() => (window as any).__floMock.emit("flo://reminder", { id: "t5", title: "Book flight to Bangalore", source: "voice", status: "open", createdAt: new Date().toISOString() }));
+  await expect(page.getByTestId("reminder-card")).toContainText("Book flight");
+  await page.getByTestId("reminder-card").getByRole("button", { name: /Done/ }).click();
+  await expect(page.getByTestId("reminder-card")).toHaveCount(0);
+  const todos = await page.evaluate(() => (window as any).__floMock.invoke("list_todos"));
+  expect(todos.find((t: any) => t.id === "t5").status).toBe("done");
+});

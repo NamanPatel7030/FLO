@@ -465,6 +465,15 @@ impl Db {
         Ok(())
     }
 
+    /// A "done" session whose transcript moved again: Claude carried on after its Stop.
+    pub fn revive_claude_session(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE claude_sessions SET status='working', updated_at=?2 WHERE session_id=?1 AND status='done'",
+            params![id, now()],
+        )?;
+        Ok(())
+    }
+
     pub fn get_claude_session(&self, id: &str) -> Result<Option<ClaudeSession>> {
         Ok(self.list_claude_sessions()?.into_iter().find(|s| s.session_id == id))
     }

@@ -89,6 +89,8 @@ export const api = {
   updateTodo: (id: string, patch: { status?: TodoStatus; title?: string; projectId?: string }) =>
     call<Todo>("update_todo", { id, ...patch }),
   deleteTodo: (id: string) => call<void>("delete_todo", { id }),
+  /** remind again in `minutes` */
+  snoozeTodo: (id: string, minutes: number) => call<void>("snooze_todo", { id, minutes }),
 
   listProjects: () => call<Project[]>("list_projects"),
   createProject: (name: string, description?: string) => call<Project>("create_project", { name, description }),
