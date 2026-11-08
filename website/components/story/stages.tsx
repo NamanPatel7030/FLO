@@ -431,8 +431,8 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
                       <span className="block truncate text-[11px] text-white/50">{f.from}</span>
                     </span>
                     <span
-                      className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-all duration-500 ${filed ? "opacity-100" : "translate-x-1 opacity-0"}`}
-                      style={{ color: pj.color, background: `color-mix(in srgb, ${pj.color} 14%, transparent)` }}
+                      className={`spk flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-all duration-500 ${filed ? "opacity-100" : "translate-x-1 opacity-0"}`}
+                      style={{ ["--spk" as string]: pj.color, background: `color-mix(in srgb, ${pj.color} 14%, transparent)` }}
                     >
                       <ArrowRight size={11} /> {pj.client || pj.name}
                     </span>
@@ -446,7 +446,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
               const hit = phase >= 1 && FILED[cur].to === k;
               return (
                 <div key={p.name} className={`stage-card relative min-w-0 rounded-2xl p-3 transition-transform duration-500 ${hit ? "stage-hl -translate-y-0.5" : ""}`}>
-                  <FolderKanban size={15} style={{ color: p.color }} />
+                  <FolderKanban size={15} className="spk" style={{ ["--spk" as string]: p.color }} />
                   <div className="mt-2 truncate text-[13px] font-semibold">{p.client || "Personal"}</div>
                   <div className="truncate text-[11px] text-white/55">{p.client ? p.name : "No client"}</div>
                   <div className="mt-2 flex items-baseline gap-1">
@@ -618,7 +618,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
           <div className="flex flex-col gap-2.5">
             {lines.map(([w, c, t], i) => (
               <div key={`${cycle}-${w}`} className={live && phase === 0 ? "line-in" : ""} style={{ animationDelay: `${0.3 + i * 1.1}s` }}>
-                <span className="text-[12px] font-semibold" style={{ color: c }}>
+                <span className="spk text-[12px] font-semibold" style={{ ["--spk" as string]: c }}>
                   {w}
                 </span>
                 <p className="text-[14px] leading-snug text-white/85">{t}</p>
@@ -674,7 +674,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
               </button>
             ))}
           </div>
-          <Win title={`~/flo · claude${d.opened && phase === 1 ? " · focused" : ""}`} className="font-mono" hl={d.opened && phase === 1}>
+          <Win title={`~/flo · claude${d.opened && phase === 1 ? " · focused" : ""}`} className="island term font-mono" hl={d.opened && phase === 1}>
             <div className="flex flex-col gap-1 text-[12.5px] leading-relaxed">
               <span className="text-white/55">&gt; make the notch reminders snoozable</span>
               <span className="text-white/85">
@@ -732,7 +732,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
                   <GripVertical size={14} className="text-white/35" />
                   <span className={`truncate ${on ? "text-white/90" : "text-white/55"}`}>{n}</span>
                   <span className={`ml-auto flex h-5 w-9 items-center rounded-full p-0.5 transition-colors ${on ? "bg-brand-400" : "bg-white/15"}`}>
-                    <span className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? "translate-x-4" : ""}`} />
+                    <span className={`h-4 w-4 rounded-full bg-[#fff] shadow transition-transform ${on ? "translate-x-4" : ""}`} />
                   </span>
                 </button>
               );
@@ -785,7 +785,7 @@ function Customise({ ch, d, manual }: { ch: number; d: Derived; manual: boolean 
   return (
     <div className="stage-card rounded-2xl p-5" data-testid="customise">
       <div
-        className="mb-4 flex h-12 items-center gap-3 rounded-full bg-black px-4 shadow-[inset_0_-1px_0_rgb(150_220_255/0.2),0_10px_30px_-12px_rgb(0_0_0/0.9)]"
+        className="island mb-4 flex h-12 items-center gap-3 rounded-full bg-black px-4 shadow-[inset_0_-1px_0_rgb(150_220_255/0.2),0_10px_30px_-12px_rgb(0_0_0/0.9)]"
         style={{ ["--vh" as string]: pal.hi, ["--va" as string]: pal.a, ["--vb" as string]: pal.b }}
         aria-label={`Preview: ${STYLES[d.style]}, ${SIZES[d.size]}, ${pal.name}`}
         data-testid="custom-preview"
@@ -847,7 +847,7 @@ function Customise({ ch, d, manual }: { ch: number; d: Derived; manual: boolean 
             aria-label={c.name}
             title={c.name}
             onClick={() => pick({ color: i })}
-            className={`h-7 w-7 cursor-pointer rounded-full transition-transform hover:scale-110 ${i === d.color ? "ring-2 ring-white/90 ring-offset-2 ring-offset-[#071a2b]" : "ring-1 ring-white/20"}`}
+            className={`h-7 w-7 cursor-pointer rounded-full transition-transform hover:scale-110 ${i === d.color ? "ring-2 ring-white/90 ring-offset-2 ring-offset-[var(--ring-offset)]" : "ring-1 ring-white/20"}`}
             style={{ background: c.swatch }}
             data-testid={`color-${i}`}
           />
@@ -931,7 +931,7 @@ function SkillCanvas({ ch, phase, cycle, d, manual }: { ch: number; phase: numbe
 function Cursor({ className = "" }: { className?: string }) {
   return (
     <svg width="16" height="20" viewBox="0 0 16 20" className={`pointer-events-none ${className}`} aria-hidden>
-      <path d="M1 1l0 15 4-4 3 7 3-1.4-3-6.6h5.5z" fill="#fff" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M1 1l0 15 4-4 3 7 3-1.4-3-6.6h5.5z" fill="#fff" stroke="#0b1220" strokeWidth="1.2" strokeLinejoin="round" />
     </svg>
   );
 }

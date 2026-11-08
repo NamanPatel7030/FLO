@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion, useScroll, useSpring } from "motion/react";
 import { CircleHelp, Columns3, LayoutGrid, LogIn, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 import { DownloadCTA } from "../DownloadCTA";
+import { ThemeToggle } from "../ThemeToggle";
 import { Logo } from "../Logo";
 import { CHAPTER_INDEX } from "./chapters";
 import { useStory } from "./StoryContext";
@@ -139,7 +140,7 @@ export function Dock({ signedIn = false }: { signedIn?: boolean }) {
   return (
     <nav aria-label="Site" className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center" data-testid="dock">
       <motion.div
-        className="chin pointer-events-auto relative"
+        className="island chin pointer-events-auto relative"
         initial={reduce ? false : { y: 80 }}
         animate={{ y: 0 }}
         transition={{ type: "spring", stiffness: 260, damping: 28, delay: 0.4 }}
@@ -176,7 +177,8 @@ export function Dock({ signedIn = false }: { signedIn?: boolean }) {
           <div className="flex items-center gap-0.5 md:gap-1">
             {right.map(renderItem)}
             {renderItem(account)}
-            <span aria-hidden className="mx-1.5 h-6 w-px bg-white/12 md:mx-2" />
+            <ThemeToggle variant="dock" />
+            <span aria-hidden className="mx-1 h-6 w-px bg-white/12 md:mx-2" />
             <div className="hidden md:block">
               <DownloadCTA size="sm" menu="up" testId="dock-download" />
             </div>

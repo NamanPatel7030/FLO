@@ -84,7 +84,7 @@ export function LangCard() {
         </AnimatePresence>
       </div>
       <div className="mt-2 flex items-center gap-1.5 text-[11.5px] text-white/60">
-        <span className="h-1.5 w-1.5 rounded-full bg-brand-300 shadow-[0_0_8px_#3dbbff]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-brand-300 shadow-[0_0_8px_rgb(var(--glow)/var(--glow-k))]" />
         <span key={h.l} className="chip-in">
           {h.l}, in its own script
         </span>
@@ -134,7 +134,7 @@ export function MeetCard() {
           <li key={l.who} className="line-in flex gap-2 text-[12.5px] leading-snug" style={{ animationDelay: `${1.7 + k * 0.6}s` }}>
             <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full" style={{ background: l.c, boxShadow: `0 0 8px ${l.c}` }} />
             <span>
-              <span className="font-semibold" style={{ color: l.c }}>
+              <span className="spk font-semibold" style={{ ["--spk" as string]: l.c }}>
                 {l.who}
               </span>{" "}
               <span className="text-white/80">{l.t}</span>
@@ -262,8 +262,8 @@ export function HeroCards() {
         <svg className="absolute inset-0" width={wires.w} height={wires.h} viewBox={`0 0 ${wires.w} ${wires.h}`}>
           <defs>
             <linearGradient id="wire-g" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor="#e9f8ff" />
-              <stop offset="1" stopColor="#3dbbff" />
+              <stop offset="0" style={{ stopColor: "var(--eq-top)" }} />
+              <stop offset="1" style={{ stopColor: "var(--accent)" }} />
             </linearGradient>
           </defs>
           {wires.list.map((w, k) => (

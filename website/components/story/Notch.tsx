@@ -136,7 +136,6 @@ export function NotchShell({
   onHover?: (on: boolean) => void;
   children: React.ReactNode;
 }) {
-  const rim = "0 0 0 1px rgb(102 206 255 / 0.10), 0 10px 34px -8px rgb(61 187 255 / 0.38), 0 24px 60px -20px rgb(0 0 0 / 0.9), inset 0 -1px 0 rgb(150 220 255 / 0.22)";
   const pal = PALETTES[d?.color ?? 0];
   const vars = { ["--vh" as string]: pal.hi, ["--va" as string]: pal.a, ["--vb" as string]: pal.b };
   const data = {
@@ -148,7 +147,7 @@ export function NotchShell({
   if (inline) {
     return (
       <div className="relative mx-auto w-full" style={{ maxWidth: size.w, ...vars }} {...data}>
-        <div className="relative overflow-hidden bg-black text-white" style={{ minHeight: size.h, borderRadius: `0 0 ${size.r}px ${size.r}px`, boxShadow: rim }}>
+        <div className="island notch-body relative overflow-hidden bg-black text-white" style={{ minHeight: size.h, borderRadius: `0 0 ${size.r}px ${size.r}px` }}>
           <span aria-hidden className="notch-inner" />
           {children}
           <span aria-hidden className="notch-rim" />
@@ -164,8 +163,7 @@ export function NotchShell({
       <Ear side="l" />
       <Ear side="r" />
       <motion.div
-        className="pointer-events-auto relative overflow-hidden bg-black text-white"
-        style={{ boxShadow: rim }}
+        className="island notch-body pointer-events-auto relative overflow-hidden bg-black text-white"
         initial={false}
         animate={{ width: size.w, height: size.h, borderBottomLeftRadius: size.r, borderBottomRightRadius: size.r }}
         transition={reduce ? { duration: 0 } : SPRING}

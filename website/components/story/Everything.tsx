@@ -79,7 +79,7 @@ function UpdateDemo() {
     t.current = setTimeout(() => setSt("ready"), 2400);
   };
   return (
-    <div className="upd mt-5 rounded-[22px] bg-black p-4 ring-1 ring-white/10" data-testid="update-demo" data-state={st}>
+    <div className="island upd mt-5 rounded-[22px] bg-black p-4 ring-1 ring-white/10" data-testid="update-demo" data-state={st}>
       <div className="flex items-center gap-3">
         <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${st === "done" ? "bg-emerald-400/15 text-emerald-300" : "bg-brand-400/15 text-brand-200"} ring-1 ring-white/10`}>
           {st === "done" ? <Check size={18} strokeWidth={3} /> : st === "ready" ? <RefreshCw size={17} /> : <ArrowDownToLine size={17} className={st === "down" ? "upd-bob" : ""} />}
@@ -136,7 +136,7 @@ const HELLOS = [
 function LangDemo() {
   const { ref, i } = useTicker(1500, HELLOS.length);
   return (
-    <div ref={ref} className="mt-4 flex h-14 items-center justify-between rounded-2xl bg-black/30 px-4 ring-1 ring-white/10">
+    <div ref={ref} className="mt-4 flex h-14 items-center justify-between rounded-2xl well px-4">
       <div className="relative h-8 flex-1 overflow-hidden">
         <AnimatePresence initial={false}>
           <motion.span
@@ -182,7 +182,7 @@ function VaultDemo() {
   const [hover, setHover] = useState<number | null>(null);
   const near = (k: number) => hover === null || hover === k || EDGES.some(([a, b]) => (a === hover && b === k) || (b === hover && a === k));
   return (
-    <div className="mt-4 overflow-hidden rounded-2xl bg-black/30 ring-1 ring-white/10">
+    <div className="mt-4 overflow-hidden rounded-2xl well">
       <svg viewBox="0 0 364 150" className="block w-full" role="img" aria-label="A knowledge graph linking projects, people and meetings">
         {EDGES.map(([a, b], k) => (
           <line
@@ -191,16 +191,16 @@ function VaultDemo() {
             y1={NODES[a].y}
             x2={NODES[b].x}
             y2={NODES[b].y}
-            stroke="#66ceff"
+            stroke="var(--accent)"
             strokeWidth="1"
             style={{ opacity: hover === null ? 0.28 : hover === a || hover === b ? 0.8 : 0.08, transition: "opacity .3s" }}
           />
         ))}
         {NODES.map((n, k) => (
           <g key={n.t} onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(null)} style={{ opacity: near(k) ? 1 : 0.3, transition: "opacity .3s", cursor: "pointer" }}>
-            <circle cx={n.x} cy={n.y} r={n.r + 6} fill="#3dbbff" className="vault-pulse" style={{ animationDelay: `${k * 0.4}s`, transformOrigin: `${n.x}px ${n.y}px` }} />
-            <circle cx={n.x} cy={n.y} r={n.r} fill={k === 0 ? "#c2ecff" : "#66ceff"} />
-            <text x={n.x} y={n.y + n.r + 12} textAnchor="middle" fontSize="10" fill="rgb(226 240 255 / 0.75)">
+            <circle cx={n.x} cy={n.y} r={n.r + 6} fill="var(--accent)" className="vault-pulse" style={{ animationDelay: `${k * 0.4}s`, transformOrigin: `${n.x}px ${n.y}px` }} />
+            <circle cx={n.x} cy={n.y} r={n.r} fill={k === 0 ? "var(--accent-ink)" : "var(--accent)"} />
+            <text x={n.x} y={n.y + n.r + 12} textAnchor="middle" fontSize="10" fill="currentColor" className="text-muted">
               {n.t}
             </text>
           </g>
@@ -288,7 +288,7 @@ function AnalyticsDemo() {
 
 function HistoryDemo() {
   return (
-    <div className="mt-4 rounded-2xl bg-black/30 p-2.5 ring-1 ring-white/10 text-[12px]">
+    <div className="mt-4 rounded-2xl well p-2.5 text-[12px]">
       <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-white/[0.06] px-2 py-1 text-white/70">
         <Search size={12} /> invoice
       </div>
@@ -309,7 +309,7 @@ function HistoryDemo() {
 function SlackDemo() {
   const [sent, setSent] = useState<null | boolean>(null);
   return (
-    <div className="mt-4 rounded-[18px] bg-black p-3 ring-1 ring-white/10">
+    <div className="island mt-4 rounded-[18px] bg-black p-3 ring-1 ring-white/10">
       {sent === null ? (
         <>
           <div className="flex items-center gap-2 text-[12.5px] font-semibold">
@@ -344,7 +344,7 @@ const SAYS = ["open Slack", "play lofi on YouTube", "volume up", "google biryani
 function InstantDemo() {
   const { ref, i } = useTicker(1700, SAYS.length);
   return (
-    <div ref={ref} className="mt-4 flex h-11 items-center gap-2 overflow-hidden rounded-full bg-black/40 px-3.5 ring-1 ring-white/10">
+    <div ref={ref} className="mt-4 flex h-11 items-center gap-2 overflow-hidden rounded-full well px-3.5">
       <Zap size={13} className="shrink-0 text-brand-300" />
       <div className="relative h-6 flex-1">
         <AnimatePresence initial={false}>
@@ -379,7 +379,7 @@ function AccentDemo() {
             aria-label={p.name}
             title={`${p.name}: the notch at the top follows too`}
             onClick={() => setDemo((d) => ({ custom: { ...d.custom, color: i } }))}
-            className={`h-7 w-7 cursor-pointer rounded-full transition-transform hover:scale-110 ${i === cur ? "ring-2 ring-white/90 ring-offset-2 ring-offset-[#071a2b]" : "ring-1 ring-white/20"}`}
+            className={`h-7 w-7 cursor-pointer rounded-full transition-transform hover:scale-110 ${i === cur ? "ring-2 ring-white/90 ring-offset-2 ring-offset-[var(--ring-offset)]" : "ring-1 ring-white/20"}`}
             style={{ background: p.swatch }}
           />
         ))}
@@ -426,7 +426,7 @@ function LookDemo() {
   const { demo } = useStory();
   const pal = PALETTES[demo.custom.color];
   return (
-    <div ref={ref} className="mt-4 flex h-11 items-center gap-3 rounded-full bg-black px-4 ring-1 ring-white/10" style={{ ["--vh" as string]: pal.hi, ["--va" as string]: pal.a, ["--vb" as string]: pal.b }}>
+    <div ref={ref} className="island mt-4 flex h-11 items-center gap-3 rounded-full bg-black px-4 ring-1 ring-white/10" style={{ ["--vh" as string]: pal.hi, ["--va" as string]: pal.a, ["--vb" as string]: pal.b }}>
       <Mic size={13} style={{ color: pal.a }} className="shrink-0" />
       <div className="flex flex-1 justify-center overflow-hidden" key={i}>
         <StyleViz style={i} w={130} h={24} />
@@ -461,7 +461,7 @@ function NetDemo() {
         ["localhost:11434", "ollama · local", true],
         ["tracker.example", "blocked", false],
       ].map(([h, w, ok]) => (
-        <div key={h as string} className="flex items-center gap-2 rounded-lg bg-black/30 px-2 py-1 ring-1 ring-white/[0.07]">
+        <div key={h as string} className="flex items-center gap-2 rounded-lg well px-2 py-1">
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ok ? "bg-emerald-300" : "bg-red-400"}`} />
           <span className={`truncate ${ok ? "text-white/85" : "text-white/45 line-through"}`}>{h}</span>
           <span className="ml-auto shrink-0 text-white/45">{w}</span>
