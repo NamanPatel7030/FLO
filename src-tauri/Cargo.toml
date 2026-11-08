@@ -46,6 +46,7 @@ url = "2"
 log = "0.4"
 env_logger = "0.11"
 rand = "0.8"
+sha2 = "0.10"
 tiny_http = "0.12"
 dirs = "5"
 whisper-rs = { version = "0.14", optional = true }

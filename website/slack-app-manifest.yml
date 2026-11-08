@@ -1,0 +1,30 @@
+# Slack app manifest for Flo's one-click "Connect Slack" (see docs/slack-setup.md).
+#
+# api.slack.com/apps → Create New App → From an app manifest → pick any workspace you own → paste this.
+# Replace https://flo.example.com with your website's SITE_URL (no trailing slash). For local
+# testing, add a second line: - http://localhost:3000/api/slack/callback
+# The live setup page (<SITE_URL>/slack/setup) prints this file with your URL already filled in.
+#
+# Flo asks only for USER scopes (it acts as the person who clicks Connect, never as a bot).
+# Keep the list in sync with website/lib/slack.ts (SLACK_USER_SCOPES) and src-tauri/src/slack.rs.
+display_information:
+  name: Flo
+  description: Your voice assistant in the notch. Turns Slack messages waiting on you into to-dos and sends replies you approve.
+  background_color: "#05070a"
+oauth_config:
+  redirect_urls:
+    - https://flo.example.com/api/slack/callback
+  scopes:
+    user:
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - im:read
+      - users:read
+      - search:read
+      - chat:write
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

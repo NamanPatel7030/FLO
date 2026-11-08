@@ -23,6 +23,11 @@ pub struct AccountStatus {
     pub offline: bool,
 }
 
+/// The app session token (None when not signed in). Used by the phone relay (push.rs).
+pub(crate) fn session_token() -> Option<String> {
+    secrets::get_secret(TOKEN)
+}
+
 pub fn base(st: &Shared) -> String {
     st.settings().account_url.trim_end_matches('/').to_string()
 }
@@ -38,7 +43,7 @@ pub fn allow_host(st: &Shared) {
     }
 }
 
-async fn call(st: &Shared, method: &str, path: &str, body: Option<Value>, bearer: Option<&str>) -> Result<(u16, Value)> {
+pub(crate) async fn call(st: &Shared, method: &str, path: &str, body: Option<Value>, bearer: Option<&str>) -> Result<(u16, Value)> {
     let url = format!("{}{path}", base(st));
     st.egress.check(&url, Purpose::Account, true)?;
     let client = st.egress.client(Purpose::Account, true);

@@ -49,6 +49,7 @@ import {
   type SkillNodeKind,
 } from "../lib/skillGraph";
 import { PLATFORMS } from "./platforms";
+import { SlackIcon, useSlackConnected } from "./SlackCard";
 import { Button } from "./ui";
 
 type FlowNode = Node<SkillNodeData, SkillNodeKind>;
@@ -259,7 +260,19 @@ function PlatformNode({ id, data, selected }: NodeProps<FlowNode>) {
           </optgroup>
         )}
       </select>
+      {data.ref === "slack" && <SlackShortcut />}
     </Shell>
+  );
+}
+
+/** Slack picked but not connected → one click to the Connect Slack card. */
+function SlackShortcut() {
+  const connected = useSlackConnected();
+  if (connected !== false) return null;
+  return (
+    <a href="#/settings/integrations" className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-brand-300 hover:text-brand-200" data-testid="connect-slack-shortcut">
+      <SlackIcon size={12} /> Connect Slack →
+    </a>
   );
 }
 

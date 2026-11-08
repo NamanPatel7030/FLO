@@ -198,9 +198,11 @@ test("integrations: 4 agent cards, webhook token hidden, Slack connect flow", as
   await expect(page.getByText("Not found on this Mac")).toBeVisible();
   await expect(page.getByText(/token=•••/)).toBeVisible();
   await expect(page.getByText(/token=TOKEN/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Advanced: paste a token" }).click(); // one-click flow: tests/e2e/slack.spec.ts
   await page.getByLabel("Slack token").fill("xoxp-123-abc");
-  await page.getByRole("button", { name: "Connect" }).last().click();
-  await expect(page.locator('[data-testid="slack-connected"]')).toContainText("Parth Gundaniya · Northwind");
+  await page.getByTestId("slack-disconnected").getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.locator('[data-testid="slack-connected"]')).toContainText("Parth Gundaniya");
+  await expect(page.locator('[data-testid="slack-connected"]')).toContainText("Northwind");
   await page.getByText("Turn unanswered DMs and mentions into to-dos").click();
   await expect.poll(async () => (await invoke(page, "get_settings")).slackSync).toBe(true);
   await page.getByRole("button", { name: "Sync now" }).click();

@@ -1,14 +1,14 @@
 // Settings → Integrations: agent tools (Claude Code, Codex, Cursor, webhook) + Slack.
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Asterisk, Check, ChevronDown, CodeXml, Copy, MousePointer2, Plug, RefreshCw, Terminal, Unplug, Webhook } from "lucide-react";
+import { Asterisk, Check, CodeXml, Copy, MousePointer2, Plug, Terminal, Unplug, Webhook } from "lucide-react";
 import { CodingAgents } from "./CodingAgents";
+import { SlackCard } from "./SlackCard";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import type { Integration } from "../lib/types";
 import { useStore } from "./store";
-import { Button, Card, CardTitle, Input, Skeleton, Toggle } from "./ui";
+import { Button, Card, CardTitle, Skeleton } from "./ui";
 
 const LOOK: Record<string, { icon: React.ReactNode; bg: string }> = {
   claude: { icon: <Asterisk size={18} strokeWidth={3} />, bg: "bg-[#d97757] text-white" },
@@ -120,109 +120,3 @@ function IntegrationCard({ it, busy, onToggle }: { it: Integration; busy: boolea
   );
 }
 
-const SlackIcon = () => (
-  <svg viewBox="0 0 24 24" width={18} height={18} aria-hidden>
-    <path fill="#E01E5A" d="M5 15a2 2 0 1 1-2-2h2v2Zm1 0a2 2 0 1 1 4 0v5a2 2 0 1 1-4 0v-5Z" />
-    <path fill="#36C5F0" d="M9 5a2 2 0 1 1 2-2v2H9Zm0 1a2 2 0 1 1 0 4H4a2 2 0 1 1 0-4h5Z" />
-    <path fill="#2EB67D" d="M19 9a2 2 0 1 1 2 2h-2V9Zm-1 0a2 2 0 1 1-4 0V4a2 2 0 1 1 4 0v5Z" />
-    <path fill="#ECB22E" d="M15 19a2 2 0 1 1-2 2v-2h2Zm0-1a2 2 0 1 1 0-4h5a2 2 0 1 1 0 4h-5Z" />
-  </svg>
-);
-
-function SlackCard() {
-  const { toast, settings, setSettings } = useStore();
-  const [who, setWho] = useState<string | null | undefined>(undefined);
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [help, setHelp] = useState(false);
-  useEffect(() => {
-    api.slackStatus().then(setWho);
-  }, []);
-  const connect = async () => {
-    setBusy(true);
-    try {
-      setWho(await api.slackConnect(token.trim()));
-      setToken("");
-      toast({ kind: "success", text: "Slack connected" });
-    } catch (e) {
-      toast({ kind: "error", text: String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Card className="p-5" >
-      <CardTitle icon={<SlackIcon />}>Slack</CardTitle>
-      {who === undefined ? (
-        <Skeleton className="h-16" />
-      ) : who ? (
-        <div className="flex flex-col gap-3" data-testid="slack-connected">
-          <div className="flex items-center gap-2 text-[13px]">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />
-            <span className="font-medium">{who}</span>
-          </div>
-          {settings && (
-            <Toggle
-              label="Turn unanswered DMs and mentions into to-dos"
-              hint="Checked locally. Messages are never sent without your OK in the notch."
-              checked={settings.slackSync}
-              onChange={(v) => setSettings({ ...settings, slackSync: v })}
-            />
-          )}
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              icon={<RefreshCw size={13} />}
-              onClick={async () => {
-                try {
-                  const n = await api.slackSyncNow();
-                  toast({ kind: "success", text: `${n} to-do${n === 1 ? "" : "s"} added` });
-                } catch (e) {
-                  toast({ kind: "error", text: String(e) });
-                }
-              }}
-            >
-              Sync now
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Unplug size={13} />}
-              onClick={async () => {
-                await api.slackDisconnect();
-                setWho(null);
-              }}
-            >
-              Disconnect
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <div className="flex gap-2">
-            <Input type="password" placeholder="xoxp-…" aria-label="Slack token" value={token} onChange={(e) => setToken(e.target.value)} className="font-mono" />
-            <Button variant="primary" disabled={!token.trim() || busy} onClick={connect} icon={<Plug size={13} />}>
-              Connect
-            </Button>
-          </div>
-          <button onClick={() => setHelp((v) => !v)} className="flex items-center gap-1 self-start text-[12px] text-brand-300 hover:text-brand-200">
-            How to get a token <ChevronDown size={13} className={clsx("transition", help && "rotate-180")} />
-          </button>
-          <AnimatePresence>
-            {help && (
-              <motion.ol initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="list-decimal overflow-hidden pl-5 text-[12px] leading-relaxed text-muted">
-                <li>Create an app at api.slack.com/apps (from scratch, pick your workspace).</li>
-                <li>Open OAuth &amp; Permissions.</li>
-                <li>
-                  Under User Token Scopes add: <code className="font-mono text-[11px] text-[var(--fg)]">channels:history groups:history im:history mpim:history im:read users:read search:read chat:write</code>
-                </li>
-                <li>Install to workspace.</li>
-                <li>Copy the User OAuth Token (starts with xoxp) and paste it above.</li>
-              </motion.ol>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
-    </Card>
-  );
-}

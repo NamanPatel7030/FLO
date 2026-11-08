@@ -1,4 +1,6 @@
-//! Slack (BYOK user token, direct to slack.com — no middle server).
+//! Slack (user token, direct to slack.com — no middle server for any Slack data).
+//!  - connect: one click (OAuth via our website hands the token to the keychain once, see
+//!    docs/slack-setup.md) or paste a token (Settings → Integrations → Advanced)
 //!  - to-dos: unanswered DMs + @mentions every 3 min → "Reply to Rahul on Slack" (no AI tokens)
 //!  - send by voice: assistant proposes, the user confirms in the notch, then chat.postMessage
 //! Scopes for the user token: channels:history groups:history im:history mpim:history
@@ -27,7 +29,7 @@ static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 static PENDING: Mutex<Option<HashMap<String, (String, String, String)>>> = Mutex::new(None);
 
 async fn call(st: &Shared, method: &str, params: &[(&str, String)], post: bool) -> Result<Value> {
-    let token = secrets::get_api_key_async("slack").await?.ok_or_else(|| anyhow!("Slack isn't connected. Add your token in Settings → Integrations."))?;
+    let token = secrets::get_api_key_async("slack").await?.ok_or_else(|| anyhow!("Slack isn't connected. Click Connect Slack in Settings → Integrations."))?;
     let url = format!("{API}/{method}");
     st.egress.check(&url, Purpose::Slack, true)?;
     let client = st.egress.client(Purpose::Slack, true);
@@ -229,6 +231,133 @@ pub async fn confirm(st: &Shared, id: &str, approve: bool) -> Result<String> {
     Ok(format!("Sent to {name}"))
 }
 
+// ── connect / disconnect ─────────────────────────────────────────────────────
+// One click: Flo asks its website for a one-time Connect URL (bound to sha256(verifier)), opens it in
+// the browser, the user approves on slack.com, the website seals the user token for ≤5 min and sends
+// the browser to flo://slack?code=…; Flo claims it with the verifier (which never left this Mac) and
+// keeps it in the keychain. After that, every Slack call goes straight to slack.com.
+
+/// Connect Slack in progress: (verifier, started)
+static OAUTH: Mutex<Option<(String, std::time::Instant)>> = Mutex::new(None);
+const OAUTH_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Live event so the Integrations card updates without a reload.
+pub const EV_SLACK: &str = "flo://slack";
+
+fn new_verifier() -> String {
+    use base64::Engine;
+    use rand::RngCore;
+    let mut b = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut b);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
+}
+
+/// base64url(sha256(verifier)) — what the website stores instead of the verifier (PKCE S256).
+pub fn challenge_of(verifier: &str) -> String {
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+pub fn reset_cache() {
+    *CACHE.lock() = None;
+}
+
+/// Begin one-click Connect Slack: get a Connect URL from our website and open it in the browser.
+pub async fn oauth_start(st: &Shared) -> Result<String> {
+    crate::account::allow_host(st);
+    let verifier = new_verifier();
+    let bearer = crate::account::session_token();
+    let (code, v) =
+        crate::account::call(st, "POST", "/api/slack/start", Some(json!({ "challenge": challenge_of(&verifier) })), bearer.as_deref()).await?;
+    if code != 200 {
+        bail!("{}", v["error"].as_str().unwrap_or("Couldn't start Connect Slack. Try again."));
+    }
+    let url = v["url"].as_str().ok_or_else(|| anyhow!("bad response from the Flo server"))?.to_string();
+    // only ever open a page on our own account server
+    if !url.starts_with(&format!("{}/api/slack/install?", crate::account::base(st))) {
+        bail!("unexpected Connect Slack URL from the Flo server");
+    }
+    *OAUTH.lock() = Some((verifier, std::time::Instant::now()));
+    tauri_plugin_opener::open_url(&url, None::<&str>)?;
+    Ok(url)
+}
+
+/// `flo://slack?code=…` → the one-time handoff code
+pub fn parse_deep_link(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    if u.scheme() != "flo" || !(u.host_str() == Some("slack") || u.path().trim_matches('/') == "slack") {
+        return None;
+    }
+    let code = u.query_pairs().find(|(k, _)| k == "code")?.1.to_string();
+    let ok = (16..=100).contains(&code.len()) && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    ok.then_some(code)
+}
+
+/// Swap the handoff code (+ our verifier) for the token, keep it in the keychain, verify it. Returns "user · team".
+pub async fn claim(st: &Shared, code: &str) -> Result<String> {
+    let verifier = match OAUTH.lock().clone() {
+        Some((v, t)) if t.elapsed() < OAUTH_TTL => v,
+        _ => bail!("This Slack link wasn't started from this Mac (or it expired). Click Connect Slack in Flo again."),
+    };
+    let bearer = crate::account::session_token();
+    let (c, v) =
+        crate::account::call(st, "POST", "/api/slack/claim", Some(json!({ "code": code, "verifier": verifier })), bearer.as_deref()).await?;
+    if c != 200 {
+        bail!("{}", v["error"].as_str().unwrap_or("That Slack link expired. Click Connect Slack in Flo again."));
+    }
+    let token = v["token"].as_str().filter(|t| t.starts_with("xoxp-")).ok_or_else(|| anyhow!("bad response from the Flo server"))?;
+    // a stray / forged flo://slack link can't burn the flow: the verifier is only cleared on success
+    *OAUTH.lock() = None;
+    secrets::set_api_key("slack", token)?;
+    reset_cache();
+    match test(st).await {
+        Ok(who) => Ok(who),
+        Err(e) => {
+            let _ = secrets::delete_api_key("slack");
+            Err(e)
+        }
+    }
+}
+
+/// "parth · Northwind" → "Slack connected as @parth in Northwind"
+pub fn connected_text(who: &str) -> String {
+    match who.split_once(" · ") {
+        Some((u, t)) => format!("Slack connected as @{u} in {t}"),
+        None => format!("Slack connected as {who}"),
+    }
+}
+
+pub fn handle_deep_link(st: Shared, url: String) {
+    let Some(code) = parse_deep_link(&url) else { return };
+    tauri::async_runtime::spawn(async move {
+        match claim(&st, &code).await {
+            Ok(who) => {
+                st.emit(EV_SLACK, json!({ "connected": true, "who": who }));
+                st.toast("success", connected_text(&who));
+                crate::show_dashboard(&st.app, Some("settings/integrations"));
+            }
+            Err(e) => {
+                st.emit(EV_SLACK, json!({ "connected": false, "error": e.to_string() }));
+                st.toast("error", format!("Slack: {e}"));
+            }
+        }
+    });
+}
+
+/// Forget the token (and, if asked, revoke it on Slack first so it stops working everywhere).
+pub async fn disconnect(st: &Shared, revoke: bool) -> Result<()> {
+    if revoke && secrets::get_api_key_async("slack").await?.is_some() {
+        if let Err(e) = call(st, "auth.revoke", &[], false).await {
+            log::warn!("slack auth.revoke: {e}");
+        }
+    }
+    secrets::delete_api_key("slack")?;
+    reset_cache();
+    st.emit(EV_SLACK, json!({ "connected": false }));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,5 +368,38 @@ mod tests {
         assert!(!needs_reply(&json!({"user":"U1","text":"done"}), "U1"));
         assert!(!needs_reply(&json!({"user":"U2","bot_id":"B1"}), "U1"));
         assert!(!needs_reply(&json!({"user":"U2","subtype":"channel_join"}), "U1"));
+    }
+
+    #[test]
+    fn parses_flo_slack_links() {
+        let code = "Zm9vYmFyYmF6cXV4LXF1dXgtXzEy";
+        assert_eq!(parse_deep_link(&format!("flo://slack?code={code}")), Some(code.into()));
+        assert_eq!(parse_deep_link(&format!("flo://slack/?code={code}&team=Acme")), Some(code.into()));
+        assert!(parse_deep_link(&format!("flo://auth?code={code}")).is_none());
+        assert!(parse_deep_link(&format!("https://slack?code={code}")).is_none());
+        assert!(parse_deep_link("flo://slack?code=").is_none());
+        assert!(parse_deep_link("flo://slack?code=short").is_none());
+        assert!(parse_deep_link("flo://slack?code=has%20spaces%20and%20more%20chars").is_none());
+        assert!(parse_deep_link(&format!("flo://slack?code={}", "a".repeat(101))).is_none());
+        assert!(parse_deep_link("flo://slack").is_none());
+        // and the sign-in parser doesn't swallow Slack links
+        assert!(crate::account::parse_deep_link(&format!("flo://slack?code={code}")).is_none());
+    }
+
+    #[test]
+    fn challenge_is_pkce_s256() {
+        // RFC 7636 appendix B
+        assert_eq!(challenge_of("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+        let v = new_verifier();
+        assert_eq!(v.len(), 43);
+        assert!(v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert_ne!(v, new_verifier());
+        assert_eq!(challenge_of(&v).len(), 43);
+    }
+
+    #[test]
+    fn connected_toast_text() {
+        assert_eq!(connected_text("parth · Northwind"), "Slack connected as @parth in Northwind");
+        assert_eq!(connected_text("parth"), "Slack connected as parth");
     }
 }
