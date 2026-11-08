@@ -6,7 +6,7 @@
 // Everything respects prefers-reduced-motion (no tilt, no spin, instant drawing).
 import { useEffect, useRef, useState } from "react";
 import { animate, AnimatePresence, motion, useInView, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
-import { Globe, ShieldCheck, Sparkles } from "lucide-react";
+import { Clock3, Flame, Globe, Mic, ShieldCheck, Type } from "lucide-react";
 import { api } from "../lib/api";
 import { formatDuration, formatNumber } from "../lib/format";
 import type { Analytics } from "../lib/types";
@@ -87,11 +87,34 @@ function goldenSpiral(W: number, H: number, n: number): { d: string; squares: [n
   }
   return { d, squares };
 }
-const SPIRAL = goldenSpiral(1000 * PHI, 1000, 10);
+const SPIRAL = goldenSpiral(1000 * PHI, 1000, 12);
+/** Where the spiral converges (its "eye"): the centre of the innermost square. The logo sits here. */
+const EYE = (() => {
+  const sq = goldenSpiral(1000 * PHI, 1000, 30).squares;
+  const [x, y, w] = sq[sq.length - 1];
+  return [x + w / 2, y + w / 2] as const;
+})();
+/** px per viewBox unit: the golden rectangle is drawn 377 px tall (a Fibonacci number). */
+const SPIRAL_SCALE = 377 / 1000;
 
 function SpiralMotif({ reduce }: { reduce: boolean }) {
+  // drawn so its eye lands exactly on the logo (the centre of the orb column), fading outward from there
+  const k = SPIRAL_SCALE;
+  const fade = `radial-gradient(circle 290px at ${EYE[0] * k}px ${EYE[1] * k}px, #000 30%, transparent 100%)`;
   return (
-    <svg viewBox={`0 0 ${1000 * PHI} 1000`} preserveAspectRatio="xMidYMid slice" className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden>
+    <svg
+      viewBox={`0 0 ${1000 * PHI} 1000`}
+      className="pointer-events-none absolute"
+      style={{
+        width: 1000 * PHI * k,
+        height: 1000 * k,
+        left: `calc(50% - ${EYE[0] * k}px)`,
+        top: `calc(50% - ${EYE[1] * k}px)`,
+        WebkitMaskImage: fade,
+        maskImage: fade,
+      }}
+      aria-hidden
+    >
       {SPIRAL.squares.map(([x, y, s], i) => (
         <motion.rect
           key={i}
@@ -100,9 +123,9 @@ function SpiralMotif({ reduce }: { reduce: boolean }) {
           width={s}
           height={s}
           fill="none"
-          strokeWidth={1.4}
+          strokeWidth={1}
           vectorEffect="non-scaling-stroke"
-          style={{ stroke: "rgb(var(--accent-2-rgb) / 0.10)" }}
+          style={{ stroke: "rgb(var(--accent-2-rgb) / 0.09)" }}
           initial={reduce ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.15 + i * 0.09, duration: 0.6 }}
@@ -111,10 +134,10 @@ function SpiralMotif({ reduce }: { reduce: boolean }) {
       <motion.path
         d={SPIRAL.d}
         fill="none"
-        strokeWidth={1.6}
+        strokeWidth={1.5}
         strokeLinecap="round"
         vectorEffect="non-scaling-stroke"
-        style={{ stroke: "rgb(var(--accent-rgb) / 0.42)", filter: "drop-shadow(0 0 6px rgb(var(--accent-rgb) / 0.5))" }}
+        style={{ stroke: "rgb(var(--accent-rgb) / 0.4)" }}
         initial={reduce ? false : { pathLength: 0 }}
         animate={{ pathLength: 1 }}
         transition={{ duration: 2.6, ease: [0.65, 0, 0.35, 1], delay: 0.2 }}
@@ -159,6 +182,7 @@ function Orb({ reduce }: { reduce: boolean }) {
 
   return (
     <div className="relative flex h-full items-center justify-center" style={{ perspective: 610 }}>
+      <SpiralMotif reduce={reduce} />
       {/* halo rings at φ-scaled radii */}
       {[F[8], F[8] / PHI + F[8] / PHI / PHI].map((d, i) => (
         <span
@@ -232,7 +256,7 @@ function Orb({ reduce }: { reduce: boolean }) {
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0 }}
-          className="absolute bottom-[13px] text-[11px] tracking-wide text-faint"
+          className="absolute bottom-[13px] z-10 rounded-full border border-[var(--border)] bg-[color-mix(in_srgb,var(--bg)_85%,transparent)] px-[10px] py-[3px] text-[10.5px] font-medium tracking-wide text-faint backdrop-blur-md"
         >
           {taps >= 5 ? "φ = 1.6180339887…" : taps > 0 ? `${taps} / 5` : "tap the logo"}
         </motion.span>
@@ -295,11 +319,11 @@ function MakerCard({ reduce }: { reduce: boolean }) {
     <div
       ref={ref}
       onMouseEnter={() => setSigKey((k) => k + 1)}
-      className="glass relative overflow-hidden rounded-[21px]"
-      style={{ padding: F[5] - F[1] }}
+      className="glass relative isolate flex flex-col overflow-hidden rounded-[21px]"
+      style={{ padding: F[5] - F[1], clipPath: "inset(0 round 21px)" }}
       data-testid="about-maker"
     >
-      <span aria-hidden className="pointer-events-none absolute -right-[55px] -top-[55px] h-[233px] w-[233px] rounded-full blur-3xl" style={{ background: "rgb(var(--accent-rgb) / 0.12)" }} />
+      <span aria-hidden className="pointer-events-none absolute inset-0 rounded-[inherit]" style={{ background: "radial-gradient(377px 233px at 100% 0%, rgb(var(--accent-rgb) / 0.13), transparent 70%)" }} />
       <div className="relative mb-[13px] text-[10.5px] font-semibold uppercase tracking-[0.2em] text-faint">Made by</div>
       <div className="relative flex items-center" style={{ gap: F[4] }}>
         <TiltPortrait reduce={reduce} />
@@ -321,7 +345,7 @@ function MakerCard({ reduce }: { reduce: boolean }) {
       <div className="relative mt-[5px] flex justify-end pr-[8px]" aria-label="Naman">
         {sigKey > 0 ? <SignatureMark key={sigKey} id="about-sig" className="h-[34px] w-[78px]" /> : <span className="h-[34px] w-[78px]" />}
       </div>
-      <div className="relative mt-[13px] flex flex-wrap" style={{ gap: F[2] }}>
+      <div className="relative mt-auto flex flex-wrap pt-[13px]" style={{ gap: F[2] }}>
         {LINKS.map((l) => (
           <motion.button
             key={l.url}
@@ -367,35 +391,46 @@ function Numbers({ reduce }: { reduce: boolean }) {
       alive = false;
     };
   }, []);
-  const stats = a
-    ? [
-        { label: "Words dictated", value: a.totalWords, fmt: (n: number) => formatNumber(n) },
-        { label: "Time saved", value: a.minutesSaved * 60, fmt: (n: number) => formatDuration(n) },
-        { label: "Dictations", value: a.totalDictations, fmt: (n: number) => formatNumber(n) },
-        { label: "Day streak", value: a.streakDays, fmt: (n: number) => String(Math.round(n)) },
-      ]
-    : null;
+  const stats = [
+    { label: "Words dictated", icon: <Type size={14} />, value: a?.totalWords, fmt: (n: number) => formatNumber(n) },
+    { label: "Time saved", icon: <Clock3 size={14} />, value: a ? a.minutesSaved * 60 : undefined, fmt: (n: number) => formatDuration(n) },
+    { label: "Dictations", icon: <Mic size={14} />, value: a?.totalDictations, fmt: (n: number) => formatNumber(n) },
+    { label: "Day streak", icon: <Flame size={14} />, value: a?.streakDays, fmt: (n: number) => `${Math.round(n)}` },
+  ];
   return (
-    <div className="glass relative flex flex-col overflow-hidden rounded-[21px]" style={{ padding: F[5] - F[1] }} data-testid="about-numbers">
+    <div
+      className="glass relative isolate flex flex-col overflow-hidden rounded-[21px]"
+      style={{ padding: F[5] - F[1], clipPath: "inset(0 round 21px)" }}
+      data-testid="about-numbers"
+    >
       <div className="mb-[13px] flex items-center justify-between">
         <span className="text-[10.5px] font-semibold uppercase tracking-[0.2em] text-faint">By the numbers</span>
-        <span className="text-[11px] text-faint">30 days</span>
+        <span className="rounded-full border border-[var(--border)] px-[8px] py-[2px] text-[10.5px] text-faint">30 days</span>
       </div>
-      <div className="grid flex-1 grid-cols-1 content-between" style={{ gap: F[3] }}>
-        {(stats ?? Array.from({ length: 4 }, () => null)).map((s, i) => (
+      <div className="grid flex-1 grid-cols-2 grid-rows-2" style={{ gap: F[2] }}>
+        {stats.map((s, i) => (
           <motion.div
-            key={i}
-            initial={reduce ? false : { opacity: 0, x: 8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.1 + i * 0.08 }}
-            className="flex items-baseline justify-between border-b border-[var(--border)] pb-[8px] last:border-0 last:pb-0"
+            key={s.label}
+            initial={reduce ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 + i * 0.08, ease: [0.16, 1, 0.3, 1], duration: 0.5 }}
+            className="group relative flex flex-col justify-between overflow-hidden rounded-[13px] border border-[var(--border)] p-[13px] transition-colors hover:border-[rgb(var(--accent-rgb)/0.45)]"
+            style={{ background: "linear-gradient(160deg, rgb(var(--accent-rgb) / 0.08), transparent 60%)" }}
           >
-            <span className="text-muted" style={{ fontSize: T.body }}>
-              {s?.label ?? "…"}
+            <span
+              className="flex h-[26px] w-[26px] items-center justify-center rounded-[8px] text-brand-300 transition-transform duration-300 group-hover:-rotate-6 group-hover:scale-110"
+              style={{ background: "rgb(var(--accent-rgb) / 0.14)" }}
+            >
+              {s.icon}
             </span>
-            <span className="accent-text font-semibold tabular-nums tracking-tight" style={{ fontSize: T.lead }}>
-              {s ? <CountUp value={s.value} format={s.fmt} reduce={reduce} /> : "—"}
-            </span>
+            <div>
+              <div className="accent-text font-semibold tabular-nums tracking-tight" style={{ fontSize: T.lead + 5, lineHeight: 1.1 }}>
+                {s.value !== undefined ? <CountUp value={s.value} format={s.fmt} reduce={reduce} /> : "–"}
+              </div>
+              <div className="mt-[3px] text-muted" style={{ fontSize: 12 }}>
+                {s.label}
+              </div>
+            </div>
           </motion.div>
         ))}
       </div>
@@ -409,8 +444,7 @@ export function About() {
   return (
     <div className="flex flex-col" style={{ gap: F[4] }} data-testid="about">
       {/* hero: a golden rectangle split 1.618 : 1 — words left, orb right */}
-      <div className="glass-strong relative overflow-hidden rounded-[34px]" style={{ height: F[8] + F[7], display: "grid", gridTemplateColumns: GOLDEN_COLS }}>
-        <SpiralMotif reduce={reduce} />
+      <div className="glass-strong relative isolate overflow-hidden rounded-[34px]" style={{ height: F[8] + F[7], display: "grid", gridTemplateColumns: GOLDEN_COLS, clipPath: "inset(0 round 34px)" }}>
         <div aria-hidden className="pointer-events-none absolute inset-0" style={{ background: "radial-gradient(610px 233px at 78% 50%, rgb(var(--accent-rgb) / 0.16), transparent 70%)" }} />
         <div className="relative flex flex-col justify-center" style={{ paddingLeft: F[6], paddingRight: F[4] }}>
           <motion.div
@@ -458,11 +492,12 @@ export function About() {
         <Numbers reduce={reduce} />
       </div>
 
-      <div className="flex items-center justify-between px-[5px] text-[11.5px] text-faint">
-        <span className="inline-flex items-center gap-1.5">
-          <Sparkles size={12} className="text-brand-300" /> Laid out on the golden ratio: 1 : 1.618, type 13 · 21 · 34 · 55.
+      <div className="flex items-center justify-center gap-[8px] text-[11.5px] text-faint">
+        <span className="h-px w-[34px] bg-[var(--border-strong)]" aria-hidden />
+        <span>
+          Laid out on the golden ratio <span className="accent-text font-semibold">φ = 1.618</span>
         </span>
-        <span className="tabular-nums">φ</span>
+        <span className="h-px w-[34px] bg-[var(--border-strong)]" aria-hidden />
       </div>
     </div>
   );
