@@ -515,6 +515,7 @@ mod tests {
             created_at: created.into(),
             completed_at: None,
             remind_at: None,
+            note_id: None,
         }
     }
 

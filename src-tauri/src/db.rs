@@ -16,7 +16,7 @@ pub struct Db {
 const PROJECT_COLORS: &[&str] = &["#8b5cf6", "#06b6d4", "#f59e0b", "#10b981", "#ec4899", "#3b82f6", "#ef4444"];
 
 /// Millisecond precision: every JS engine (incl. WebKit) parses this reliably.
-fn now() -> String {
+pub(crate) fn now() -> String {
     Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
 }
 
@@ -116,6 +116,7 @@ impl Db {
             "ALTER TABLE skills ADD COLUMN connections TEXT NOT NULL DEFAULT '[]'",
             "ALTER TABLE skills ADD COLUMN schedule TEXT",
             "ALTER TABLE skills ADD COLUMN last_run TEXT",
+            "ALTER TABLE todos ADD COLUMN note_id TEXT",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -451,13 +452,14 @@ impl Db {
     pub fn insert_todo(&self, t: &Todo) -> Result<()> {
         // a deadline in the words ("by next Monday") becomes the due date + a 5-min-early reminder
         let mut owned;
-        let t = if t.due.is_none() || t.project_id.is_none() {
+        let t = if t.due.is_none() || t.project_id.is_none() || t.remind_at.is_none() {
             owned = t.clone();
             if owned.due.is_none() {
                 owned.due = Self::due_from_words(&t.title, &t.created_at);
-                if owned.remind_at.is_none() {
-                    owned.remind_at = Self::remind_at_for(owned.due.as_deref());
-                }
+            }
+            // every dated to-do gets a reminder (date-only ones at 9:55 that day) unless it's already past
+            if owned.remind_at.is_none() {
+                owned.remind_at = Self::remind_at_for(owned.due.as_deref()).filter(|r| !Self::is_past(r));
             }
             // file it under the project its words point to (name, client, keywords)
             if owned.project_id.is_none() {
@@ -469,8 +471,8 @@ impl Db {
             t
         };
         self.conn.lock().execute(
-            "INSERT INTO todos (id,title,reason,person,app,source,status,project_id,due,confidence,created_at,completed_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-            params![t.id, t.title, t.reason, t.person, t.app, t.source, t.status, t.project_id, t.due, t.confidence, t.created_at, t.completed_at],
+            "INSERT INTO todos (id,title,reason,person,app,source,status,project_id,due,confidence,created_at,completed_at,note_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![t.id, t.title, t.reason, t.person, t.app, t.source, t.status, t.project_id, t.due, t.confidence, t.created_at, t.completed_at, t.note_id],
         )?;
         if let Some(r) = &t.remind_at {
             self.conn.lock().execute("UPDATE todos SET remind_at=?2, reminded=0 WHERE id=?1", params![t.id, r])?;
@@ -505,23 +507,37 @@ impl Db {
         Ok(n)
     }
 
-    /// 5 minutes before a due time (RFC3339 with a clock time). None for date-only / no due.
+    /// 5 minutes before a due time, in local time (RFC3339). A date-only due ("2026-11-06")
+    /// counts as 10:00 local that day (same rule as `text::parse_due`), so it's reminded at 9:55.
+    /// None when there's no due date or it doesn't parse.
     pub fn remind_at_for(due: Option<&str>) -> Option<String> {
-        let d = due?;
-        if d.len() <= 10 {
-            return None;
-        }
-        let t = chrono::DateTime::parse_from_rfc3339(d).ok()?;
+        let d = due?.trim();
+        let t = if d.len() <= 10 {
+            let day = NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()?;
+            day.and_hms_opt(10, 0, 0)?.and_local_timezone(Local).earliest()?
+        } else {
+            chrono::DateTime::parse_from_rfc3339(d).ok()?.with_timezone(&Local)
+        };
         Some((t - Duration::minutes(5)).to_rfc3339())
     }
 
+    /// An RFC3339 time that has already passed (unparseable counts as not past).
+    fn is_past(at: &str) -> bool {
+        chrono::DateTime::parse_from_rfc3339(at).map(|t| t < Local::now() - Duration::minutes(1)).unwrap_or(false)
+    }
+
     /// Open to-dos whose reminder time has arrived and haven't been notified yet.
+    /// Compared as instants, not text: a reminder stored as `Z` or another offset still fires
+    /// at the right moment.
     pub fn due_reminders(&self) -> Result<Vec<Todo>> {
-        let now = Local::now().to_rfc3339();
+        let now = Local::now();
         let c = self.conn.lock();
-        let mut st = c.prepare("SELECT * FROM todos WHERE status='open' AND reminded=0 AND remind_at IS NOT NULL AND remind_at<=?1")?;
-        let rows = st.query_map([now], row_todo)?.collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let mut st = c.prepare("SELECT * FROM todos WHERE status='open' AND reminded=0 AND remind_at IS NOT NULL")?;
+        let rows = st.query_map([], row_todo)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows
+            .into_iter()
+            .filter(|t| t.remind_at.as_deref().and_then(|r| chrono::DateTime::parse_from_rfc3339(r).ok()).is_some_and(|r| r <= now))
+            .collect())
     }
 
     pub fn mark_reminded(&self, id: &str) -> Result<()> {
@@ -557,6 +573,20 @@ impl Db {
         let mut st = c.prepare("SELECT * FROM todos ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'snoozed' THEN 1 ELSE 2 END, created_at DESC")?;
         let rows = st.query_map([], row_todo)?.collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// To-dos created from one meeting note.
+    pub fn todos_for_note(&self, note_id: &str) -> Result<Vec<Todo>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT * FROM todos WHERE note_id=?1 ORDER BY created_at")?;
+        let rows = st.query_map([note_id], row_todo)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Change a to-do's title and owner together (a speaker was renamed).
+    pub fn set_todo_title_person(&self, id: &str, title: &str, person: Option<&str>) -> Result<()> {
+        self.conn.lock().execute("UPDATE todos SET title=?2, person=?3 WHERE id=?1", params![id, title, person])?;
+        Ok(())
     }
 
     pub fn open_todo_titles(&self) -> Result<Vec<String>> {
@@ -1191,6 +1221,7 @@ fn row_todo(r: &Row) -> rusqlite::Result<Todo> {
         created_at: r.get(10)?,
         completed_at: r.get(11)?,
         remind_at: r.get::<_, Option<String>>(12).unwrap_or(None),
+        note_id: r.get::<_, Option<String>>("note_id").unwrap_or(None),
     })
 }
 
@@ -1345,8 +1376,65 @@ mod tests {
         let rt = chrono::DateTime::parse_from_rfc3339(&r).unwrap();
         let dt = chrono::DateTime::parse_from_rfc3339(due).unwrap();
         assert_eq!((dt - rt).num_minutes(), 5);
-        assert!(Db::remind_at_for(Some("2026-11-06")).is_none());
+        // date-only → 9:55 local that day
+        let d = chrono::DateTime::parse_from_rfc3339(&Db::remind_at_for(Some("2026-11-06")).unwrap()).unwrap().with_timezone(&Local);
+        assert_eq!(d.format("%Y-%m-%d %H:%M").to_string(), "2026-11-06 09:55");
         assert!(Db::remind_at_for(None).is_none());
+        assert!(Db::remind_at_for(Some("soon")).is_none());
+    }
+
+    #[test]
+    fn due_reminders_compare_instants_not_text() {
+        let db = Db::open_in_memory().unwrap();
+        // an hour ago in UTC ("Z"), and an hour ahead at a far-west offset: as text these
+        // compare the wrong way round against a local "+05:30" now
+        let past_utc = (chrono::Utc::now() - Duration::hours(1)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let fut_west = (chrono::Utc::now() + Duration::hours(1)).with_timezone(&chrono::FixedOffset::west_opt(11 * 3600).unwrap()).to_rfc3339();
+        let a = db.add_todo("call the bank", "voice", None, None).unwrap();
+        let b = db.add_todo("water the plants", "voice", None, None).unwrap();
+        db.set_remind(&a.id, Some(&past_utc)).unwrap();
+        db.set_remind(&b.id, Some(&fut_west)).unwrap();
+        let ids: Vec<_> = db.due_reminders().unwrap().into_iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![a.id.clone()]);
+        db.mark_reminded(&a.id).unwrap();
+        assert!(db.due_reminders().unwrap().is_empty());
+    }
+
+    #[test]
+    fn date_only_due_gets_a_future_reminder_but_never_a_stale_one() {
+        let db = Db::open_in_memory().unwrap();
+        let tomorrow = (Local::now() + Duration::days(1)).format("%Y-%m-%d").to_string();
+        let yesterday = (Local::now() - Duration::days(1)).format("%Y-%m-%d").to_string();
+        let mk = |title: &str, due: &str| Todo {
+            id: new_id(),
+            title: title.into(),
+            source: "screen".into(),
+            status: "open".into(),
+            due: Some(due.into()),
+            created_at: now(),
+            ..Default::default()
+        };
+        let a = mk("reply to Priya", &tomorrow);
+        let b = mk("old thing", &yesterday);
+        db.insert_todo(&a).unwrap();
+        db.insert_todo(&b).unwrap();
+        let all = db.list_todos().unwrap();
+        let ra = all.iter().find(|t| t.id == a.id).unwrap().remind_at.clone().expect("reminder for tomorrow");
+        assert!(ra.contains("T09:55"), "{ra}");
+        assert!(all.iter().find(|t| t.id == b.id).unwrap().remind_at.is_none());
+    }
+
+    #[test]
+    fn snooze_rearms_a_reminder() {
+        let db = Db::open_in_memory().unwrap();
+        let a = db.add_todo("call the bank", "voice", None, None).unwrap();
+        db.set_remind(&a.id, Some(&(Local::now() - Duration::minutes(2)).to_rfc3339())).unwrap();
+        assert_eq!(db.due_reminders().unwrap().len(), 1);
+        db.mark_reminded(&a.id).unwrap();
+        db.set_remind(&a.id, Some(&(Local::now() + Duration::minutes(10)).to_rfc3339())).unwrap();
+        assert!(db.due_reminders().unwrap().is_empty());
+        db.set_remind(&a.id, Some(&(Local::now() - Duration::seconds(1)).to_rfc3339())).unwrap();
+        assert_eq!(db.due_reminders().unwrap().len(), 1);
     }
 
     #[test]

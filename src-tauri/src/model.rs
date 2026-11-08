@@ -506,6 +506,9 @@ pub struct Todo {
     /// when to notify (RFC3339), set to due-minus-5-minutes so reminders are always 5 min early
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remind_at: Option<String>,
+    /// the meeting note this to-do came from (Details opens that conversation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

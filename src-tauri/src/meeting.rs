@@ -526,6 +526,9 @@ pub fn rename_speaker(st: &Shared, note_id: &str, from: &str, to: &str) -> Resul
         n.action_items = n.action_items.iter().map(|a| replace_word(a, from, &to)).collect();
     }
     st.db.upsert_note(&n)?;
+    if rename_note_todos(&st.db, note_id, from, &to)? > 0 {
+        st.emit(ev::TODOS, ());
+    }
     if let Some(mut meta) = load_meta(st, note_id) {
         if let Some(i) = meta.speakers.iter().position(|c| c.label == from) {
             let moved = meta.speakers.remove(i);
@@ -554,6 +557,21 @@ pub fn rename_speaker(st: &Shared, note_id: &str, from: &str, to: &str) -> Resul
     }
     st.emit(ev::NOTES, ());
     Ok(n)
+}
+
+/// The meeting's to-dos follow a speaker rename ("Speaker 2: send deck" → "Rahul: send deck").
+fn rename_note_todos(db: &crate::db::Db, note_id: &str, from: &str, to: &str) -> Result<usize> {
+    let mut changed = 0;
+    for t in db.todos_for_note(note_id)? {
+        let owned = t.person.as_deref() == Some(from);
+        let title = replace_word(&t.title, from, to);
+        if owned || title != t.title {
+            let person = if owned { Some(to) } else { t.person.as_deref() };
+            db.set_todo_title_person(&t.id, &title, person)?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
 }
 
 // ── pure helpers (unit tested) ─────────────────────────────────────────────
@@ -644,6 +662,62 @@ fn pearson(p: &[(f32, f32)]) -> f32 {
         return 0.0;
     }
     sxy / (sxx.sqrt() * syy.sqrt())
+}
+
+/// "Rahul: send the deck by Friday" → (Some("Rahul"), "send the deck by Friday").
+/// Only a short name-like prefix counts as an owner (not "Note: …" sentences or times like "10:30").
+pub fn split_owner(item: &str) -> (Option<String>, String) {
+    let item = item.trim();
+    if let Some((who, task)) = item.split_once(':') {
+        // "10:30" is a time, not "Owner: task"
+        if task.starts_with(|c: char| c.is_ascii_digit()) {
+            return (None, item.to_string());
+        }
+        let who = who.trim();
+        let task = task.trim();
+        let name_like = !who.is_empty()
+            && who.chars().count() <= 30
+            && who.split_whitespace().count() <= 3
+            && who.chars().next().is_some_and(|c| c.is_alphabetic())
+            && who.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '.' || c == '-' || c == '\'');
+        if name_like && !task.is_empty() {
+            return (Some(who.to_string()), task.to_string());
+        }
+    }
+    (None, item.to_string())
+}
+
+/// Turn a meeting's action items into to-dos linked to the note: the owner becomes the to-do's
+/// person, a deadline in the words dates it (and arms a reminder, via `insert_todo`), and the
+/// meeting is the "why". Your own items read as plain tasks; others' keep "Owner: task".
+/// Returns how many were added (duplicates of open to-dos are skipped).
+pub fn file_action_items(db: &crate::db::Db, n: &Note, items: &[String]) -> Result<usize> {
+    let mut existing = db.open_todo_titles()?;
+    let mut added = 0;
+    for item in items {
+        let (owner, task) = split_owner(item);
+        let mine = owner.as_deref().map(|o| o.eq_ignore_ascii_case(YOU) || o.eq_ignore_ascii_case("me")).unwrap_or(true);
+        let title = if mine { task.clone() } else { format!("{}: {task}", owner.as_deref().unwrap_or_default()) };
+        if title.is_empty() || text::is_duplicate_todo(&title, &existing) || text::is_duplicate_todo(&task, &existing) {
+            continue;
+        }
+        let t = Todo {
+            id: crate::db::new_id(),
+            title: title.clone(),
+            reason: Some(format!("Action item from the meeting “{}”", n.title)),
+            person: if mine { None } else { owner },
+            source: "meeting".into(),
+            status: "open".into(),
+            project_id: n.project_id.clone(),
+            created_at: crate::db::now(),
+            note_id: Some(n.id.clone()),
+            ..Default::default()
+        };
+        db.insert_todo(&t)?;
+        existing.push(title);
+        added += 1;
+    }
+    Ok(added)
 }
 
 /// Replace whole-word occurrences ("Speaker 2" but not "Speaker 21").
@@ -757,12 +831,7 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
         if n.project_id.is_none() {
             n.project_id = st.db.project_for(&format!("{} {}", n.title, n.summary));
         }
-        let existing = st.db.open_todo_titles().unwrap_or_default();
-        for item in &s.action_items {
-            if !text::is_duplicate_todo(item, &existing) {
-                let _ = st.db.add_todo(item, "meeting", n.project_id.clone(), None);
-            }
-        }
+        let _ = file_action_items(&st.db, &n, &s.action_items);
         if !s.action_items.is_empty() {
             st.emit(ev::TODOS, ());
             st.emit(ev::PROJECTS, ());
@@ -787,6 +856,58 @@ mod tests {
 
     fn seg(t: f64, text: &str, who: &str) -> MeetingSegment {
         MeetingSegment { t, text: text.into(), speaker: Some(who.into()) }
+    }
+
+    fn note(id: &str, title: &str) -> Note {
+        Note {
+            id: id.into(),
+            title: title.into(),
+            kind: "meeting".into(),
+            project_id: None,
+            transcript: vec![],
+            summary: String::new(),
+            action_items: vec![],
+            duration_sec: 0.0,
+            created_at: crate::db::now(),
+            live: false,
+        }
+    }
+
+    #[test]
+    fn splits_owner_from_action_item() {
+        assert_eq!(split_owner("Rahul: send the deck"), (Some("Rahul".into()), "send the deck".into()));
+        assert_eq!(split_owner("Speaker 2: book the venue"), (Some("Speaker 2".into()), "book the venue".into()));
+        assert_eq!(split_owner("review the PR"), (None, "review the PR".into()));
+        assert_eq!(split_owner("Call at 10:30 tomorrow"), (None, "Call at 10:30 tomorrow".into()));
+        assert_eq!(split_owner("We agreed on the following plan for launch: ship"), (None, "We agreed on the following plan for launch: ship".into()));
+    }
+
+    #[test]
+    fn action_items_become_dated_linked_todos_with_owners() {
+        let db = crate::db::Db::open_in_memory().unwrap();
+        let n = note("n1", "Pricing sync");
+        let items = vec![
+            "You: review the PR tomorrow at 3pm".to_string(),
+            "Speaker 2: send the pricing deck by next Monday".to_string(),
+            "update the roadmap".to_string(),
+            "You: review the PR tomorrow at 3pm".to_string(), // duplicate
+        ];
+        assert_eq!(file_action_items(&db, &n, &items).unwrap(), 3);
+        let todos = db.todos_for_note("n1").unwrap();
+        assert_eq!(todos.len(), 3);
+        let mine = todos.iter().find(|t| t.title == "review the PR tomorrow at 3pm").expect("own item is a plain task");
+        assert!(mine.person.is_none());
+        assert!(mine.due.is_some() && mine.remind_at.is_some(), "dated + reminder: {mine:?}");
+        assert!(mine.reason.as_deref().unwrap().contains("Pricing sync"));
+        let theirs = todos.iter().find(|t| t.person.as_deref() == Some("Speaker 2")).unwrap();
+        assert!(theirs.title.starts_with("Speaker 2: send"));
+        assert!(theirs.due.as_deref().unwrap().contains("T10:00"));
+        // rename follows into the to-dos
+        assert_eq!(rename_note_todos(&db, "n1", "Speaker 2", "Rahul").unwrap(), 1);
+        let renamed = db.todos_for_note("n1").unwrap().into_iter().find(|t| t.id == theirs.id).unwrap();
+        assert_eq!(renamed.person.as_deref(), Some("Rahul"));
+        assert!(renamed.title.starts_with("Rahul: send"), "{}", renamed.title);
+        assert_eq!(renamed.note_id.as_deref(), Some("n1"));
     }
 
     #[test]

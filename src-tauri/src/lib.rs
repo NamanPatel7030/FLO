@@ -8,6 +8,8 @@ mod audio;
 mod claude;
 mod code;
 mod commands;
+#[cfg(test)]
+mod contract_tests;
 mod corrections;
 mod db;
 mod egress;
@@ -188,6 +190,36 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
     Ok(())
 }
 
+/// How long to wait before the next cursor sample while the cursor is outside the island:
+/// far away (>400 pt) 250 ms, approaching (>120 pt) 80 ms, close 33 ms. Nobody crosses 400 pt of
+/// screen in under 250 ms and then expects the notch to have opened already, so entering still feels
+/// instant, but an idle Flo wakes ~4×/s instead of 20×/s.
+fn hover_poll_ms(x: f64, y: f64, ww: f64, wh: f64) -> u64 {
+    let dx = if x < 0.0 { -x } else if x > ww { x - ww } else { 0.0 };
+    let dy = if y < 0.0 { -y } else if y > wh { y - wh } else { 0.0 };
+    let d = dx.max(dy);
+    if d > 400.0 {
+        250
+    } else if d > 120.0 {
+        80
+    } else {
+        33
+    }
+}
+
+#[cfg(test)]
+mod hover_tests {
+    #[test]
+    fn polls_slower_the_further_the_cursor_is() {
+        use super::hover_poll_ms as p;
+        assert_eq!(p(10.0, 10.0, 200.0, 40.0), 33); // over the window
+        assert_eq!(p(-100.0, 20.0, 200.0, 40.0), 33); // just beside it
+        assert_eq!(p(100.0, 300.0, 200.0, 40.0), 80); // a little below
+        assert_eq!(p(100.0, 900.0, 200.0, 40.0), 250); // far down the screen
+        assert_eq!(p(-800.0, 0.0, 200.0, 40.0), 250); // far left
+    }
+}
+
 /// The island is a non-activating panel, so its web view doesn't get mouse-exit events while
 /// another app is active. Track the cursor here and tell the island when it enters/leaves.
 fn spawn_hover_tracker(app: AppHandle, st: Shared) {
@@ -195,11 +227,12 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
         let mut inside = false;
         let mut last: (f64, f64) = (f64::NAN, f64::NAN);
         let mut outside_streak = 0u8;
+        let mut next_ms: u64 = 50;
         loop {
             // over the island: ~60 Hz so hover highlights/tooltips follow the cursor without visible
-            // steps (12 Hz read as stutter); elsewhere 20 Hz so entering feels instant. One cheap
-            // CoreGraphics call per tick.
-            tokio::time::sleep(std::time::Duration::from_millis(if inside { 16 } else { 50 })).await;
+            // steps (12 Hz read as stutter). Outside, the rate follows the distance to the island
+            // (see `hover_poll_ms`) so an idle Flo barely wakes up. One cheap CoreGraphics call per tick.
+            tokio::time::sleep(std::time::Duration::from_millis(if inside { 16 } else { next_ms })).await;
             // fast path (macOS): CoreGraphics cursor + cached island rect, all in logical points
             let sample = match (platform::cursor_location(), *ISLAND_RECT.lock()) {
                 (Some((cx_, cy_)), Some((rx, ry, rw, rh))) => Some((cx_ - rx, cy_ - ry, rw, rh)),
@@ -216,6 +249,7 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
                 }
             };
             let Some((x, y, ww, wh)) = sample else { continue };
+            next_ms = hover_poll_ms(x, y, ww, wh);
             // hysteresis: enter on the exact frame; leave only when ≥8px outside for 2 samples in a row,
             // so a window resize under a resting cursor can never toggle the menu open/closed
             // the hot zone is a little larger than the window (a small notch is an easy target);
