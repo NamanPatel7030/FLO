@@ -20,7 +20,7 @@ export interface WidgetMeta {
 
 /** Every widget Flo offers, in the order they appear in the Settings picker. */
 export const WIDGETS: WidgetMeta[] = [
-  { id: "nowPlaying", label: "Now Playing", hint: "Track, transport controls and volume", span: 2, h: 78 },
+  { id: "nowPlaying", label: "Now Playing", hint: "Artwork, progress, transport controls and volume", span: 2, h: 148 },
   { id: "agents", label: "Claude sessions", hint: "Live Claude Code sessions — scroll, hover to expand", span: 2, h: 132 },
   { id: "note", label: "Quick note", hint: "A scratch note, saved on this device", span: 2, h: 92 },
   { id: "today", label: "Today's to-dos", hint: "Check off tasks, see why each is here — scroll, hover to expand", span: 2, h: 148 },
@@ -111,10 +111,65 @@ export function onWidgetsChange(cb: (ids: WidgetId[]) => void): () => void {
 }
 
 // ── panel layout ────────────────────────────────────────────────────────────
-const GAP = 8; // grid gap (matches gap-2)
+// The hover panel (one hover on the notch opens it): quick actions on top, the widget grid below.
+// Laid out at base size (PANEL_W wide) and zoomed by Settings → Notch → Size.
+/** Base width of the hover panel's black shape (logical px, before the notch-size scale). */
+export const PANEL_W = 680;
+/** Columns of the panel's widget grid: span-2 widgets take half a row, span-1 a quarter. */
+export const PANEL_COLS = 4;
+/** Side padding inside the panel. */
+export const PANEL_PAD_X = 12;
+export const GAP = 8; // grid gap (matches gap-2)
 const PAD_TOP = 4; // pt-1
 const PAD_BOTTOM = 12; // pb-3
-const QUICK_H = 46; // the quick-actions row pinned at the bottom
+/** The quick-actions row at the top of the panel (tile height). */
+export const QUICK_H = 54;
+/** "Add widgets" tile when the user turned every widget off. */
+export const EMPTY_WIDGETS_H = 64;
+/** Max body height (base px) before the widget grid scrolls (keeps the panel on screen). */
+export const PANEL_BODY_MAX = 600;
+
+export interface PanelCell {
+  id: WidgetId;
+  /** columns taken in the PANEL_COLS grid (leftover space in a row goes to its last tile) */
+  span: number;
+}
+export interface PanelRow {
+  cells: PanelCell[];
+  h: number;
+}
+
+/** Pack widgets into rows of the panel's 4-column grid (in order). A row's free columns go to its
+ *  last tile, so every row is full width and nothing floats. */
+export function packPanelRows(ids: WidgetId[], cols: number = PANEL_COLS): PanelRow[] {
+  const rows: PanelRow[] = [];
+  let cur: PanelCell[] = [];
+  let used = 0;
+  const flush = () => {
+    if (!cur.length) return;
+    const free = cols - used;
+    if (free > 0) cur[cur.length - 1] = { ...cur[cur.length - 1], span: cur[cur.length - 1].span + free };
+    rows.push({ cells: cur, h: Math.max(...cur.map((c) => widgetHeight(c.id))) });
+    cur = [];
+    used = 0;
+  };
+  for (const id of ids) {
+    const span = Math.min(cols, widgetSpan(id));
+    if (used + span > cols) flush();
+    cur.push({ id, span });
+    used += span;
+    if (used === cols) flush();
+  }
+  flush();
+  return rows;
+}
+
+/** Height of the widget grid alone (no quick row / padding). */
+export function panelGridHeight(ids: WidgetId[]): number {
+  const rows = packPanelRows(ids);
+  if (!rows.length) return EMPTY_WIDGETS_H;
+  return rows.reduce((h, r, i) => h + r.h + (i > 0 ? GAP : 0), 0);
+}
 
 /** Pack widgets into rows of a 2-column grid: span-2 widgets take their own row, span-1 pair up. */
 export function packWidgetRows(ids: WidgetId[]): WidgetId[][] {
@@ -140,15 +195,12 @@ export function packWidgetRows(ids: WidgetId[]): WidgetId[][] {
   return rows;
 }
 
-/** Exact height of the panel body (below the notch spacer) for a given widget list. */
+/** Exact height of the hover panel body (below the notch row): quick actions + widget grid,
+ *  capped at PANEL_BODY_MAX (the grid scrolls beyond that). */
 export function widgetsBodyHeight(ids: WidgetId[]): number {
-  const rows = packWidgetRows(ids);
-  let h = PAD_TOP + PAD_BOTTOM;
-  rows.forEach((row, i) => {
-    const rowH = Math.max(...row.map((id) => widgetHeight(id)));
-    h += rowH + (i > 0 ? GAP : 0);
-  });
-  // the quick-actions row is always present
-  h += (rows.length ? GAP : 0) + QUICK_H;
-  return Math.round(h);
+  const h = PAD_TOP + QUICK_H + GAP + panelGridHeight(ids) + PAD_BOTTOM;
+  return Math.round(Math.min(PANEL_BODY_MAX, h));
 }
+
+/** Max height of the scrollable widget grid inside the panel body. */
+export const panelGridMax = () => PANEL_BODY_MAX - PAD_TOP - QUICK_H - GAP - PAD_BOTTOM;

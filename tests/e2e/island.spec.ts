@@ -165,7 +165,79 @@ test("hovering the notch opens the glass quick menu", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Dictate" })).toHaveCount(0, { timeout: 3000 });
 });
 
-test("hover dwell: nothing opens under ~500ms; after dwell an item shows only its tooltip, not the peek menu", async ({ page }) => {
+test("ONE hover opens everything: quick actions + widgets in one large panel, no click; leaving collapses it", async ({ page }) => {
+  await openIsland(page);
+  const calls0 = await page.evaluate(() => (window as any).__floMock.calls.length);
+  await emit(page, "flo://hover", { inside: true, cx: 0, y: 12 });
+  const panel = page.getByTestId("notch-panel");
+  await expect(panel).toBeVisible();
+  // the widgets are right there (no "Widgets" button / second panel)
+  await expect(page.getByTestId("widget-grid")).toBeVisible();
+  await expect(page.getByTestId("np-player")).toBeVisible();
+  await expect(panel.getByText("Stopwatch")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Widgets" })).toHaveCount(0);
+  for (const name of ["Dictate", "Ask", "Agent", "Meeting", "History", "Open", "Customize"]) await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
+  // nothing was clicked to get here
+  const clicks = await page.evaluate((n) => (window as any).__floMock.calls.slice(n).map((c: any) => c.cmd), calls0);
+  expect(clicks.filter((c: string) => c !== "island_resize" && c !== "now_playing" && c !== "get_volume" && c !== "list_todos" && c !== "weather" && !c.startsWith("get_presence"))).toEqual([]);
+  // a big panel (≥ 640 wide at the default size)
+  const w = (await page.locator("[data-island-root]").boundingBox())!.width;
+  expect(w).toBeGreaterThanOrEqual(640);
+  await emit(page, "flo://hover", { inside: false });
+  await expect(panel).toHaveCount(0, { timeout: 3000 });
+});
+
+test("music live activity: artwork + equalizer in the collapsed notch while playing; gone when nothing plays", async ({ page }) => {
+  await openIsland(page);
+  const activity = page.getByTestId("music-activity");
+  await expect(activity).toBeVisible();
+  await expect(activity).toHaveAttribute("aria-label", /Playing: Night Owl/);
+  await expect(activity.getByTestId("np-artwork")).toBeVisible();
+  await expect(activity.getByTestId("np-equalizer")).toHaveAttribute("data-playing", "true");
+  // paused → still shown (dimmed, static bars) for a while
+  await page.evaluate(() => (window as any).__floMock.setNowPlaying("paused"));
+  await expect(activity.getByTestId("np-equalizer")).toHaveAttribute("data-playing", "false");
+  // a video in the browser: no artwork → the app icon
+  await page.evaluate(() => (window as any).__floMock.setNowPlaying("youtube"));
+  await expect(activity.getByTestId("np-appicon")).toBeVisible();
+  await expect(activity).toHaveAttribute("aria-label", /Deep focus/);
+  // nothing playing → the activity disappears
+  await page.evaluate(() => (window as any).__floMock.setNowPlaying("none"));
+  await expect(activity).toHaveCount(0);
+  // and listening wins over music
+  await page.evaluate(() => (window as any).__floMock.setNowPlaying("spotify"));
+  await expect(activity).toBeVisible();
+  await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
+  await emit(page, "flo://level", { rms: 0.3 });
+  await expect(page.locator(LISTENING)).toBeVisible();
+  await expect(activity).toHaveCount(0);
+});
+
+test("rich player in the hover panel: progress, controls call media_control, volume", async ({ page }) => {
+  await openIsland(page);
+  const keep = setInterval(() => emit(page, "flo://hover", { inside: true, cx: 0, y: 12 }).catch(() => {}), 120);
+  try {
+    const player = page.getByTestId("np-player");
+    await expect(player).toBeVisible();
+    await expect(player).toContainText("Night Owl");
+    await expect(player).toContainText("Galimatias");
+    await expect(player).toContainText("Spotify");
+    await expect(player).toContainText("3:34"); // duration
+    await expect(player.getByRole("progressbar")).toBeVisible();
+    await expect(player.getByRole("slider", { name: "Volume" })).toBeVisible();
+    await player.getByRole("button", { name: "Pause" }).click();
+    await expect(player.getByRole("button", { name: "Play" })).toBeVisible();
+    await player.getByRole("button", { name: "Next" }).click();
+    await expect(player).toContainText("Weightless");
+    await player.getByRole("button", { name: "Previous" }).click();
+    const actions = await page.evaluate(() => (window as any).__floMock.calls.filter((c: any) => c.cmd === "media_control").map((c: any) => c.args.action));
+    expect(actions).toEqual(["playpause", "next", "previous"]);
+  } finally {
+    clearInterval(keep);
+  }
+});
+
+test("hover dwell: a quick pass opens nothing; after the short dwell an item shows only its tooltip, not the panel", async ({ page }) => {
   await openIsland(page);
   await emit(page, "flo://claude-sessions", [
     sess("a", "Flo", "done", "Built the notch tray"),
@@ -178,9 +250,9 @@ test("hover dwell: nothing opens under ~500ms; after dwell an item shows only it
   const cx = box!.x + box!.width / 2 - (win!.x + win!.width / 2);
   const y = box!.y - win!.y + box!.height / 2;
 
-  // quick pass: hover for < 500ms, then leave — nothing should have opened
+  // quick pass: hover for < 200ms — nothing should have opened yet
   const keep = setInterval(() => emit(page, "flo://hover", { inside: true, cx, y, x: win!.width / 2 + cx }).catch(() => {}), 60);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(90);
   expect(await page.getByText("LinkedIn or Wellfound?").isVisible()).toBe(false);
   expect(await page.getByRole("button", { name: "Dictate" }).isVisible()).toBe(false);
 
@@ -487,13 +559,15 @@ test("to-do tray: hovering lists every to-do (not just three), scrollable, and t
 
 test("claude permission: the notch shows what Claude wants, and Allow / terminal answer it", async ({ page }) => {
   await openIsland(page);
+  // an older backend: title/body only → project from the title, tool inferred from "Run:"
   await emit(page, "flo://confirm", { id: "q1", kind: "claude", title: "Claude needs you · api", body: "Run: npm publish" });
   const card = page.getByTestId("claude-permission-card");
   await expect(card).toBeVisible();
-  await expect(card).toContainText("Claude needs you");
-  await expect(card).toContainText("api");
-  await expect(card).toContainText("Run: npm publish");
+  await expect(card.getByTestId("perm-project")).toHaveText("api");
+  await expect(card.getByTestId("perm-tool")).toHaveText("Bash");
+  await expect(card.getByTestId("perm-command")).toContainText("npm publish");
   await card.getByRole("button", { name: "Allow" }).click();
+  await expect(card.getByTestId("perm-answered")).toContainText("Allowed");
   await expect(card).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as any).__floPermissions)).toEqual([{ id: "q1", decision: "allow" }]);
 
@@ -507,6 +581,53 @@ test("claude permission: the notch shows what Claude wants, and Allow / terminal
   await expect(page.getByTestId("claude-permission-card")).toBeVisible();
   await emit(page, "flo://confirm-done", { id: "q3" });
   await expect(page.getByTestId("claude-permission-card")).toHaveCount(0);
+});
+
+test("claude permission: says which session asks, Open focuses it, long commands fit, a queue steps through", async ({ page }) => {
+  await openIsland(page);
+  const long =
+    'Run: for f in content/posts/*.md; do npx markdownlint --fix "$f" && node scripts/frontmatter.js --check --strict "$f" || echo "failed: $f" >> lint.log; done && git add -A && git commit -m "chore: lint all 100 posts" && git push origin main --force-with-lease && npm run deploy -- --prod';
+  await page.evaluate((b) => (window as any).__floMock.permission("blog-100-plan", "Bash", b, 12), long);
+  const card = page.getByTestId("claude-permission-card");
+  await expect(card.getByTestId("perm-project")).toHaveText("blog-100-plan");
+  await expect(card.getByTestId("perm-tool")).toHaveText("Bash");
+  await expect(card).toContainText("in iTerm");
+  await expect(card.getByTestId("perm-waited")).toContainText(/1\ds/);
+  // the card fits: buttons inside the window, command clamped with "Show all"
+  await page.waitForTimeout(700);
+  const fits = async () => {
+    const win = (await page.locator("[data-island-root]").boundingBox())!;
+    const allow = (await card.getByRole("button", { name: "Allow" }).boundingBox())!;
+    expect(allow.y + allow.height).toBeLessThanOrEqual(win.y + win.height - 4);
+  };
+  await fits();
+  await card.getByRole("button", { name: "Show all" }).click();
+  await expect(card.getByRole("button", { name: "Show less" })).toBeVisible();
+  await page.waitForTimeout(700);
+  await fits();
+  // Open focuses that session's window (and answers nothing)
+  await card.getByRole("button", { name: "Open blog-100-plan" }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__floMock.calls.filter((c: any) => c.cmd === "focus_claude_session").map((c: any) => c.args)))
+    .toEqual([{ sessionId: "sess-blog-100-plan", cwd: "/Users/p/blog-100-plan" }]);
+  await expect(card).toBeVisible();
+
+  // two more arrive: 1/3 with a stepper
+  await page.evaluate(() => {
+    (window as any).__floMock.permission("flo-mvp", "Edit", "Edit src/island/Island.tsx", 3);
+    (window as any).__floMock.permission("api", "WebFetch", "Open https://example.com", 1);
+  });
+  const queue = card.getByTestId("perm-queue");
+  await expect(queue).toContainText("1/3");
+  await queue.getByRole("button", { name: "Next question" }).click();
+  await expect(page.getByTestId("perm-project")).toHaveText("flo-mvp");
+  await expect(page.getByTestId("perm-tool")).toHaveText("Edit file");
+  // Deny → brief confirmation → the next one slides in
+  await page.getByTestId("claude-permission-card").getByRole("button", { name: "Deny" }).click();
+  await expect(page.getByTestId("perm-answered")).toContainText("Denied");
+  await expect(page.getByTestId("perm-project")).toHaveText("api");
+  await expect(page.getByTestId("perm-queue")).toContainText("2/2");
+  await expect.poll(() => page.evaluate(() => (window as any).__floPermissions.map((p: any) => p.decision))).toEqual(["deny"]);
 });
 
 test("agent mode: hands-free pill, a heard request, live steps, and a spoken yes resolves the confirm", async ({ page }) => {

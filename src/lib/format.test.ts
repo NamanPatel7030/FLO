@@ -23,6 +23,14 @@ import {
   TRAY_TIP_H,
   peekTileAt,
   trayLayout,
+  MUSIC_WING,
+  setNotchScale,
+  permissionLines,
+  permissionCmdLines,
+  permissionBody,
+  toolLabel,
+  appLabel,
+  waitedLabel,
   tooltipRect,
   TRAY_TIP_W,
   ISLAND_EAR,
@@ -224,6 +232,26 @@ describe("tray layout (notch)", () => {
     const right = l.slots.filter((s) => s.side === "right");
     expect(right[0].cx).toBeGreaterThan(100);
   });
+  it("music live activity reserves the inner wing; tray items move outside it", () => {
+    const plain = trayLayout(geo, 1, 1);
+    const music = trayLayout(geo, 1, 1, MUSIC_WING);
+    expect(music.width).toBeGreaterThan(plain.width);
+    const r = music.slots.find((s) => s.side === "right")!;
+    expect(r.cx - 10).toBeGreaterThanOrEqual(100 + MUSIC_WING - 4); // icon clears the equalizer
+    // music alone: just the two music wings
+    expect(trayLayout(geo, 0, 0, MUSIC_WING).width).toBe(200 + 2 * (MUSIC_WING + ISLAND_EAR));
+    expect(islandSize("tray", geo, { trayLeft: 0, trayRight: 0, music: true }).width).toBe(200 + 2 * (MUSIC_WING + ISLAND_EAR));
+  });
+  it("hover panel is large, scales with the notch size and stays on screen", () => {
+    setNotchScale("big");
+    const big = islandSize("peek", geo, { widgetBody: 330 });
+    expect(big.width).toBeGreaterThanOrEqual(640);
+    setNotchScale("biggest");
+    const biggest = islandSize("peek", geo, { widgetBody: 330 });
+    expect(biggest.width / big.width).toBeGreaterThan(1.2);
+    expect(islandSize("peek", { ...geo, screenWidth: 700 }, { widgetBody: 330 }).width).toBeLessThanOrEqual(700);
+    setNotchScale("big");
+  });
   it("islandSize('tray') matches the layout and swells on hover", () => {
     const l = trayLayout(geo, 2, 1);
     expect(islandSize("tray", geo, { trayLeft: 2, trayRight: 1 })).toEqual({ width: l.width, height: 32 });
@@ -339,5 +367,35 @@ describe("sessionsByUrgency", () => {
     const list = [s("w", "working", 1), s("a", "needs_approval", 1)];
     sessionsByUrgency(list);
     expect(list[0].sessionId).toBe("w");
+  });
+});
+
+describe("claude permission card", () => {
+  it("wraps commands at word boundaries and never under-counts", () => {
+    expect(permissionLines("npm publish")).toBe(1);
+    expect(permissionLines("a".repeat(120))).toBe(3);
+    expect(permissionLines("x\ny")).toBe(2);
+    // 3 words of 30 chars at 56/line → one per line
+    expect(permissionLines(["a".repeat(30), "b".repeat(30), "c".repeat(30)].join(" "))).toBe(3);
+  });
+  it("counts the $ prompt and drops Bash's 'Run:' prefix", () => {
+    expect(permissionCmdLines("Run: " + "a".repeat(55), "Bash")).toBe(2);
+    expect(permissionCmdLines("Edit src/main.rs", "Edit")).toBe(1);
+  });
+  it("grows the card with the command so buttons are never clipped", () => {
+    expect(permissionBody(4) - permissionBody(1)).toBe(3 * 18);
+    const geo = { platform: "macos" as const, hasNotch: true, notchWidth: 200, notchHeight: 38, screenWidth: 1512 };
+    expect(islandSize("confirm", geo, { claude: true, cmdLines: 4 }).height).toBeGreaterThan(islandSize("confirm", geo, { claude: true, cmdLines: 1 }).height);
+  });
+  it("labels tools, apps and waiting time", () => {
+    expect(toolLabel("Bash")).toBe("Bash");
+    expect(toolLabel("Edit")).toBe("Edit file");
+    expect(toolLabel("mcp__github__create_issue")).toBe("create_issue");
+    expect(toolLabel(undefined, "Run: ls")).toBe("Bash");
+    expect(appLabel("com.googlecode.iterm2")).toBe("iTerm");
+    expect(appLabel("Terminal")).toBe("Terminal");
+    expect(appLabel(null)).toBe("");
+    expect(waitedLabel(12)).toBe("12s");
+    expect(waitedLabel(185)).toBe("3m");
   });
 });

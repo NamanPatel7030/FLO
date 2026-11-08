@@ -1,15 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 import {
-  Mic,
-  Sparkles,
-  Radio,
-  LayoutDashboard,
-  SkipBack,
-  SkipForward,
-  Play,
-  Pause,
   Timer as TimerIcon,
-  Volume2,
   ListChecks,
   Settings as SettingsIcon,
   Clock,
@@ -22,45 +14,58 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { ClaudeSession, NowPlaying, Todo, Weather } from "../lib/types";
-import { widgetHeight, widgetSpan, ZONE_ROW_H, type WidgetId } from "../lib/widgets";
+import type { ClaudeSession, Todo, Weather } from "../lib/types";
+import { EMPTY_WIDGETS_H, GAP, PANEL_COLS, packPanelRows, panelGridHeight, panelGridMax, widgetHeight, ZONE_ROW_H, type WidgetId } from "../lib/widgets";
+import { NowPlayingCard } from "./NowPlaying";
 import { dayOffset, dayOffsetLabel, formatZoneTime, hourDiffLabel, isDaytime, loadZones, onZonesChange, type ClockZone } from "../lib/timezones";
 
 export type WidgetAction = "dictate" | "ask" | "meeting" | "dashboard" | "todos" | "customize";
 
-/** The panel that hangs below the notch. Renders the user's chosen widgets (customised in Settings). */
-export function Widgets({ top, ids, sessions, onAction, scale = 1 }: { top: number; ids: WidgetId[]; sessions: ClaudeSession[]; onAction: (a: WidgetAction) => void; scale?: number }) {
+/**
+ * The widget grid inside the hover panel (below the quick actions). Rows are packed exactly like
+ * widgetsBodyHeight measures them (4 columns: span-2 = half, span-1 = quarter, a row's free space
+ * goes to its last tile), laid out at base size; the panel zooms it to the notch size.
+ * Rows slide in one after another once the black shape has opened.
+ */
+export function WidgetGrid({ ids, sessions, onAction }: { ids: WidgetId[]; sessions: ClaudeSession[]; onAction: (a: WidgetAction) => void }) {
+  if (ids.length === 0)
+    return (
+      <button
+        onClick={() => onAction("customize")}
+        style={{ height: EMPTY_WIDGETS_H }}
+        className="flex w-full items-center justify-center gap-2.5 rounded-xl bg-white/[0.04] text-white/55 transition hover:bg-white/[0.07]"
+      >
+        <SettingsIcon size={16} className="text-[var(--accent)]" />
+        <span className="text-[12px] font-medium">Add widgets</span>
+        <span className="text-[10.5px] text-white/40">Choose what shows here</span>
+      </button>
+    );
+  const rows = packPanelRows(ids);
+  // scroll only when it really doesn't fit (zoom rounding would otherwise flash a scrollbar)
+  const scrolls = panelGridHeight(ids) > panelGridMax();
   return (
-    <div className="flex h-full flex-col">
-      <div style={{ height: top }} />
-      {/* laid out at base size, zoomed to Settings → Notch size (the window is sized to match) */}
-      <div className="px-3 pb-3 pt-1" style={{ zoom: scale, width: `${100 / scale}%` }}>
-        {ids.length === 0 ? (
-          <button
-            onClick={() => onAction("customize")}
-            className="flex h-full w-full flex-col items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] text-white/55 transition hover:bg-white/[0.07]"
-          >
-            <SettingsIcon size={18} className="text-[var(--accent)]" />
-            <span className="text-[12px] font-medium">Add widgets</span>
-            <span className="text-[10.5px] text-white/40">Choose what shows here</span>
-          </button>
-        ) : (
-          <div className="grid grid-cols-2 content-start gap-2">
-            {ids.map((id) => (
-              <div key={id} style={{ height: widgetHeight(id) }} className={widgetSpan(id) === 2 ? "col-span-2" : "col-span-1"}>
-                <WidgetTile id={id} sessions={sessions} onAction={onAction} />
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="mt-2 flex items-center justify-around rounded-xl bg-white/[0.04] p-1">
-          <QuickAction icon={<Mic size={15} />} label="Dictate" onClick={() => onAction("dictate")} />
-          <QuickAction icon={<Sparkles size={15} />} label="Ask" onClick={() => onAction("ask")} />
-          <QuickAction icon={<Radio size={15} />} label="Meeting" onClick={() => onAction("meeting")} />
-          <QuickAction icon={<LayoutDashboard size={15} />} label="Open" onClick={() => onAction("dashboard")} />
-          <QuickAction icon={<SettingsIcon size={15} />} label="Edit" onClick={() => onAction("customize")} />
-        </div>
-      </div>
+    <div
+      className={"flex flex-col " + (scrolls ? "flo-scroll overflow-y-auto overscroll-contain" : "overflow-visible")}
+      style={{ gap: GAP, maxHeight: scrolls ? panelGridMax() : undefined }}
+      data-testid="widget-grid"
+    >
+      {rows.map((row, r) => (
+        <motion.div
+          key={row.cells.map((c) => c.id).join("+")}
+          className="grid shrink-0"
+          style={{ gridTemplateColumns: `repeat(${PANEL_COLS}, minmax(0, 1fr))`, gap: GAP, height: row.h }}
+          initial={{ opacity: 0, y: 10, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ type: "spring", stiffness: 420, damping: 32, delay: 0.1 + r * 0.045 }}
+        >
+          {row.cells.map((c) => (
+            // explicit height: WebKit doesn't resolve a tile's h-full against a stretched grid item
+            <div key={c.id} style={{ gridColumn: `span ${c.span} / span ${c.span}`, height: row.h }} className="min-w-0" data-widget={c.id}>
+              <WidgetTile id={c.id} sessions={sessions} onAction={onAction} />
+            </div>
+          ))}
+        </motion.div>
+      ))}
     </div>
   );
 }
@@ -81,7 +86,7 @@ export function WidgetPreview({ id, sessions = [] }: { id: WidgetId; sessions?: 
 function WidgetTile({ id, sessions, onAction }: { id: WidgetId; sessions: ClaudeSession[]; onAction: (a: WidgetAction) => void }) {
   switch (id) {
     case "nowPlaying":
-      return <NowPlayingWidget />;
+      return <NowPlayingCard />;
     case "today":
       return <TodayWidget onOpen={() => onAction("todos")} />;
     case "timer":
@@ -99,85 +104,11 @@ function WidgetTile({ id, sessions, onAction }: { id: WidgetId; sessions: Claude
   }
 }
 
-function QuickAction({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="flex flex-col items-center gap-0.5 rounded-lg px-2 py-1 text-white/75 transition hover:bg-white/10 hover:text-white">
-      <span className="text-[var(--accent)]">{icon}</span>
-      <span className="text-[10px] font-medium">{label}</span>
-    </button>
-  );
-}
-
 /** Small label shown at the top of most tiles. */
 function TileHead({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-white/45">
       {icon} {children}
-    </div>
-  );
-}
-
-function NowPlayingWidget() {
-  const [np, setNp] = useState<NowPlaying | null>(null);
-  const [vol, setVol] = useState<number | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const poll = () => api.nowPlaying().then((v) => alive && setNp(v)).catch(() => {});
-    poll();
-    api.getVolume().then((v) => alive && setVol(v)).catch(() => {});
-    const t = setInterval(poll, 3000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
-  if (!np) {
-    return (
-      <div className="flex h-full items-center gap-2 rounded-xl bg-white/[0.04] px-3 text-[12px] text-white/45">
-        <Volume2 size={14} /> Nothing playing
-      </div>
-    );
-  }
-  const control = async (a: "playpause" | "next" | "previous") => {
-    await api.mediaControl(a).catch(() => {});
-    api.nowPlaying().then(setNp).catch(() => {});
-  };
-  return (
-    <div className="flex h-full flex-col justify-center rounded-xl bg-white/[0.05] px-3 py-2">
-      <div className="flex items-center gap-2.5">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md" style={{ background: "linear-gradient(135deg, var(--accent-grad-from), var(--accent-grad-to))" }}>
-          <span className="h-2 w-2 rounded-full bg-white/90" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[12.5px] font-medium text-white/90">{np.title}</div>
-          <div className="truncate text-[11px] text-white/50">{np.artist}</div>
-        </div>
-        <div className="flex items-center gap-0.5 text-white/80">
-          <button aria-label="Previous" onClick={() => control("previous")} className="rounded-full p-1 hover:bg-white/10"><SkipBack size={15} /></button>
-          <button aria-label={np.playing ? "Pause" : "Play"} onClick={() => control("playpause")} className="rounded-full bg-white/10 p-1.5 hover:bg-white/20">
-            {np.playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
-          </button>
-          <button aria-label="Next" onClick={() => control("next")} className="rounded-full p-1 hover:bg-white/10"><SkipForward size={15} /></button>
-        </div>
-      </div>
-      {vol !== null && (
-        <div className="mt-2 flex items-center gap-2">
-          <Volume2 size={13} className="text-white/45" />
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={vol}
-            aria-label="Volume"
-            onChange={(e) => {
-              const v = Number(e.target.value);
-              setVol(v);
-              api.setVolume(v).catch(() => {});
-            }}
-            className="flo-range h-1 flex-1"
-          />
-        </div>
-      )}
     </div>
   );
 }

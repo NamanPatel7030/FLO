@@ -9,7 +9,13 @@ import {
   trayTipHeight,
   ISLAND_EAR,
   ISLAND_WING,
-  peekTileAt,
+  MUSIC_WING,
+  greeting,
+  hitTestTrayC,
+  TRAY_SLOT,
+  PERM_LINES,
+  PERM_LINES_MAX,
+  permissionCmdLines,
   SWELL_X,
   SWELL_Y,
   tooltipRect,
@@ -41,11 +47,13 @@ import {
   type Todo,
   type TranscriptEvent,
 } from "../lib/types";
-import { IslandContent, PEEK_ACTIONS } from "./IslandContent";
+import { IslandContent } from "./IslandContent";
 import { ConfirmCard, CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, TrayTooltip, type TrayItem } from "./Tray";
 import { runDemo } from "./demo";
 import { NotchViz } from "./Ribbon";
-import { Widgets } from "./Widgets";
+import { WidgetGrid } from "./Widgets";
+import { MusicWings } from "./NowPlaying";
+import { useMediaActivity } from "../lib/nowPlaying";
 import { AgentCard, AgentModePill, type AgentState } from "./AgentCard";
 import { loadWidgets, onWidgetsChange, widgetsBodyHeight, type WidgetId } from "../lib/widgets";
 import { applyTheme, onNotchPreview, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
@@ -65,13 +73,17 @@ export interface MeetingInfo {
   summary?: string;
 }
 
-const SPRING = { type: "spring", stiffness: 420, damping: 34, mass: 0.9 } as const;
+/** opening: a touch of overshoot, like the Dynamic Island morphing out of the camera */
+const SPRING_OPEN = { type: "spring", stiffness: 360, damping: 28, mass: 0.85 } as const;
+/** closing: quicker and critically damped (no wobble back into the notch) */
+const SPRING_CLOSE = { type: "spring", stiffness: 520, damping: 44, mass: 0.8 } as const;
 const COLLAPSE_MS = 520;
 const DONE_MS = 1500;
 const ERROR_MS = 5000;
 const RESULT_MS = 2600;
-/** continuous hover required before the notch opens anything (kills quick-pass flicker) */
-const DWELL_MS = 500;
+/** continuous hover required before the notch opens (intent: a cursor passing to the menu bar
+ *  doesn't open it, a deliberate hover opens the whole panel almost at once) */
+const DWELL_MS = 200;
 /** a different tray item must be hit this long before the tooltip switches to it */
 const TIP_SWITCH_MS = 120;
 const CLAUDE_CARD_MS = 4000;
@@ -196,6 +208,28 @@ export default function Island() {
         setTip(t);
       }
     };
+    if (g.shown === "peek") {
+      // the hover panel is open: it stays put, except when the cursor lands squarely on a tray
+      // icon in the notch row (its list opens, like from the collapsed notch). The quick-action
+      // tile under the cursor lights up — hit-tested on the real DOM, since a non-activating
+      // panel gets no DOM hover while another app is frontmost
+      const onIcon = g.notch && g.slots.length ? hitTestTrayC(g.slots, cx, e.y, g.nh, TRAY_SLOT / 2) : -1;
+      if (onIcon !== tipRef.current) commitTip(onIcon);
+      if (onIcon >= 0) return;
+      const r = rootRef.current?.getBoundingClientRect();
+      // hover coords are window-relative; the root fills the window in the app (offset 0) and
+      // sits on a fake desktop in the browser preview
+      const px = (e.x ?? g.winW / 2 + cx) + (r?.left ?? 0);
+      const py = e.y + (r?.top ?? 0);
+      const el = typeof document !== "undefined" ? (document.elementFromPoint(px, py) as HTMLElement | null) : null;
+      const hit = el?.closest<HTMLElement>("[data-peek-tile]");
+      const tile = hit ? Number(hit.dataset.peekTile) : -1;
+      if (tile !== hotTileRef.current) {
+        hotTileRef.current = tile;
+        setHotTile(tile);
+      }
+      return;
+    }
     if (g.notch && g.slots.length) {
       const t = pickTip(tipRef.current, g.slots, cx, e.y, g.nh, g.tipH(tipRef.current));
       if (t === tipRef.current) {
@@ -213,10 +247,9 @@ export default function Island() {
         commitTip(t);
       }
     }
-    const tile = g.shown === "peek" ? peekTileAt(g.winW, g.pillW, g.winW / 2 + cx, e.y, g.nh, PEEK_ACTIONS) : -1;
-    if (tile !== hotTileRef.current) {
-      hotTileRef.current = tile;
-      setHotTile(tile);
+    if (hotTileRef.current !== -1) {
+      hotTileRef.current = -1;
+      setHotTile(-1);
     }
   }, []);
 
@@ -501,19 +534,28 @@ export default function Island() {
     return () => clearTimeout(t);
   }, [headClaude, hover]);
 
-  const headConfirm = confirms[0];
+  // the confirm on screen: the user can step through a queue of permission questions
+  const [confirmIdx, setConfirmIdx] = useState(0);
+  const [expandedConfirm, setExpandedConfirm] = useState<string | null>(null);
+  const headConfirm = confirms[Math.min(confirmIdx, Math.max(0, confirms.length - 1))];
+  const oldestConfirm = confirms[0];
   const answerConfirm = useCallback((c: ConfirmEvent, approve: boolean | "terminal") => {
-    setConfirms((q) => q.filter((x) => x.id !== c.id));
+    setConfirms((q) => {
+      const i = q.findIndex((x) => x.id === c.id);
+      // stay on the same slot → the next question slides into place
+      setConfirmIdx((k) => Math.max(0, Math.min(k, q.length - 2, i >= 0 ? i : k)));
+      return q.filter((x) => x.id !== c.id);
+    });
     if (c.kind === "claude") api.answerClaudePermission(c.id, approve === "terminal" ? "terminal" : approve ? "allow" : "deny").catch(() => {});
     else api.confirmAction(c.id, approve === true).catch(() => {});
   }, []);
   useEffect(() => {
-    if (!headConfirm) return;
+    if (!oldestConfirm) return;
     // never auto-deny a Claude permission: unanswered, it goes back to the terminal (the backend
     // also times out and closes the card); a staged Slack message is simply cancelled
-    const t = setTimeout(() => answerConfirm(headConfirm, headConfirm.kind === "claude" ? "terminal" : false), CONFIRM_MS);
+    const t = setTimeout(() => answerConfirm(oldestConfirm, oldestConfirm.kind === "claude" ? "terminal" : false), CONFIRM_MS);
     return () => clearTimeout(t);
-  }, [headConfirm, answerConfirm]);
+  }, [oldestConfirm, answerConfirm]);
 
   const headFix = corrections[0];
   useEffect(() => {
@@ -548,7 +590,10 @@ export default function Island() {
   }, [sessions, todos, detected, meeting.live, ignoredDetect]);
 
   const notch = !!geo && geo.platform === "macos" && geo.hasNotch;
-  const layout = geo && notch ? trayLayout(geo, trayItems.left.length, trayItems.right.length) : null;
+  // live music activity: media playing (or paused < 30 s) → artwork + equalizer in the wings
+  const media = useMediaActivity();
+  const musicLive = notch && !!media;
+  const layout = geo && notch ? trayLayout(geo, trayItems.left.length, trayItems.right.length, musicLive ? MUSIC_WING : 0) : null;
 
   // ── resize protocol state ───────────────────────────────────────────────
   const [shown, setShown] = useState<IslandVariant>("collapsed");
@@ -580,19 +625,21 @@ export default function Island() {
     if (headClaude) return "claude";
     if (history) return "history";
     if (meeting.live) return meetingOpen ? "meetingExpanded" : "meeting";
-    if (widgetsOpen) return "widgets";
+    // the panel pinned open programmatically (demo / perf probe); hover opens the same panel below
+    if (widgetsOpen) return "peek";
     // agent mode stays visible (it's listening) — above hover/tray, below anything with content
     if (handsfree) return "agentMode";
     if (preview) return "listening"; // show the selected notch style live for ~3s
     if (hover && dwell && tipItem) return "trayTooltip";
+    // ONE hover = everything: quick actions + widgets in a single panel (no second click)
     if (hover && dwell) return "peek";
-    if (trayItems.all.length) return "tray";
+    if (trayItems.all.length || musicLive) return "tray";
     return "collapsed";
-  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headReminder, headClaude, history, meeting.live, meetingOpen, widgetsOpen, handsfree, preview, hover, dwell, tipItem, trayItems.all.length]);
+  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headReminder, headClaude, history, meeting.live, meetingOpen, widgetsOpen, handsfree, preview, hover, dwell, tipItem, trayItems.all.length, musicLive]);
 
   // no expansion before the dwell completes (prevents an enter-resize that could feed back into hover)
   const swell = false;
-  const trayCounts = { trayLeft: trayItems.left.length, trayRight: trayItems.right.length };
+  const trayCounts = { trayLeft: trayItems.left.length, trayRight: trayItems.right.length, ...(musicLive ? { music: true } : {}) };
 
   // sizes below read the notch scale; set it during render so a size change applies on this render
   setNotchScale(settings?.notchSize);
@@ -608,9 +655,13 @@ export default function Island() {
       case "history":
         return { rows: Math.max(1, history?.length ?? 1) };
       case "widgets":
-        return { widgetBody: widgetsBodyHeight(widgetIds), scale: getNotchScale() };
-      case "confirm":
-        return { claude: headConfirm?.kind === "claude" };
+      case "peek":
+        return { ...trayCounts, widgetBody: widgetsBodyHeight(widgetIds), scale: getNotchScale() };
+      case "confirm": {
+        if (headConfirm?.kind !== "claude") return { claude: false };
+        const n = permissionCmdLines(headConfirm.body, headConfirm.tool);
+        return { claude: true, cmdLines: Math.min(n, expandedConfirm === headConfirm.id ? PERM_LINES_MAX : PERM_LINES) };
+      }
       case "agent":
         return {
           agentSteps: agent?.steps.length ?? 0,
@@ -621,8 +672,6 @@ export default function Island() {
         return swell ? { swell: true } : undefined;
       case "tray":
         return { ...trayCounts, swell };
-      case "peek":
-        return trayCounts;
       case "trayTooltip":
         return { ...trayCounts, tipCx: layout?.slots[tipIdx]?.cx ?? 0, tipRows: tipItem?.kind === "agents" ? tipItem.sessions.length : tipItem?.kind === "todos" ? tipItem.todos.length : undefined, scale: getNotchScale() };
       default:
@@ -767,6 +816,9 @@ export default function Island() {
     handleHover({ inside: true, x, y: e.clientY - r.top, cx: x - r.width / 2 });
   };
 
+  // last pill size drawn (picks the open vs close spring); declared before the early return
+  const lastPill = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+
   if (!geo) return null;
 
   const size = islandSize(shown, geo, shownContent);
@@ -792,17 +844,26 @@ export default function Island() {
             : { width: size.width - EAR * 2, height: size.height }
     : { width: size.width - 24, height: size.height - 24 };
   const bigCard = ["card", "claude", "reminder", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm", "agent"].includes(shown);
+  const panelOpen = shown === "peek";
   const radius = notch
     ? collapsed
       ? "0 0 9px 9px"
-      : bigCard
+      : panelOpen
+        ? "0 0 30px 30px"
+        : bigCard
         ? "0 0 22px 22px"
         : compact || shown === "tray" || shown === "trayTooltip" || swollen
           ? "0 0 13px 13px"
           : "0 0 18px 18px"
-    : bigCard
-      ? "22px"
-      : "999px";
+    : panelOpen
+      ? "26px"
+      : bigCard
+        ? "22px"
+        : "999px";
+  // spring per direction: open with a little life, close tight; the shape leads, content follows
+  const growing = pill.width * pill.height >= lastPill.current.width * lastPill.current.height;
+  lastPill.current = pill;
+  const morph = reduce ? { duration: 0 } : growing ? SPRING_OPEN : SPRING_CLOSE;
 
   // keep hit-testing geometry current for the hover handler (refs → no re-render per mouse move)
   geomRef.current = {
@@ -849,7 +910,7 @@ export default function Island() {
       <motion.div
         initial={false}
         animate={{ width: pill.width, height: pill.height, borderRadius: radius }}
-        transition={SPRING}
+        transition={morph}
         className={notch ? "relative bg-black text-white" : "relative text-white"}
         style={
           notch
@@ -927,32 +988,18 @@ export default function Island() {
               ghost content (e.g. a frozen spinner) on screen if they were ever interrupted. */}
           {(
             <motion.div
-              key={shown + (shown === "claude" ? headClaude?.id : "") + (shown === "correction" ? headFix?.id : "")}
-              className="absolute inset-0"
+              key={shown + (shown === "claude" ? headClaude?.id : "") + (shown === "correction" ? headFix?.id : "") + (shown === "confirm" ? headConfirm?.id : "")}
+              className="absolute top-0"
               // opacity + transform only: both run on the compositor (an animated blur filter
-              // repaints the whole card every frame and was the main source of stutter)
-              initial={{ opacity: 0, y: -4, scale: 0.985 }}
+              // repaints the whole card every frame and was the main source of stutter).
+              // Laid out at the FINAL pill size and centred, so the morphing shape clips it
+              // instead of reflowing it every frame.
+              initial={panelOpen ? { opacity: 0, y: -10, scale: 0.96 } : { opacity: 0, y: -4, scale: 0.985 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-              style={{ willChange: "opacity, transform", transformOrigin: "50% 0%" }}
+              transition={panelOpen ? { duration: 0.26, delay: 0.05, ease: [0.2, 0.8, 0.2, 1] } : { duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+              style={{ willChange: "opacity, transform", transformOrigin: "50% 0%", left: "50%", width: pill.width, marginLeft: -pill.width / 2, height: pill.height }}
             >
-              {shown === "widgets" ? (
-                <Widgets
-                  scale={getNotchScale()}
-                  top={notch ? geo.notchHeight : 0}
-                  ids={widgetIds}
-                  sessions={sessions}
-                  onAction={(a) => {
-                    setWidgetsOpen(false);
-                    if (a === "dictate") api.startSession("dictation");
-                    else if (a === "ask") api.startSession("assistant");
-                    else if (a === "meeting") api.startMeeting();
-                    else if (a === "todos") api.openDashboard("todos");
-                    else if (a === "customize") api.openDashboard("settings/appearance");
-                    else api.openDashboard();
-                  }}
-                />
-              ) : shown === "agent" && agent ? (
+              {shown === "agent" && agent ? (
                 <AgentCard
                   agent={agent}
                   notch={notch}
@@ -972,7 +1019,19 @@ export default function Island() {
                   onExit={() => api.toggleAgentMode().catch(() => setHandsfree(null))}
                 />
               ) : shown === "confirm" && headConfirm ? (
-                <ConfirmCard c={headConfirm} more={confirms.length - 1} notch={notch} geo={geo} onAnswer={(ok) => answerConfirm(headConfirm, ok)} />
+                <ConfirmCard
+                  c={headConfirm}
+                  more={confirms.length - 1}
+                  notch={notch}
+                  geo={geo}
+                  onAnswer={(ok) => answerConfirm(headConfirm, ok)}
+                  index={confirms.indexOf(headConfirm)}
+                  total={confirms.length}
+                  onStep={(d) => setConfirmIdx((k) => Math.max(0, Math.min(confirms.length - 1, k + d)))}
+                  expanded={expandedConfirm === headConfirm.id}
+                  onToggleExpand={() => setExpandedConfirm((e) => (e === headConfirm.id ? null : headConfirm.id))}
+                  onOpen={() => api.focusClaudeSession(headConfirm.sessionId, headConfirm.cwd).catch(() => {})}
+                />
               ) : shown === "correction" && headFix ? (
                 <CorrectionCard
                   c={headFix}
@@ -1032,7 +1091,24 @@ export default function Island() {
                   onCloseError={() => setPhase("idle")}
                   onCloseHistory={() => setHistory(null)}
                   onOpenHistory={openHistory}
-                  onWidgets={() => setWidgetsOpen(true)}
+                  scale={getNotchScale()}
+                  onActed={() => {
+                    setWidgetsOpen(false);
+                    leaveNow();
+                  }}
+                  panel={
+                    shown === "peek" ? (
+                      <WidgetGrid
+                        ids={widgetIds}
+                        sessions={sessions}
+                        onAction={(a) => {
+                          if (a === "todos") api.openDashboard("todos");
+                          else if (a === "customize") api.openDashboard("settings/appearance");
+                          else api.openDashboard();
+                        }}
+                      />
+                    ) : undefined
+                  }
                   onAgentMode={() =>
                     api.toggleAgentMode().catch((err) => {
                       setPhase("error");
@@ -1055,6 +1131,9 @@ export default function Island() {
               <TrayRow items={trayItems.all} slots={layout.slots} pillW={pill.width} nh={geo.notchHeight} hot={tipIdx} onItem={onTrayItem} />
             </AnimatePresence>
           )}
+          {/* the music live activity stays put while the shape morphs (collapsed → tray → panel) */}
+          {notch && media && ["tray", "trayTooltip", "peek"].includes(shown) && <MusicWings np={media} geo={geo} />}
+          {notch && panelOpen && <PanelHeader pillW={pill.width} nh={geo.notchHeight} inner={Math.max(geo.notchWidth / 2 + (musicLive ? MUSIC_WING : 0), ...(layout?.slots ?? []).map((s) => Math.abs(s.cx) + 12))} />}
         </div>
       </motion.div>
       <AnimatePresence>
@@ -1110,6 +1189,32 @@ function WinTray({ items, onItem, onHover }: { items: TrayItem[]; onItem: (i: Tr
         </button>
       ))}
     </div>
+  );
+}
+
+const PANEL_DATE = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric" });
+
+/** The notch row of the open panel: a greeting on the left wing, today's date on the right,
+ *  shown only where they clear the camera, the music activity and tray icons. */
+function PanelHeader({ pillW, nh, inner }: { pillW: number; nh: number; inner: number }) {
+  const room = pillW / 2 - inner - 18;
+  if (room < 70) return null;
+  const now = new Date();
+  return (
+    <motion.div
+      className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between px-[18px] text-[12px] font-medium"
+      style={{ height: nh }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3, delay: 0.12 }}
+    >
+      <span className="truncate text-white/80" style={{ maxWidth: room }}>
+        {greeting(now.getHours())}
+      </span>
+      <span className="truncate text-white/45" style={{ maxWidth: room }}>
+        {PANEL_DATE.format(now)}
+      </span>
+    </motion.div>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, AlarmClock, AudioLines, Bell, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, AlarmClock, AudioLines, Bell, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Moon, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
 import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase, Todo } from "../lib/types";
@@ -11,6 +11,8 @@ import { CardRow } from "./CardRow";
 import { isSignInError } from "../lib/account";
 import { NotchViz } from "./Ribbon";
 import { isLongReply, toPlainText } from "../lib/markdown";
+import { usePresence } from "../lib/presence";
+import { GAP as PANEL_GAP, QUICK_H } from "../lib/widgets";
 
 interface Props {
   variant: IslandVariant;
@@ -36,7 +38,12 @@ interface Props {
   onToggleMeeting: () => void;
   onStopMeeting: () => void;
   onStartMeeting: () => void;
-  onWidgets: () => void;
+  /** the widget grid shown under the quick actions in the hover panel */
+  panel?: React.ReactNode;
+  /** Settings → Notch → Size scale for the hover panel */
+  scale?: number;
+  /** a quick action ran (the panel steps aside) */
+  onActed?: () => void;
   /** turn on hands-free agent mode */
   onAgentMode?: () => void;
   /** peek tile under the cursor (backend hit-testing), -1 = none */
@@ -52,7 +59,48 @@ interface Props {
 }
 
 /** Number of quick actions in the peek menu (for hit-testing). */
-export const PEEK_ACTIONS = 7;
+export const PEEK_ACTIONS = 8;
+
+/** Last peek tile: Active / Away. Green dot = at the Mac; amber moon = Away (phone gets notifications). */
+function PresenceQuick({ hot, index }: { hot?: boolean; index: number }) {
+  const { status, busy, set } = usePresence();
+  const away = status === "away";
+  const label = away ? "Away" : "Active";
+  return (
+    <motion.button
+      initial={{ opacity: 0, y: 8, scale: 0.92 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 520, damping: 30, delay: 0.03 + index * 0.035 }}
+      whileTap={{ scale: 0.94 }}
+      disabled={busy}
+      onClick={() => set(away ? "active" : "away").catch(() => {})}
+      data-hot={hot ? "true" : "false"}
+      data-testid="notch-presence"
+      data-peek-tile={index}
+      data-status={status}
+      role="switch"
+      aria-checked={away}
+      aria-label={away ? "Away · notifications go to your phone. Click to come back" : "Active. Click to go Away"}
+      title={away ? "Away · notifications go to your phone" : "Active · click to go Away"}
+      className={"island-tile relative flex h-full flex-col items-center justify-center gap-1 rounded-2xl " + (away ? "text-amber-100" : "text-white/85 hover:text-white")}
+      style={away ? { background: "linear-gradient(180deg, rgba(245,158,11,0.22), rgba(245,158,11,0.10))", boxShadow: "inset 0 0 0 1px rgba(252,211,77,0.30)" } : undefined}
+    >
+      <span className="flex h-[18px] items-center justify-center transition-transform duration-200" style={{ transform: hot ? "translateY(-1px) scale(1.08)" : "none" }}>
+        {away ? (
+          <Moon size={15} className="fill-amber-300/70 text-amber-300" style={{ filter: "drop-shadow(0 0 6px rgba(252,211,77,0.7))" }} />
+        ) : (
+          <span className="relative flex h-[16px] w-[16px] items-center justify-center">
+            <span className="absolute h-[14px] w-[14px] rounded-full bg-emerald-400/20" />
+            <span className="h-[8px] w-[8px] rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
+          </span>
+        )}
+      </span>
+      <span className="pointer-events-none text-[10.5px] font-medium leading-none text-white/70" aria-hidden>
+        {label}
+      </span>
+    </motion.button>
+  );
+}
 
 function CopyButton({ text, label = false }: { text: string; label?: boolean }) {
   const [done, setDone] = useState(false);
@@ -184,16 +232,35 @@ export function IslandContent(p: Props) {
           ? { icon: <Square size={14} fill="currentColor" className="text-red-400" />, label: "Stop meeting", run: p.onStopMeeting }
           : { icon: <Radio size={16} />, label: "Meeting", run: p.onStartMeeting },
         { icon: <History size={16} />, label: "History", run: p.onOpenHistory },
-        { icon: <LayoutGrid size={16} />, label: "Widgets", run: p.onWidgets },
         { icon: <LayoutDashboard size={16} />, label: "Open", run: () => api.openDashboard() },
+        { icon: <LayoutGrid size={16} />, label: "Customize", run: () => api.openDashboard("settings/appearance") },
       ];
+      // ONE hover opens this whole panel: quick actions on top, the user's widgets below (p.panel).
+      // Laid out at base size and zoomed to Settings → Notch → Size (the window is sized to match).
+      const scale = p.scale ?? 1;
+      const keepOpen = new Set(["History"]); // History swaps the panel for its own card
       return (
-        <div className="flex h-full flex-col">
-          {notch && <div style={{ height: top }} />}
-          <div className={"grid flex-1 grid-cols-7 items-center gap-1.5 " + (notch ? "px-3 pb-2 pt-1" : "px-2 py-1.5")}>
-            {actions.map((a, i) => (
-              <Quick key={a.label} index={i} hot={p.hotTile === i} icon={a.icon} label={a.label} onClick={a.run} />
-            ))}
+        <div className="flex h-full flex-col" data-testid="notch-panel">
+          {notch ? <div className="shrink-0" style={{ height: top }} /> : <div className="h-2 shrink-0" />}
+          <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-1" // px, not %: WebKit's standardized zoom doesn't scale percentage widths
+            style={{ zoom: scale, width: p.pillW / scale, gap: PANEL_GAP }}>
+            <div className="grid shrink-0 gap-1.5" style={{ gridTemplateColumns: `repeat(${actions.length + 1}, minmax(0, 1fr))`, height: QUICK_H }} data-testid="quick-actions">
+              {actions.map((a, i) => (
+                <Quick
+                  key={a.label}
+                  index={i}
+                  hot={p.hotTile === i}
+                  icon={a.icon}
+                  label={a.label}
+                  onClick={() => {
+                    a.run();
+                    if (!keepOpen.has(a.label)) p.onActed?.();
+                  }}
+                />
+              ))}
+              <PresenceQuick index={actions.length} hot={p.hotTile === actions.length} />
+            </div>
+            {p.panel}
           </div>
         </div>
       );
@@ -590,7 +657,7 @@ export function IslandContent(p: Props) {
         >
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[13px] font-semibold">
-              {needs ? "Claude needs you" : "Claude finished"} <span className="text-white/50">· {c.project}</span>
+              {needs ? "Claude needs you" : c.kind === "limit" ? "Claude hit its limit" : c.kind === "resumed" ? "Resumed — continuing" : "Claude finished"} <span className="text-white/50">· {c.project}</span>
             </span>
             {p.claudeMore > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10.5px] text-white/70">+{p.claudeMore}</span>}
           </div>
@@ -608,29 +675,25 @@ function Quick({ icon, label, onClick, hot, index }: { icon: React.ReactNode; la
     <motion.button
       initial={{ opacity: 0, y: 8, scale: 0.92 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 520, damping: 30, delay: 0.03 + index * 0.035 }}
+      transition={{ type: "spring", stiffness: 520, damping: 30, delay: 0.06 + index * 0.025 }}
       whileTap={{ scale: 0.94 }}
       onClick={onClick}
       data-hot={hot ? "true" : "false"}
+      data-peek-tile={index}
       aria-label={label}
       title={label}
-      className="island-tile relative flex h-[40px] flex-col items-center justify-center rounded-xl text-white/85 hover:text-white"
+      className="island-tile relative flex h-full min-w-0 flex-col items-center justify-center gap-1 rounded-2xl text-white/85 hover:text-white"
     >
       <span
-        className="flex items-center justify-center text-brand-200 transition-transform duration-200"
+        className="flex h-[18px] items-center justify-center text-brand-200 transition-transform duration-200"
         style={{
           filter: hot ? "drop-shadow(0 0 8px rgba(102,206,255,0.85))" : "drop-shadow(0 0 4px rgba(102,206,255,0.35))",
-          transform: hot ? "translateY(-4px)" : "none",
+          transform: hot ? "translateY(-1px) scale(1.08)" : "none",
         }}
       >
         {icon}
       </span>
-      {/* label only on the hovered tile */}
-      <span
-        className="pointer-events-none absolute bottom-[3px] text-[9.5px] font-medium text-white/85 transition-opacity duration-150"
-        style={{ opacity: hot ? 1 : 0 }}
-        aria-hidden
-      >
+      <span className="pointer-events-none max-w-full truncate px-1 text-[10.5px] font-medium leading-none text-white/70" aria-hidden>
         {label}
       </span>
     </motion.button>

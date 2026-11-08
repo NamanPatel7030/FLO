@@ -1,12 +1,29 @@
 // Notch tray: live items in the wings beside the camera (Claude sessions, to-dos, meeting) +
 // tooltips, the correction card and the meeting-detected prompt. Pure presentation; state lives
 // in Island.tsx.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Asterisk, Check, CheckCircle2, Trash2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
-import { claudeStatusLabel, formatDue, relativeTime, TRAY_LIST_ROW, type TraySlot } from "../lib/format";
+import { ArrowUpRight, Asterisk, Check, CheckCircle2, ChevronLeft, ChevronRight, Folder, Trash2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
+import {
+  appLabel,
+  claudeStatusLabel,
+  formatDue,
+  ISLAND_GAP,
+  PERM_LINE,
+  PERM_LINES,
+  PERM_LINES_MAX,
+  permissionCmdLines,
+  permissionCommand,
+  relativeTime,
+  toolLabel,
+  TRAY_LIST_ROW,
+  waitedLabel,
+  type TraySlot,
+} from "../lib/format";
 import type { ClaudeSession, ConfirmEvent, CorrectionEvent, IslandGeometry, Todo } from "../lib/types";
 import { CardRow } from "./CardRow";
+import { useAutoContinue } from "../lib/autoContinue";
+import { acFor, LimitLine, LimitStatus, LimitSwitch } from "./LimitWait";
 
 export type TrayItem =
   /** ALL agent sessions behind one stacked icon (sorted most urgent first) */
@@ -262,6 +279,7 @@ export function TrayTooltip({
   /** delete a to-do from the list */
   onDeleteTodo?: (t: Todo) => void;
 }) {
+  const ac = useAutoContinue(); // sessions waiting on a usage-limit reset
   return (
     <motion.div
       key={item.id}
@@ -290,13 +308,18 @@ export function TrayTooltip({
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-[12px] font-medium">{s.project}</span>
-                    <span className={"shrink-0 text-[10px] " + STATUS_COLOR[s.status]} title={claudeStatusLabel(s.status)}>
-                      {SHORT_STATUS[s.status]}
-                    </span>
+                    {acFor(ac, s.sessionId) ? (
+                      <LimitStatus a={acFor(ac, s.sessionId)!} />
+                    ) : (
+                      <span className={"shrink-0 text-[10px] " + STATUS_COLOR[s.status]} title={claudeStatusLabel(s.status)}>
+                        {SHORT_STATUS[s.status]}
+                      </span>
+                    )}
                     <span className="ml-auto shrink-0 text-[10px] text-white/35">{relativeTime(s.updatedAt)}</span>
                   </span>
-                  <span className="block truncate text-[11px] leading-tight text-white/50">{s.message || " "}</span>
+                  {acFor(ac, s.sessionId) ? <LimitLine a={acFor(ac, s.sessionId)!} /> : <span className="block truncate text-[11px] leading-tight text-white/50">{s.message || " "}</span>}
                 </span>
+                {acFor(ac, s.sessionId) && <LimitSwitch a={acFor(ac, s.sessionId)!} />}
                 <button className={iconGhost} onClick={() => onOpen(s)} title="Open" aria-label={`Open ${s.project}`}>
                   <ExternalLink size={12} />
                 </button>
@@ -378,8 +401,28 @@ export function TrayTooltip({
 }
 
 /** "Send to Rahul on Slack?" — Flo never sends without this OK. */
-export function ConfirmCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent; more: number; notch: boolean; geo: IslandGeometry; onAnswer: (approve: boolean | "terminal") => void }) {
-  if (c.kind === "claude") return <ClaudePermissionCard c={c} more={more} notch={notch} geo={geo} onAnswer={onAnswer} />;
+export function ConfirmCard({
+  c,
+  more,
+  notch,
+  geo,
+  onAnswer,
+  ...perm
+}: {
+  c: ConfirmEvent;
+  more: number;
+  notch: boolean;
+  geo: IslandGeometry;
+  onAnswer: (approve: boolean | "terminal") => void;
+  /** Claude permission queue: position, stepping, "Show all", focusing the session */
+  index?: number;
+  total?: number;
+  onStep?: (delta: number) => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+  onOpen?: () => void;
+}) {
+  if (c.kind === "claude") return <ClaudePermissionCard c={c} notch={notch} geo={geo} onAnswer={onAnswer} {...perm} />;
   return (
     <CardRow
       notch={notch}
@@ -413,34 +456,191 @@ export function ConfirmCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent
   );
 }
 
-/** "Claude needs you · project — Run: npm publish" with Deny / Allow (and answer in the terminal). */
-function ClaudePermissionCard({ c, more, notch, geo, onAnswer }: { c: ConfirmEvent; more: number; notch: boolean; geo: IslandGeometry; onAnswer: (a: boolean | "terminal") => void }) {
-  const [project, title] = (() => {
-    const i = c.title.indexOf("·");
-    return i >= 0 ? [c.title.slice(i + 1).trim(), c.title.slice(0, i).trim()] : ["", c.title];
-  })();
+/** Where a Claude permission card came from, for the header. */
+function permissionWho(c: ConfirmEvent) {
+  const i = c.title.indexOf("·");
+  const project = c.project || (i >= 0 ? c.title.slice(i + 1).trim() : "") || "Claude Code";
+  return { project, tool: toolLabel(c.tool, c.body), app: appLabel(c.app) };
+}
+
+/** A command with its flags dimmed and quoted strings tinted (still plain, selectable text). */
+function CommandText({ text }: { text: string }) {
+  const parts = text.split(/(\s+)/);
   return (
-    <div className="absolute inset-x-0 bottom-0 px-4 pb-3" style={{ top: notch ? geo.notchHeight + 10 : 8 }} data-testid="claude-permission-card">
-      <div className="flex items-center gap-2">
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inset-0 rounded-full bg-amber-400 opacity-60 [animation:ping_1.2s_cubic-bezier(0,0,0.2,1)_2]" />
-          <span className="relative h-2.5 w-2.5 rounded-full bg-amber-400" />
+    <>
+      {parts.map((p, i) =>
+        /^\s+$/.test(p) ? (
+          p
+        ) : /^--?[\w-]/.test(p) ? (
+          <span key={i} className="text-white/45">
+            {p}
+          </span>
+        ) : /^["'`]/.test(p) ? (
+          <span key={i} className="text-amber-200/85">
+            {p}
+          </span>
+        ) : /^(&&|\|\||\||;|>|>>)$/.test(p) ? (
+          <span key={i} className="text-[#d97757]">
+            {p}
+          </span>
+        ) : (
+          <span key={i}>{p}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+function useWaited(c: ConfirmEvent) {
+  const [first] = useState(() => (c.at && !Number.isNaN(Date.parse(c.at)) ? Date.parse(c.at) : Date.now()));
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (now - first) / 1000;
+}
+
+/**
+ * "blog-100-plan · Bash · iTerm · 12s … Open ↗" — a Claude Code permission prompt.
+ * The card is sized from its content (islandSize("confirm", { claude, cmdLines })), so the command
+ * and buttons are never clipped: up to 4 lines, "Show all" for longer ones (scrolls past 10).
+ * Allow / Deny flash a confirmation, then the next queued question slides in.
+ * Keys (when the island has focus): ⌘↩ Allow · ⎋ Deny.
+ */
+function ClaudePermissionCard({
+  c,
+  notch,
+  geo,
+  onAnswer,
+  index = 0,
+  total = 1,
+  onStep,
+  expanded = false,
+  onToggleExpand,
+  onOpen,
+}: {
+  c: ConfirmEvent;
+  notch: boolean;
+  geo: IslandGeometry;
+  onAnswer: (a: boolean | "terminal") => void;
+  index?: number;
+  total?: number;
+  onStep?: (delta: number) => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+  onOpen?: () => void;
+}) {
+  const who = permissionWho(c);
+  const cmd = permissionCommand(c.body, c.tool);
+  const lines = permissionCmdLines(c.body, c.tool);
+  const long = lines > PERM_LINES;
+  const visible = Math.min(lines, expanded ? PERM_LINES_MAX : PERM_LINES);
+  const waited = useWaited(c);
+  const [done, setDone] = useState<"allow" | "deny" | null>(null);
+  const answer = (a: boolean) => {
+    if (done) return;
+    setDone(a ? "allow" : "deny");
+    setTimeout(() => onAnswer(a), 650);
+  };
+  const answerRef = useRef(answer);
+  answerRef.current = answer;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        answerRef.current(true);
+      } else if (e.key === "Escape") answerRef.current(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const chip = "shrink-0 rounded-md bg-white/[0.08] px-1.5 py-[2px] text-[10.5px] font-medium leading-none text-white/65";
+  return (
+    <div className="absolute inset-x-0 bottom-0 flex flex-col px-4 pb-3" style={{ top: notch ? geo.notchHeight + ISLAND_GAP + 4 : 8 }} data-testid="claude-permission-card" data-session={c.sessionId}>
+      {/* header: who's asking */}
+      <div className="flex h-6 shrink-0 items-center gap-2">
+        <span className="relative flex h-2.5 w-2.5 shrink-0">
+          <span className="absolute inset-0 rounded-full bg-amber-400 opacity-60 [animation:ping_1.4s_cubic-bezier(0,0,0.2,1)_infinite]" />
+          <span className="relative h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]" />
         </span>
-        <span className="truncate text-[13.5px] font-semibold">{title}</span>
-        {project && <span className="truncate text-[12.5px] text-white/45">· {project}</span>}
-        {more > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] text-white/70">+{more}</span>}
+        <Folder size={13} className="shrink-0 text-white/50" />
+        <span className="min-w-0 truncate text-[13.5px] font-semibold text-white" data-testid="perm-project" title={c.cwd || who.project}>
+          {who.project}
+        </span>
+        <span className={chip} data-testid="perm-tool">
+          {who.tool}
+        </span>
+        {who.app && <span className="shrink-0 truncate text-[11px] text-white/40">in {who.app}</span>}
+        <span className="shrink-0 text-[11px] tabular-nums text-white/40" data-testid="perm-waited">
+          · {waitedLabel(waited)}
+        </span>
+        <span className="flex-1" />
+        {total > 1 && (
+          <span className="flex shrink-0 items-center rounded-full bg-white/[0.06] text-[10.5px] tabular-nums text-white/65" data-testid="perm-queue">
+            <button aria-label="Previous question" className="rounded-full p-0.5 hover:bg-white/10 disabled:opacity-30" disabled={index === 0} onClick={() => onStep?.(-1)}>
+              <ChevronLeft size={12} />
+            </button>
+            <span className="px-0.5">
+              {index + 1}/{total}
+            </span>
+            <button aria-label="Next question" className="rounded-full p-0.5 hover:bg-white/10 disabled:opacity-30" disabled={index >= total - 1} onClick={() => onStep?.(1)}>
+              <ChevronRight size={12} />
+            </button>
+          </span>
+        )}
+        <button
+          className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.08] px-2 py-[3px] text-[11px] font-medium text-white/80 hover:bg-white/[0.14] hover:text-white"
+          onClick={onOpen}
+          aria-label={`Open ${who.project}`}
+          title={`Show the ${who.project} session${who.app ? ` in ${who.app}` : ""}`}
+        >
+          Open <ArrowUpRight size={11} />
+        </button>
       </div>
-      <p className="selectable mt-2 line-clamp-2 rounded-xl border border-white/[0.07] bg-white/[0.05] px-3 py-2 font-mono text-[12.5px] leading-[17px] text-white/90">{c.body}</p>
-      <div className="mt-2 flex items-center gap-1.5">
-        <button className="mr-auto rounded-full px-2 py-1 text-[11px] text-white/45 hover:bg-white/10 hover:text-white/80" onClick={() => onAnswer("terminal")} title="Answer in the terminal instead">
-          Answer in terminal
-        </button>
-        <button className={btnGhost + " flex items-center gap-1"} onClick={() => onAnswer(false)} aria-label="Deny">
-          <X size={12} /> Deny
-        </button>
-        <button className={btnPrimary + " flex items-center gap-1"} onClick={() => onAnswer(true)} aria-label="Allow">
-          <Check size={12} strokeWidth={3} /> Allow
-        </button>
+      {/* the command */}
+      <div className="relative mt-2 shrink-0 rounded-xl border border-white/[0.07] bg-white/[0.05] px-3 py-[7px]">
+        <p
+          className={"selectable whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[12px] text-white/90 " + (expanded && lines > PERM_LINES_MAX ? "flo-scroll overflow-y-auto" : "overflow-hidden")}
+          style={{ lineHeight: `${PERM_LINE}px`, maxHeight: visible * PERM_LINE }}
+          data-testid="perm-command"
+        >
+          {c.tool === "Bash" || (!c.tool && /^Run:\s/.test(c.body.trim())) ? <span className="select-none text-white/30">$ </span> : null}
+          <CommandText text={cmd} />
+        </p>
+        {long && (
+          <button
+            className="absolute bottom-[5px] right-2 rounded-md bg-[#141414] px-1.5 text-[10.5px] font-medium text-brand-200 shadow-[-10px_0_10px_#141414] hover:text-white"
+            onClick={onToggleExpand}
+          >
+            {expanded ? "Show less" : "Show all"}
+          </button>
+        )}
+      </div>
+      {/* answer */}
+      <div className="mt-[10px] flex h-7 shrink-0 items-center gap-1.5">
+        {done ? (
+          <motion.span
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={"ml-auto flex items-center gap-1.5 text-[12px] font-semibold " + (done === "allow" ? "text-emerald-300" : "text-white/60")}
+            data-testid="perm-answered"
+          >
+            {done === "allow" ? <CheckCircle2 size={14} /> : <X size={14} />} {done === "allow" ? "Allowed" : "Denied"}
+          </motion.span>
+        ) : (
+          <>
+            <button className="mr-auto rounded-full px-2 py-1 text-[11px] text-white/45 hover:bg-white/10 hover:text-white/80" onClick={() => onAnswer("terminal")} title="Answer in the terminal instead">
+              Answer in terminal
+            </button>
+            <button className={btnGhost + " flex items-center gap-1"} onClick={() => answer(false)} aria-label="Deny" title="Deny (esc)">
+              <X size={12} /> Deny
+            </button>
+            <button className={btnPrimary + " flex items-center gap-1.5"} onClick={() => answer(true)} aria-label="Allow" title="Allow (⌘↩)">
+              <Check size={12} strokeWidth={3} /> Allow <span className="text-[10px] font-medium opacity-60">⌘↩</span>
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

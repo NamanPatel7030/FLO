@@ -1,4 +1,5 @@
 import type { ClaudeSession, ClaudeStatus, HotkeyCombo, IslandGeometry, Todo, NotchSize } from "./types";
+import { PANEL_W } from "./widgets";
 
 const URGENCY: Record<ClaudeStatus, number> = { needs_approval: 0, waiting_reply: 1, done: 2, working: 3 };
 /** Most urgent first: needs_approval > waiting_reply > done > working; newest first within a status. */
@@ -198,13 +199,22 @@ export interface TraySlot {
 
 const wingFor = (n: number) => (n > 0 ? TRAY_PAD_IN + n * TRAY_SLOT - 4 + TRAY_PAD_OUT : 0);
 
-/** Layout of tray items in the wings beside the notch. Window is centred on the notch. */
-export function trayLayout(geo: IslandGeometry, nLeft: number, nRight: number): { width: number; height: number; wing: number; slots: TraySlot[] } {
+/** Width of each music live-activity wing (artwork left, equalizer right), next to the camera. */
+export const MUSIC_WING = 36;
+
+/**
+ * Layout of tray items in the wings beside the notch. Window is centred on the notch.
+ * `inner` reserves that much of each wing next to the camera (the music live activity); tray
+ * items sit outside it.
+ */
+export function trayLayout(geo: IslandGeometry, nLeft: number, nRight: number, inner: number = 0): { width: number; height: number; wing: number; slots: TraySlot[] } {
   const nw = geo.notchWidth;
-  const wing = Math.max(TRAY_MIN_WING, wingFor(nLeft), wingFor(nRight));
+  const side = (n: number) => (n > 0 ? inner + wingFor(n) - (inner ? TRAY_PAD_IN / 2 : 0) : inner);
+  const wing = Math.max(TRAY_MIN_WING, side(nLeft), side(nRight));
+  const off = inner ? inner - TRAY_PAD_IN / 2 : 0;
   const slots: TraySlot[] = [];
-  for (let i = 0; i < nLeft; i++) slots.push({ side: "left", index: i, cx: -(nw / 2 + TRAY_PAD_IN + 10 + i * TRAY_SLOT) });
-  for (let i = 0; i < nRight; i++) slots.push({ side: "right", index: i, cx: nw / 2 + TRAY_PAD_IN + 10 + i * TRAY_SLOT });
+  for (let i = 0; i < nLeft; i++) slots.push({ side: "left", index: i, cx: -(nw / 2 + off + TRAY_PAD_IN + 10 + i * TRAY_SLOT) });
+  for (let i = 0; i < nRight; i++) slots.push({ side: "right", index: i, cx: nw / 2 + off + TRAY_PAD_IN + 10 + i * TRAY_SLOT });
   return { width: nw + 2 * (wing + ISLAND_EAR), height: geo.notchHeight, wing, slots };
 }
 
@@ -308,6 +318,108 @@ export interface CardContent {
   agentDone?: boolean;
   /** agent card is asking a yes/no question (question + Yes / No row) */
   agentConfirm?: boolean;
+  /** media is playing: the music live activity takes the inner part of each wing */
+  music?: boolean;
+  /** permission card: visible command lines */
+  cmdLines?: number;
+}
+
+// ── Claude permission card ───────────────────────────────────────────────────
+/** Width of the permission card (the command box wraps at PERM_CHARS monospace chars). */
+export const PERM_W = 500;
+export const PERM_CHARS = 56;
+export const PERM_LINE = 18;
+/** Lines shown before "Show all", and the most an expanded command shows before it scrolls. */
+export const PERM_LINES = 4;
+export const PERM_LINES_MAX = 10;
+
+/** The command as shown (Bash's "Run: " prefix dropped — the tool chip says it's a command). */
+export function permissionCommand(body: string, tool?: string): string {
+  const t = body.trim();
+  return (tool === "Bash" || !tool) && /^Run:\s/.test(t) ? t.replace(/^Run:\s+/, "") : t;
+}
+
+/** Wrapped line count of a command at the card's width: greedy word wrap like the browser does
+ *  (wraps at spaces; a token longer than a line breaks anywhere). Errs a little tall, never short. */
+export function permissionLines(text: string, perLine: number = PERM_CHARS): number {
+  let total = 0;
+  for (const ln of text.split("\n")) {
+    let lines = 1;
+    let col = 0;
+    for (const w of ln.split(/ +/)) {
+      const len = w.length;
+      if (col === 0) col = len;
+      else if (col + 1 + len <= perLine) col += 1 + len;
+      else {
+        lines++;
+        col = len;
+      }
+      while (col > perLine) {
+        lines++;
+        col -= perLine;
+      }
+    }
+    total += lines;
+  }
+  return total;
+}
+
+/** Lines the permission card's command box needs (counts the "$ " prompt shown for commands). */
+export function permissionCmdLines(body: string, tool?: string): number {
+  const bash = tool === "Bash" || (!tool && /^Run:\s/.test(body.trim()));
+  return permissionLines((bash ? "$ " : "") + permissionCommand(body, tool));
+}
+
+/** "Bash" → "Bash", "Edit" → "Edit file", "mcp__github__create_issue" → "create_issue". */
+export function toolLabel(tool?: string, body = ""): string {
+  if (!tool) return /^Run:/.test(body) ? "Bash" : "Tool";
+  const m: Record<string, string> = { Edit: "Edit file", MultiEdit: "Edit file", Write: "Write file", Read: "Read file", NotebookEdit: "Edit notebook", WebFetch: "Fetch URL", WebSearch: "Web search" };
+  if (m[tool]) return m[tool];
+  if (tool.startsWith("mcp__")) return tool.split("__")[2] || tool.split("__")[1] || "MCP tool";
+  return tool;
+}
+
+/** "com.googlecode.iterm2" → "iTerm"; plain names pass through. */
+export function appLabel(app?: string | null): string {
+  if (!app) return "";
+  const known: Record<string, string> = {
+    "com.googlecode.iterm2": "iTerm",
+    "com.apple.Terminal": "Terminal",
+    "com.microsoft.VSCode": "VS Code",
+    "com.todesktop.230313mzl4w4u92": "Cursor",
+    "dev.warp.Warp-Stable": "Warp",
+    "com.mitchellh.ghostty": "Ghostty",
+    "dev.zed.Zed": "Zed",
+    "com.github.wez.wezterm": "WezTerm",
+    "net.kovidgoyal.kitty": "kitty",
+  };
+  if (known[app]) return known[app];
+  if (/^[a-z0-9-]+(\.[A-Za-z0-9-]+){2,}$/.test(app)) {
+    const last = app.split(".").pop() ?? app;
+    return last.charAt(0).toUpperCase() + last.slice(1);
+  }
+  return app;
+}
+
+/** "12s", "3m", "1h 4m" — how long a question has been waiting. */
+export function waitedLabel(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** Height of the permission card body (below the notch + gap) for `lines` visible command lines. */
+export function permissionBody(lines: number): number {
+  // top 4 · header 24 · gap 8 · command box (lines + 14 padding) · gap 10 · actions 28 · bottom 12
+  return 4 + 24 + 8 + Math.max(1, lines) * PERM_LINE + 14 + 10 + 28 + 12;
+}
+
+/** Width of the hover panel's black shape at the current notch size, kept on screen. */
+export function panelWidth(geo: IslandGeometry): number {
+  const w = Math.round(PANEL_W * notchScale);
+  const max = Math.max(320, (geo.screenWidth || 1512) - 2 * (ISLAND_EAR + 12));
+  return Math.min(w, max);
 }
 
 /** Height of the assistant card body (below the notch) for given content. */
@@ -330,7 +442,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
   const nh = notch ? geo.notchHeight : 0;
   if (notch) {
     const compact = nw + 2 * (ISLAND_WING + ISLAND_EAR);
-    const tray = trayLayout(geo, content?.trayLeft ?? 0, content?.trayRight ?? 0);
+    const tray = trayLayout(geo, content?.trayLeft ?? 0, content?.trayRight ?? 0, content?.music ? MUSIC_WING : 0);
     const hasTray = (content?.trayLeft ?? 0) + (content?.trayRight ?? 0) > 0;
     switch (variant) {
       case "collapsed":
@@ -350,11 +462,15 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "meetingPrompt":
         return { width: 400, height: nh + ISLAND_GAP + 52 };
       case "confirm":
-        return { width: 460, height: nh + ISLAND_GAP + (content?.claude ? 112 : 98) };
+        return content?.claude
+          ? { width: PERM_W, height: nh + ISLAND_GAP + permissionBody(content.cmdLines ?? 2) }
+          : { width: 460, height: nh + ISLAND_GAP + 98 };
+      // the hover panel: quick actions + widgets, one shape (the pill is width - 2 * ear)
       case "peek":
-        return { width: Math.max(nw + 2 * 160, hasTray ? tray.width : 0), height: nh + 54 };
-      case "widgets":
-        return { width: Math.round(380 * notchScale), height: nh + ISLAND_GAP + Math.round((content?.widgetBody ?? 232) * notchScale) };
+      case "widgets": {
+        const w = Math.max(panelWidth(geo) + 2 * ISLAND_EAR, hasTray || content?.music ? tray.width : 0);
+        return { width: w + (w % 2), height: nh + Math.round((content?.widgetBody ?? 328) * notchScale) };
+      }
       case "agent":
         // top gap + header row + bottom padding, then a taller body while running vs a one-line result
         return { width: 468, height: nh + 54 + (content?.agentConfirm ? 74 : content?.agentDone ? 28 : 58) };
@@ -402,11 +518,10 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "meetingPrompt":
       return { width: 380 + pad, height: 64 + pad };
     case "confirm":
-      return { width: 440 + pad, height: 108 + pad };
+      return content?.claude ? { width: PERM_W - 20 + pad, height: permissionBody(content.cmdLines ?? 2) + 4 + pad } : { width: 440 + pad, height: 108 + pad };
     case "peek":
-      return { width: 260 + pad, height: 52 + pad };
     case "widgets":
-      return { width: 360 + pad, height: (content?.widgetBody ?? 232) + pad };
+      return { width: panelWidth(geo) + pad, height: Math.round((content?.widgetBody ?? 328) * notchScale) + 8 + pad };
     case "agent":
       return { width: 420 + pad, height: (content?.agentConfirm ? 128 : content?.agentDone ? 82 : 112) + pad };
     case "agentMode":

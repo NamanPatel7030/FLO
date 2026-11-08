@@ -3,7 +3,7 @@
 // peek|swell|tray|trayTooltip|correction|meetingPrompt|agent|agentmode (&hold=pill|steps|confirm).
 // Note: the query must come BEFORE the hash, e.g. /?demo=tray&nh=38#/island
 import { api } from "../lib/api";
-import { mockClaudeEvent, mockClaudeSession, mockCorrection, mockEmit, mockInvoke, mockMeetingDetected } from "../lib/mock";
+import { mockClaudeEvent, mockClaudeSession, mockCorrection, mockEmit, mockInvoke, mockMeetingDetected, mockPermission } from "../lib/mock";
 import { trayLayout } from "../lib/format";
 import { EV, type HoverEvent, type IslandGeometry } from "../lib/types";
 
@@ -36,6 +36,30 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
       break;
     case "widgets":
       at(300, () => hooks.openWidgets?.());
+      break;
+    // live music activity in the collapsed notch (&media=youtube|paused for the other states)
+    case "music":
+      break; // the mock starts playing; the activity shows on load
+    // ONE hover opens the whole panel (quick actions + widgets incl. the rich player); keep hovering
+    case "panel":
+      for (let t = 300; t < 60000; t += 200) at(t, () => hooks.setPos({ inside: true, cx: 0, y: 12 }));
+      break;
+    // Claude permission prompts: a long command (Show all), a queue of three
+    case "permission":
+      at(300, () =>
+        new URLSearchParams(location.search).get("hold") === "long"
+          ? mockPermission(
+              "blog-100-plan",
+              "Bash",
+              "Run: for f in content/posts/*.md; do npx markdownlint --fix \"$f\" && node scripts/frontmatter.js --check --strict \"$f\" || echo \"failed: $f\" >> lint.log; done && git add -A && git commit -m \"chore: lint all 100 posts\" && git push origin main --force-with-lease",
+              47,
+            )
+          : mockPermission("blog-100-plan", "Bash", undefined, 12),
+      );
+      if (new URLSearchParams(location.search).get("hold") === "queue") {
+        at(350, () => mockPermission("flo-mvp", "Edit", "Edit src/island/Island.tsx", 4));
+        at(400, () => mockPermission("api", "WebFetch", "Open https://registry.npmjs.org/-/package/flo/dist-tags", 1));
+      }
       break;
     case "reminder":
       at(300, () =>

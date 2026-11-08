@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { DEFAULT_WIDGETS, loadWidgets, packWidgetRows, saveWidgets, widgetsBodyHeight, WIDGET_META, type WidgetId } from "./widgets";
+import { DEFAULT_WIDGETS, loadWidgets, packPanelRows, packWidgetRows, saveWidgets, widgetsBodyHeight, WIDGET_META, type WidgetId } from "./widgets";
 
 describe("packWidgetRows", () => {
   it("gives span-2 widgets their own row and pairs span-1 widgets", () => {
@@ -12,6 +12,20 @@ describe("packWidgetRows", () => {
   });
   it("handles an empty list", () => {
     expect(packWidgetRows([])).toEqual([]);
+  });
+});
+
+describe("packPanelRows (4-column hover panel)", () => {
+  it("pairs span-2 widgets side by side and fills each row", () => {
+    const rows = packPanelRows(["nowPlaying", "today", "timer", "clock"]);
+    expect(rows.map((r) => r.cells.map((c) => [c.id, c.span]))).toEqual([
+      [["nowPlaying", 2], ["today", 2]],
+      [["timer", 1], ["clock", 3]],
+    ]);
+    expect(rows[0].h).toBe(Math.max(WIDGET_META.nowPlaying.h, WIDGET_META.today.h));
+  });
+  it("a lone widget takes the full row", () => {
+    expect(packPanelRows(["nowPlaying"])[0].cells).toEqual([{ id: "nowPlaying", span: 4 }]);
   });
 });
 
