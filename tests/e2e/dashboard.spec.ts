@@ -93,8 +93,8 @@ test("appearance: dark-only (no theme toggle), accent and notch style apply and 
   expect(box!.width).toBeGreaterThan(40);
   expect(box!.height).toBeGreaterThan(20);
 
-  // notch animation lives in the Notch tab now; pick Bars → saved via save_settings
-  await page.goto("/#/settings/notch");
+  // notch animation lives on the same Appearance tab (Notch section); pick Bars → saved via save_settings
+  await page.getByRole("region", { name: "Notch" }).scrollIntoViewIfNeeded();
   await page.getByRole("button", { name: "Bars", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => (window as any).__floMock.invoke("get_settings").then((s: any) => s.notchStyle)))
@@ -141,9 +141,75 @@ test("to-dos: reminders section, per-to-do details, and bulk actions", async ({ 
     .toBe(0);
 });
 
-test("notch tab: size, new animations, sounds and notifications all save", async ({ page }) => {
+test("settings: Account merged into General, Notch merged into Appearance; old links still work", async ({ page }) => {
+  await page.goto("/#/settings/general");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  for (const gone of ["Account", "Notch"]) await expect(page.getByRole("button", { name: gone, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Account" }).getByTestId("account-card")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Preferences" }).getByText("Your typing speed")).toBeVisible();
+  // the old Account link lands on General
+  await page.goto("/#/settings/account");
+  await expect(page.getByTestId("account-card")).toBeVisible();
+  await expect(page).toHaveURL(/#\/settings\/general$/);
+  // the old Notch link lands on Appearance, which has accent + every notch section
+  await page.goto("/#/settings/notch");
+  await expect(page).toHaveURL(/#\/settings\/appearance$/);
+  for (const name of ["Colour", "Notch", "Sounds & alerts", "Widgets"]) await expect(page.getByRole("region", { name })).toBeVisible();
+  await expect(page.getByText("Accent", { exact: true })).toBeVisible();
+});
+
+test("accent recolours the brand palette and logo live", async ({ page }) => {
+  await page.goto("/#/settings/appearance");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  const before = await page.evaluate(() => {
+    const el = document.createElement("span");
+    el.className = "text-brand-300";
+    document.body.appendChild(el);
+    return getComputedStyle(el).color;
+  });
+  await page.getByLabel("Violet").click();
+  // a brand-* utility (Tailwind) follows the accent with no reload
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector(".text-brand-300")!).color)).not.toBe(before);
+  // …and so does the logo (inline SVG drawn from the accent vars)
+  const logoStop = () => page.evaluate(() => getComputedStyle(document.querySelector('svg[aria-label="Flo"] linearGradient stop[offset="0.5"]')!).stopColor);
+  const violetStop = await logoStop();
+  await page.getByLabel("Sky").click();
+  await expect.poll(logoStop).not.toBe(violetStop);
+});
+
+test("clock widget: add time zones in Settings and they show in the notch widgets", async ({ page }) => {
+  await page.goto("/#/settings/appearance");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  const ed = page.getByTestId("clock-zones-editor");
+  await ed.scrollIntoViewIfNeeded();
+  for (const city of ["London", "Singapore"]) {
+    const add = ed.getByRole("button", { name: "Add time zone" });
+    if (await add.isVisible()) await add.click();
+    await ed.getByLabel("Search cities").fill(city.slice(0, 4));
+    await ed.getByRole("option", { name: new RegExp(city) }).first().click();
+  }
+  await expect(ed.getByRole("button", { name: "Remove London" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("flo.clockZones") || "[]").map((z: any) => z.city))).toEqual(["London", "Singapore"]);
+  // remove one, then it's gone from storage too
+  await ed.getByRole("button", { name: "Remove London" }).click();
+  // the picker stays open for adding more; keyboard: type, Enter picks the top match
+  await ed.getByLabel("Search cities").fill("new y");
+  await ed.getByLabel("Search cities").press("Enter");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("flo.clockZones") || "[]").map((z: any) => z.city))).toEqual(["Singapore", "New York"]);
+
+  // the notch widgets panel (same origin → same localStorage) shows the extra zones
+  await page.goto("/?nh=38&nw=420&demo=widgets#/island");
+  const zones = page.getByTestId("clock-zone");
+  await expect(zones).toHaveCount(2);
+  await expect(zones.nth(0)).toContainText("Singapore");
+  await expect(zones.nth(1)).toContainText("New York");
+  await expect(zones.nth(0)).toContainText(/\d{1,2}:\d{2}/);
+});
+
+test("appearance → notch section: size, new animations, sounds and notifications all save", async ({ page }) => {
   await page.goto("/#/settings/notch");
   await page.waitForFunction(() => !!(window as any).__floMock);
+  await expect(page).toHaveURL(/#\/settings\/appearance$/);
   const get = (k: string) => page.evaluate((key) => (window as any).__floMock.invoke("get_settings").then((s: any) => s[key]), k);
 
   await page.getByRole("radio", { name: /Biggest/ }).click();

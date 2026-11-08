@@ -29,9 +29,9 @@ export function SignatureMark({ className = "h-[22px] w-[52px]", id = "sig" }: {
     <svg viewBox="0 0 92 40" className={className} aria-hidden>
       <defs>
         <linearGradient id={`${id}-grad`} x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0" stopColor="#e3f6ff" />
-          <stop offset="0.55" stopColor="#66ceff" />
-          <stop offset="1" stopColor="#1a9be0" />
+          <stop offset="0" style={{ stopColor: "var(--color-brand-100)" }} />
+          <stop offset="0.55" style={{ stopColor: "var(--color-brand-400)" }} />
+          <stop offset="1" style={{ stopColor: "var(--color-brand-600)" }} />
         </linearGradient>
       </defs>
       <path
@@ -43,7 +43,7 @@ export function SignatureMark({ className = "h-[22px] w-[52px]", id = "sig" }: {
         strokeLinecap="round"
         strokeLinejoin="round"
         className="flo-sig"
-        style={{ filter: "drop-shadow(0 0 3px rgba(102,206,255,0.45))" }}
+        style={{ filter: "drop-shadow(0 0 3px rgb(var(--accent-rgb) / 0.45))" }}
       />
     </svg>
   );
@@ -57,8 +57,8 @@ export function Portrait({ size }: { size: number }) {
       style={{
         width: size,
         height: size,
-        background: "radial-gradient(circle at 50% 35%, #66ceff 0%, #1a9be0 38%, #062a44 78%, #020b14 100%)",
-        boxShadow: "0 0 0 1px rgba(147,221,255,0.55), 0 0 18px -4px rgba(102,206,255,0.6)",
+        background: "radial-gradient(circle at 50% 35%, var(--color-brand-400) 0%, var(--color-brand-600) 38%, color-mix(in oklab, var(--accent) 22%, black) 78%, #020b14 100%)",
+        boxShadow: "0 0 0 1px rgb(var(--accent-2-rgb) / 0.55), 0 0 18px -4px rgb(var(--accent-rgb) / 0.6)",
       }}
     >
       <img src={naman} alt="Naman Gundaniya" className="absolute inset-x-0 bottom-0 h-[112%] w-full object-cover object-top" draggable={false} />

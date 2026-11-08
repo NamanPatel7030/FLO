@@ -55,7 +55,7 @@ export function resolveTheme(mode: ThemeMode): "dark" | "light" {
 }
 
 /** Apply theme + accent vars to :root. Safe to call repeatedly. */
-export function applyTheme(settings: Pick<Settings, "theme" | "accent" | "notchGradient">): void {
+export function applyTheme(settings: Pick<Settings, "theme" | "accent" | "notchGradient">, mirror = true): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   // Flo is dark-only; the light/system theme switcher was removed. Keep accent customization.
@@ -74,6 +74,42 @@ export function applyTheme(settings: Pick<Settings, "theme" | "accent" | "notchG
   set("--accent-deep", darken(accent, 0.22));
   set("--accent-grad-from", gf);
   set("--accent-grad-to", gt);
+  // The brand-* scale in styles.css is color-mix()ed from --accent, so it follows automatically.
+  // Mirror the accent so other windows (the notch island) recolour the instant it changes — before
+  // their own settings round-trip — and so a fresh window paints in the right colour from frame one.
+  // Only the dashboard (where the accent is edited) writes the mirror: if the island wrote too, a
+  // stale settings read there could bounce an old accent back into the dashboard.
+  if (mirror && !root.classList.contains("island")) try {
+    const payload = JSON.stringify({ accent, notchGradient: settings.notchGradient ?? [] });
+    if (localStorage.getItem(THEME_KEY) !== payload) localStorage.setItem(THEME_KEY, payload);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+const THEME_KEY = "flo:theme";
+
+function applyCached(raw: string | null): void {
+  if (!raw) return;
+  try {
+    const t = JSON.parse(raw);
+    if (t && typeof t.accent === "string") applyTheme({ theme: "dark", accent: t.accent, notchGradient: Array.isArray(t.notchGradient) ? t.notchGradient : [] }, false);
+  } catch {
+    /* ignore */
+  }
+}
+
+// Every window that imports the theme engine: paint the last-known accent immediately, then follow
+// accent changes made in any other window live (the `storage` event fires only in OTHER windows).
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  try {
+    applyCached(localStorage.getItem(THEME_KEY));
+  } catch {
+    /* ignore */
+  }
+  window.addEventListener("storage", (e) => {
+    if (e.key === THEME_KEY) applyCached(e.newValue);
+  });
 }
 
 /** Call cb when the OS light/dark preference changes (only matters while theme = system). */

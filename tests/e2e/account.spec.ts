@@ -157,7 +157,7 @@ test("signed out: dictation hotkey shows a 'Sign in to Flo' card in the notch", 
 });
 
 test("Settings → Account shows the user and Sign out returns to the gate", async ({ page }) => {
-  await page.goto("/?signedin=1#/settings/account");
+  await page.goto("/?signedin=1#/settings/general");
   await mock(page);
   const card = page.locator('[data-testid="account-card"]');
   await expect(card).toContainText("Naman Gundaniya");

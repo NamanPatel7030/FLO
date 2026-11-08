@@ -4,6 +4,7 @@
 // island reacts when Settings changes it) plus a same-window `flo:widgets` CustomEvent (the
 // `storage` event never fires in the window that wrote it). Both the island and Settings
 // subscribe via onWidgetsChange so the panel reflects edits live.
+import { loadZones, ZONES_EVENT, ZONES_KEY } from "./timezones";
 
 export type WidgetId = "nowPlaying" | "today" | "timer" | "pomodoro" | "clock" | "weather" | "agents" | "note";
 
@@ -25,11 +26,28 @@ export const WIDGETS: WidgetMeta[] = [
   { id: "today", label: "Today's to-dos", hint: "Check off tasks, see why each is here — scroll, hover to expand", span: 2, h: 148 },
   { id: "timer", label: "Stopwatch", hint: "A simple count-up timer", span: 1, h: 96 },
   { id: "pomodoro", label: "Pomodoro", hint: "A 25-minute focus countdown", span: 1, h: 96 },
-  { id: "clock", label: "Clock & date", hint: "The time and today's date", span: 1, h: 96 },
+  { id: "clock", label: "Clock & date", hint: "The time, today's date and other time zones", span: 1, h: 96 },
   { id: "weather", label: "Weather", hint: "Local conditions (coming soon)", span: 1, h: 96 },
 ];
 
 export const WIDGET_META: Record<WidgetId, WidgetMeta> = Object.fromEntries(WIDGETS.map((w) => [w.id, w])) as Record<WidgetId, WidgetMeta>;
+
+/** Height of one extra time-zone row in the clock tile, and the tile's padding around them. */
+export const ZONE_ROW_H = 20;
+const ZONE_PAD = 22;
+
+/** Columns a widget takes right now. The clock widens to a full row once world-clock zones are added. */
+export function widgetSpan(id: WidgetId, zoneCount = id === "clock" ? loadZones().length : 0): 1 | 2 {
+  if (id === "clock" && zoneCount > 0) return 2;
+  return WIDGET_META[id]?.span ?? 1;
+}
+
+/** Tile height right now (the clock grows with its zone list). */
+export function widgetHeight(id: WidgetId, zoneCount = id === "clock" ? loadZones().length : 0): number {
+  const base = WIDGET_META[id]?.h ?? 96;
+  if (id === "clock" && zoneCount > 0) return Math.max(base, ZONE_PAD + zoneCount * ZONE_ROW_H);
+  return base;
+}
 
 /** What a fresh install shows until the user customises it. */
 export const DEFAULT_WIDGETS: WidgetId[] = ["nowPlaying", "today", "timer", "clock"];
@@ -75,16 +93,20 @@ export function saveWidgets(ids: WidgetId[]): void {
 }
 
 /** Subscribe to widget-list changes from this window or any other. Returns an unsubscribe fn. */
+// Clock zone edits fire it too (with a fresh array): they change the clock tile's size, and the
+// island re-measures the panel from the list it receives.
 export function onWidgetsChange(cb: (ids: WidgetId[]) => void): () => void {
   const onStorage = (e: StorageEvent) => {
-    if (e.key === KEY) cb(loadWidgets());
+    if (e.key === KEY || e.key === ZONES_KEY) cb(loadWidgets());
   };
   const onCustom = () => cb(loadWidgets());
   window.addEventListener("storage", onStorage);
   window.addEventListener("flo:widgets", onCustom as EventListener);
+  window.addEventListener(ZONES_EVENT, onCustom as EventListener);
   return () => {
     window.removeEventListener("storage", onStorage);
     window.removeEventListener("flo:widgets", onCustom as EventListener);
+    window.removeEventListener(ZONES_EVENT, onCustom as EventListener);
   };
 }
 
@@ -99,7 +121,7 @@ export function packWidgetRows(ids: WidgetId[]): WidgetId[][] {
   const rows: WidgetId[][] = [];
   let cur: WidgetId[] = [];
   for (const id of ids) {
-    const span = WIDGET_META[id]?.span ?? 1;
+    const span = widgetSpan(id);
     if (span === 2) {
       if (cur.length) {
         rows.push(cur);
@@ -123,7 +145,7 @@ export function widgetsBodyHeight(ids: WidgetId[]): number {
   const rows = packWidgetRows(ids);
   let h = PAD_TOP + PAD_BOTTOM;
   rows.forEach((row, i) => {
-    const rowH = Math.max(...row.map((id) => WIDGET_META[id]?.h ?? 96));
+    const rowH = Math.max(...row.map((id) => widgetHeight(id)));
     h += rowH + (i > 0 ? GAP : 0);
   });
   // the quick-actions row is always present

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown, Maximize2 } from "lucide-react";
+import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown, Maximize2, Globe2, Plus, Search } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
@@ -17,14 +17,26 @@ import { accountApi, initials, refreshAccount, useAccount } from "../../lib/acco
 import { playCue, SOUND_PACKS, type SoundPack } from "../../lib/cueSounds";
 import { DEFAULT_WIDGETS, WIDGETS, loadWidgets, saveWidgets, type WidgetId } from "../../lib/widgets";
 import { WidgetPreview } from "../../island/Widgets";
+import { formatZoneTime, hourDiffLabel, loadZones, MAX_ZONES, onZonesChange, saveZones, searchCities, type ClockZone, type ZoneCity } from "../../lib/timezones";
 
-const TABS = ["Account", "General", "Appearance", "Notch", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
+const TABS = ["General", "Appearance", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
 type Tab = (typeof TABS)[number];
+/** Tabs that were merged away: old links (#/settings/account, #/settings/notch) still land in the right place. */
+const TAB_ALIASES: Record<string, Tab> = { account: "General", notch: "Appearance" };
+
+function resolveSettingsTab(arg: string | undefined): Tab {
+  const a = (arg ?? "").toLowerCase();
+  return TAB_ALIASES[a] ?? (TABS.find((t) => t.toLowerCase() === a) as Tab | undefined) ?? "General";
+}
 
 export default function Settings() {
   const { settings, setSettings, pageArg, go } = useStore();
-  const tab: Tab = (TABS.find((t) => t.toLowerCase() === pageArg) ?? "General") as Tab;
+  const tab = resolveSettingsTab(pageArg);
   const set = (patch: Partial<S>) => settings && setSettings({ ...settings, ...patch });
+  // rewrite a merged-away tab's URL to its new home so the address matches what's shown
+  useEffect(() => {
+    if (pageArg && TAB_ALIASES[pageArg.toLowerCase()]) go("settings", tab.toLowerCase());
+  }, [pageArg]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div>
@@ -45,11 +57,9 @@ export default function Settings() {
         <Skeleton className="h-80" />
       ) : (
         <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="max-w-3xl">
-            {tab === "Account" && <AccountTab />}
+          <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className={tab === "About" ? "max-w-[940px]" : "max-w-3xl"}>
             {tab === "General" && <General s={settings} set={set} />}
             {tab === "Appearance" && <Appearance s={settings} set={set} />}
-            {tab === "Notch" && <Notch s={settings} set={set} />}
             {tab === "Shortcuts" && <Shortcuts s={settings} set={set} />}
             {tab === "Voice" && <Voice s={settings} set={set} />}
             {tab === "AI" && <AI s={settings} set={set} />}
@@ -76,6 +86,22 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
       </div>
       <div className="shrink-0">{children}</div>
     </div>
+  );
+}
+
+/** A titled group on the longer merged tabs (General, Appearance) so they stay scannable. */
+function Section({ title, hint, children, first }: { title: string; hint?: string; children: React.ReactNode; first?: boolean }) {
+  return (
+    <section className={clsx(!first && "pt-3")} aria-label={title}>
+      <div className="mb-3 flex items-end gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+          {hint && <p className="mt-0.5 text-[12px] text-faint">{hint}</p>}
+        </div>
+        <span className="mb-1.5 h-px flex-1 bg-gradient-to-r from-[var(--border-strong)] to-transparent" />
+      </div>
+      <div className="space-y-4">{children}</div>
+    </section>
   );
 }
 
@@ -144,7 +170,7 @@ function AccountTab() {
   return (
     <Card className="p-5" >
       <div className="flex items-center gap-4" data-testid="account-card">
-        <span className="accent-gradient flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-[18px] font-semibold text-white shadow-[0_0_24px_-6px_rgba(61,187,255,0.7)]">
+        <span className="accent-gradient flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-[18px] font-semibold text-white shadow-[0_0_24px_-6px_rgb(var(--accent-rgb)/0.7)]">
           {u?.image ? <img src={u.image} alt="" className="h-full w-full rounded-full object-cover" /> : initials(u)}
         </span>
         <div className="min-w-0 flex-1">
@@ -243,13 +269,25 @@ function HexField({ value, onChange }: { value: string; onChange: (hex: string) 
 }
 
 function Appearance({ s, set }: P) {
+  return (
+    <div className="space-y-6">
+      <Section first title="Colour" hint="One accent recolours everything: buttons, logo, charts and the notch.">
+        <AccentCard s={s} set={set} />
+        <NotchColoursCard s={s} set={set} />
+      </Section>
+      <Notch s={s} set={set} />
+    </div>
+  );
+}
+
+function AccentCard({ s, set }: P) {
   const accent = normalizeHex(s.accent || "#3dbbff");
   const isPreset = ACCENT_PRESETS.some((pre) => normalizeHex(pre.accent) === accent);
   return (
-    <div className="space-y-5">
+    <div>
       <Card className="p-4">
         <CardTitle icon={<Palette size={15} />}>Accent</CardTitle>
-        <p className="-mt-1 text-[12px] text-faint">Used across Flo and in the notch. Notch animation, size and sounds live in the Notch tab.</p>
+        <p className="-mt-1 text-[12px] text-faint">Used across Flo and in the notch. Changes apply instantly, everywhere.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2.5">
           {ACCENT_PRESETS.map((pre) => (
             <button
@@ -282,167 +320,281 @@ const SIZES: { id: NotchSize; label: string; hint: string; panel: number }[] = [
 /** Everything about the notch in one place: size, animation, colours, sounds, notifications, widgets. */
 function Notch({ s, set }: P) {
   const accent = normalizeHex(s.accent || "#3dbbff");
-  const auto = !(Array.isArray(s.notchGradient) && s.notchGradient.length === 2);
-  const [gf, gt] = deriveGradient({ accent, notchGradient: s.notchGradient });
   const size = s.notchSize ?? "big";
   const pack = (s.soundPack ?? "chime") as SoundPack;
   const volume = s.soundVolume ?? 70;
   return (
-    <div className="space-y-5">
-      <Card className="p-4">
-        <CardTitle icon={<Maximize2 size={15} />}>Size</CardTitle>
-        <p className="-mt-1 text-[12px] text-faint">How big things open when you hover the notch: your to-dos, Claude sessions and widgets.</p>
-        <div className="mt-3 grid grid-cols-4 gap-3" role="radiogroup" aria-label="Notch size">
-          {SIZES.map((z) => (
-            <button
-              key={z.id}
-              role="radio"
-              aria-checked={size === z.id}
-              onClick={() => set({ notchSize: z.id })}
-              className={clsx("rounded-2xl border p-3 text-left transition", size === z.id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong")}
-            >
-              {/* a tiny notch with the hover panel drawn to scale */}
-              <div className="flex h-[64px] items-start justify-center overflow-hidden rounded-xl bg-black pt-0">
-                <div className="flex flex-col items-center">
-                  <div className="h-[9px] w-[40px] rounded-b-[6px] bg-[#1b1b1f]" />
-                  <div
-                    className="mt-1 rounded-[7px] border border-white/10 bg-white/[0.06] p-1"
-                    style={{ width: 64 * z.panel, height: 40 * z.panel, boxShadow: size === z.id ? `0 0 0 1px ${accent}55` : undefined }}
-                  >
-                    <div className="h-1 w-3/4 rounded-full" style={{ background: accent, opacity: 0.8 }} />
-                    <div className="mt-1 h-1 w-1/2 rounded-full bg-white/25" />
-                    <div className="mt-1 h-1 w-2/3 rounded-full bg-white/15" />
+    <>
+      <Section title="Notch" hint="How the notch looks and moves when you hover it or talk to Flo.">
+        <Card className="p-4">
+          <CardTitle icon={<Maximize2 size={15} />}>Size</CardTitle>
+          <p className="-mt-1 text-[12px] text-faint">How big things open when you hover the notch: your to-dos, Claude sessions and widgets.</p>
+          <div className="mt-3 grid grid-cols-4 gap-3" role="radiogroup" aria-label="Notch size">
+            {SIZES.map((z) => (
+              <button
+                key={z.id}
+                role="radio"
+                aria-checked={size === z.id}
+                onClick={() => set({ notchSize: z.id })}
+                className={clsx("rounded-2xl border p-3 text-left transition", size === z.id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong")}
+              >
+                {/* a tiny notch with the hover panel drawn to scale */}
+                <div className="flex h-[64px] items-start justify-center overflow-hidden rounded-xl bg-black pt-0">
+                  <div className="flex flex-col items-center">
+                    <div className="h-[9px] w-[40px] rounded-b-[6px] bg-[#1b1b1f]" />
+                    <div
+                      className="mt-1 rounded-[7px] border border-white/10 bg-white/[0.06] p-1"
+                      style={{ width: 64 * z.panel, height: 40 * z.panel, boxShadow: size === z.id ? `0 0 0 1px ${accent}55` : undefined }}
+                    >
+                      <div className="h-1 w-3/4 rounded-full" style={{ background: accent, opacity: 0.8 }} />
+                      <div className="mt-1 h-1 w-1/2 rounded-full bg-white/25" />
+                      <div className="mt-1 h-1 w-2/3 rounded-full bg-white/15" />
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="mt-2 flex items-center justify-between px-0.5">
-                <span className="text-[12.5px] font-medium">{z.label}</span>
-                {size === z.id ? <Check size={14} className="text-[var(--accent)]" /> : <span className="text-[11px] text-faint">{z.hint}</span>}
-              </div>
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <div className="flex items-center justify-between">
-          <CardTitle icon={<Sparkles size={15} />}>Animation</CardTitle>
-          <Button size="sm" variant="glass" icon={<Play size={12} />} onClick={() => broadcastNotchPreview(s.notchStyle)}>
-            Preview in notch
-          </Button>
-        </div>
-        <div className="relative mt-1">
-          <StylePreview style={s.notchStyle} accent={accent} height={84} />
-          <span className="pointer-events-none absolute left-3 top-2.5 rounded-full bg-white/10 px-2 py-0.5 text-[10.5px] font-medium text-white/70">
-            {NOTCH_STYLES.find((n) => n.id === s.notchStyle)?.label ?? "Ribbon"} · live
-          </span>
-        </div>
-        <div className="mt-3 grid grid-cols-3 gap-2.5">
-          {NOTCH_STYLES.map((n) => (
-            <button
-              key={n.id}
-              aria-label={n.label}
-              aria-pressed={s.notchStyle === n.id}
-              onClick={() => {
-                set({ notchStyle: n.id });
-                broadcastNotchPreview(n.id);
-              }}
-              className={clsx(
-                "rounded-2xl border p-1.5 text-left transition",
-                s.notchStyle === n.id ? "border-[var(--accent)] glass-strong shadow-[0_0_0_1px_var(--accent)]" : "border-[var(--border)] glass hover:glass-strong",
-              )}
-            >
-              <StylePreview style={n.id} accent={accent} height={46} />
-              <div className="mt-1.5 flex items-center justify-between px-1 pb-0.5">
-                <span className="text-[12.5px] font-medium">{n.label}</span>
-                {s.notchStyle === n.id && <Check size={13} className="text-[var(--accent)]" />}
-              </div>
-            </button>
-          ))}
-        </div>
-        <p className="mt-2.5 text-[12px] text-faint">Every style reacts to your voice. Tap one to apply it and see it in the notch.</p>
-      </Card>
-
-      <Card className="p-4">
-        <CardTitle icon={<Palette size={15} />}>Notch colours</CardTitle>
-        <Toggle label="Match my accent" hint="Use a gradient made from your accent colour." checked={auto} onChange={(v) => set({ notchGradient: v ? [] : [gf, gt] })} />
-        {!auto && (
-          <div className="mt-2 flex items-center gap-3">
-            <ColorField label="From" round={false} value={gf} onChange={(v) => set({ notchGradient: [v, gt] })} />
-            <ColorField label="To" round={false} value={gt} onChange={(v) => set({ notchGradient: [gf, v] })} />
-            <div className="h-8 flex-1 rounded-full" style={{ background: `linear-gradient(90deg, ${gf}, ${gt})` }} />
+                <div className="mt-2 flex items-center justify-between px-0.5">
+                  <span className="text-[12.5px] font-medium">{z.label}</span>
+                  {size === z.id ? <Check size={14} className="text-[var(--accent)]" /> : <span className="text-[11px] text-faint">{z.hint}</span>}
+                </div>
+              </button>
+            ))}
           </div>
+        </Card>
+
+        <Card className="p-4">
+          <div className="flex items-center justify-between">
+            <CardTitle icon={<Sparkles size={15} />}>Animation</CardTitle>
+            <Button size="sm" variant="glass" icon={<Play size={12} />} onClick={() => broadcastNotchPreview(s.notchStyle)}>
+              Preview in notch
+            </Button>
+          </div>
+          <div className="relative mt-1">
+            <StylePreview style={s.notchStyle} accent={accent} height={84} />
+            <span className="pointer-events-none absolute left-3 top-2.5 rounded-full bg-white/10 px-2 py-0.5 text-[10.5px] font-medium text-white/70">
+              {NOTCH_STYLES.find((n) => n.id === s.notchStyle)?.label ?? "Ribbon"} · live
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2.5">
+            {NOTCH_STYLES.map((n) => (
+              <button
+                key={n.id}
+                aria-label={n.label}
+                aria-pressed={s.notchStyle === n.id}
+                onClick={() => {
+                  set({ notchStyle: n.id });
+                  broadcastNotchPreview(n.id);
+                }}
+                className={clsx(
+                  "rounded-2xl border p-1.5 text-left transition",
+                  s.notchStyle === n.id ? "border-[var(--accent)] glass-strong shadow-[0_0_0_1px_var(--accent)]" : "border-[var(--border)] glass hover:glass-strong",
+                )}
+              >
+                <StylePreview style={n.id} accent={accent} height={46} />
+                <div className="mt-1.5 flex items-center justify-between px-1 pb-0.5">
+                  <span className="text-[12.5px] font-medium">{n.label}</span>
+                  {s.notchStyle === n.id && <Check size={13} className="text-[var(--accent)]" />}
+                </div>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2.5 text-[12px] text-faint">Every style reacts to your voice. Tap one to apply it and see it in the notch.</p>
+        </Card>
+
+      </Section>
+
+      <Section title="Sounds & alerts" hint="What you hear, and how reminders and Claude Code reach you.">
+        <Card className="p-4">
+          <CardTitle icon={<Volume2 size={15} />}>Sounds</CardTitle>
+          <Toggle label="All sounds" hint="Turn every Flo sound on or off. Pick each one below." checked={s.playSounds} onChange={(v) => set({ playSounds: v })} />
+          <div className={clsx("mt-2 space-y-2.5 transition", !s.playSounds && "pointer-events-none opacity-40")}>
+            <SoundRow
+              label="Start listening"
+              hint="When you press Fn or Control and Flo starts listening."
+              on={s.startSoundOn ?? true}
+              onToggle={(v) => set({ startSoundOn: v })}
+              pack={(s.soundStart || pack) as SoundPack}
+              onPack={(p) => set({ soundStart: p })}
+              play={(p) => playCue("ready", true, p, volume / 100)}
+            />
+            <SoundRow
+              label="Stop and done"
+              hint="When you let go, Flo finishes, or something goes wrong."
+              on={s.stopSoundOn ?? true}
+              onToggle={(v) => set({ stopSoundOn: v })}
+              pack={(s.soundStop || pack) as SoundPack}
+              onPack={(p) => set({ soundStop: p })}
+              play={(p) => {
+                playCue("done", true, p, volume / 100);
+                setTimeout(() => playCue("error", true, p, volume / 100), 700);
+              }}
+            />
+            <SoundRow
+              label="Notifications"
+              hint="When a reminder or a Claude update appears in the notch."
+              on={s.notifySound ?? true}
+              onToggle={(v) => set({ notifySound: v })}
+              pack={(s.soundNotify || pack) as SoundPack}
+              onPack={(p) => set({ soundNotify: p })}
+              play={(p) => playCue("notify", true, p, volume / 100)}
+            />
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <Volume2 size={14} className="text-faint" />
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={volume}
+              aria-label="Sound volume"
+              onChange={(e) => set({ soundVolume: Number(e.target.value) })}
+              onMouseUp={() => playCue("done", true, pack, volume / 100)}
+              className="flo-range h-1 flex-1"
+            />
+            <span className="w-9 text-right text-[12px] tabular-nums text-muted">{volume}%</span>
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <CardTitle icon={<Bell size={15} />}>Notifications</CardTitle>
+          <Toggle
+            label="macOS notification banners"
+            hint="Reminders also appear in Notification Centre. Off: only the notch shows them (with Done and Snooze)."
+            checked={s.systemNotifications ?? true}
+            onChange={(v) => set({ systemNotifications: v })}
+          />
+          <Toggle
+            label="Allow or deny Claude Code from the notch"
+            hint="When Claude Code asks for permission, answer in the notch instead of the terminal. Unanswered after 2 minutes, it asks in the terminal as usual."
+            checked={s.claudeApprovals ?? true}
+            onChange={(v) => set({ claudeApprovals: v })}
+          />
+        </Card>
+      </Section>
+
+      <Section title="Widgets" hint="The panel that opens below the notch.">
+        <WidgetsCard />
+      </Section>
+    </>
+  );
+}
+
+function NotchColoursCard({ s, set }: P) {
+  const accent = normalizeHex(s.accent || "#3dbbff");
+  const auto = !(Array.isArray(s.notchGradient) && s.notchGradient.length === 2);
+  const [gf, gt] = deriveGradient({ accent, notchGradient: s.notchGradient });
+  return (
+    <Card className="p-4">
+      <CardTitle icon={<Palette size={15} />}>Notch colours</CardTitle>
+      <Toggle label="Match my accent" hint="Use a gradient made from your accent colour." checked={auto} onChange={(v) => set({ notchGradient: v ? [] : [gf, gt] })} />
+      {!auto && (
+        <div className="mt-2 flex items-center gap-3">
+          <ColorField label="From" round={false} value={gf} onChange={(v) => set({ notchGradient: [v, gt] })} />
+          <ColorField label="To" round={false} value={gt} onChange={(v) => set({ notchGradient: [gf, v] })} />
+          <div className="h-8 flex-1 rounded-full" style={{ background: `linear-gradient(90deg, ${gf}, ${gt})` }} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** World clock: add/remove extra time zones shown in the notch Clock widget (searchable city list). */
+function ClockZonesEditor({ zones, onChange }: { zones: ClockZone[]; onChange: (z: ClockZone[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const results = searchCities(q, zones).slice(0, 8);
+  const full = zones.length >= MAX_ZONES;
+  const now = new Date();
+  useEffect(() => setHi(0), [q]);
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+  const add = (c: ZoneCity) => {
+    onChange([...zones, { city: c.city, tz: c.tz }]);
+    setQ("");
+    if (zones.length + 1 >= MAX_ZONES) setOpen(false);
+  };
+  return (
+    <div className="mt-2.5 rounded-xl border border-[var(--border)] bg-black/20 p-2.5" data-testid="clock-zones-editor">
+      <div className="flex items-center gap-2">
+        <Globe2 size={14} className="text-[var(--accent)]" />
+        <span className="flex-1 text-[12.5px] font-medium">Time zones</span>
+        <span className="text-[11px] text-faint">
+          {zones.length}/{MAX_ZONES}
+        </span>
+        {!open && (
+          <Button size="sm" variant="glass" icon={<Plus size={13} />} disabled={full} onClick={() => setOpen(true)}>
+            Add time zone
+          </Button>
         )}
-      </Card>
-
-      <Card className="p-4">
-        <CardTitle icon={<Volume2 size={15} />}>Sounds</CardTitle>
-        <Toggle label="All sounds" hint="Turn every Flo sound on or off. Pick each one below." checked={s.playSounds} onChange={(v) => set({ playSounds: v })} />
-        <div className={clsx("mt-2 space-y-2.5 transition", !s.playSounds && "pointer-events-none opacity-40")}>
-          <SoundRow
-            label="Start listening"
-            hint="When you press Fn or Control and Flo starts listening."
-            on={s.startSoundOn ?? true}
-            onToggle={(v) => set({ startSoundOn: v })}
-            pack={(s.soundStart || pack) as SoundPack}
-            onPack={(p) => set({ soundStart: p })}
-            play={(p) => playCue("ready", true, p, volume / 100)}
-          />
-          <SoundRow
-            label="Stop and done"
-            hint="When you let go, Flo finishes, or something goes wrong."
-            on={s.stopSoundOn ?? true}
-            onToggle={(v) => set({ stopSoundOn: v })}
-            pack={(s.soundStop || pack) as SoundPack}
-            onPack={(p) => set({ soundStop: p })}
-            play={(p) => {
-              playCue("done", true, p, volume / 100);
-              setTimeout(() => playCue("error", true, p, volume / 100), 700);
-            }}
-          />
-          <SoundRow
-            label="Notifications"
-            hint="When a reminder or a Claude update appears in the notch."
-            on={s.notifySound ?? true}
-            onToggle={(v) => set({ notifySound: v })}
-            pack={(s.soundNotify || pack) as SoundPack}
-            onPack={(p) => set({ soundNotify: p })}
-            play={(p) => playCue("notify", true, p, volume / 100)}
-          />
+      </div>
+      {zones.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {zones.map((z) => (
+            <span key={z.city + z.tz} className="inline-flex h-7 items-center gap-1.5 rounded-full glass pl-2.5 pr-1 text-[12px]">
+              <span className="font-medium">{z.city}</span>
+              <span className="tabular-nums text-faint">{formatZoneTime(now, z.tz)}</span>
+              <button
+                aria-label={`Remove ${z.city}`}
+                onClick={() => onChange(zones.filter((x) => x !== z))}
+                className="flex h-5 w-5 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-[var(--fg)]"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
         </div>
-        <div className="mt-4 flex items-center gap-3">
-          <Volume2 size={14} className="text-faint" />
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={volume}
-            aria-label="Sound volume"
-            onChange={(e) => set({ soundVolume: Number(e.target.value) })}
-            onMouseUp={() => playCue("done", true, pack, volume / 100)}
-            className="flo-range h-1 flex-1"
-          />
-          <span className="w-9 text-right text-[12px] tabular-nums text-muted">{volume}%</span>
+      )}
+      {zones.length === 0 && !open && <p className="mt-1.5 text-[11.5px] text-faint">Show other cities next to your local time, like London, New York or Singapore.</p>}
+      {open && (
+        <div className="mt-2">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+              <input
+                ref={inputRef}
+                value={q}
+                aria-label="Search cities"
+                placeholder="Search a city or country…"
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setHi((h) => Math.min(results.length - 1, h + 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setHi((h) => Math.max(0, h - 1));
+                  } else if (e.key === "Enter" && results[hi]) add(results[hi]);
+                  else if (e.key === "Escape") setOpen(false);
+                }}
+                className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--glass)] pl-8 pr-2 text-[12.5px] outline-none"
+              />
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+              Done
+            </Button>
+          </div>
+          <div role="listbox" aria-label="Cities" className="mt-1.5 max-h-[232px] overflow-y-auto rounded-lg">
+            {results.length === 0 && <div className="px-2.5 py-2 text-[12px] text-faint">No city found. Try a country name.</div>}
+            {results.map((c, i) => (
+              <button
+                key={c.city + c.tz}
+                role="option"
+                aria-selected={i === hi}
+                onMouseEnter={() => setHi(i)}
+                onClick={() => add(c)}
+                className={clsx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition", i === hi ? "bg-[var(--accent)]/15" : "hover:bg-white/5")}
+              >
+                <span className="font-medium">{c.city}</span>
+                <span className="min-w-0 flex-1 truncate text-[11.5px] text-faint">{c.country}</span>
+                <span className="text-[11px] tabular-nums text-faint">{hourDiffLabel(now, c.tz)}</span>
+                <span className="w-[64px] text-right tabular-nums text-muted">{formatZoneTime(now, c.tz)}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      </Card>
-
-      <Card className="p-4">
-        <CardTitle icon={<Bell size={15} />}>Notifications</CardTitle>
-        <Toggle
-          label="macOS notification banners"
-          hint="Reminders also appear in Notification Centre. Off: only the notch shows them (with Done and Snooze)."
-          checked={s.systemNotifications ?? true}
-          onChange={(v) => set({ systemNotifications: v })}
-        />
-        <Toggle
-          label="Allow or deny Claude Code from the notch"
-          hint="When Claude Code asks for permission, answer in the notch instead of the terminal. Unanswered after 2 minutes, it asks in the terminal as usual."
-          checked={s.claudeApprovals ?? true}
-          onChange={(v) => set({ claudeApprovals: v })}
-        />
-      </Card>
-
-      <WidgetsCard />
+      )}
     </div>
   );
 }
@@ -464,6 +616,13 @@ function WidgetsCard() {
     apply(next);
   };
   const off = WIDGETS.filter((w) => !enabled.has(w.id));
+  // world-clock zones for the Clock widget (also re-sizes its preview and the notch panel)
+  const [zones, setZones] = useState<ClockZone[]>(() => loadZones());
+  useEffect(() => onZonesChange(setZones), []);
+  const applyZones = (next: ClockZone[]) => {
+    setZones(next);
+    saveZones(next);
+  };
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between">
@@ -498,6 +657,7 @@ function WidgetsCard() {
                 </button>
               </div>
               <WidgetPreview id={id} />
+              {id === "clock" && <ClockZonesEditor zones={zones} onChange={applyZones} />}
             </div>
           );
         })}
@@ -527,25 +687,32 @@ function WidgetsCard() {
 
 function General({ s, set }: P) {
   return (
-    <Card className="divide-y divide-[var(--border)] px-5 py-2">
-      <Row label="Your name" hint="Used in greetings and to spot messages addressed to you.">
-        <Input className="w-56" value={s.userName} onChange={(e) => set({ userName: e.target.value })} />
-      </Row>
-      <Row label="Setup" hint="Walk through permissions, voice, AI and shortcuts again.">
-        <Button size="sm" icon={<Sparkles size={13} />} onClick={() => set({ onboarded: false })}>
-          Run setup again
-        </Button>
-      </Row>
-      <Row label="Your typing speed" hint="Used to calculate time saved.">
-        <div className="flex items-center gap-2">
-          <Input type="number" className="w-20" value={s.typingWpm} onChange={(e) => set({ typingWpm: Number(e.target.value) || 40 })} />
-          <span className="text-[12px] text-muted">wpm</span>
-          <Button size="sm" icon={<Keyboard size={13} />} onClick={() => useStore.getState().go("typing")}>
-            Measure
-          </Button>
-        </div>
-      </Row>
-    </Card>
+    <div className="space-y-6">
+      <Section first title="Account" hint="Who's signed in on this Mac.">
+        <AccountTab />
+      </Section>
+      <Section title="Preferences">
+        <Card className="divide-y divide-[var(--border)] px-5 py-2">
+          <Row label="Your name" hint="Used in greetings and to spot messages addressed to you.">
+            <Input className="w-56" value={s.userName} onChange={(e) => set({ userName: e.target.value })} />
+          </Row>
+          <Row label="Setup" hint="Walk through permissions, voice, AI and shortcuts again.">
+            <Button size="sm" icon={<Sparkles size={13} />} onClick={() => set({ onboarded: false })}>
+              Run setup again
+            </Button>
+          </Row>
+          <Row label="Your typing speed" hint="Used to calculate time saved.">
+            <div className="flex items-center gap-2">
+              <Input type="number" className="w-20" value={s.typingWpm} onChange={(e) => set({ typingWpm: Number(e.target.value) || 40 })} />
+              <span className="text-[12px] text-muted">wpm</span>
+              <Button size="sm" icon={<Keyboard size={13} />} onClick={() => useStore.getState().go("typing")}>
+                Measure
+              </Button>
+            </div>
+          </Row>
+        </Card>
+      </Section>
+    </div>
   );
 }
 

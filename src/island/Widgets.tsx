@@ -23,7 +23,8 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { ClaudeSession, NowPlaying, Todo, Weather } from "../lib/types";
-import { WIDGET_META, type WidgetId } from "../lib/widgets";
+import { widgetHeight, widgetSpan, ZONE_ROW_H, type WidgetId } from "../lib/widgets";
+import { dayOffset, dayOffsetLabel, formatZoneTime, hourDiffLabel, isDaytime, loadZones, onZonesChange, type ClockZone } from "../lib/timezones";
 
 export type WidgetAction = "dictate" | "ask" | "meeting" | "dashboard" | "todos" | "customize";
 
@@ -46,7 +47,7 @@ export function Widgets({ top, ids, sessions, onAction, scale = 1 }: { top: numb
         ) : (
           <div className="grid grid-cols-2 content-start gap-2">
             {ids.map((id) => (
-              <div key={id} style={{ height: WIDGET_META[id]?.h }} className={WIDGET_META[id]?.span === 2 ? "col-span-2" : "col-span-1"}>
+              <div key={id} style={{ height: widgetHeight(id) }} className={widgetSpan(id) === 2 ? "col-span-2" : "col-span-1"}>
                 <WidgetTile id={id} sessions={sessions} onAction={onAction} />
               </div>
             ))}
@@ -70,7 +71,7 @@ export function Widgets({ top, ids, sessions, onAction, scale = 1 }: { top: numb
 export function WidgetPreview({ id, sessions = [] }: { id: WidgetId; sessions?: ClaudeSession[] }) {
   return (
     <div aria-hidden className="pointer-events-none overflow-hidden rounded-2xl border border-white/10 bg-[#0a0c10] p-2" style={{ colorScheme: "dark" }}>
-      <div style={{ height: WIDGET_META[id]?.h }}>
+      <div style={{ height: widgetHeight(id) }}>
         <WidgetTile id={id} sessions={sessions} onAction={() => {}} />
       </div>
     </div>
@@ -259,17 +260,46 @@ function PomodoroWidget() {
 
 function ClockWidget() {
   const [now, setNow] = useState(() => new Date());
+  const [zones, setZones] = useState<ClockZone[]>(() => loadZones());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+  // world-clock zones are edited in Settings → Appearance → Notch widgets (any window)
+  useEffect(() => onZonesChange(setZones), []);
   const time = DUE_TIME.format(now);
   const date = DUE_DATE.format(now);
-  return (
-    <div className="flex h-full flex-col justify-between rounded-xl bg-white/[0.04] p-2.5">
+  const local = (
+    <>
       <TileHead icon={<Clock size={12} />}>Clock</TileHead>
       <div className="text-[24px] font-semibold tabular-nums leading-none text-white/90">{time}</div>
       <div className="text-[12px] text-white/55">{date}</div>
+    </>
+  );
+  if (zones.length === 0) return <div className="flex h-full flex-col justify-between rounded-xl bg-white/[0.04] p-2.5">{local}</div>;
+  // with zones the tile takes a full row: local time on the left, the world clock on the right
+  return (
+    <div className="flex h-full gap-2.5 rounded-xl bg-white/[0.04] p-2.5" data-testid="clock-widget">
+      <div className="flex w-[100px] shrink-0 flex-col justify-between">{local}</div>
+      <div className="@container flex min-w-0 flex-1 flex-col justify-center border-l border-white/[0.07] pl-2.5" data-testid="clock-zones">
+        {zones.map((z) => {
+          const day = dayOffsetLabel(dayOffset(now, z.tz));
+          const sun = isDaytime(now, z.tz);
+          return (
+            <div key={z.city + z.tz} className="flex items-center gap-1.5" style={{ height: ZONE_ROW_H }} title={`${z.city} · ${hourDiffLabel(now, z.tz)}`} data-testid="clock-zone">
+              <span
+                aria-label={sun ? "Day" : "Night"}
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                style={sun ? { background: "#fcd34d", boxShadow: "0 0 6px rgba(252,211,77,0.7)" } : { background: "rgb(var(--accent-2-rgb) / 0.55)" }}
+              />
+              <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-white/80">{z.city}</span>
+              <span className="hidden shrink-0 text-[10.5px] tabular-nums text-white/35 @[250px]:inline">{hourDiffLabel(now, z.tz)}</span>
+              <span className="min-w-[36px] shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-white/90">{formatZoneTime(now, z.tz)}</span>
+              <span className="w-[13px] shrink-0 text-[10px] font-semibold tabular-nums text-[var(--accent)]">{day}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -415,7 +445,7 @@ const STATUS_LABEL: Record<ClaudeSession["status"], string> = {
 };
 const STATUS_DOT: Record<ClaudeSession["status"], string> = {
   needs_approval: "#ffb020",
-  waiting_reply: "#3dbbff",
+  waiting_reply: "var(--accent)",
   working: "#8b8f98",
   done: "#34d399",
 };

@@ -74,6 +74,9 @@ export function NotchViz({
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const col = readAccent(accent);
+    // follow live accent changes (applyTheme rewrites :root's inline style) without restarting
+    const mo = typeof MutationObserver !== "undefined" ? new MutationObserver(() => Object.assign(col, readAccent(accent))) : null;
+    mo?.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     const rgba = (c3: [number, number, number], al: number) => `rgba(${c3[0]},${c3[1]},${c3[2]},${al})`;
 
     const gate = initialGate();
@@ -142,7 +145,10 @@ export function NotchViz({
       if (L.mode === "done" && fade <= 0) cancelAnimationFrame(raf);
     };
     raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      mo?.disconnect();
+    };
   }, [width, height, notchWidth, wing, style, accent, single]);
 
   return (
