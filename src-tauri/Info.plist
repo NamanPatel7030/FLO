@@ -4,6 +4,8 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Flo listens only while you hold the Fn key or record meeting notes. Audio is transcribed on this Mac.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Flo records the call audio of your meetings (separately from your microphone) so the notes show who said what. It is transcribed on this Mac.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Flo can open apps for you when you ask the assistant.</string>
 </dict>

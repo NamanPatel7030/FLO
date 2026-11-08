@@ -277,3 +277,41 @@ test("typing test: New passage loads fresh text and resets without leaving the p
   await expect(page.locator('[data-word="0"]')).toHaveAttribute("data-state", "current");
   await expect.poll(async () => (await wordsOnScreen(page)).join(" ")).not.toBe(before);
 });
+
+test("meeting notes: speakers have their own colours and can be renamed across the note", async ({ page }) => {
+  await page.goto("/#/notes/n1");
+  await mock(page);
+  const tr = page.locator('[data-testid="note-transcript"]');
+  await expect(page.locator('[data-testid="capture-mode"]')).toHaveText("You + call audio");
+  await expect(tr.locator('[data-testid="speaker-tag"]').first()).toHaveText("You");
+  // consistent colour per speaker, different between speakers
+  const colorOf = (who: string) => tr.locator(`[data-speaker="${who}"]`).first().getAttribute("data-color");
+  const [you, s1, s2] = [await colorOf("You"), await colorOf("Speaker 1"), await colorOf("Speaker 2")];
+  expect(new Set([you, s1, s2]).size).toBe(3);
+  const s2Colors = await tr.locator('[data-speaker="Speaker 2"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-color")));
+  expect(s2Colors.length).toBe(2);
+  expect(new Set(s2Colors).size).toBe(1);
+  // "You" is not renamable
+  await expect(tr.locator('[data-speaker="You"]').first()).toBeDisabled();
+  // rename Speaker 2 → Ana: every Speaker 2 line follows
+  await tr.locator('[data-speaker="Speaker 2"]').first().click();
+  const input = page.locator('[data-testid="speaker-rename-input"]');
+  await input.fill("Ana");
+  await input.press("Enter");
+  await expect(tr.locator('[data-speaker="Ana"]')).toHaveCount(2);
+  await expect(tr.locator('[data-speaker="Speaker 2"]')).toHaveCount(0);
+  await expect(page.getByText("Flo will recognize this voice next time.")).toBeVisible();
+  const n = await invoke(page, "get_note", { id: "n1" });
+  expect(n.transcript.filter((s: any) => s.speaker === "Ana").length).toBe(2);
+  // Escape cancels a rename
+  await tr.locator('[data-speaker="Speaker 1"]').first().click();
+  await input.fill("Nobody");
+  await input.press("Escape");
+  await expect(tr.locator('[data-speaker="Speaker 1"]')).toHaveCount(2);
+});
+
+test("meeting notes: mic-only meetings say so", async ({ page }) => {
+  await page.goto("/#/notes/n2");
+  await mock(page);
+  await expect(page.locator('[data-testid="capture-mode"]')).toHaveText("Mic only");
+});

@@ -89,6 +89,9 @@ impl Db {
             CREATE TABLE IF NOT EXISTS attention_snapshots(
               window_key TEXT PRIMARY KEY, app TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS assistant_log(id TEXT PRIMARY KEY, created_at TEXT NOT NULL, json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS meeting_meta(note_id TEXT PRIMARY KEY, json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS voices(
+              name TEXT PRIMARY KEY, embedding BLOB NOT NULL, samples INTEGER NOT NULL, updated_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_dict_created ON dictations(created_at);
             CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status);
             "#,
@@ -555,6 +558,32 @@ impl Db {
     /// Mark notes left "live" by a crash as finished.
     pub fn close_stale_live_notes(&self) -> Result<()> {
         self.conn.lock().execute("UPDATE notes SET live=0 WHERE live=1", [])?;
+        Ok(())
+    }
+
+    // ── meeting speakers (meeting.rs / speakers.rs own the JSON shape) ───────
+    pub fn meeting_meta(&self, note_id: &str) -> Result<Option<String>> {
+        Ok(self.conn.lock().query_row("SELECT json FROM meeting_meta WHERE note_id=?1", [note_id], |r| r.get(0)).optional()?)
+    }
+
+    pub fn set_meeting_meta(&self, note_id: &str, json: &str) -> Result<()> {
+        self.conn.lock().execute("INSERT INTO meeting_meta VALUES (?1,?2) ON CONFLICT(note_id) DO UPDATE SET json=?2", params![note_id, json])?;
+        Ok(())
+    }
+
+    /// Remembered voices: (name, embedding blob, samples).
+    pub fn list_voices(&self) -> Result<Vec<(String, Vec<u8>, u32)>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT name, embedding, samples FROM voices ORDER BY name")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn upsert_voice(&self, name: &str, embedding: &[u8], samples: u32) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT INTO voices VALUES (?1,?2,?3,?4) ON CONFLICT(name) DO UPDATE SET embedding=?2, samples=?3, updated_at=?4",
+            params![name, embedding, samples, now()],
+        )?;
         Ok(())
     }
 
