@@ -13,7 +13,15 @@ export const metadata: Metadata = {
   title: { default: "Flo · Your Assistant", template: "%s · Flo" },
   description:
     "Speak. Flo writes, answers and remembers. Private voice dictation, a screen-aware assistant, live meeting notes and to-dos that live in your MacBook notch.",
-  icons: { icon: "/logo.svg" },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-32x32.png", type: "image/png", sizes: "32x32" },
+      { url: "/favicon-16x16.png", type: "image/png", sizes: "16x16" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/site.webmanifest",
   openGraph: {
     title: "Flo · Your Assistant",
     description: "Private voice dictation, a screen-aware assistant and live meeting notes, right in your notch.",

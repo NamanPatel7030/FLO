@@ -1,4 +1,5 @@
 "use client";
+import { NamanAvatar } from "../NamanAvatar";
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -153,8 +154,7 @@ export function Outro() {
             <div className="glass-strong mx-auto flex max-w-4xl flex-col items-center gap-8 rounded-[32px] p-8 sm:flex-row sm:p-10">
               <div className="relative shrink-0">
                 <motion.div className="absolute -inset-1 rounded-full accent-bg opacity-70 blur-[2px]" animate={{ rotate: 360 }} transition={{ duration: 18, repeat: Infinity, ease: "linear" }} />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/naman.png" alt="Naman Gundaniya" className="relative h-32 w-32 rounded-full object-cover object-top" style={{ background: "radial-gradient(circle at 40% 30%, #3dbbff, #083a57 70%)" }} />
+                <NamanAvatar size={128} screen="maker" cycle className="relative" />
               </div>
               <div className="text-center sm:text-left">
                 <p className="eyebrow eyebrow-line">Made by</p>

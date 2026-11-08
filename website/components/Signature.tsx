@@ -1,3 +1,5 @@
+import { NamanAvatar } from "./NamanAvatar";
+
 // "crafted by {handwritten Naman}" — subtle maker credit for the auth pages. Links to hellonaman.com.
 const PATH =
   "M6 30 C8 22 10 12 12 6 C13 3 14 4 14 8 C15 16 18 26 21 30 C22 32 23 31 23 27 C24 18 25 10 26 5 " +
@@ -18,6 +20,7 @@ export function MakerSignature() {
       className="group mt-10 flex items-center gap-1.5 text-white/35 opacity-70 transition hover:text-white/70 hover:opacity-100"
     >
       <span className="text-[9.5px] font-medium uppercase tracking-[0.14em]">crafted by</span>
+      <NamanAvatar size={22} className="ring-1 ring-white/30" />
       <svg viewBox="0 0 92 40" className="h-[20px] w-[48px]" aria-hidden>
         <defs>
           <linearGradient id="naman-sig-grad" x1="0" x2="1" y1="0" y2="0">

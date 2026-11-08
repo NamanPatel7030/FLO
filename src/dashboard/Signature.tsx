@@ -1,7 +1,7 @@
 // Maker credit: a handwritten "Naman" that draws itself once, and again on hover.
 import { useState } from "react";
 import { isTauri } from "../lib/api";
-import naman from "../assets/naman.png";
+import { AVATARS, avatarIndex, avatarName } from "../lib/avatars";
 
 export const MAKER_SITE = "https://hellonaman.com";
 
@@ -50,19 +50,37 @@ export function SignatureMark({ className = "h-[22px] w-[52px]", id = "sig" }: {
 }
 
 /** Round cut-out portrait over a light-blue → deep-navy glow, thin ring, subtle shine. */
-export function Portrait({ size }: { size: number }) {
+/** Naman's portrait. Each `screen` opens with its own avatar design; with `cycle`, a click shows
+ *  the next of all 52 (cross-fading). */
+export function Portrait({ size, screen = "sidebar", cycle = false }: { size: number; screen?: string; cycle?: boolean }) {
+  const [i, setI] = useState(() => avatarIndex(screen));
+  const a = AVATARS[i % Math.max(1, AVATARS.length)];
+  if (!a) return null;
+  const img = (
+    <img
+      key={a.slug}
+      src={a.url}
+      alt="Naman Gundaniya"
+      title={cycle ? `${avatarName(a.slug)} · click for another` : undefined}
+      className="avatar-fade absolute inset-0 h-full w-full object-cover"
+      draggable={false}
+    />
+  );
   return (
     <span
-      className="relative inline-flex shrink-0 overflow-hidden rounded-full"
-      style={{
-        width: size,
-        height: size,
-        background: "radial-gradient(circle at 50% 35%, var(--color-brand-400) 0%, var(--color-brand-600) 38%, color-mix(in oklab, var(--accent) 22%, black) 78%, #020b14 100%)",
-        boxShadow: "0 0 0 1px rgb(var(--accent-2-rgb) / 0.55), 0 0 18px -4px rgb(var(--accent-rgb) / 0.6)",
-      }}
+      className={"relative inline-flex shrink-0 overflow-hidden rounded-full" + (cycle ? " cursor-pointer" : "")}
+      style={{ width: size, height: size, boxShadow: "0 0 0 1px rgb(255 255 255 / 0.35), 0 6px 18px -6px rgb(0 0 0 / 0.5)" }}
+      onClick={
+        cycle
+          ? (e) => {
+              e.stopPropagation();
+              setI((n) => (n + 1) % AVATARS.length);
+            }
+          : undefined
+      }
+      data-avatar={a.slug}
     >
-      <img src={naman} alt="Naman Gundaniya" className="absolute inset-x-0 bottom-0 h-[112%] w-full object-cover object-top" draggable={false} />
-      <span className="pointer-events-none absolute inset-0 rounded-full" style={{ background: "linear-gradient(160deg, rgba(255,255,255,0.28), transparent 42%)" }} />
+      {img}
     </span>
   );
 }

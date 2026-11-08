@@ -811,3 +811,15 @@ html.island .selectable {
     --flo-ai-angle: 360deg;
   }
 }
+
+/* maker avatar: each new design cross-fades in */
+.avatar-fade {
+  animation: avatar-in 0.35s ease-out both;
+}
+@keyframes avatar-in {
+  from { opacity: 0; transform: scale(1.04); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-fade { animation: none; }
+}

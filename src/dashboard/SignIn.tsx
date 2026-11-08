@@ -6,7 +6,7 @@ import { AlertCircle, ArrowLeft, ArrowRight, Check, CloudOff, Eye, EyeOff, Globe
 import { accountApi, friendlyAuthError, setAccountUser, continueOffline, holdSignInGate, type AccountStatus, type AccountUser } from "../lib/account";
 import { greeting } from "../lib/format";
 import { LogoMark } from "./Logo";
-import { MAKER_SITE, openExternal, SignatureMark } from "./Signature";
+import { MAKER_SITE, openExternal, Portrait, SignatureMark } from "./Signature";
 import { SignInScene } from "./SignInScene";
 
 const EASE = [0.2, 0.8, 0.2, 1] as const;
@@ -451,6 +451,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
               className="flex items-center gap-1.5 text-[var(--fg-faint)] opacity-70 transition hover:opacity-100"
             >
               <span className="text-[9.5px] font-medium uppercase tracking-[0.14em]">crafted by</span>
+              <Portrait size={22} screen="signin" />
               <SignatureMark id="signin-sig" className="h-[20px] w-[48px]" />
             </button>
           </div>

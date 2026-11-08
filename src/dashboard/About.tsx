@@ -297,7 +297,7 @@ function TiltPortrait({ reduce }: { reduce: boolean }) {
           className="absolute -inset-[8px] rounded-full transition-opacity duration-300"
           style={{ background: "conic-gradient(from 210deg, rgb(var(--accent-rgb) / 0.0), rgb(var(--accent-rgb) / 0.7), rgb(var(--accent-2-rgb) / 0.0) 70%)", filter: "blur(10px)", opacity: hot ? 1 : 0.35 }}
         />
-        <Portrait size={F[7]} />
+        <Portrait size={F[7]} screen="about" cycle />
       </motion.div>
     </div>
   );
