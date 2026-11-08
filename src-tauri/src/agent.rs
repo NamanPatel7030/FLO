@@ -20,6 +20,54 @@ use std::time::Duration;
 
 const MAX_STEPS: usize = 14;
 const IMG_MAX_W: u32 = 1366;
+/// After opening a page / app the next screenshot waits for it to load (a stale screen made the
+/// model click the wrong thing or stop early).
+const AFTER_NAV_MS: u64 = 2200;
+const AFTER_ENTER_MS: u64 = 1300;
+const AFTER_ACTION_MS: u64 = 550;
+/// Give up only after this many failed actions in a row (one misstep no longer ends the run).
+const MAX_FAILS_IN_A_ROW: usize = 3;
+
+/// Flo's own notch card sits at the top centre of the screen — exactly where most search boxes
+/// are. Hide it while the screen is captured, and let clicks pass through it, so the agent sees and
+/// clicks the page underneath.
+fn island_window(st: &Shared) -> Option<tauri::WebviewWindow> {
+    use tauri::Manager;
+    st.app.get_webview_window("island")
+}
+
+#[cfg(target_os = "macos")]
+fn island_alpha(st: &Shared, alpha: f64) {
+    let Some(w) = island_window(st) else { return };
+    let Ok(ptr) = w.ns_window() else { return };
+    let ptr = ptr as usize;
+    let (tx, rx) = std::sync::mpsc::channel();
+    if w.run_on_main_thread(move || {
+        platform::set_window_alpha(ptr as *mut std::ffi::c_void, alpha);
+        let _ = tx.send(());
+    })
+    .is_ok()
+    {
+        let _ = rx.recv_timeout(Duration::from_millis(400));
+    }
+}
+#[cfg(not(target_os = "macos"))]
+fn island_alpha(_st: &Shared, _alpha: f64) {}
+
+fn island_click_through(st: &Shared, on: bool) {
+    if let Some(w) = island_window(st) {
+        let _ = w.set_ignore_cursor_events(on);
+    }
+}
+
+/// Screenshot of the screen WITHOUT Flo's card on it.
+async fn capture_clean(st: &Shared) -> Result<Shot> {
+    island_alpha(st, 0.0);
+    tokio::time::sleep(Duration::from_millis(70)).await; // let the compositor drop the window
+    let shot = tokio::task::spawn_blocking(capture).await?;
+    island_alpha(st, 1.0);
+    shot
+}
 /// how long a confirm question waits for an answer in agent mode (spoken yes/no) — then it's a no
 pub const VOICE_CONFIRM_SECS: u64 = 15;
 /// … and when answered with the island buttons (push-to-talk run)
@@ -173,6 +221,71 @@ fn emit(st: &Shared, kind: &str, text: &str) {
     st.emit(ev::AGENT, json!({ "kind": kind, "text": text }));
 }
 
+/// Perform one screen action. Returns the history line and how long to let the screen settle.
+async fn act(st: &Shared, action: &str, v: &serde_json::Value, shot: &Shot) -> Result<(String, u64)> {
+    let sx = |px: f64| px * shot.screen_w / shot.img_w as f64;
+    let sy = |py: f64| py * shot.screen_h / shot.img_h as f64;
+    match action {
+        "open_app" => {
+            let name = v["name"].as_str().unwrap_or_default().to_string();
+            if name.trim().is_empty() {
+                bail!("open_app needs a name");
+            }
+            platform::open_app(&name)?;
+            emit(st, "step", &format!("Opening {name}"));
+            Ok((format!("opened app {name}"), AFTER_NAV_MS))
+        }
+        "open_url" => {
+            let url = v["url"].as_str().unwrap_or_default();
+            let u = url::Url::parse(url)?;
+            if !matches!(u.scheme(), "http" | "https") {
+                bail!("only http(s) links can be opened");
+            }
+            tauri_plugin_opener::open_url(u.as_str(), None::<&str>)?;
+            emit(st, "step", &format!("Opening {}", u.host_str().unwrap_or("page")));
+            Ok((format!("opened {url}"), AFTER_NAV_MS))
+        }
+        "click" | "double_click" => {
+            let (x, y) = (sx(v["x"].as_f64().ok_or_else(|| anyhow!("click needs x"))?), sy(v["y"].as_f64().ok_or_else(|| anyhow!("click needs y"))?));
+            let what = v["what"].as_str().unwrap_or("").to_string();
+            let dbl = action == "double_click";
+            // the click goes to the page, not to Flo's card sitting on top of it
+            island_click_through(st, true);
+            let r = tokio::task::spawn_blocking(move || platform::click_at(x, y, dbl)).await;
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            island_click_through(st, false);
+            r??;
+            emit(st, "step", &format!("Clicking {what}"));
+            Ok((format!("clicked {what}"), AFTER_ACTION_MS))
+        }
+        "type" => {
+            let t = v["text"].as_str().unwrap_or("").to_string();
+            if t.is_empty() {
+                bail!("type needs text");
+            }
+            let tt = t.clone();
+            tokio::task::spawn_blocking(move || platform::type_text(&tt)).await??;
+            emit(st, "step", &format!("Typing “{}”", text::truncate_chars(&t, 40)));
+            Ok((format!("typed \"{}\"", text::truncate_chars(&t, 40)), AFTER_ACTION_MS))
+        }
+        "key" => {
+            let name = v["name"].as_str().unwrap_or_default().to_string();
+            let code = platform::keycode_for(&name).ok_or_else(|| anyhow!("unknown key \"{name}\" (use return, tab, escape, arrows, space, pageup/pagedown)"))?;
+            let (c, sh, al, ct) = (v["cmd"].as_bool().unwrap_or(false), v["shift"].as_bool().unwrap_or(false), v["alt"].as_bool().unwrap_or(false), v["ctrl"].as_bool().unwrap_or(false));
+            tokio::task::spawn_blocking(move || platform::key_press(code, c, sh, al, ct)).await??;
+            emit(st, "step", &format!("Pressing {name}"));
+            let settle = if matches!(name.as_str(), "return" | "enter") { AFTER_ENTER_MS } else { AFTER_ACTION_MS };
+            Ok((format!("pressed {name}"), settle))
+        }
+        "scroll" => {
+            let dy = v["dy"].as_i64().unwrap_or(-3) as i32;
+            tokio::task::spawn_blocking(move || platform::scroll_by(dy)).await??;
+            Ok(("scrolled".into(), AFTER_ACTION_MS))
+        }
+        other => bail!("unknown action \"{other}\" (use open_app, open_url, click, type, key, scroll, wait, confirm, done)"),
+    }
+}
+
 /// Run the agent toward `goal`. Returns a short result summary.
 pub async fn run(st: &Shared, goal: &str) -> Result<String> {
     let s = st.settings();
@@ -190,13 +303,14 @@ pub async fn run(st: &Shared, goal: &str) -> Result<String> {
     emit(st, "start", goal);
     let mut history: Vec<String> = vec![];
     let mut confirms = 0usize;
+    let mut fails = 0usize;
 
     for step in 0..MAX_STEPS {
         if st.agent_abort.load(Ordering::SeqCst) {
             emit(st, "aborted", "Stopped.");
             return Ok("Stopped.".into());
         }
-        let shot = tokio::task::spawn_blocking(capture).await??;
+        let shot = capture_clean(st).await?;
         let user = format!(
             "GOAL: {goal}\nScreenshot size: {}x{} px.\nActions so far:\n{}\n\nReturn the single next action as JSON.",
             shot.img_w,
@@ -217,13 +331,19 @@ pub async fn run(st: &Shared, goal: &str) -> Result<String> {
             },
         )
         .await?;
-        let v: serde_json::Value = text::extract_json_object(&raw).and_then(|j| serde_json::from_str(&j).ok()).ok_or_else(|| anyhow!("agent gave no action"))?;
+        let Some(v) = text::extract_json_object(&raw).and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok()) else {
+            fails += 1;
+            log::warn!("agent step {step}: no JSON action");
+            history.push("FAILED: your last reply wasn't a JSON action; reply with exactly one JSON object".into());
+            if fails >= MAX_FAILS_IN_A_ROW {
+                bail!("the AI didn't return a usable action");
+            }
+            continue;
+        };
         let action = v["action"].as_str().unwrap_or("done").to_string();
         let action = action.as_str();
-
-        // map screenshot pixels → screen points
-        let sx = |px: f64| px * shot.screen_w / shot.img_w as f64;
-        let sy = |py: f64| py * shot.screen_h / shot.img_h as f64;
+        log::info!("agent step {step}: {}", text::truncate_chars(&v.to_string(), 160));
+        let mut pause = AFTER_ACTION_MS;
 
         match action {
             "done" => {
@@ -250,60 +370,29 @@ pub async fn run(st: &Shared, goal: &str) -> Result<String> {
                     }
                 }
             }
-            "open_app" => {
-                let name = v["name"].as_str().unwrap_or_default();
-                platform::open_app(name)?;
-                history.push(format!("opened app {name}"));
-                emit(st, "step", &format!("Opening {name}"));
-            }
-            "open_url" => {
-                let url = v["url"].as_str().unwrap_or_default();
-                let u = url::Url::parse(url)?;
-                if !matches!(u.scheme(), "http" | "https") {
-                    bail!("refused non-web url");
-                }
-                tauri_plugin_opener::open_url(u.as_str(), None::<&str>)?;
-                history.push(format!("opened {url}"));
-                emit(st, "step", &format!("Opening {}", u.host_str().unwrap_or("page")));
-            }
-            "click" | "double_click" => {
-                let (x, y) = (sx(v["x"].as_f64().unwrap_or(0.0)), sy(v["y"].as_f64().unwrap_or(0.0)));
-                let what = v["what"].as_str().unwrap_or("").to_string();
-                let dbl = action == "double_click";
-                let wl = what.clone();
-                tokio::task::spawn_blocking(move || platform::click_at(x, y, dbl)).await??;
-                let what = wl;
-                history.push(format!("clicked {what}"));
-                emit(st, "step", &format!("Clicking {what}"));
-            }
-            "type" => {
-                let t = v["text"].as_str().unwrap_or("").to_string();
-                let tt = t.clone();
-                tokio::task::spawn_blocking(move || platform::type_text(&tt)).await??;
-                history.push(format!("typed \"{}\"", text::truncate_chars(&t, 40)));
-                emit(st, "step", &format!("Typing “{}”", text::truncate_chars(&t, 40)));
-            }
-            "key" => {
-                let name = v["name"].as_str().unwrap_or_default().to_string();
-                let code = platform::keycode_for(&name).ok_or_else(|| anyhow!("unknown key {name}"))?;
-                let (c, sh, al, ct) = (v["cmd"].as_bool().unwrap_or(false), v["shift"].as_bool().unwrap_or(false), v["alt"].as_bool().unwrap_or(false), v["ctrl"].as_bool().unwrap_or(false));
-                tokio::task::spawn_blocking(move || platform::key_press(code, c, sh, al, ct)).await??;
-                history.push(format!("pressed {name}"));
-                emit(st, "step", &format!("Pressing {name}"));
-            }
-            "scroll" => {
-                let dy = v["dy"].as_i64().unwrap_or(-3) as i32;
-                tokio::task::spawn_blocking(move || platform::scroll_by(dy)).await??;
-                history.push("scrolled".into());
-            }
             "wait" => {
                 let ms = v["ms"].as_u64().unwrap_or(600).min(4000);
                 tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                history.push(format!("waited {ms} ms"));
+                pause = 0;
             }
-            other => bail!("unknown action {other}"),
+            _ => match act(st, action, &v, &shot).await {
+                Ok((line, wait_ms)) => {
+                    fails = 0;
+                    history.push(line);
+                    pause = wait_ms;
+                }
+                Err(e) => {
+                    fails += 1;
+                    log::warn!("agent step {step}: {action} failed: {e}");
+                    history.push(format!("FAILED {action}: {e}. Try a different way."));
+                    if fails >= MAX_FAILS_IN_A_ROW {
+                        bail!("{e}");
+                    }
+                }
+            },
         }
-        let _ = step;
-        tokio::time::sleep(std::time::Duration::from_millis(550)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(pause)).await;
     }
     emit(st, "done", "Reached the step limit.");
     Ok("Reached the step limit; stopping.".into())

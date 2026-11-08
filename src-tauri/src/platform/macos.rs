@@ -559,6 +559,45 @@ pub fn configure_island(ns_window: *mut c_void) {
 }
 
 /// Top-left origin (logical px) for the island so it hangs from the notch.
+/// Move AND resize a window in ONE native call. Doing it as set_size + set_position leaves a frame
+/// where the window has its new size at its old spot, so the centred notch visibly jumps sideways.
+/// `x`, `top` are global top-left coordinates (points); must run on the main thread.
+pub fn set_frame_atomic(ns_window: *mut std::ffi::c_void, x: f64, top: f64, w: f64, h: f64) -> bool {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    if ns_window.is_null() {
+        return false;
+    }
+    unsafe {
+        let win = ns_window as *mut AnyObject;
+        let screens: *mut AnyObject = msg_send![class!(NSScreen), screens];
+        if screens.is_null() {
+            return false;
+        }
+        let count: usize = msg_send![screens, count];
+        if count == 0 {
+            return false;
+        }
+        // Cocoa's origin is the bottom-left of the PRIMARY screen; flip the top-left y
+        let primary: *mut AnyObject = msg_send![screens, objectAtIndex: 0usize];
+        let pf: NSRect = msg_send![primary, frame];
+        let frame = NSRect::new(NSPoint::new(x, pf.size.height - top - h), NSSize::new(w, h));
+        let _: () = msg_send![win, setFrame: frame, display: objc2::runtime::Bool::YES];
+    }
+    true
+}
+
+/// Fade a window fully in/out instantly (0.0–1.0). An alpha-0 window isn't composited, so it's
+/// absent from screenshots, and nothing moves or re-lays out. Must run on the main thread.
+pub fn set_window_alpha(ns_window: *mut std::ffi::c_void, alpha: f64) {
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let win = ns_window as *mut AnyObject;
+        let _: () = msg_send![win, setAlphaValue: alpha];
+    }
+}
+
 pub fn island_position(geo: &IslandGeometry, width: f64, _height: f64) -> (f64, f64) {
     ((geo.screen_width - width) / 2.0, 0.0)
 }

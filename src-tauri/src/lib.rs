@@ -76,8 +76,8 @@ pub(crate) fn island_geometry(app: &AppHandle) -> anyhow::Result<IslandGeometry>
 
 pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::Result<()> {
     let w = app.get_webview_window("island").ok_or_else(|| anyhow::anyhow!("island window missing"))?;
-    w.set_size(LogicalSize::new(width, height))?;
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         let geo = GEOMETRY.lock().clone().unwrap_or(IslandGeometry {
             platform: "macos".into(),
             has_notch: false,
@@ -86,9 +86,28 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
             screen_width: 1512.0,
         });
         let (x, y) = platform::island_position(&geo, width, height);
-        w.set_position(LogicalPosition::new(x, y))?;
         *ISLAND_RECT.lock() = Some((x, y, width, height));
-    } else if let Some(m) = w.primary_monitor()? {
+        // size + position in one native call, so the centred notch never jumps sideways
+        if let Ok(ptr) = w.ns_window() {
+            let ptr = ptr as usize;
+            let w2 = w.clone();
+            let ran = w.run_on_main_thread(move || {
+                if !platform::set_frame_atomic(ptr as *mut std::ffi::c_void, x, y, width, height) {
+                    let _ = w2.set_size(LogicalSize::new(width, height));
+                    let _ = w2.set_position(LogicalPosition::new(x, y));
+                }
+            });
+            if ran.is_ok() {
+                return Ok(());
+            }
+        }
+        w.set_size(LogicalSize::new(width, height))?;
+        w.set_position(LogicalPosition::new(x, y))?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    w.set_size(LogicalSize::new(width, height))?;
+    if let Some(m) = w.primary_monitor()? {
         let scale = m.scale_factor();
         let wa = m.work_area();
         let x = (wa.position.x as f64 + wa.size.width as f64) / scale - width - 16.0;
