@@ -9,6 +9,7 @@ import { claudeStatusLabel, relativeTime } from "../lib/format";
 import { EV, type ClaudeEvent, type ClaudeSession, type Todo } from "../lib/types";
 import { useStore } from "./store";
 import { Card, CardTitle, Empty, SourceBadge } from "./ui";
+import { AutoContinueList } from "./AutoContinue";
 
 export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
   const projects = useStore((s) => s.projects);
@@ -156,6 +157,8 @@ export function ClaudeSessionsCard() {
           </button>
         )}
       </CardTitle>
+      {/* sessions that hit a usage limit: waiting for the reset / auto-continued */}
+      <AutoContinueList />
       {!sessions ? null : nothing ? (
         <Empty icon={<BellRing size={18} />} title="All caught up" hint="Connect Claude Code in Settings · Integrations and your sessions show up here and in the notch." />
       ) : (

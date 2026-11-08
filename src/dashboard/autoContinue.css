@@ -1,0 +1,40 @@
+/* Auto-continue (Claude usage limit) cards: calm amber in dark, deeper amber in light. */
+.ac-scope {
+  --ac-amber: #fbbf24;
+  --ac-amber-soft: rgb(251 191 36 / 0.82);
+  --ac-amber-faint: rgb(251 191 36 / 0.55);
+  --ac-bg: rgb(245 158 11 / 0.07);
+  --ac-ring: rgb(252 211 77 / 0.2);
+  --ac-chip: rgb(245 158 11 / 0.14);
+  --ac-ok: #6ee7b7;
+  --ac-bad: #fca5a5;
+}
+:root[data-theme="light"] .ac-scope {
+  --ac-amber: #b45309;
+  --ac-amber-soft: rgb(180 83 9 / 0.9);
+  --ac-amber-faint: rgb(180 83 9 / 0.62);
+  --ac-bg: rgb(251 191 36 / 0.12);
+  --ac-ring: rgb(217 119 6 / 0.28);
+  --ac-chip: rgb(251 191 36 / 0.22);
+  --ac-ok: #047857;
+  --ac-bad: #b91c1c;
+}
+.ac-pulse {
+  animation: ac-pulse 2.4s ease-in-out infinite;
+}
+@keyframes ac-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.05;
+    transform: scale(1.35);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-pulse {
+    animation: none;
+  }
+}
