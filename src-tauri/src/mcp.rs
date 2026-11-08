@@ -35,7 +35,7 @@ pub struct Session {
 }
 
 /// PATH for servers started from a Finder-launched app (which gets a bare /usr/bin:/bin).
-fn server_path() -> String {
+pub(crate) fn server_path() -> String {
     let home = dirs::home_dir().map(|h| h.to_string_lossy().to_string()).unwrap_or_default();
     let mut parts: Vec<String> = std::env::var("PATH").unwrap_or_default().split(':').filter(|p| !p.is_empty()).map(String::from).collect();
     for p in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", &format!("{home}/.local/bin"), &format!("{home}/.cargo/bin"), &format!("{home}/.bun/bin")] {

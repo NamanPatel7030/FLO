@@ -8,6 +8,7 @@ import type { Project, ProjectStatus } from "../../lib/types";
 import { useStore } from "../store";
 import { Button, Card, CardTitle, Empty, Input, PageHeader, ProgressRing, Select, Skeleton, StatusPill } from "../ui";
 import { TodoRow } from "../components";
+import { CodeChip, CodeSection, requestAddCode } from "../ProjectCode";
 
 export default function Projects() {
   const { projects, pageArg, go } = useStore();
@@ -91,7 +92,14 @@ export default function Projects() {
         <div className="grid grid-cols-3 gap-4">
           {projects.map((p, i) => (
             <motion.div key={p.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
-              <ProjectCard p={p} onClick={() => go("projects", p.id)} />
+              <ProjectCard
+                p={p}
+                onClick={() => go("projects", p.id)}
+                onAddCode={() => {
+                  requestAddCode(p.id);
+                  go("projects", p.id);
+                }}
+              />
             </motion.div>
           ))}
         </div>
@@ -102,7 +110,7 @@ export default function Projects() {
   );
 }
 
-function ProjectCard({ p, onClick }: { p: Project; onClick: () => void }) {
+function ProjectCard({ p, onClick, onAddCode }: { p: Project; onClick: () => void; onAddCode: () => void }) {
   const total = p.openTodos + p.doneTodos;
   const pct = total ? p.doneTodos / total : 0;
   return (
@@ -129,6 +137,9 @@ function ProjectCard({ p, onClick }: { p: Project; onClick: () => void }) {
           {p.openTodos} open · {relativeTime(p.updatedAt)}
         </span>
       </div>
+      <div className="relative mt-3 flex items-center border-t border-white/[0.06] pt-3">
+        <CodeChip p={p} onAdd={onAddCode} />
+      </div>
     </Card>
   );
 }
@@ -147,7 +158,7 @@ function Drawer({ p, onClose }: { p: Project; onClose: () => void }) {
         exit={{ x: 480, opacity: 0 }}
         transition={{ type: "spring", stiffness: 380, damping: 38 }}
         // solid surface: a translucent drawer let the project cards behind it show through its fields
-        className="fixed bottom-3 right-3 top-3 z-40 flex w-[440px] flex-col overflow-hidden rounded-3xl border border-white/10 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.85)]"
+        className="fixed bottom-3 right-3 top-3 z-40 flex w-[440px] flex-col overflow-clip rounded-3xl border border-white/10 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.85)]"
         style={{ background: "linear-gradient(180deg, #0f1b27 0%, #0a121b 100%)" }}
       >
         <div className="relative p-5">
@@ -187,6 +198,7 @@ function Drawer({ p, onClose }: { p: Project; onClose: () => void }) {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
           <ClientSection p={p} />
+          <CodeSection key={p.id} p={p} />
           <CardTitle>To-dos</CardTitle>
           <form
             onSubmit={async (e) => {

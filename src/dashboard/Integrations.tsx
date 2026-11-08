@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Asterisk, Check, ChevronDown, Copy, MousePointer2, Plug, RefreshCw, Terminal, Unplug, Webhook } from "lucide-react";
+import { Asterisk, Check, ChevronDown, CodeXml, Copy, MousePointer2, Plug, RefreshCw, Terminal, Unplug, Webhook } from "lucide-react";
+import { CodingAgents } from "./CodingAgents";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import type { Integration } from "../lib/types";
@@ -47,6 +48,11 @@ export function Integrations() {
         </div>
       )}
       <SlackCard />
+      <Card className="p-5">
+        <CardTitle icon={<CodeXml size={15} />}>Coding agents</CardTitle>
+        <p className="-mt-1.5 mb-3.5 text-[12.5px] text-muted">Connect your AI coding account. Projects → Code → Edit with AI hands your task to it, in your repo, on this Mac.</p>
+        <CodingAgents />
+      </Card>
     </div>
   );
 }
