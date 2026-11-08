@@ -427,7 +427,8 @@ function cardBody(c: CardContent | undefined, charsPerLine: number): number {
   // header + up to 4 reply lines + results + action row (Go deeper / Web / Open full answer)
   if (!c || c.replyChars === undefined) return 250;
   const lines = Math.min(4, Math.max(1, Math.ceil(c.replyChars / charsPerLine)));
-  return Math.min(250, 62 + lines * 19 + ((c.results ?? 0) > 0 ? 34 : 0) + 34);
+  // header row 40 + reply lines + result chips + action row; measured against the rendered card
+  return Math.min(250, 46 + lines * 19 + ((c.results ?? 0) > 0 ? 34 : 0) + 34);
 }
 
 const lines = (chars: number | undefined, perLine: number, max: number) =>
@@ -497,10 +498,12 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "meetingExpanded":
         return { width: 520, height: nh + 160 };
       case "card":
-        return { width: 520, height: nh + cardBody(content, 62) };
+        // ~72 characters fit on a line of the 520 px card (13.5 px text beside the 20 px icon)
+        return { width: 520, height: nh + cardBody(content, 72) };
       case "claude":
       case "reminder":
-        return { width: 460, height: nh + ISLAND_GAP + 64 };
+        // 500 wide: two-line messages wrap at a natural width instead of crowding the buttons
+        return { width: 500, height: nh + ISLAND_GAP + 64 };
     }
   }
   // floating capsule (Windows / no notch). Padding 24 for shadow.
@@ -541,7 +544,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "meetingExpanded":
       return { width: 440 + pad, height: 240 + pad };
     case "card":
-      return { width: 440 + pad, height: Math.min(240, cardBody(content, 52) + 12) + pad };
+      return { width: 440 + pad, height: Math.min(240, cardBody(content, 60) + 12) + pad };
     case "claude":
     case "reminder":
       return { width: 380 + pad, height: 74 + pad };

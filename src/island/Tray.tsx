@@ -31,7 +31,8 @@ export type TrayItem =
   | { id: "todos"; kind: "todos"; todos: Todo[] }
   | { id: "meeting"; kind: "meeting"; app: string };
 
-const SPRING = { type: "spring", stiffness: 520, damping: 30 } as const;
+/** calm, no-overshoot ease for everything in the tray */
+const EASE = { type: "tween", duration: 0.18, ease: [0.22, 1, 0.36, 1] } as const;
 
 const SHORT_STATUS: Record<ClaudeSession["status"], string> = {
   working: "Working",
@@ -78,9 +79,11 @@ export const sourceLook = (source?: string) => SOURCE_LOOK[source ?? "claude"] ?
  * transform-only animations to Core Animation (compositor), so the main thread does nothing:
  * no JS ticks, no conic-gradient / mask / shadow / filter on the rotating element.
  */
-function WorkingArc() {
+function WorkingArc({ still }: { still?: boolean }) {
+  // still: the resting tray holds the arc in place (paused, not removed) so an idle notch draws
+  // zero frames; it picks up spinning the moment the island is hovered / opened
   return (
-    <span className="flo-spin pointer-events-none absolute -inset-[3px]" aria-hidden>
+    <span className="flo-spin pointer-events-none absolute -inset-[3px]" data-still={still ? "true" : undefined} aria-hidden>
       <svg viewBox="0 0 26 26" width="100%" height="100%">
         <defs>
           <linearGradient id="flo-arc" x1="0" y1="1" x2="1" y2="0">
@@ -98,12 +101,12 @@ function WorkingArc() {
 }
 
 /** 20px round glass avatar for an agent session, with a status ring/badge. */
-export function ClaudeAvatar({ status, hot, source }: { status: ClaudeSession["status"]; hot?: boolean; source?: string }) {
+export function ClaudeAvatar({ status, source, still }: { status: ClaudeSession["status"]; hot?: boolean; source?: string; still?: boolean }) {
   const working = status === "working";
   const look = sourceLook(source);
   return (
-    <motion.span animate={{ scale: hot ? 1.14 : 1 }} transition={SPRING} className="relative flex h-5 w-5 items-center justify-center">
-      {working && <WorkingArc />}
+    <span className="relative flex h-5 w-5 items-center justify-center">
+      {working && <WorkingArc still={still} />}
       <span
         className="relative flex h-5 w-5 items-center justify-center rounded-full"
         style={{
@@ -125,13 +128,13 @@ export function ClaudeAvatar({ status, hot, source }: { status: ClaudeSession["s
           <Check size={7} strokeWidth={4} className="text-black" />
         </span>
       )}
-    </motion.span>
+    </span>
   );
 }
 
-function Chip({ children, hot, badge, tone = "blue" }: { children: React.ReactNode; hot?: boolean; badge?: number; tone?: "blue" | "red" }) {
+function Chip({ children, badge, tone = "blue" }: { children: React.ReactNode; hot?: boolean; badge?: number; tone?: "blue" | "red" }) {
   return (
-    <motion.span animate={{ scale: hot ? 1.14 : 1 }} transition={SPRING} className="relative flex h-5 min-w-5 items-center justify-center">
+    <span className="relative flex h-5 min-w-5 items-center justify-center">
       <span
         className="flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white/85"
         style={{
@@ -147,14 +150,14 @@ function Chip({ children, hot, badge, tone = "blue" }: { children: React.ReactNo
           {badge > 9 ? "9+" : badge}
         </span>
       )}
-    </motion.span>
+    </span>
   );
 }
 
 /** One stacked icon for every agent session: the most urgent one on top, a ghost disc behind
  *  when there are more, and a small count badge. Status (ring / check / stepped spinner) comes
  *  from the most urgent session. */
-function AgentStack({ sessions, hot }: { sessions: ClaudeSession[]; hot?: boolean }) {
+function AgentStack({ sessions, hot, still }: { sessions: ClaudeSession[]; hot?: boolean; still?: boolean }) {
   const top = sessions[0];
   const n = sessions.length;
   return (
@@ -166,7 +169,7 @@ function AgentStack({ sessions, hot }: { sessions: ClaudeSession[]; hot?: boolea
           aria-hidden
         />
       )}
-      <ClaudeAvatar status={top.status} hot={hot} source={top.source} />
+      <ClaudeAvatar status={top.status} hot={hot} source={top.source} still={still} />
       {n > 1 && (
         <span
           className="absolute -right-[7px] -top-[5px] flex h-[13px] min-w-[13px] items-center justify-center rounded-full bg-white px-[3px] text-[8.5px] font-bold leading-none text-black ring-[1.5px] ring-black"
@@ -179,10 +182,10 @@ function AgentStack({ sessions, hot }: { sessions: ClaudeSession[]; hot?: boolea
   );
 }
 
-export function TrayItemView({ item, hot }: { item: TrayItem; hot?: boolean }) {
+export function TrayItemView({ item, hot, still }: { item: TrayItem; hot?: boolean; still?: boolean }) {
   switch (item.kind) {
     case "agents":
-      return <AgentStack sessions={item.sessions} hot={hot} />;
+      return <AgentStack sessions={item.sessions} hot={hot} still={still} />;
     case "todos":
       return (
         <Chip hot={hot} badge={item.todos.length}>
@@ -205,39 +208,46 @@ export function TrayItemView({ item, hot }: { item: TrayItem; hot?: boolean }) {
 export function TrayRow({
   items,
   slots,
-  pillW,
   nh,
   hot,
   onItem,
+  live = true,
 }: {
   items: TrayItem[];
   slots: TraySlot[];
-  pillW: number;
+  /** unused: icons are anchored to the centre (kept so callers needn't change) */
+  pillW?: number;
   nh: number;
   hot: number;
   onItem: (item: TrayItem) => void;
+  /** the island is hovered / open (false = resting tray: nothing animates) */
+  live?: boolean;
 }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0" style={{ height: nh }}>
       {items.map((it, i) => {
         const s = slots[i];
         if (!s) return null;
+        // icons fade in place (no scale-pop); hover = a soft halo behind the icon (.tray-btn)
         return (
           <motion.button
             key={it.id}
-            initial={{ opacity: 0, scale: 0.4 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.4 }}
-            transition={{ ...SPRING, delay: Math.min(i, 5) * 0.03 }}
-            className="pointer-events-auto absolute flex h-6 w-6 items-center justify-center"
-            style={{ left: pillW / 2 + s.cx - 12, top: (nh - 24) / 2 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ ...EASE, delay: Math.min(i, 5) * 0.015 }}
+            data-hot={hot === i ? "true" : "false"}
+            className="tray-btn pointer-events-auto absolute flex h-6 w-6 items-center justify-center"
+            // anchored to the centre (= the camera), which never moves while the shape morphs; an
+            // offset from the *target* width made icons jump mid-animation
+            style={{ left: `calc(50% + ${s.cx - 12}px)`, top: (nh - 24) / 2 }}
             onClick={(e) => {
               e.stopPropagation();
               onItem(it);
             }}
             aria-label={it.kind === "agents" ? `Agents: ${it.sessions.length} · ${it.sessions[0].project} ${claudeStatusLabel(it.sessions[0].status)}` : it.kind}
           >
-            <TrayItemView item={it} hot={hot === i} />
+            <TrayItemView item={it} hot={hot === i} still={!live} />
           </motion.button>
         );
       })}
@@ -283,10 +293,10 @@ export function TrayTooltip({
   return (
     <motion.div
       key={item.id}
-      initial={{ opacity: 0, y: -6, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -4, scale: 0.98 }}
-      transition={{ type: "spring", stiffness: 480, damping: 34 }}
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -2, transition: { type: "tween", duration: 0.14, ease: [0.4, 0, 1, 1] } }}
+      transition={{ type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
       className="island-tip absolute z-20 overflow-hidden rounded-2xl text-white"
       style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, transformOrigin: "top center" }}
       onClick={(e) => e.stopPropagation()}

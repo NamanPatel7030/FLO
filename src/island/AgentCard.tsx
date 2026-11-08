@@ -24,7 +24,7 @@ function ListeningDot({ size = 26, busy = false }: { size?: number; busy?: boole
           style={{ border: "1.5px solid var(--accent)" }}
           initial={{ scale: 0.8, opacity: 0.7 }}
           animate={{ scale: 1.45, opacity: 0 }}
-          transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
+          transition={{ type: "tween", duration: 1.6, repeat: Infinity, ease: "easeOut" }}
         />
       )}
       <span
@@ -161,7 +161,7 @@ export function AgentCard({
               key={lastStep}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
+              transition={{ type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
               className="flex items-center gap-1.5 text-[12px] text-white/80"
               data-testid="agent-step"
             >

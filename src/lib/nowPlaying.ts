@@ -78,11 +78,23 @@ export function setNowPlaying(raw: NowPlaying | null | undefined) {
   subs.forEach((f) => f());
 }
 
+/** fast polls before settling on the slow safety-net rate even if no event ever arrives
+ *  (nothing playing → the backend never emits; polling every 3 s forever cost an IPC + an
+ *  AppleScript round trip on the idle notch) */
+const FAST_POLLS = 3;
+let fastPolls = 0;
 function schedulePoll() {
   if (pollTimer) clearTimeout(pollTimer);
-  pollTimer = setTimeout(poll, eventsSeen ? POLL_SLOW_MS : POLL_FAST_MS);
+  const fast = !eventsSeen && fastPolls < FAST_POLLS;
+  if (fast) fastPolls++;
+  pollTimer = setTimeout(poll, fast ? POLL_FAST_MS : POLL_SLOW_MS);
 }
 function poll() {
+  // a hidden page (dashboard minimised) skips the round trip; events still arrive
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+    if (subs.size) schedulePoll();
+    return;
+  }
   api
     .nowPlaying()
     .then((v) => setNowPlaying(v))

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, AlarmClock, AudioLines, Bell, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Moon, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
+import { AppWindow, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, AlarmClock, AudioLines, Bell, Check, Copy, Globe, LogIn, History, Lock, Maximize2, MessageSquareText, Mic, Moon, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
 import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase, Todo } from "../lib/types";
@@ -68,10 +69,7 @@ function PresenceQuick({ hot, index }: { hot?: boolean; index: number }) {
   const label = away ? "Away" : "Active";
   return (
     <motion.button
-      initial={{ opacity: 0, y: 8, scale: 0.92 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 520, damping: 30, delay: 0.03 + index * 0.035 }}
-      whileTap={{ scale: 0.94 }}
+      {...tileIn(index)}
       disabled={busy}
       onClick={() => set(away ? "active" : "away").catch(() => {})}
       data-hot={hot ? "true" : "false"}
@@ -82,12 +80,12 @@ function PresenceQuick({ hot, index }: { hot?: boolean; index: number }) {
       aria-checked={away}
       aria-label={away ? "Away · notifications go to your phone. Click to come back" : "Active. Click to go Away"}
       title={away ? "Away · notifications go to your phone" : "Active · click to go Away"}
-      className={"island-tile relative flex h-full flex-col items-center justify-center gap-1 rounded-2xl " + (away ? "text-amber-100" : "text-white/85 hover:text-white")}
-      style={away ? { background: "linear-gradient(180deg, rgba(245,158,11,0.22), rgba(245,158,11,0.10))", boxShadow: "inset 0 0 0 1px rgba(252,211,77,0.30)" } : undefined}
+      className="island-tile flex h-full flex-col items-center justify-center gap-1 rounded-2xl"
+      data-tone={away ? "amber" : undefined}
     >
-      <span className="flex h-[18px] items-center justify-center transition-transform duration-200" style={{ transform: hot ? "translateY(-1px) scale(1.08)" : "none" }}>
+      <span className="island-tile-icon flex h-[18px] items-center justify-center">
         {away ? (
-          <Moon size={15} className="fill-amber-300/70 text-amber-300" style={{ filter: "drop-shadow(0 0 6px rgba(252,211,77,0.7))" }} />
+          <Moon size={15} className="fill-amber-300/70 text-amber-300" />
         ) : (
           <span className="relative flex h-[16px] w-[16px] items-center justify-center">
             <span className="absolute h-[14px] w-[14px] rounded-full bg-emerald-400/20" />
@@ -95,7 +93,7 @@ function PresenceQuick({ hot, index }: { hot?: boolean; index: number }) {
           </span>
         )}
       </span>
-      <span className="pointer-events-none text-[10.5px] font-medium leading-none text-white/70" aria-hidden>
+      <span className="island-tile-label pointer-events-none text-[10.5px] font-medium leading-none" aria-hidden>
         {label}
       </span>
     </motion.button>
@@ -171,7 +169,7 @@ function ModeIcon({ mode, locked }: { mode: Mode; locked?: boolean }) {
   if (mode === "assistant")
     return (
       <div className="relative" aria-label="Assistant listening">
-        <motion.div animate={{ rotate: [0, 12, -8, 0] }} transition={{ repeat: Infinity, duration: 2.4 }}>
+        <motion.div animate={{ opacity: [1, 0.6, 1] }} transition={{ repeat: Infinity, duration: 2.4, ease: "easeInOut" }}>
           <Sparkles size={15} className="text-brand-300" />
         </motion.div>
         {badge}
@@ -232,8 +230,8 @@ export function IslandContent(p: Props) {
           ? { icon: <Square size={14} fill="currentColor" className="text-red-400" />, label: "Stop meeting", run: p.onStopMeeting }
           : { icon: <Radio size={16} />, label: "Meeting", run: p.onStartMeeting },
         { icon: <History size={16} />, label: "History", run: p.onOpenHistory },
-        { icon: <LayoutDashboard size={16} />, label: "Open", run: () => api.openDashboard() },
-        { icon: <LayoutGrid size={16} />, label: "Customize", run: () => api.openDashboard("settings/appearance") },
+        { icon: <AppWindow size={16} />, label: "Open", run: () => api.openDashboard() },
+        { icon: <SlidersHorizontal size={16} />, label: "Customize", run: () => api.openDashboard("settings/appearance") },
       ];
       // ONE hover opens this whole panel: quick actions on top, the user's widgets below (p.panel).
       // Laid out at base size and zoomed to Settings → Notch → Size (the window is sized to match).
@@ -299,7 +297,7 @@ export function IslandContent(p: Props) {
           notch={notch}
           geo={geo}
           left={
-            <motion.div initial={{ scale: 0.3, rotate: -40 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 600, damping: 18 }}>
+            <motion.div initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "tween", duration: 0.24, ease: [0.22, 1, 0.36, 1] }}>
               <CheckBadge />
             </motion.div>
           }
@@ -544,9 +542,9 @@ export function IslandContent(p: Props) {
                 {c.results.map((r, i) => (
                   <motion.span
                     key={i}
-                    initial={{ opacity: 0, y: 6 }}
+                    initial={{ opacity: 0, y: 3 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.15 + i * 0.07 }}
+                    transition={{ type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1], delay: 0.12 + i * 0.03 }}
                     className="rounded-full border border-brand-300/25 bg-brand-300/10 px-2 py-0.5 text-[11px] text-brand-100"
                   >
                     {r}
@@ -670,30 +668,28 @@ export function IslandContent(p: Props) {
   }
 }
 
+/** Tiles fade in together with a barely-there cascade (≤ 12 ms apart), after the shape has opened. */
+export const tileIn = (index: number) => ({
+  initial: { opacity: 0, y: 3 },
+  animate: { opacity: 1, y: 0 },
+  transition: { type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1], delay: 0.1 + index * 0.012 },
+}) as const;
+
+/** A quick action. Hover never scales: the accent wash fades in (see .island-tile in styles.css)
+ *  and the icon brightens and lifts 1px. */
 function Quick({ icon, label, onClick, hot, index }: { icon: React.ReactNode; label: string; onClick: () => void; hot?: boolean; index: number }) {
   return (
     <motion.button
-      initial={{ opacity: 0, y: 8, scale: 0.92 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 520, damping: 30, delay: 0.06 + index * 0.025 }}
-      whileTap={{ scale: 0.94 }}
+      {...tileIn(index)}
       onClick={onClick}
       data-hot={hot ? "true" : "false"}
       data-peek-tile={index}
       aria-label={label}
       title={label}
-      className="island-tile relative flex h-full min-w-0 flex-col items-center justify-center gap-1 rounded-2xl text-white/85 hover:text-white"
+      className="island-tile flex h-full min-w-0 flex-col items-center justify-center gap-1 rounded-2xl"
     >
-      <span
-        className="flex h-[18px] items-center justify-center text-brand-200 transition-transform duration-200"
-        style={{
-          filter: hot ? "drop-shadow(0 0 8px rgba(102,206,255,0.85))" : "drop-shadow(0 0 4px rgba(102,206,255,0.35))",
-          transform: hot ? "translateY(-1px) scale(1.08)" : "none",
-        }}
-      >
-        {icon}
-      </span>
-      <span className="pointer-events-none max-w-full truncate px-1 text-[10.5px] font-medium leading-none text-white/70" aria-hidden>
+      <span className="island-tile-icon flex h-[18px] items-center justify-center">{icon}</span>
+      <span className="island-tile-label pointer-events-none max-w-full truncate px-1 text-[10.5px] font-medium leading-none" aria-hidden>
         {label}
       </span>
     </motion.button>

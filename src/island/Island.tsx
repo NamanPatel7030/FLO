@@ -73,11 +73,16 @@ export interface MeetingInfo {
   summary?: string;
 }
 
-/** opening: a touch of overshoot, like the Dynamic Island morphing out of the camera */
-const SPRING_OPEN = { type: "spring", stiffness: 360, damping: 28, mass: 0.85 } as const;
-/** closing: quicker and critically damped (no wobble back into the notch) */
-const SPRING_CLOSE = { type: "spring", stiffness: 520, damping: 44, mass: 0.8 } as const;
-const COLLAPSE_MS = 520;
+/** Calm, premium motion: no springs, no overshoot anywhere in the notch. A long, soft ease-out
+ *  ("expo-ish") for opening; a quicker, symmetric ease for closing back into the camera. */
+export const EASE_OUT = [0.22, 1, 0.36, 1] as const;
+const EASE_CLOSE = [0.32, 0.72, 0, 1] as const;
+const MORPH_OPEN = { type: "tween", duration: 0.32, ease: EASE_OUT } as const;
+const MORPH_CLOSE = { type: "tween", duration: 0.22, ease: EASE_CLOSE } as const;
+/** default for every motion element under the island (motion's default for x/y/scale is a bouncy spring) */
+const CALM = { type: "tween", duration: 0.2, ease: EASE_OUT } as const;
+/** the window shrinks only after the close animation has finished (content never jumps) */
+const COLLAPSE_MS = 300;
 const DONE_MS = 1500;
 const ERROR_MS = 5000;
 const RESULT_MS = 2600;
@@ -807,17 +812,33 @@ export default function Island() {
     else api.openDashboard("home");
   };
 
-  // DOM mouse tracking: browser preview only (ignored once the backend reports hover)
+  // DOM mouse tracking: browser preview only (ignored once the backend reports hover).
+  // mousemove can fire at 120 Hz: coalesce to one hit-test per frame.
+  const moveRaf = useRef(0);
+  const lastMove = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const onMouseMove = (e: React.MouseEvent) => {
     if (backendHover.current) return;
-    const r = rootRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const x = e.clientX - r.left;
-    handleHover({ inside: true, x, y: e.clientY - r.top, cx: x - r.width / 2 });
+    lastMove.current = { x: e.clientX, y: e.clientY };
+    if (moveRaf.current) return;
+    moveRaf.current = requestAnimationFrame(() => {
+      moveRaf.current = 0;
+      if (backendHover.current) return;
+      const r = rootRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const x = lastMove.current.x - r.left;
+      handleHover({ inside: true, x, y: lastMove.current.y - r.top, cx: x - r.width / 2 });
+    });
   };
+  useEffect(() => () => cancelAnimationFrame(moveRaf.current), []);
 
-  // last pill size drawn (picks the open vs close spring); declared before the early return
+  // last pill size drawn (picks the open vs close easing); declared before the early return
+  // (compared against the last COMMITTED pill: StrictMode renders twice, so a render-time write
+  // would make every close look like an open)
   const lastPill = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const drawnPill = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  useEffect(() => {
+    lastPill.current = drawnPill.current;
+  });
 
   if (!geo) return null;
 
@@ -860,10 +881,10 @@ export default function Island() {
       : bigCard
         ? "22px"
         : "999px";
-  // spring per direction: open with a little life, close tight; the shape leads, content follows
+  // easing per direction (no overshoot either way); the shape leads, content follows
   const growing = pill.width * pill.height >= lastPill.current.width * lastPill.current.height;
-  lastPill.current = pill;
-  const morph = reduce ? { duration: 0 } : growing ? SPRING_OPEN : SPRING_CLOSE;
+  drawnPill.current = pill;
+  const morph = reduce ? { duration: 0 } : growing ? MORPH_OPEN : MORPH_CLOSE;
 
   // keep hit-testing geometry current for the hover handler (refs → no re-render per mouse move)
   geomRef.current = {
@@ -903,6 +924,8 @@ export default function Island() {
       onMouseEnter={(e) => onMouseMove(e)}
       onMouseMove={onMouseMove}
       onMouseLeave={() => {
+        cancelAnimationFrame(moveRaf.current);
+        moveRaf.current = 0;
         if (!backendHover.current) handleHover({ inside: false });
         setDomItem(-1);
       }}
@@ -918,33 +941,47 @@ export default function Island() {
                 overflow: "visible",
                 // glow is bottom-weighted + tightly clipped (negative spread) so it hugs the rounded
                 // pill instead of haloing the flat-topped notch as a rectangle.
-                boxShadow: hovering
-                  ? "inset 0 -1.5px 0 rgba(102,206,255,0.9), 0 7px 20px -10px rgba(61,187,255,0.55)"
-                  : glow
-                    ? "inset 0 -1px 0 rgba(102,206,255,0.72), 0 5px 15px -11px rgba(61,187,255,0.5)"
-                    : shown === "error"
-                      ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
-                      : bigCard
-                        ? "inset 0 -1px 0 rgba(147,221,255,0.14)"
-                        : "none",
-                transition: "box-shadow 0.28s ease",
+                // static per state (never transitioned: an animated box-shadow repaints the whole
+                // shape every frame); the hover glow is a separate layer that only fades its opacity
+                boxShadow: glow
+                  ? "inset 0 -1px 0 rgba(102,206,255,0.72), 0 5px 15px -11px rgba(61,187,255,0.5)"
+                  : shown === "error"
+                    ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
+                    : bigCard
+                      ? "inset 0 -1px 0 rgba(147,221,255,0.14)"
+                      : "none",
               }
             : {
-                background: "linear-gradient(180deg, rgba(10,16,24,0.80), rgba(2,4,8,0.88))",
-                backdropFilter: "blur(30px) saturate(180%)",
-                WebkitBackdropFilter: "blur(30px) saturate(180%)",
-                border: `1px solid ${hover ? "rgba(147,221,255,0.32)" : "rgba(147,221,255,0.16)"}`,
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 14px 36px -10px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(0,0,0,0.6)",
+                // no backdrop-filter: the window is transparent over the desktop, so a blur here
+                // only cost GPU time on every frame of the morph without blurring anything
+                background: "linear-gradient(180deg, rgba(12,18,26,0.92), rgba(3,5,9,0.95))",
+                border: `1px solid ${hover ? "rgba(147,221,255,0.30)" : "rgba(147,221,255,0.14)"}`,
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.09), 0 14px 36px -10px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(0,0,0,0.6)",
                 overflow: "hidden",
-                transition: "border-color 0.25s ease",
+                transition: "border-color 160ms ease",
               }
         }
       >
         {notch && !collapsed && <Ears size={EAR} />}
+        {/* hover: a calm accent rim along the bottom edge + a soft under-glow. Its own layer, so the
+            hover only fades opacity (compositor) — nothing pops, nothing repaints */}
+        {notch && (
+          <span
+            aria-hidden
+            data-testid="notch-hover-glow"
+            className="pointer-events-none absolute inset-0"
+            style={{
+              borderRadius: "inherit",
+              boxShadow: "inset 0 -1px 0 rgba(147,221,255,0.55), 0 8px 22px -14px rgba(61,187,255,0.55)",
+              opacity: hovering && !glow ? 1 : 0,
+              transition: `opacity ${hovering ? 180 : 240}ms cubic-bezier(0.22,1,0.36,1)`,
+            }}
+          />
+        )}
         <div
           className="absolute inset-0 overflow-hidden"
           style={{
-            borderRadius: radius,
+            borderRadius: "inherit", // follows the morphing shape frame by frame
             // WebKit doesn't clip transformed children (the sheen) to border-radius unless the
             // clip layer is composited with a solid mask; this forces the clip with no visual change.
             transform: "translateZ(0)",
@@ -975,15 +1012,6 @@ export default function Island() {
               style={{ background: "linear-gradient(90deg, transparent, #e3f6ff, transparent)", animation: "flo-shimmer-x 0.9s ease-out 1" }}
             />
           )}
-          {/* premium hover: a single specular sheen sweeps across once on enter */}
-          {hovering && !reduce && (
-            <span
-              key="sheen"
-              aria-hidden
-              className="flo-sheen pointer-events-none absolute inset-y-0 left-0 w-1/3"
-              style={{ background: "linear-gradient(100deg, transparent, rgba(194,236,255,0.18), transparent)" }}
-            />
-          )}
           {/* Only the current content is rendered (enter animation only). Exit animations could leave
               ghost content (e.g. a frozen spinner) on screen if they were ever interrupted. */}
           {(
@@ -994,10 +1022,13 @@ export default function Island() {
               // repaints the whole card every frame and was the main source of stutter).
               // Laid out at the FINAL pill size and centred, so the morphing shape clips it
               // instead of reflowing it every frame.
-              initial={panelOpen ? { opacity: 0, y: -10, scale: 0.96 } : { opacity: 0, y: -4, scale: 0.985 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={panelOpen ? { duration: 0.26, delay: 0.05, ease: [0.2, 0.8, 0.2, 1] } : { duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-              style={{ willChange: "opacity, transform", transformOrigin: "50% 0%", left: "50%", width: pill.width, marginLeft: -pill.width / 2, height: pill.height }}
+              // No scale (a scaled panel re-rasterises and reads as a "pop"): a short fade with a
+              // few px of drift, starting once the shape has led the way.
+              initial={panelOpen ? { opacity: 0, y: -4 } : { opacity: 0, y: -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              // content fades in WITH the shape (a later start left the growing shape empty and black)
+              transition={panelOpen ? { type: "tween", duration: 0.22, delay: 0.04, ease: EASE_OUT } : { type: "tween", duration: 0.18, delay: 0.03, ease: EASE_OUT }}
+              style={{ transformOrigin: "50% 0%", left: "50%", width: pill.width, marginLeft: -pill.width / 2, height: pill.height }}
             >
               {shown === "agent" && agent ? (
                 <AgentCard
@@ -1128,7 +1159,9 @@ export default function Island() {
           )}
           {notch && showTray && layout && (
             <AnimatePresence>
-              <TrayRow items={trayItems.all} slots={layout.slots} pillW={pill.width} nh={geo.notchHeight} hot={tipIdx} onItem={onTrayItem} />
+              {/* live = the island is open: a working session's arc only spins then (the resting
+                  tray draws nothing per frame) */}
+              <TrayRow items={trayItems.all} slots={layout.slots} pillW={pill.width} nh={geo.notchHeight} hot={tipIdx} onItem={onTrayItem} live={hover || shown !== "tray"} />
             </AnimatePresence>
           )}
           {/* the music live activity stays put while the shape morphs (collapsed → tray → panel) */}
@@ -1167,7 +1200,7 @@ export default function Island() {
   );
 
   return (
-    <MotionConfig reducedMotion="user">
+    <MotionConfig reducedMotion="user" transition={CALM}>
       {stage ? (
         <Stage notch={notch} nh={geo.notchHeight}>
           {island}
@@ -1206,7 +1239,7 @@ function PanelHeader({ pillW, nh, inner }: { pillW: number; nh: number; inner: n
       style={{ height: nh }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.3, delay: 0.12 }}
+      transition={{ type: "tween", duration: 0.2, delay: 0.12, ease: EASE_OUT }}
     >
       <span className="truncate text-white/80" style={{ maxWidth: room }}>
         {greeting(now.getHours())}

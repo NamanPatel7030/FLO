@@ -89,17 +89,18 @@ export function MusicWings({ np, geo }: { np: NowPlaying; geo: IslandGeometry })
     <motion.div
       className="pointer-events-none absolute top-0 flex items-center justify-center"
       style={{ left: `calc(50% + ${cx}px)`, width: MUSIC_WING, marginLeft: -MUSIC_WING / 2, height: geo.notchHeight }}
-      initial={{ opacity: 0, scale: 0.4, filter: "blur(4px)" }}
-      animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-      transition={{ type: "spring", stiffness: 520, damping: 26, delay }}
+      // a plain fade (no scale-pop, no animated blur filter: both repaint every frame)
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ type: "tween", duration: 0.24, ease: [0.22, 1, 0.36, 1], delay }}
     >
       {child}
     </motion.div>
   );
   return (
     <div data-testid="music-activity" aria-label={label} role="img" className="pointer-events-none absolute inset-x-0 top-0" style={{ height: geo.notchHeight }}>
-      {wing(-off, <Artwork np={np} size={art} radius={6} className={np.playing ? "" : "opacity-60"} />, 0.04)}
-      {wing(off, <Equalizer playing={np.playing} tint={tint} height={Math.min(14, geo.notchHeight - 16)} bar={2.5} />, 0.1)}
+      {wing(-off, <Artwork np={np} size={art} radius={6} className={np.playing ? "" : "opacity-60"} />, 0.02)}
+      {wing(off, <Equalizer playing={np.playing} tint={tint} height={Math.min(14, geo.notchHeight - 16)} bar={2.5} />, 0.04)}
     </div>
   );
 }
@@ -186,7 +187,7 @@ export function NowPlayingCard() {
   }
   const dur = np.duration && np.duration > 0 ? np.duration : undefined;
   const pct = dur && elapsed !== undefined ? Math.min(100, (elapsed / dur) * 100) : 0;
-  const btn = "flex items-center justify-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white active:scale-95";
+  const btn = "flex items-center justify-center rounded-full text-white/80 transition-colors duration-150 hover:bg-white/10 hover:text-white active:bg-white/[0.06]";
   return (
     <div
       className="relative flex h-full flex-col justify-between overflow-hidden rounded-xl p-3"
@@ -230,7 +231,7 @@ export function NowPlayingCard() {
           <button
             aria-label={np.playing ? "Pause" : "Play"}
             onClick={() => mediaControl("playpause")}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-black shadow-[0_4px_14px_-4px_rgba(255,255,255,0.45)] transition hover:scale-105 active:scale-95"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-black shadow-[0_4px_14px_-4px_rgba(255,255,255,0.45)] transition-[background-color,opacity] duration-150 hover:bg-white/90 active:opacity-80"
           >
             {np.playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="translate-x-[1px]" />}
           </button>

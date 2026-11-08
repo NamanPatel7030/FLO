@@ -20,9 +20,13 @@ describe("packPanelRows (4-column hover panel)", () => {
     const rows = packPanelRows(["nowPlaying", "today", "timer", "clock"]);
     expect(rows.map((r) => r.cells.map((c) => [c.id, c.span]))).toEqual([
       [["nowPlaying", 2], ["today", 2]],
-      [["timer", 1], ["clock", 3]],
+      [["timer", 2], ["clock", 2]],
     ]);
     expect(rows[0].h).toBe(Math.max(WIDGET_META.nowPlaying.h, WIDGET_META.today.h));
+  });
+  it("shares leftover columns evenly instead of stretching the last tile", () => {
+    expect(packPanelRows(["timer", "pomodoro", "clock"])[0].cells.map((c) => c.span)).toEqual([2, 1, 1]);
+    expect(packPanelRows(["timer", "clock"])[0].cells.map((c) => c.span)).toEqual([2, 2]);
   });
   it("a lone widget takes the full row", () => {
     expect(packPanelRows(["nowPlaying"])[0].cells).toEqual([{ id: "nowPlaying", span: 4 }]);

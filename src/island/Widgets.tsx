@@ -54,9 +54,9 @@ export function WidgetGrid({ ids, sessions, onAction }: { ids: WidgetId[]; sessi
           key={row.cells.map((c) => c.id).join("+")}
           className="grid shrink-0"
           style={{ gridTemplateColumns: `repeat(${PANEL_COLS}, minmax(0, 1fr))`, gap: GAP, height: row.h }}
-          initial={{ opacity: 0, y: 10, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ type: "spring", stiffness: 420, damping: 32, delay: 0.1 + r * 0.045 }}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: "tween", duration: 0.22, ease: [0.22, 1, 0.36, 1], delay: 0.12 + r * 0.02 }}
         >
           {row.cells.map((c) => (
             // explicit height: WebKit doesn't resolve a tile's h-full against a stretched grid item
@@ -294,13 +294,19 @@ function dueLabel(due: string): string {
   return midnight ? date : `${date}, ${DUE_TIME.format(d)}`;
 }
 
-/** A warm beige tile that lifts and grows a touch on hover (used for the to-do and Claude cards). */
+/** A warm beige tile (used for the to-do and Claude cards). Hover never scales or moves it: a soft
+ *  top highlight and a crisp inner rim fade in (opacity only). */
 function BeigeTile({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className="group relative flex h-full flex-col overflow-hidden rounded-xl p-2.5 text-left transition-[transform,box-shadow] duration-200 ease-out hover:z-20 hover:-translate-y-1 hover:scale-[1.04] hover:shadow-[0_14px_34px_rgba(0,0,0,0.55)]"
-      style={{ background: "linear-gradient(150deg, #efe7d5 0%, #e4d6bd 100%)", color: "#2f2a20" }}
+      className="group relative isolate flex h-full flex-col overflow-hidden rounded-xl p-2.5 text-left"
+      style={{ background: "linear-gradient(150deg, #efe7d5 0%, #e4d6bd 100%)", color: "#2f2a20", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5)" }}
     >
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit] opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100"
+        style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0) 45%)", boxShadow: "inset 0 0 0 1px rgba(122,108,78,0.28)" }}
+      />
       {children}
     </div>
   );

@@ -131,7 +131,7 @@ export const PANEL_BODY_MAX = 600;
 
 export interface PanelCell {
   id: WidgetId;
-  /** columns taken in the PANEL_COLS grid (leftover space in a row goes to its last tile) */
+  /** columns taken in the PANEL_COLS grid (a row's leftover columns are shared evenly) */
   span: number;
 }
 export interface PanelRow {
@@ -139,16 +139,22 @@ export interface PanelRow {
   h: number;
 }
 
-/** Pack widgets into rows of the panel's 4-column grid (in order). A row's free columns go to its
- *  last tile, so every row is full width and nothing floats. */
+/** Pack widgets into rows of the panel's 4-column grid (in order). A row's free columns are shared
+ *  evenly between its tiles, so every row is full width and no tile is stretched. */
 export function packPanelRows(ids: WidgetId[], cols: number = PANEL_COLS): PanelRow[] {
   const rows: PanelRow[] = [];
   let cur: PanelCell[] = [];
   let used = 0;
   const flush = () => {
     if (!cur.length) return;
-    const free = cols - used;
-    if (free > 0) cur[cur.length - 1] = { ...cur[cur.length - 1], span: cur[cur.length - 1].span + free };
+    // share the free columns evenly (smallest tiles first) so no single tile is stretched wide
+    let free = cols - used;
+    while (free > 0) {
+      let k = 0;
+      for (let j = 1; j < cur.length; j++) if (cur[j].span < cur[k].span) k = j;
+      cur[k] = { ...cur[k], span: cur[k].span + 1 };
+      free--;
+    }
     rows.push({ cells: cur, h: Math.max(...cur.map((c) => widgetHeight(c.id))) });
     cur = [];
     used = 0;

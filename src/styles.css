@@ -409,19 +409,87 @@ html.island * {
 html.island .selectable {
   cursor: text;
 }
-/* glass tile inside the black notch */
+/* glass tile inside the black notch. Hover is calm: nothing scales or moves (no layout shift);
+   an accent wash + crisp rim fade in on their own layer (opacity only → compositor), the icon
+   brightens and lifts 1px, the label goes white. */
 .island-tile {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.015));
-  border: 1px solid rgb(var(--accent-2-rgb) / 0.12);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.10);
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.2s ease, border-color 0.2s ease, box-shadow 0.22s ease;
+  position: relative;
+  isolation: isolate;
+  color: rgb(255 255 255 / 0.85);
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.065), rgb(255 255 255 / 0.02));
+  border: 1px solid rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07);
+  transition: border-color 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.island-tile::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(120% 100% at 50% 0%, rgb(var(--accent-2-rgb) / 0.20), rgb(var(--accent-rgb) / 0.07) 55%, rgb(var(--accent-rgb) / 0.02));
+  box-shadow: inset 0 0 0 1px rgb(var(--accent-2-rgb) / 0.34), inset 0 1px 0 rgb(255 255 255 / 0.16);
+  transition: opacity 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.island-tile-icon {
+  color: rgb(var(--accent-2-rgb) / 0.88);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), color 140ms ease;
+}
+.island-tile-label {
+  color: rgb(255 255 255 / 0.62);
+  transition: color 140ms ease;
 }
 .island-tile[data-hot="true"],
 .island-tile:hover {
-  transform: translateY(-2px);
-  background: linear-gradient(180deg, rgb(var(--accent-2-rgb) / 0.20), rgb(var(--accent-rgb) / 0.06));
-  border-color: rgb(var(--accent-2-rgb) / 0.40);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22), 0 8px 22px -10px rgb(var(--accent-rgb) / 0.9);
+  border-color: rgb(var(--accent-2-rgb) / 0.0);
+}
+.island-tile[data-hot="true"]::before,
+.island-tile:hover::before {
+  opacity: 1;
+}
+.island-tile[data-hot="true"] .island-tile-icon,
+.island-tile:hover .island-tile-icon {
+  color: rgb(var(--accent-2-rgb));
+  transform: translateY(-1px);
+}
+.island-tile[data-hot="true"] .island-tile-label,
+.island-tile:hover .island-tile-label {
+  color: rgb(255 255 255 / 0.92);
+}
+.island-tile:active::before {
+  opacity: 0.7;
+}
+/* Away (presence tile): a warm amber tint instead of the accent */
+.island-tile[data-tone="amber"] {
+  color: rgb(254 243 199);
+  background: linear-gradient(180deg, rgb(245 158 11 / 0.20), rgb(245 158 11 / 0.08));
+  border-color: rgb(252 211 77 / 0.28);
+}
+.island-tile[data-tone="amber"]::before {
+  background: linear-gradient(180deg, rgb(252 211 77 / 0.14), rgb(245 158 11 / 0.04));
+  box-shadow: inset 0 0 0 1px rgb(252 211 77 / 0.42), inset 0 1px 0 rgb(255 255 255 / 0.14);
+}
+.island-tile:focus-visible {
+  outline: 1.5px solid rgb(var(--accent-2-rgb) / 0.7);
+  outline-offset: 1px;
+}
+/* tray icons in the notch: a soft halo fades in behind the hovered icon (no scale) */
+.tray-btn::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgb(var(--accent-2-rgb) / 0.22), rgb(var(--accent-2-rgb) / 0.06) 70%, transparent 72%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.10);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tray-btn[data-hot="true"]::before,
+.tray-btn:hover::before {
+  opacity: 1;
 }
 .island-tip {
   background: linear-gradient(180deg, rgb(14 26 40 / 0.96), rgb(3 7 12 / 0.97));
@@ -607,37 +675,17 @@ html.island .selectable {
   will-change: transform;
   animation: flo-spin 1.2s linear infinite;
 }
+/* resting tray: hold the arc where it is (zero frames while the notch idles) */
+.flo-spin[data-still="true"] {
+  animation-play-state: paused;
+  will-change: auto;
+}
 @media (prefers-reduced-motion: reduce) {
   .flo-spin {
     animation-duration: 3s;
   }
 }
 
-/* premium notch hover: one specular sheen sweep across the pill on cursor enter */
-@keyframes flo-sheen {
-  0% {
-    transform: translateX(-140%) skewX(-16deg);
-    opacity: 0;
-  }
-  35% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(360%) skewX(-16deg);
-    opacity: 0;
-  }
-}
-.flo-sheen {
-  /* forwards: stay invisible after the sweep (otherwise a static band sits on the open panel) */
-  animation: flo-sheen 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) 1 forwards;
-  opacity: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .flo-sheen {
-    animation: none;
-    opacity: 0;
-  }
-}
 
 /* volume slider in the notch widgets */
 .flo-range {
