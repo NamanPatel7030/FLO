@@ -33,6 +33,7 @@ pub fn spawn(st: Shared) {
                 if st.settings().system_notifications {
                     notify("Reminder", &body);
                 }
+                crate::push::notify(&st, crate::push::todo_due_payload(&t, &when)); // phone, only while Away
                 // also surface it in the app + notch
                 st.emit(ev::TOAST, ToastEvent { kind: "info".into(), text: format!("Reminder: {body}") });
                 st.emit(ev::REMINDER, &t);

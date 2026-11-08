@@ -93,6 +93,7 @@ pub async fn run_and_deliver(st: &Shared, k: &Skill) -> Result<AssistantResponse
             }
             st.emit(ev::ASSISTANT, resp.clone());
             st.toast("success", format!("{} ran", k.name));
+            crate::push::notify(st, crate::push::skill_payload(&k.name, &resp.reply, true)); // phone, only while Away
             if notify_on {
                 crate::reminders::notify(&format!("{} ran", k.name), &text::truncate_chars(resp.reply.trim(), 180));
             }
@@ -101,6 +102,7 @@ pub async fn run_and_deliver(st: &Shared, k: &Skill) -> Result<AssistantResponse
         Err(e) => {
             log::warn!("scheduled skill {}: {e:#}", k.name);
             st.toast("error", format!("{} couldn't run: {e}", k.name));
+            crate::push::notify(st, crate::push::skill_payload(&k.name, &e.to_string(), false)); // phone, only while Away
             if notify_on {
                 crate::reminders::notify(&format!("{} couldn't run", k.name), &e.to_string());
             }

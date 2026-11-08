@@ -13,6 +13,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    /* default-import CommonJS packages (qrcode-generator) */
+    "allowSyntheticDefaultImports": true,
 
     /* Linting */
     "strict": true,

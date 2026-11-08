@@ -778,6 +778,7 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
     st.emit(ev::NOTES, ());
     st.emit(ev::MEETING, MeetingEvent { note_id: n.id.clone(), segment: None, summary: Some(n.summary.clone()), elapsed_sec: elapsed, live: false, partial: None });
     st.toast("success", format!("Notes ready: {}", n.title));
+    crate::push::notify(st, crate::push::meeting_payload(&n.title, &n.id, n.action_items.len())); // phone, only while Away
 }
 
 #[cfg(test)]

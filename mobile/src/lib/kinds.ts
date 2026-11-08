@@ -100,6 +100,8 @@ export const GROUPS: Record<KindGroup, GroupMeta> = {
 const KIND_TO_GROUP: Record<string, KindGroup> = {
   claude_done: 'claude',
   claude_needs_you: 'claude',
+  claude_limit: 'claude',
+  claude_resumed: 'claude',
   todo_due: 'todos',
   todos_digest: 'todos',
   reminder: 'reminders',
@@ -122,6 +124,10 @@ export function kindLabel(kind: string | null | undefined): string {
       return 'Claude · Done';
     case 'claude_needs_you':
       return 'Claude · Needs you';
+    case 'claude_limit':
+      return 'Claude · Limit reached';
+    case 'claude_resumed':
+      return 'Claude · Resumed';
     case 'todo_due':
       return 'To-do due';
     case 'todos_digest':
