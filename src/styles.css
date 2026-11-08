@@ -665,3 +665,47 @@ html.island .selectable {
   box-shadow: none !important;
   border-radius: 0 !important;
 }
+
+/* Skill canvas · Build with AI: nodes fade/lift in one by one (the inner card animates: the
+   React Flow wrapper's transform is its position), shimmering ghost nodes while the AI works,
+   and a slowly turning glow around the Build with AI card. */
+.react-flow__node.flo-node-pending {
+  opacity: 0;
+  pointer-events: none;
+}
+.react-flow__node.flo-node-in > div {
+  animation: flo-node-in 0.46s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes flo-node-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.94);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+.flo-ghost {
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.03) 20%, rgba(255, 255, 255, 0.11) 40%, rgba(255, 255, 255, 0.03) 60%) 0 0 / 220% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+@property --flo-ai-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.flo-ai-card {
+  background:
+    linear-gradient(#0d1722, #0d1722) padding-box,
+    conic-gradient(from var(--flo-ai-angle), rgb(var(--accent-rgb) / 0.95), #a78bfa, #f472b6, #f5b94a, rgb(var(--accent-rgb) / 0.95)) border-box;
+  border: 1px solid transparent;
+  animation: flo-ai-turn 5s linear infinite;
+}
+@keyframes flo-ai-turn {
+  to {
+    --flo-ai-angle: 360deg;
+  }
+}

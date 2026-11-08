@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { BookText, CheckCircle2, Loader2, MousePointerClick, PenLine, Plug, Plus, Sparkles, Trash2, X, Zap } from "lucide-react";
+import { BookText, CheckCircle2, Clock, Loader2, MousePointerClick, PenLine, Play, Plug, Plus, Sparkles, Trash2, X, Zap } from "lucide-react";
 import { api } from "../../lib/api";
+import { cronError, describeCron, formatRun, nextRun } from "../../lib/cron";
 import type { Connection, McpTool, Skill } from "../../lib/types";
 import { SkillCanvasEditor } from "../SkillCanvas";
 import { useStore } from "../store";
@@ -115,7 +116,7 @@ function SkillsList() {
           )}
           <div className="grid grid-cols-2 gap-4" data-testid="skills-grid">
             {skills.map((k) => (
-              <SkillCard key={k.id} k={k} onEdit={() => setEditing(k)} />
+              <SkillCard key={k.id} k={k} onEdit={() => setEditing(k)} onRan={load} />
             ))}
           </div>
           <div className="mt-7 mb-3 text-[11.5px] font-semibold uppercase tracking-wider text-faint">Start from a template</div>
@@ -161,8 +162,29 @@ function SkillsList() {
   );
 }
 
-function SkillCard({ k, onEdit }: { k: Skill; onEdit: () => void }) {
+/** "Every weekday at 09:00 · next tomorrow 09:00" for a scheduled skill. */
+function scheduleLine(cron: string): { when: string; next: string } | null {
+  if (cronError(cron)) return null;
+  const n = nextRun(cron);
+  const when = describeCron(cron);
+  return { when: when.charAt(0).toUpperCase() + when.slice(1), next: n ? formatRun(n) : "never" };
+}
+
+function SkillCard({ k, onEdit, onRan }: { k: Skill; onEdit: () => void; onRan: () => void }) {
   const first = k.triggers.split(",")[0]?.trim();
+  const [run, setRun] = useState<{ busy: boolean; reply?: string; error?: string }>({ busy: false });
+  const sched = k.schedule ? scheduleLine(k.schedule) : null;
+  const runNow = async () => {
+    setRun({ busy: true });
+    try {
+      const r = await api.runSkillNow(k.id);
+      // the backend toasts "<name> ran" (same as a scheduled run)
+      setRun({ busy: false, reply: r.reply });
+      onRan();
+    } catch (e) {
+      setRun({ busy: false, error: String(e) });
+    }
+  };
   return (
     <Card onClick={onEdit} className={clsx("relative h-full p-5", !k.enabled && "opacity-55")}>
       <div className="flex items-start gap-3">
@@ -175,9 +197,39 @@ function SkillCard({ k, onEdit }: { k: Skill; onEdit: () => void }) {
             <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10.5px] font-medium text-muted">{k.mode === "do" ? "Does it" : "Writes it"}</span>
             {!k.enabled && <span className="shrink-0 text-[10.5px] text-faint">Off</span>}
           </div>
-          <div className="mt-1 text-[12px] text-faint">Say “{first || k.name}”</div>
+          <div className="mt-1 text-[12px] text-faint">{first ? `Say “${first}”` : sched ? "Runs on its schedule" : `Say “${k.name}”`}</div>
         </div>
+        {sched && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!run.busy) runNow();
+            }}
+            aria-label={`Run ${k.name} now`}
+            disabled={run.busy}
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-xl bg-[var(--accent)]/15 px-3 text-[12px] font-medium text-brand-100 ring-1 ring-[var(--accent)]/30 transition hover:bg-[var(--accent)]/25 disabled:opacity-70"
+          >
+            {run.busy ? <Loader2 size={13} className="animate-spin" /> : <Play size={12} className="fill-current" />}
+            {run.busy ? "Running…" : "Run now"}
+          </button>
+        )}
       </div>
+      {sched && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#ff8a5c]/[0.08] px-3 py-2 text-[12px] ring-1 ring-[#ff8a5c]/20" data-testid="skill-schedule">
+          <Clock size={13} className="shrink-0 text-[#ffb08f]" />
+          <span className="truncate text-[var(--fg)]">{sched.when}</span>
+          <span className="ml-auto shrink-0 text-faint">next {sched.next}</span>
+        </div>
+      )}
+      {(run.reply || run.error) && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className={clsx("mt-2 line-clamp-3 whitespace-pre-line rounded-xl px-3 py-2 text-[12px] leading-relaxed", run.error ? "bg-red-500/10 text-red-200" : "bg-white/[0.04] text-muted")}
+          data-testid="skill-run-result"
+        >
+          {run.error ? run.error : run.reply}
+        </div>
+      )}
       <p className="mt-3 line-clamp-2 text-[12.5px] leading-relaxed text-muted">{k.instructions}</p>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         {k.platforms.map((p) => {

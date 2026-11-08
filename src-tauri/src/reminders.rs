@@ -5,7 +5,7 @@ use crate::model::{ev, ToastEvent};
 use crate::state::Shared;
 
 #[cfg(target_os = "macos")]
-fn notify(title: &str, body: &str) {
+pub(crate) fn notify(title: &str, body: &str) {
     // escape double quotes for AppleScript
     let esc = |s: &str| s.replace('\\', "").replace('"', "'");
     let script = format!("display notification \"{}\" with title \"Flo\" subtitle \"{}\"", esc(body), esc(title));
@@ -13,7 +13,7 @@ fn notify(title: &str, body: &str) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn notify(_title: &str, _body: &str) {}
+pub(crate) fn notify(_title: &str, _body: &str) {}
 
 pub fn spawn(st: Shared) {
     tauri::async_runtime::spawn(async move {

@@ -345,3 +345,108 @@ test("skill canvas: hover a node to delete it, hover a connection to detach it",
   await detach.click({ force: true });
   await expect.poll(() => ed.locator(".react-flow__edge").count()).toBe(before - 1);
 });
+
+test("skill canvas: Build with AI drafts the nodes and the name, errors are readable, and it saves", async ({ page }) => {
+  await page.goto("/#/skills");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.getByRole("button", { name: "New skill" }).click();
+  const ed = page.getByTestId("skill-editor");
+  // a blank new skill opens the AI composer right away
+  const box = ed.getByTestId("ai-composer");
+  await expect(box).toBeVisible();
+  // a failure shows a readable message and keeps the composer open
+  await box.getByLabel("Describe the skill").fill("this will fail");
+  await box.getByRole("button", { name: "Build", exact: true }).click();
+  await expect(box.getByTestId("ai-error")).toContainText("didn't return a skill");
+
+  await box.getByLabel("Describe the skill").fill("Every weekday at 9, read my unread Gmail, summarise it and post it to Slack #daily");
+  await box.getByRole("button", { name: "Build", exact: true }).click();
+  await expect(ed.getByTestId("ai-ghosts")).toBeVisible();
+  await expect(ed.getByLabel("Skill name")).toHaveValue("Daily inbox digest");
+  await expect(box).toHaveCount(0);
+  await expect(ed.getByTestId("node-step")).toHaveCount(3);
+  await expect(ed.getByTestId("node-schedule")).toHaveCount(1);
+  await expect(ed.getByTestId("node-output")).toHaveCount(1);
+  // nodes are revealed one by one; wait until the last is in
+  await expect(ed.locator(".react-flow__node.flo-node-pending")).toHaveCount(0);
+  const panel = ed.getByTestId("generated-skill");
+  await expect(panel).toContainText("1. Read my unread Gmail");
+  await expect(panel).toContainText("3. Post the summary to #daily in Slack");
+  await expect(panel.getByTestId("compiled-schedule")).toContainText("Every weekday at 09:00");
+  // the AI's setup note (no Slack MCP server yet)
+  await expect(panel.getByTestId("ai-notes")).toContainText("Slack MCP server");
+
+  await ed.getByRole("button", { name: "Create skill" }).click();
+  await expect(ed).toHaveCount(0);
+  const saved = await page.evaluate(() => (window as any).__floMock.invoke("list_skills").then((ks: any[]) => ks.find((k) => k.name === "Daily inbox digest")));
+  expect(saved.schedule).toBe("0 9 * * 1-5");
+  expect(saved.platforms).toEqual(["gmail", "slack"]);
+  expect(saved.mode).toBe("do");
+  await expect(page.getByTestId("skills-grid")).toContainText("Daily inbox digest");
+});
+
+test("skill canvas: Refine with AI sends the current skill and redraws it", async ({ page }) => {
+  await page.goto("/#/skills");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.getByRole("button", { name: /Follow-up email/ }).click();
+  const ed = page.getByTestId("skill-editor");
+  await expect(ed.getByTestId("ai-composer")).toHaveCount(0);
+  await ed.getByRole("button", { name: "Refine with AI" }).click();
+  await ed.getByLabel("Describe the skill").fill("cc my manager on every follow-up");
+  await ed.getByRole("button", { name: "Refine", exact: true }).click();
+  await expect(ed.locator(".react-flow__node.flo-node-pending")).toHaveCount(0);
+  await expect(ed.getByTestId("generated-skill")).toContainText("Cc my manager on every follow-up");
+  await expect(ed.getByLabel("Skill name")).toHaveValue("Follow-up email");
+});
+
+test("skill canvas: a Schedule node shows a live human preview and compiles into the panel", async ({ page }) => {
+  await page.goto("/#/skills");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.getByRole("button", { name: /Slack reply/ }).click();
+  const ed = page.getByTestId("skill-editor");
+  await ed.getByRole("button", { name: "Add Schedule" }).click();
+  const node = ed.getByTestId("node-schedule");
+  const preview = node.getByTestId("schedule-preview");
+  await expect(preview).toContainText("Runs every weekday at 09:00 · next:");
+  const panel = ed.getByTestId("generated-skill");
+  await expect(panel.getByTestId("compiled-schedule")).toContainText("Every weekday at 09:00");
+
+  await node.getByLabel("Repeat").selectOption("daily");
+  await node.getByLabel("Time").fill("18:30");
+  await expect(preview).toContainText("Runs every day at 18:30");
+  await expect(panel.getByTestId("compiled-schedule")).toContainText("Every day at 18:30");
+
+  await node.getByRole("button", { name: /Advanced: cron expression/ }).click();
+  await expect(node.getByLabel("Cron expression")).toHaveValue("30 18 * * *");
+  await node.getByLabel("Cron expression").fill("61 * * * *");
+  await expect(preview).toContainText("minute must be between 0 and 59");
+  await ed.getByRole("button", { name: "Create skill" }).click();
+  await expect(panel).toContainText("Fix the Schedule");
+  await expect(ed).toBeVisible();
+
+  await node.getByLabel("Cron expression").fill("*/15 * * * *");
+  await expect(preview).toContainText("Runs every 15 minutes");
+  await expect(node.getByLabel("Repeat")).toHaveValue("minutes");
+  await ed.getByRole("button", { name: "Create skill" }).click();
+  await expect(ed).toHaveCount(0);
+  const saved = await page.evaluate(() => (window as any).__floMock.invoke("list_skills").then((ks: any[]) => ks.find((k) => k.name === "Slack reply")));
+  expect(saved.schedule).toBe("*/15 * * * *");
+  expect(JSON.parse(saved.graph).nodes.some((n: any) => n.type === "schedule")).toBe(true);
+  await expect(page.getByTestId("skills-grid")).toContainText("Every 15 minutes");
+});
+
+test("skills: a scheduled skill shows its next run, and Run now runs it", async ({ page }) => {
+  await page.goto("/#/skills");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  const card = page.getByTestId("skills-grid").locator("div", { has: page.getByText("Morning inbox digest") }).filter({ has: page.getByTestId("skill-schedule") }).last();
+  await expect(card.getByTestId("skill-schedule")).toContainText("Every weekday at 09:00");
+  await expect(card.getByTestId("skill-schedule")).toContainText("next ");
+  // only scheduled skills get Run now
+  await expect(page.getByRole("button", { name: /Run Upwork proposal now/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Run Morning inbox digest now" }).click();
+  await expect(card.getByTestId("skill-run-result")).toContainText("Apollo deck");
+  // clicking Run now doesn't open the editor
+  await expect(page.getByTestId("skill-editor")).toHaveCount(0);
+  const k = await page.evaluate(() => (window as any).__floMock.invoke("list_skills").then((ks: any[]) => ks.find((x) => x.id === "k3")));
+  expect(k.lastRun).toBeTruthy();
+});

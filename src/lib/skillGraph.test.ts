@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoWire, compileSkill, freeSpot, graphFromSkill, NODE_W, orderedSteps, type SkillGraph } from "./skillGraph";
+import { autoWire, compileSkill, describeForAi, freeSpot, graphFromGenerated, graphFromSkill, NODE_W, NODE_H, orderedSteps, type SkillGraph } from "./skillGraph";
 
 const g: SkillGraph = {
   nodes: [
@@ -83,5 +83,74 @@ describe("adding nodes on the canvas", () => {
     const fresh = graphFromSkill({ triggers: "x", instructions: "y", platforms: ["upwork", "browser", "slack"], mode: "write" });
     const att = fresh.nodes.filter((n) => n.type === "platform");
     for (let i = 1; i < att.length; i++) expect(att[i].position.x - att[i - 1].position.x).toBeGreaterThanOrEqual(NODE_W);
+  });
+
+  it("a Schedule starts the skill like a trigger and compiles to its cron", () => {
+    const sg: SkillGraph = {
+      nodes: [
+        { id: "c", type: "schedule", position: { x: 0, y: 0 }, data: { cron: " 0 9  * * 1-5 " } },
+        { id: "s", type: "step", position: { x: 300, y: 0 }, data: { text: "Summarise my inbox" } },
+        { id: "o", type: "output", position: { x: 600, y: 0 }, data: { mode: "write" } },
+      ],
+      edges: [
+        { id: "1", source: "c", target: "s" },
+        { id: "2", source: "s", target: "o" },
+      ],
+    };
+    const c = compileSkill(sg);
+    expect(c.schedule).toBe("0 9 * * 1-5");
+    // a schedule alone is enough: no trigger warning
+    expect(c.warnings).toEqual([]);
+    expect(compileSkill({ ...sg, nodes: sg.nodes.map((n) => (n.id === "c" ? { ...n, data: { cron: "61 * * * *" } } : n)) }).warnings.join(" ")).toMatch(/Fix the Schedule: minute/);
+    expect(compileSkill(g).schedule).toBe("");
+    // a new schedule node feeds the first step
+    const w = autoWire({ nodes: [...g.nodes, { id: "c2", type: "schedule", position: { x: 0, y: 0 }, data: {} }], edges: g.edges }, { id: "c2", type: "schedule", position: { x: 0, y: 0 }, data: {} });
+    expect(w.add).toEqual([{ id: "e-c2-s1", source: "c2", target: "s1" }]);
+    // older skills with a schedule get a Schedule node
+    const fresh = graphFromSkill({ triggers: "digest", instructions: "x", platforms: [], mode: "write", schedule: "0 9 * * *" });
+    expect(compileSkill(fresh).schedule).toBe("0 9 * * *");
+  });
+
+  it("lays out an AI-drafted skill: steps in order, attachments under the step that mentions them, no overlaps", () => {
+    const gen = {
+      name: "Daily inbox digest",
+      triggers: ["inbox digest"],
+      schedule: "0 9 * * 1-5",
+      steps: ["Read my unread Gmail", "Summarise it in 5 bullets", "Post it to #daily in Slack"],
+      platforms: ["gmail"],
+      mcp: ["c2"],
+      knowledge: [],
+      mode: "do" as const,
+      notes: [],
+    };
+    const lg = graphFromGenerated(gen, { c2: "Slack" });
+    const c = compileSkill(lg, { c2: "Slack" });
+    expect(c.triggers).toBe("inbox digest");
+    expect(c.schedule).toBe("0 9 * * 1-5");
+    expect(c.instructions).toMatch(/^1\. Read my unread Gmail\n2\. Summarise it in 5 bullets\n3\. Post it to #daily in Slack/);
+    expect(c.platforms).toEqual(["gmail"]);
+    expect(c.connections).toEqual(["c2"]);
+    expect(c.mode).toBe("do");
+    expect(c.warnings).toEqual([]);
+    const steps = orderedSteps(lg);
+    const host = (ref: string) => lg.edges.find((e) => e.target === lg.nodes.find((n) => n.data.ref === ref)!.id)!.source;
+    expect(host("gmail")).toBe(steps[0].id);
+    expect(host("c2")).toBe(steps[2].id);
+    for (const a of lg.nodes)
+      for (const b of lg.nodes)
+        if (a !== b) expect(Math.abs(a.position.x - b.position.x) < NODE_W && Math.abs(a.position.y - b.position.y) < NODE_H - 40).toBe(false);
+    // the last node revealed is the output
+    expect(lg.nodes[lg.nodes.length - 1].type).toBe("output");
+    // no trigger phrases and no schedule: still gets a trigger node to fill in
+    expect(graphFromGenerated({ ...gen, triggers: [], schedule: null }).nodes.some((n) => n.type === "trigger")).toBe(true);
+    expect(graphFromGenerated({ ...gen, triggers: [] }).nodes.some((n) => n.type === "trigger")).toBe(false);
+  });
+
+  it("describes the canvas for Refine with AI", () => {
+    const d = describeForAi("Proposal", compileSkill(g, { "conn-notion": "Notion" }), { "conn-notion": "Notion" });
+    expect(d).toContain("Name: Proposal");
+    expect(d).toContain("Schedule (cron): none");
+    expect(d).toContain("Notion [conn-notion]");
+    expect(d).toContain("1. Read the job post on screen");
   });
 });

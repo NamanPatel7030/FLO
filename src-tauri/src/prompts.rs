@@ -92,6 +92,24 @@ pub fn skill_tools_system(context: &str, name: &str, instructions: &str, mode: &
     )
 }
 
+/// System prompt for a skill running on its schedule (or "Run now"): nobody is at the keyboard and
+/// there's no field to type into, so the answer is saved as a note and shown as a notification.
+pub fn scheduled_skill_system(context: &str, name: &str, instructions: &str, mode: &str, has_tools: bool, docs: &str) -> String {
+    let tools = if has_tools {
+        "You have tools from the user's MCP servers. Call them whenever they help (look things up, read, create, post). Never invent results; if a tool fails, say so briefly.\n"
+    } else {
+        "You have no tools: work only from the context below and your own knowledge, and say plainly if the instructions need data you can't reach.\n"
+    };
+    let finish = if mode == "do" {
+        "When the work is done, answer with one or two short sentences saying what you did."
+    } else {
+        "Answer with ONLY the finished result (it is saved as a note and shown in a notification): no preamble, no quotes."
+    };
+    format!(
+        "You are Flo, the user's assistant on their Mac. The user's skill \"{name}\" is running on its schedule, unattended: nobody is at the keyboard, so you can't ask questions and there is no text field to type into. Follow its instructions:\n\"\"\"\n{instructions}\n\"\"\"\n{tools}Never do anything destructive (delete, pay, message new people) unless the instructions clearly ask for it.\n{finish}\nPlain punctuation only: no em dashes.{docs}\n\nContext:\n{context}"
+    )
+}
+
 /// Incremental update: previous summary + only the new lines (keeps cost flat as meetings grow).
 pub fn meeting_update_user(previous_summary: &str, new_lines: &str) -> String {
     if previous_summary.trim().is_empty() {

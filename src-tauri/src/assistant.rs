@@ -251,7 +251,7 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
 }
 
 /// The Knowledge documents a skill attaches ("doc:<id>" on the canvas), as prompt text.
-fn skill_docs(st: &Shared, k: &crate::model::Skill) -> String {
+pub(crate) fn skill_docs(st: &Shared, k: &crate::model::Skill) -> String {
     let docs = st.db.list_context_docs().unwrap_or_default();
     let mut out = String::new();
     for id in k.connections.iter().filter_map(|c| c.strip_prefix("doc:")) {

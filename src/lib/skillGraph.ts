@@ -1,13 +1,15 @@
 // A skill drawn as a canvas: nodes you connect, compiled into the skill Flo runs.
 //   trigger  — phrases that invoke it ("proposal for this job")
+//   schedule — a cron schedule it also runs on by itself ("0 9 * * 1-5")
 //   step     — one instruction; steps run in the order the arrows connect them
 //   platform — where it works (Upwork, Slack…, or a custom platform you added)
 //   mcp      — an MCP server whose tools Flo may call
 //   knowledge— a document from Knowledge to use as reference
 //   output   — what happens at the end: write into the field, or do it on screen
-import type { Skill } from "./types";
+import { cronError } from "./cron";
+import type { GeneratedSkill, Skill } from "./types";
 
-export type SkillNodeKind = "trigger" | "step" | "platform" | "mcp" | "knowledge" | "output";
+export type SkillNodeKind = "trigger" | "schedule" | "step" | "platform" | "mcp" | "knowledge" | "output";
 
 export interface SkillNodeData extends Record<string, unknown> {
   /** trigger: phrases · step: instruction · platform/mcp/knowledge: display label */
@@ -16,6 +18,8 @@ export interface SkillNodeData extends Record<string, unknown> {
   ref?: string;
   /** output */
   mode?: "write" | "do";
+  /** schedule: 5-field cron */
+  cron?: string;
 }
 
 export interface SkillNode {
@@ -42,6 +46,8 @@ export interface CompiledSkill {
   platforms: string[];
   connections: string[];
   mode: "write" | "do";
+  /** cron it runs on by itself ("" = only when asked) */
+  schedule: string;
   /** human-readable problems ("No steps yet") */
   warnings: string[];
 }
@@ -57,7 +63,7 @@ export function orderedSteps(g: SkillGraph): SkillNode[] {
   const byId = new Map(g.nodes.map((n) => [n.id, n]));
   const out = new Map<string, string[]>();
   for (const e of g.edges) out.set(e.source, [...(out.get(e.source) ?? []), e.target]);
-  const starts = g.nodes.filter((n) => n.type === "trigger").sort((a, b) => a.position.y - b.position.y);
+  const starts = g.nodes.filter((n) => n.type === "trigger" || n.type === "schedule").sort((a, b) => a.position.y - b.position.y);
   const seen = new Set<string>();
   const order: SkillNode[] = [];
   const queue = [...starts.map((s) => s.id)];
@@ -94,6 +100,10 @@ export function compileSkill(g: SkillGraph, names: Record<string, string> = {}):
   const docs = refs("knowledge");
   const output = g.nodes.find((n) => n.type === "output");
   const mode = output?.data.mode === "do" ? "do" : "write";
+  const scheduleNode = g.nodes.find((n) => n.type === "schedule");
+  const cron = (scheduleNode?.data.cron ?? "").trim();
+  const cronErr = scheduleNode ? (cron ? cronError(cron) : "Pick when it should run.") : null;
+  const schedule = scheduleNode && !cronErr ? cron.split(/\s+/).join(" ") : "";
 
   const lines: string[] = [];
   if (steps.length === 1) lines.push(steps[0]);
@@ -104,7 +114,8 @@ export function compileSkill(g: SkillGraph, names: Record<string, string> = {}):
   if (docs.length) lines.push(`Use my reference documents: ${docs.map(label).join(", ")}.`);
   lines.push(mode === "do" ? "Finish by doing it on screen. Ask before sending, posting, paying or deleting." : "Finish by typing the result into the field I'm in.");
 
-  if (!triggers.length) warnings.push("Add a Trigger with the words that start this skill.");
+  if (!triggers.length && !scheduleNode) warnings.push("Add a Trigger with the words that start this skill, or a Schedule.");
+  if (cronErr) warnings.push(`Fix the Schedule: ${cronErr}`);
   if (!steps.length) warnings.push("Add at least one Step that says what to do.");
   if (!output) warnings.push("Add an Output: write it, or do it on screen.");
 
@@ -114,6 +125,7 @@ export function compileSkill(g: SkillGraph, names: Record<string, string> = {}):
     platforms,
     connections: [...customPlatforms, ...mcp, ...docs],
     mode,
+    schedule,
     warnings,
   };
 }
@@ -165,13 +177,14 @@ export function autoWire(g: SkillGraph, added: SkillNode): { add: SkillEdge[]; r
       return { add: last ? [e(last.id, added.id)] : [], remove: [] };
     case "step": {
       if (!last) {
-        const t = g.nodes.find((n) => n.type === "trigger");
-        return { add: [...(t ? [e(t.id, added.id)] : []), ...(output ? [e(added.id, output.id)] : [])], remove: [] };
+        const starts = g.nodes.filter((n) => n.type === "trigger" || n.type === "schedule");
+        return { add: [...starts.map((t) => e(t.id, added.id)), ...(output ? [e(added.id, output.id)] : [])], remove: [] };
       }
       const toOut = output ? g.edges.filter((x) => x.source === last.id && x.target === output.id).map((x) => x.id) : [];
       return { add: [e(last.id, added.id), ...(output ? [e(added.id, output.id)] : [])], remove: toOut };
     }
     case "trigger":
+    case "schedule":
       return { add: first ? [e(added.id, first.id)] : [], remove: [] };
     case "output":
       return { add: last ? [e(last.id, added.id)] : [], remove: [] };
@@ -182,7 +195,7 @@ let seq = 0;
 export const nodeId = (kind: SkillNodeKind) => `${kind}-${Date.now().toString(36)}-${(seq++).toString(36)}`;
 
 /** A canvas for a skill: its saved graph, or one laid out from its fields (older skills, templates). */
-export function graphFromSkill(k: Pick<Skill, "triggers" | "instructions" | "platforms" | "mode"> & { graph?: string; connections?: string[] }): SkillGraph {
+export function graphFromSkill(k: Pick<Skill, "triggers" | "instructions" | "platforms" | "mode"> & { graph?: string; connections?: string[]; schedule?: string | null }): SkillGraph {
   if (k.graph) {
     try {
       const g = JSON.parse(k.graph) as SkillGraph;
@@ -206,5 +219,68 @@ export function graphFromSkill(k: Pick<Skill, "triggers" | "instructions" | "pla
     nodes.push({ id, type, position: { x: NODE_W + GAP_X + (i % 3) * (NODE_W + 40), y: 230 + Math.floor(i / 3) * 140 }, data: { ref } });
     edges.push({ id: `e-step-${id}`, source: "step-1", target: id });
   });
+  if (k.schedule) {
+    nodes.push({ id: "schedule", type: "schedule", position: { x: 0, y: 260 }, data: { cron: k.schedule } });
+    edges.push({ id: "e-schedule-step", source: "schedule", target: "step-1" });
+  }
   return { nodes, edges };
+}
+
+/**
+ * Lay out a skill drafted by "Build with AI": trigger and schedule on the left, steps left to right,
+ * the output after the last step, and each platform / server / document under the step that
+ * mentions it (else the last step). Node order = the order they're revealed in.
+ */
+export function graphFromGenerated(gen: GeneratedSkill, names: Record<string, string> = {}): SkillGraph {
+  const col = (i: number) => i * (NODE_W + GAP_X);
+  const nodes: SkillNode[] = [];
+  const edges: SkillEdge[] = [];
+  const e = (source: string, target: string) => edges.push({ id: `e-${source}-${target}`, source, target });
+  const hasTrigger = gen.triggers.length > 0 || !gen.schedule;
+  if (hasTrigger) nodes.push({ id: nodeId("trigger"), type: "trigger", position: { x: 0, y: gen.schedule ? -90 : 20 }, data: { text: gen.triggers.join(", ") } });
+  if (gen.schedule) nodes.push({ id: nodeId("schedule"), type: "schedule", position: { x: 0, y: hasTrigger ? 120 : 20 }, data: { cron: gen.schedule } });
+  const starts = nodes.map((n) => n.id);
+  const steps: SkillNode[] = gen.steps.map((text, i) => ({ id: nodeId("step"), type: "step", position: { x: col(i + 1), y: 0 }, data: { text } }));
+  steps.forEach((s, i) => {
+    nodes.push(s);
+    if (i === 0) starts.forEach((t) => e(t, s.id));
+    else e(steps[i - 1].id, s.id);
+  });
+  const last = steps[steps.length - 1];
+  const output: SkillNode = { id: nodeId("output"), type: "output", position: { x: col(steps.length + 1), y: 20 }, data: { mode: gen.mode === "do" ? "do" : "write" } };
+  // attachments: under the step that mentions them, stacked when several share a step
+  const label = (ref: string) => (names[ref] ?? PLATFORM_LABELS[ref] ?? ref).toLowerCase();
+  const perStep = new Map<string, number>();
+  const attach = (ref: string, type: SkillNodeKind) => {
+    const words = label(ref).split(/\s+/).filter((w) => w.length > 2);
+    const host = steps.find((s) => words.some((w) => (s.data.text ?? "").toLowerCase().includes(w))) ?? last;
+    if (!host) return;
+    const k = perStep.get(host.id) ?? 0;
+    perStep.set(host.id, k + 1);
+    const node: SkillNode = { id: nodeId(type), type, position: freeSpot(nodes, { x: host.position.x, y: 230 + k * 150 }), data: { ref } };
+    nodes.push(node);
+    e(host.id, node.id);
+  };
+  gen.platforms.forEach((r) => attach(r, "platform"));
+  gen.mcp.forEach((r) => attach(r, "mcp"));
+  gen.knowledge.forEach((r) => attach(r, "knowledge"));
+  nodes.push(output);
+  if (last) e(last.id, output.id);
+  return { nodes, edges };
+}
+
+const PLATFORM_LABELS: Record<string, string> = { upwork: "Upwork", slack: "Slack", gmail: "Gmail", linkedin: "LinkedIn", whatsapp: "WhatsApp", browser: "website browser", any: "app" };
+
+/** The skill as text for "Refine with AI" (what the canvas compiles to). */
+export function describeForAi(name: string, c: CompiledSkill, names: Record<string, string> = {}): string {
+  const label = (id: string) => names[id] ?? PLATFORM_LABELS[id] ?? id;
+  return [
+    `Name: ${name || "(unnamed)"}`,
+    `Triggers: ${c.triggers || "(none)"}`,
+    `Schedule (cron): ${c.schedule || "none"}`,
+    `Steps and notes:\n${c.instructions}`,
+    `Platforms: ${c.platforms.map(label).join(", ") || "(none)"}`,
+    `Connections (MCP servers, custom platforms, documents): ${c.connections.map((x) => `${label(x)} [${x}]`).join(", ") || "(none)"}`,
+    `Output: ${c.mode}`,
+  ].join("\n");
 }

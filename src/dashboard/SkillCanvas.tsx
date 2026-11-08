@@ -1,7 +1,7 @@
 // The skill editor as a canvas: drop nodes, connect them, and see the skill they generate.
 // Triggers start it, Steps run in arrow order, Platforms / MCP servers / Knowledge docs attach to
 // steps, and the Output says how it ends (write into the field, or do it on screen).
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   addEdge,
   Background,
@@ -26,12 +26,28 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { AlertTriangle, BookText, Boxes, Flag, Globe, ListOrdered, MousePointerClick, PenLine, Plug, Sparkles, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowUp, BookText, Boxes, ChevronDown, Clock, Flag, Globe, ListOrdered, Loader2, MousePointerClick, PenLine, Plug, RotateCcw, Sparkles, Trash2, WandSparkles, X, Zap } from "lucide-react";
 import { api } from "../lib/api";
+import { cronError, cronFromForm, describeCron, formatRun, formFromCron, nextRun, PRESETS, WEEKDAYS, type ScheduleForm } from "../lib/cron";
 import type { Connection, ContextDoc, Skill } from "../lib/types";
-import { autoWire, compileSkill, freeSpot, graphFromSkill, nodeId, NODE_W, orderedSteps, type SkillEdge, type SkillGraph, type SkillNode, type SkillNodeData, type SkillNodeKind } from "../lib/skillGraph";
+import {
+  autoWire,
+  compileSkill,
+  describeForAi,
+  freeSpot,
+  graphFromGenerated,
+  graphFromSkill,
+  nodeId,
+  NODE_W,
+  orderedSteps,
+  type SkillEdge,
+  type SkillGraph,
+  type SkillNode,
+  type SkillNodeData,
+  type SkillNodeKind,
+} from "../lib/skillGraph";
 import { PLATFORMS } from "./platforms";
 import { Button } from "./ui";
 
@@ -39,6 +55,7 @@ type FlowNode = Node<SkillNodeData, SkillNodeKind>;
 
 const KIND: Record<SkillNodeKind, { label: string; hint: string; color: string; icon: React.ReactNode }> = {
   trigger: { label: "Trigger", hint: "Words that start it", color: "#f5b94a", icon: <Zap size={13} /> },
+  schedule: { label: "Schedule", hint: "Runs by itself", color: "#ff8a5c", icon: <Clock size={13} /> },
   step: { label: "Step", hint: "One thing to do", color: "#3dbbff", icon: <ListOrdered size={13} /> },
   platform: { label: "Platform", hint: "Where it works", color: "#34d399", icon: <Globe size={13} /> },
   mcp: { label: "MCP server", hint: "Tools Flo can call", color: "#a78bfa", icon: <Plug size={13} /> },
@@ -96,6 +113,110 @@ function TriggerNode({ id, data, selected }: NodeProps<FlowNode>) {
     <Shell id={id} kind="trigger" selected={selected} target={false}>
       <input aria-label="Trigger phrases" className={inputCls} placeholder="proposal for this job, apply…" value={data.text ?? ""} onChange={(e) => set({ text: e.target.value })} />
       <div className="mt-1.5 text-[10.5px] text-white/40">Comma-separated. The skill's name works too.</div>
+    </Shell>
+  );
+}
+
+const DEFAULT_CRON = "0 9 * * 1-5";
+
+function ScheduleNode({ id, data, selected }: NodeProps<FlowNode>) {
+  const set = useData(id);
+  const cron = data.cron ?? "";
+  const [form, setForm] = useState<ScheduleForm>(() => formFromCron(cron || DEFAULT_CRON));
+  const [advanced, setAdvanced] = useState(() => formFromCron(cron || DEFAULT_CRON).preset === "custom");
+  // the cron changed from outside (Build with AI): show it on the matching preset
+  useEffect(() => {
+    if (form.preset !== "custom" && cron && cronFromForm(form) !== cron) {
+      const f = formFromCron(cron);
+      setForm(f);
+      if (f.preset === "custom") setAdvanced(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cron]);
+  const update = (patch: Partial<ScheduleForm>) => {
+    const f = { ...form, ...patch };
+    setForm(f);
+    if (f.preset === "custom") setAdvanced(true);
+    else set({ cron: cronFromForm(f) });
+  };
+  const err = cron.trim() ? cronError(cron) : "Pick when it should run.";
+  const next = err ? null : nextRun(cron);
+  const sel = inputCls + " nowheel appearance-none bg-no-repeat pr-7";
+  const chevron = { backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23ffffff80' stroke-width='3'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")", backgroundPosition: "right 9px center" };
+  return (
+    <Shell id={id} kind="schedule" selected={selected} target={false}>
+      <div className="space-y-1.5">
+        <select aria-label="Repeat" className={sel} style={chevron} value={form.preset} onChange={(e) => update({ preset: e.target.value as ScheduleForm["preset"] })}>
+          {PRESETS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        {form.preset === "weekly" && (
+          <select aria-label="Day" className={sel} style={chevron} value={form.day} onChange={(e) => update({ day: Number(e.target.value) })}>
+            {WEEKDAYS.map((d, i) => (
+              <option key={d} value={i}>
+                {d}
+              </option>
+            ))}
+          </select>
+        )}
+        {(form.preset === "weekdays" || form.preset === "daily" || form.preset === "weekly") && (
+          <label className="flex items-center gap-2 text-[11.5px] text-white/50">
+            at
+            <input aria-label="Time" type="time" className={inputCls + " [color-scheme:dark] tabular-nums"} value={form.time} onChange={(e) => e.target.value && update({ time: e.target.value })} />
+          </label>
+        )}
+        {form.preset === "minutes" && (
+          <label className="flex items-center gap-2 text-[11.5px] text-white/50">
+            every
+            <input
+              aria-label="Minutes"
+              type="number"
+              min={1}
+              max={59}
+              className={inputCls + " w-16 text-center tabular-nums"}
+              value={form.every}
+              onChange={(e) => update({ every: Math.min(59, Math.max(1, Number(e.target.value) || 1)) })}
+            />
+            minutes
+          </label>
+        )}
+      </div>
+      <button
+        onClick={() => setAdvanced(!advanced)}
+        aria-expanded={advanced}
+        className="nodrag mt-2 flex items-center gap-1 text-[10.5px] font-medium text-white/45 transition hover:text-white/80"
+      >
+        <ChevronDown size={11} className={clsx("transition", advanced ? "rotate-0" : "-rotate-90")} /> Advanced: cron expression
+      </button>
+      {advanced && (
+        <input
+          aria-label="Cron expression"
+          spellCheck={false}
+          className={inputCls + " mt-1.5 font-mono text-[12px] tracking-wide"}
+          placeholder="min hour day month weekday"
+          value={cron}
+          onChange={(e) => {
+            set({ cron: e.target.value });
+            setForm(formFromCron(e.target.value));
+          }}
+        />
+      )}
+      <div
+        data-testid="schedule-preview"
+        className={clsx("mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-snug", err ? "bg-red-500/10 text-red-200/90 ring-1 ring-red-400/25" : "bg-[#ff8a5c]/10 text-white/80 ring-1 ring-[#ff8a5c]/25")}
+      >
+        {err ? (
+          err
+        ) : (
+          <>
+            Runs {describeCron(cron)}
+            {next && <span className="text-white/50"> · next: {formatRun(next, new Date(), false)}</span>}
+          </>
+        )}
+      </div>
     </Shell>
   );
 }
@@ -247,7 +368,7 @@ function RemovableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
 
 const edgeTypes = { removable: RemovableEdge };
 
-const nodeTypes = { trigger: TriggerNode, step: StepNode, platform: PlatformNode, mcp: McpNode, knowledge: KnowledgeNode, output: OutputNode };
+const nodeTypes = { trigger: TriggerNode, schedule: ScheduleNode, step: StepNode, platform: PlatformNode, mcp: McpNode, knowledge: KnowledgeNode, output: OutputNode };
 
 const edgeDefaults = { type: "removable", animated: true, markerEnd: { type: MarkerType.ArrowClosed, color: "#66ceff", width: 16, height: 16 }, style: { stroke: "#66ceff", strokeWidth: 1.6 } };
 
@@ -265,6 +386,137 @@ function fromFlow(nodes: FlowNode[], edges: Edge[]): SkillGraph {
   };
 }
 
+const AI_EXAMPLES = [
+  "Every weekday at 9, read my unread Gmail, summarise it and post it to Slack #daily",
+  "When I say “proposal”, read the Upwork job on screen and write a proposal from my portfolio",
+  "Every Monday at 8:30, list my open to-dos by project and save it as a note",
+];
+const AI_STAGES = ["Reading your description…", "Choosing the steps…", "Wiring platforms and tools…", "Laying out the canvas…"];
+
+/** Shimmering placeholder nodes while the AI drafts the skill. */
+function GhostNodes() {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setStage((s) => Math.min(s + 1, AI_STAGES.length - 1)), 1100);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <motion.div className="pointer-events-none absolute inset-0 z-[5] flex flex-col items-center justify-center bg-[#070d14]/80 backdrop-blur-[3px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} data-testid="ai-ghosts">
+      <div className="flex items-center">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="flex items-center">
+            {i > 0 && <div className="h-px w-9 bg-gradient-to-r from-white/5 via-[var(--accent)]/50 to-white/5" />}
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ delay: i * 0.14, duration: 0.35, ease: [0.2, 0.8, 0.2, 1] }}
+              className="w-[184px] overflow-hidden rounded-2xl border border-white/10 bg-[#0d1722] shadow-[0_10px_30px_-12px_rgba(0,0,0,0.8)]"
+            >
+              <div className="flo-ghost h-8" style={{ animationDelay: `${i * 0.15}s` }} />
+              <div className="space-y-2 p-3">
+                <div className="flo-ghost h-2.5 w-4/5 rounded-full" style={{ animationDelay: `${i * 0.15}s` }} />
+                <div className="flo-ghost h-2.5 w-3/5 rounded-full" style={{ animationDelay: `${i * 0.15}s` }} />
+                <div className="flo-ghost h-7 rounded-lg" style={{ animationDelay: `${i * 0.15}s` }} />
+              </div>
+            </motion.div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-6 flex items-center gap-2 rounded-full border border-white/10 bg-[#0d1722]/90 px-3.5 py-1.5 text-[12px] text-white/75">
+        <Loader2 size={13} className="animate-spin text-[var(--accent)]" />
+        <AnimatePresence mode="wait">
+          <motion.span key={stage} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.18 }}>
+            {AI_STAGES[stage]}
+          </motion.span>
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  );
+}
+
+/** "Describe it in words": the Build / Refine with AI box floating over the canvas. */
+function AiComposer({ refine, busy, error, onSubmit, onClose }: { refine: boolean; busy: boolean; error: string; onSubmit: (text: string, mode: "build" | "refine") => void; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => ref.current?.focus(), []);
+  const go = (mode: "build" | "refine") => text.trim() && !busy && onSubmit(text.trim(), mode);
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
+      <motion.div
+        initial={{ opacity: 0, y: -10, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -8, scale: 0.98 }}
+        transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
+        className="flo-ai-card pointer-events-auto w-full max-w-[600px] rounded-2xl p-4 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95),0_0_40px_-12px_rgb(var(--accent-rgb)/0.5)]"
+        data-testid="ai-composer"
+        role="dialog"
+        aria-label={refine ? "Refine with AI" : "Build with AI"}
+      >
+        <div className="flex items-start gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent)] to-[#a78bfa] text-white shadow-[0_6px_18px_-6px_rgb(var(--accent-rgb)/0.8)]">
+            <WandSparkles size={15} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-semibold text-white">{refine ? "Refine with AI" : "Build with AI"}</div>
+            <div className="mt-0.5 text-[11.5px] leading-snug text-white/50">
+              {refine ? "Say what to change. Flo redraws the canvas; nothing is saved until you do." : "Describe the skill in plain words. Flo drafts the canvas; edit anything before you create it."}
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close AI" className="-mr-1 -mt-1 rounded-lg p-1.5 text-white/45 transition hover:bg-white/10 hover:text-white">
+            <X size={14} />
+          </button>
+        </div>
+        <textarea
+          ref={ref}
+          aria-label="Describe the skill"
+          rows={3}
+          value={text}
+          disabled={busy}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              go(refine ? "refine" : "build");
+            } else if (e.key === "Escape") {
+              e.stopPropagation();
+              onClose();
+            }
+          }}
+          placeholder={refine ? "Also post it to #standup on Fridays, and skip newsletters…" : "What should it do, where, and when? Flo picks the steps, platforms and tools…"}
+          className="mt-3 w-full resize-none rounded-xl bg-white/[0.05] px-3 py-2.5 text-[13px] leading-relaxed text-white outline-none ring-1 ring-white/10 transition placeholder:text-white/30 focus:ring-[var(--accent)] disabled:opacity-60"
+        />
+        {!refine && !text && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {AI_EXAMPLES.map((ex) => (
+              <button key={ex} onClick={() => setText(ex)} className="max-w-full truncate rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/60 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white">
+                {ex}
+              </button>
+            ))}
+          </div>
+        )}
+        {error && (
+          <div role="alert" className="mt-2.5 flex items-start gap-2 rounded-xl bg-red-500/10 px-3 py-2 text-[12px] leading-snug text-red-200 ring-1 ring-red-400/25" data-testid="ai-error">
+            <AlertTriangle size={13} className="mt-[1px] shrink-0" /> {error}
+          </div>
+        )}
+        <div className="mt-3 flex items-center gap-2">
+          <span className="flex-1 text-[11px] text-white/35">Type or dictate · ⌘↵ to {refine ? "refine" : "build"}</span>
+          {refine && (
+            <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} disabled={busy || !text.trim()} onClick={() => go("build")}>
+              Start over
+            </Button>
+          )}
+          <Button variant="primary" size="sm" icon={busy ? <Loader2 size={13} className="animate-spin" /> : refine ? <Sparkles size={13} /> : <ArrowUp size={13} />} disabled={busy || !text.trim()} onClick={() => go(refine ? "refine" : "build")}>
+            {busy ? (refine ? "Refining…" : "Building…") : refine ? "Refine" : "Build"}
+          </Button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave: (s: Skill) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
   const start = useMemo(() => toFlow(graphFromSkill(initial)), [initial]);
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(start.nodes);
@@ -273,7 +525,13 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
   const [enabled, setEnabled] = useState(initial.enabled);
   const [err, setErr] = useState("");
   const [picks, setPicks] = useState<{ platforms: Connection[]; mcps: Connection[]; docs: ContextDoc[] }>({ platforms: [], mcps: [], docs: [] });
-  const { screenToFlowPosition } = useReactFlow();
+  // Build with AI: open right away for a brand-new blank skill
+  const [aiOpen, setAiOpen] = useState(!initial.id && !initial.instructions.trim());
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiErr, setAiErr] = useState("");
+  const [aiNotes, setAiNotes] = useState<string[]>([]);
+  const timers = useRef<number[]>([]);
+  const { screenToFlowPosition, fitView } = useReactFlow();
 
   useEffect(() => {
     Promise.all([api.listConnections().catch(() => [] as Connection[]), api.listContextDocs()]).then(([conns, docs]) =>
@@ -285,6 +543,7 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
 
   const names = useMemo(() => {
     const m: Record<string, string> = {};
@@ -294,6 +553,8 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
   }, [picks]);
   const graph = fromFlow(nodes, edges);
   const compiled = compileSkill(graph, names);
+  const hasSteps = orderedSteps(graph).some((s) => (s.data.text ?? "").trim());
+  const next = compiled.schedule ? nextRun(compiled.schedule) : null;
 
   const onConnect = useCallback((c: FlowConnection) => setEdges((es) => addEdge({ ...c, id: `e-${c.source}-${c.target}-${Date.now().toString(36)}`, ...edgeDefaults }, es)), [setEdges]);
 
@@ -306,20 +567,60 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
       at ??
       (kind === "step" && last
         ? { x: last.position.x + NODE_W + 80, y: last.position.y }
-        : kind === "trigger"
-          ? { x: (steps[0]?.position.x ?? 0) - NODE_W - 80, y: steps[0]?.position.y ?? 0 }
+        : kind === "trigger" || kind === "schedule"
+          ? { x: (steps[0]?.position.x ?? 0) - NODE_W - 80, y: (steps[0]?.position.y ?? 0) + (kind === "schedule" ? 200 : 0) }
           : last
             ? { x: last.position.x, y: last.position.y + 220 }
             : screenToFlowPosition({ x: window.innerWidth / 2 - NODE_W / 2, y: window.innerHeight / 2 - 60 }));
-    const node: SkillNode = { id: nodeId(kind), type: kind, position: freeSpot(g.nodes, near), data: kind === "output" ? { mode: "write" } : {} };
+    const node: SkillNode = { id: nodeId(kind), type: kind, position: freeSpot(g.nodes, near), data: kind === "output" ? { mode: "write" } : kind === "schedule" ? { cron: DEFAULT_CRON } : {} };
     const wiring = autoWire({ nodes: [...g.nodes, node], edges: g.edges }, node);
     setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { ...node, selected: true }]);
     setEdges((es) => [...es.filter((x) => !wiring.remove.includes(x.id)), ...wiring.add.map((x) => ({ ...x, ...edgeDefaults }))]);
   };
 
+  /** Replace the canvas with `g`, revealing its nodes one by one (edges appear as both ends do). */
+  const reveal = (g: SkillGraph) => {
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current = [];
+    const flow = toFlow(g);
+    setNodes(flow.nodes.map((n) => ({ ...n, className: "flo-node-pending" })));
+    setEdges([]);
+    const later = (ms: number, f: () => void) => timers.current.push(window.setTimeout(f, ms));
+    // frame the finished layout first (the hidden nodes are measured by then), then show them
+    later(60, () => fitView({ padding: 0.22, maxZoom: 1, duration: 350 }));
+    const shown = new Set<string>();
+    flow.nodes.forEach((n, i) =>
+      later(380 + i * 150, () => {
+        shown.add(n.id);
+        setNodes((ns) => ns.map((x) => (x.id === n.id ? { ...x, className: "flo-node-in" } : x)));
+        const ready = flow.edges.filter((e) => e.source === n.id || e.target === n.id).filter((e) => shown.has(e.source) && shown.has(e.target));
+        if (ready.length) setEdges((es) => [...es, ...ready.filter((e) => !es.some((x) => x.id === e.id))]);
+      }),
+    );
+  };
+
+  const runAi = async (text: string, mode: "build" | "refine") => {
+    setAiBusy(true);
+    setAiErr("");
+    try {
+      const gen = await api.generateSkillGraph(text, mode === "refine" ? describeForAi(name, compiled, names) : undefined);
+      reveal(graphFromGenerated(gen, names));
+      if (mode === "build" || !name.trim()) setName(gen.name);
+      setAiNotes(gen.notes ?? []);
+      setErr("");
+      setAiOpen(false);
+    } catch (e) {
+      setAiErr(String(e).replace(/^Error:\s*/, "") || "Something went wrong. Try again.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   const save = async () => {
     if (!name.trim()) return setErr("Give the skill a name.");
     if (!compiled.instructions.trim() || compiled.warnings.some((w) => w.includes("Step"))) return setErr("Add at least one Step that says what to do.");
+    const badSchedule = compiled.warnings.find((w) => w.startsWith("Fix the Schedule"));
+    if (badSchedule) return setErr(badSchedule);
     try {
       await onSave({
         ...initial,
@@ -330,6 +631,7 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
         platforms: compiled.platforms,
         mode: compiled.mode,
         connections: compiled.connections,
+        schedule: compiled.schedule || null,
         graph: JSON.stringify(graph),
       });
     } catch (e) {
@@ -376,7 +678,23 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
 
         <div className="flex min-h-0 flex-1">
           {/* palette */}
-          <div className="w-[190px] shrink-0 space-y-1.5 border-r border-white/10 p-3" aria-label="Add nodes">
+          <div className="w-[190px] shrink-0 space-y-1.5 overflow-y-auto border-r border-white/10 p-3" aria-label="Add nodes">
+            <button
+              onClick={() => setAiOpen(true)}
+              aria-label={hasSteps ? "Refine with AI" : "Build with AI"}
+              className={clsx(
+                "flo-ai-card mb-3 flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left transition",
+                aiOpen ? "shadow-[0_0_30px_-4px_rgb(var(--accent-rgb)/0.8)]" : "shadow-[0_0_22px_-8px_rgb(var(--accent-rgb)/0.7)] hover:shadow-[0_0_30px_-4px_rgb(var(--accent-rgb)/0.8)]",
+              )}
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--accent)] to-[#a78bfa] text-white shadow-[0_4px_14px_-4px_rgb(var(--accent-rgb)/0.9)]">
+                {aiBusy ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[12.5px] font-semibold text-white">{hasSteps ? "Refine with AI" : "Build with AI"}</span>
+                <span className="block truncate text-[10.5px] text-white/50">{hasSteps ? "Describe a change" : "Describe it in words"}</span>
+              </span>
+            </button>
             <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-white/40">Add</div>
             {(Object.keys(KIND) as SkillNodeKind[]).map((k) => (
               <button
@@ -434,6 +752,10 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
               <Controls showInteractive={false} position="bottom-left" />
               <MiniMap pannable zoomable position="bottom-right" nodeColor={(n) => KIND[(n.type as SkillNodeKind) ?? "step"]?.color ?? "#3dbbff"} maskColor="rgba(5,9,14,0.75)" style={{ background: "#0a121b" }} />
             </ReactFlow>
+            <AnimatePresence>{aiBusy && <GhostNodes key="ghosts" />}</AnimatePresence>
+            <AnimatePresence>
+              {aiOpen && <AiComposer key="composer" refine={hasSteps} busy={aiBusy} error={aiErr} onSubmit={runAi} onClose={() => (setAiOpen(false), setAiErr(""))} />}
+            </AnimatePresence>
           </div>
 
           {/* generated skill */}
@@ -444,8 +766,18 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
             <div className="mt-3 space-y-3 text-[12.5px]">
               <div>
                 <div className="text-[11px] text-white/40">Say</div>
-                <div className="mt-0.5 text-white/85">{compiled.triggers || <span className="text-white/30">no trigger yet</span>}</div>
+                <div className="mt-0.5 text-white/85">{compiled.triggers || <span className="text-white/30">{compiled.schedule ? "nothing: it runs on its schedule" : "no trigger yet"}</span>}</div>
               </div>
+              {compiled.schedule && (
+                <div data-testid="compiled-schedule" className="rounded-xl bg-[#ff8a5c]/[0.08] p-2.5 ring-1 ring-[#ff8a5c]/20">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-[#ffb08f]">
+                    <Clock size={12} /> Runs on a schedule
+                  </div>
+                  <div className="mt-1 text-white/85">{cap(describeCron(compiled.schedule))}</div>
+                  {next && <div className="mt-0.5 text-[11px] text-white/45">Next run {formatRun(next)}</div>}
+                  {compiled.mode === "write" && <div className="mt-1.5 text-[11px] leading-snug text-white/40">On its schedule there's no field to type into, so the result is saved as a note and sent as a notification.</div>}
+                </div>
+              )}
               <div>
                 <div className="text-[11px] text-white/40">Flo will</div>
                 <pre className="mt-1 whitespace-pre-wrap rounded-xl bg-white/[0.04] p-2.5 font-sans text-[12px] leading-relaxed text-white/80">{compiled.instructions}</pre>
@@ -468,6 +800,18 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
                   {compiled.warnings.map((w) => (
                     <div key={w} className="flex items-start gap-1.5 text-[11.5px] text-amber-200/80">
                       <AlertTriangle size={12} className="mt-[2px] shrink-0" /> {w}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {aiNotes.length > 0 && (
+                <div className="space-y-1 rounded-xl bg-[var(--accent)]/[0.07] p-2.5 ring-1 ring-[var(--accent)]/20" data-testid="ai-notes">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-brand-200">
+                    <WandSparkles size={12} /> From the AI
+                  </div>
+                  {aiNotes.map((n) => (
+                    <div key={n} className="text-[11.5px] leading-snug text-white/65">
+                      {n}
                     </div>
                   ))}
                 </div>
