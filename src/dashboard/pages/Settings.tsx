@@ -18,6 +18,8 @@ import { playCue, SOUND_PACKS, type SoundPack } from "../../lib/cueSounds";
 import { DEFAULT_WIDGETS, WIDGETS, loadWidgets, saveWidgets, type WidgetId } from "../../lib/widgets";
 import { WidgetPreview } from "../../island/Widgets";
 import { UpdateSettingsRow } from "../UpdateCard";
+import { PresenceSettings } from "../Presence";
+import { AutoContinueSettings } from "../AutoContinue";
 import { formatZoneTime, hourDiffLabel, loadZones, MAX_ZONES, onZonesChange, saveZones, searchCities, type ClockZone, type ZoneCity } from "../../lib/timezones";
 
 const TABS = ["General", "Appearance", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
@@ -469,6 +471,7 @@ function Notch({ s, set }: P) {
             checked={s.claudeApprovals ?? true}
             onChange={(v) => set({ claudeApprovals: v })}
           />
+          <AutoContinueSettings s={s} set={set} />
         </Card>
       </Section>
 
@@ -691,6 +694,9 @@ function General({ s, set }: P) {
     <div className="space-y-6">
       <Section first title="Account" hint="Who's signed in on this Mac.">
         <AccountTab />
+      </Section>
+      <Section title="Presence & phone" hint="Active means you're at your Mac. Away sends short notifications to your phone.">
+        <PresenceSettings s={s} set={set} />
       </Section>
       <Section title="Preferences">
         <Card className="divide-y divide-[var(--border)] px-5 py-2">

@@ -27,6 +27,8 @@ mod meeting_detect;
 mod model;
 mod platform;
 mod prompts;
+mod push;
+mod autocontinue;
 mod secrets;
 mod session;
 mod selftest;
@@ -216,8 +218,12 @@ fn spawn_hover_tracker(app: AppHandle, st: Shared) {
             let Some((x, y, ww, wh)) = sample else { continue };
             // hysteresis: enter on the exact frame; leave only when ≥8px outside for 2 samples in a row,
             // so a window resize under a resting cursor can never toggle the menu open/closed
-            let strictly_in = x >= 0.0 && x <= ww && y >= 0.0 && y <= wh;
-            let near = x >= -8.0 && x <= ww + 8.0 && y >= -8.0 && y <= wh + 8.0;
+            // the hot zone is a little larger than the window (a small notch is an easy target);
+            // "near" stays wider than the hot zone so entering at its edge can't flap
+            const PAD_X: f64 = 22.0;
+            const PAD_Y: f64 = 8.0;
+            let strictly_in = x >= -PAD_X && x <= ww + PAD_X && y >= 0.0 && y <= wh + PAD_Y;
+            let near = x >= -(PAD_X + 8.0) && x <= ww + PAD_X + 8.0 && y >= -8.0 && y <= wh + PAD_Y + 8.0;
             let now = if inside {
                 if near {
                     outside_streak = 0;
@@ -419,6 +425,7 @@ pub fn run() {
             commands::open_claude_session,
             commands::list_claude_sessions,
             commands::open_claude_by_session,
+            commands::focus_claude_session,
             commands::dismiss_claude_session,
             commands::accept_correction,
             commands::undo_correction,
@@ -426,6 +433,7 @@ pub fn run() {
             commands::install_integration,
             commands::uninstall_integration,
             commands::slack_connect,
+            commands::slack_oauth_start,
             commands::slack_status,
             commands::slack_disconnect,
             commands::slack_sync_now,
@@ -465,6 +473,18 @@ pub fn run() {
             code::stop_code_run,
             skillgen::generate_skill_graph,
             scheduler::run_skill_now,
+            push::get_presence,
+            push::set_presence,
+            push::pair_phone_start,
+            push::list_phones,
+            push::remove_phone,
+            push::send_test_push,
+            autocontinue::list_auto_continue,
+            autocontinue::set_auto_continue,
+            autocontinue::auto_continue_now,
+            autocontinue::cancel_auto_continue,
+            autocontinue::dismiss_auto_continue,
+            autocontinue::auto_continue_log,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -508,6 +528,7 @@ pub fn run() {
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
                         account::handle_deep_link(st_dl.clone(), url.to_string());
+                        slack::handle_deep_link(st_dl.clone(), url.to_string());
                     }
                 });
             }
@@ -528,6 +549,8 @@ pub fn run() {
             mcp::refresh_hosts(&st, None);
             reminders::spawn(st.clone());
             scheduler::spawn(st.clone());
+            push::spawn(st.clone());
+            autocontinue::spawn(st.clone());
             attention::spawn(st.clone());
             // both read the hook token from the keychain, which can wait on a macOS permission
             // prompt; never block app start (and the notch) on that
@@ -542,6 +565,7 @@ pub fn run() {
                     .ok();
             }
             updater::spawn_auto_check(handle.clone());
+            media::init(handle.clone());
             spawn_hover_tracker(handle.clone(), st.clone());
             stt::spawn_idle_unloader(st.whisper.clone());
             Ok(())

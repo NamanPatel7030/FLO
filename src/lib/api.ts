@@ -142,7 +142,9 @@ export const api = {
   uninstallIntegration: (id: string) => call<Integration[]>("uninstall_integration", { id }),
   slackConnect: (token: string) => call<string>("slack_connect", { token }),
   slackStatus: () => call<string | null>("slack_status").catch(() => null),
-  slackDisconnect: () => call<void>("slack_disconnect"),
+  /** one-click Connect Slack: opens the browser; the result arrives on EV.slack */
+  slackOauthStart: () => call<string>("slack_oauth_start"),
+  slackDisconnect: (revoke = false) => call<void>("slack_disconnect", { revoke }),
   slackSyncNow: () => call<number>("slack_sync_now"),
   confirmAction: (id: string, approve: boolean) => call<string>("confirm_action", { id, approve }),
   /** Claude Code permission prompt: allow | deny | terminal (answer it in the terminal instead) */
@@ -168,6 +170,8 @@ export const api = {
   deleteContextDoc: (id: string) => call<void>("delete_context_doc", { id }),
   listClaudeSessions: () => call<ClaudeSession[]>("list_claude_sessions").catch(() => [] as ClaudeSession[]),
   openClaudeBySession: (sessionId: string) => call<string>("open_claude_by_session", { sessionId }),
+  /** focus the window of a session that's asking for permission (nothing is dismissed) */
+  focusClaudeSession: (sessionId?: string, cwd?: string) => call<string>("focus_claude_session", { sessionId: sessionId ?? null, cwd: cwd ?? null }),
   dismissClaudeSession: (sessionId: string) => call<void>("dismiss_claude_session", { sessionId }),
   acceptCorrection: (heard: string, corrected: string) => call<DictionaryEntry>("accept_correction", { heard, corrected }),
   undoCorrection: (heard: string, corrected: string) => call<void>("undo_correction", { heard, corrected }),
@@ -187,4 +191,12 @@ export const api = {
   claudeHookStatus: () => call<ClaudeHookStatus>("claude_hook_status"),
   installClaudeHook: () => call<ClaudeHookStatus>("install_claude_hook"),
   uninstallClaudeHook: () => call<ClaudeHookStatus>("uninstall_claude_hook"),
+  // presence (Active / Away) + paired phones (push.rs)
+  getPresence: () => call<import("./types").PresenceInfo>("get_presence"),
+  setPresence: (status: import("./types").PresenceStatus) => call<import("./types").PresenceInfo>("set_presence", { status }),
+  pairPhoneStart: () => call<import("./types").PairCode>("pair_phone_start"),
+  listPhones: () => call<import("./types").PhoneDevice[]>("list_phones"),
+  removePhone: (id: string) => call<void>("remove_phone", { id }),
+  /** only while Away; errors when Active */
+  sendTestPush: () => call<import("./types").PushResult>("send_test_push"),
 };

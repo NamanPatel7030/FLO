@@ -19,6 +19,7 @@ import { Signature } from "./Signature";
 import { Ocean } from "../island/Ocean";
 import { Kbd } from "./ui";
 import { UpdateSidebarCard } from "./UpdateCard";
+import { PresenceSidebarCard } from "./Presence";
 import { checkForUpdate } from "../lib/updates";
 import { Logo } from "./Logo";
 import { missingRequired, usePermissions } from "./usePermissions";
@@ -139,6 +140,7 @@ export default function Dashboard() {
           </nav>
           <div className="mt-auto p-3">
             <UpdateSidebarCard />
+            <PresenceSidebarCard />
             <div className="rounded-2xl glass-strong p-3 text-[12px] text-muted">
               {ready ? (
                 <>

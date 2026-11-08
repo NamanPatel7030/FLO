@@ -19,6 +19,9 @@ pub fn get_settings(st: State<Shared>) -> Settings {
 
 #[tauri::command]
 pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
+    // presence changes only through set_presence (push.rs); a stale settings copy must not undo it
+    let mut settings = settings;
+    settings.presence = st.settings().presence;
     settings::save(&st.data_dir, &settings).map_err(e)?;
     if let Some(h) = url::Url::parse(&settings.account_url).ok().and_then(|u| u.host_str().map(String::from)) {
         st.egress.allow_account_host(&h);
@@ -540,6 +543,24 @@ pub async fn open_claude_by_session(st: State<'_, Shared>, session_id: String) -
         .map_err(e)
 }
 
+/// Permission card "Open": focus the asking session's window (by session, else by its folder)
+/// without dismissing anything — the question is still waiting.
+#[tauri::command]
+pub async fn focus_claude_session(st: State<'_, Shared>, session_id: Option<String>, cwd: Option<String>) -> R<String> {
+    let known = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => st.db.get_claude_session(id).map_err(e)?,
+        None => None,
+    };
+    let (b, t, cwd) = match known {
+        Some(s) => (s.app_bundle, s.terminal, s.cwd),
+        None => (None, None, cwd.unwrap_or_default()),
+    };
+    tauri::async_runtime::spawn_blocking(move || claude::focus(b.as_deref(), t.as_deref(), &cwd))
+        .await
+        .map_err(e)?
+        .map_err(e)
+}
+
 #[tauri::command]
 pub fn dismiss_claude_session(st: State<Shared>, session_id: String) -> R<()> {
     st.db.dismiss_claude_session(&session_id).map_err(e)?;
@@ -727,10 +748,19 @@ pub async fn slack_connect(st: State<'_, Shared>, token: String) -> R<String> {
         return Err("Use a Slack *user* token (starts with xoxp-).".into());
     }
     secrets::set_api_key("slack", &token).map_err(e)?;
-    crate::slack::test(st.inner()).await.map_err(|err| {
+    crate::slack::reset_cache();
+    let who = crate::slack::test(st.inner()).await.map_err(|err| {
         let _ = secrets::delete_api_key("slack");
         err.to_string()
-    })
+    })?;
+    st.emit(crate::slack::EV_SLACK, serde_json::json!({ "connected": true, "who": who }));
+    Ok(who)
+}
+
+/// One-click Connect Slack: opens our website's Connect URL in the browser; finishes via flo://slack.
+#[tauri::command]
+pub async fn slack_oauth_start(st: State<'_, Shared>) -> R<String> {
+    crate::slack::oauth_start(st.inner()).await.map_err(e)
 }
 
 #[tauri::command]
@@ -742,8 +772,8 @@ pub async fn slack_status(st: State<'_, Shared>) -> R<Option<String>> {
 }
 
 #[tauri::command]
-pub fn slack_disconnect() -> R<()> {
-    secrets::delete_api_key("slack").map_err(e)
+pub async fn slack_disconnect(st: State<'_, Shared>, revoke: Option<bool>) -> R<()> {
+    crate::slack::disconnect(st.inner(), revoke.unwrap_or(false)).await.map_err(e)
 }
 
 #[tauri::command]

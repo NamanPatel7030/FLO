@@ -26,6 +26,9 @@ import type {
 import { EV } from "./types";
 import { countWords } from "./format";
 import { codeMock, UNHANDLED } from "./mockCode";
+import { mediaControl, mediaSample, mediaSet } from "./mockMedia";
+import { presenceMock } from "./mockPresence";
+import { autoContinueMock } from "./mockAutoContinue";
 
 // ── event bus ───────────────────────────────────────────────────────────────
 type Cb = (payload: any) => void;
@@ -92,12 +95,17 @@ const settings: Settings = {
   stopSoundOn: true,
   systemNotifications: true,
   claudeApprovals: true,
+  claudeAutoContinue: false,
+  claudeContinuePrompt: "Continue where you left off.",
   typingWpm: 40,
   userName: "Parth",
   theme: "dark",
   accent: "#3dbbff",
   notchStyle: "ribbon",
   notchGradient: [],
+  presence: "active",
+  autoAway: false,
+  autoAwayMinutes: 10,
 };
 
 const keys = new Set<string>(["groq"]);
@@ -650,10 +658,47 @@ const integrations: Integration[] = [
   { id: "webhook", name: "Any tool (webhook)", available: true, installed: true, configPath: "http://127.0.0.1:47621/agent/hook?token=TOKEN&source=NAME", note: "POST JSON {status, project, message} from any script or agent." },
 ];
 let slackWho: string | null = null;
+/** Connect Slack started (slack_oauth_start) and waiting for flo://slack */
+let slackPending: string | null = null;
+let slackRevoked = 0;
+/** URLs the app would open in the browser (for tests) */
+export const openedUrls: string[] = [];
+/** what the Rust flo://slack deep-link handler does once the website hands the token back */
+function mockSlackDeepLink(code = "handoff_demo_code_123456") {
+  if (!slackPending || code.toUpperCase().includes("BAD")) {
+    const error = "That Slack link expired. Click Connect Slack in Flo again.";
+    mockEmit(EV.slack, { connected: false, error });
+    mockEmit(EV.toast, { kind: "error", text: `Slack: ${error}` });
+    return false;
+  }
+  slackPending = null;
+  slackWho = "parth · Northwind";
+  mockEmit(EV.slack, { connected: true, who: slackWho });
+  mockEmit(EV.toast, { kind: "success", text: "Slack connected as @parth in Northwind" });
+  return true;
+}
 /** confirm_action calls (for tests) */
 export const confirmLog: { id: string; approve: boolean }[] = [];
 export function mockConfirm(title = "Send to Rahul on Slack?", body = "Hey Rahul, the deck is in the shared drive. Can you review it before Friday's call? Thanks!") {
   const e: ConfirmEvent = { id: uid("cf"), kind: "slack", title, body };
+  mockEmit(EV.confirm, e);
+  return e;
+}
+
+/** A Claude Code permission prompt, shaped like claude.rs ask_permission emits it. */
+export function mockPermission(project = "blog-100-plan", tool = "Bash", body = "Run: npm run build && npx wrangler pages deploy ./dist --project-name blog-100-plan --branch main --commit-dirty=true", secsAgo = 0) {
+  const e: ConfirmEvent = {
+    id: uid("perm"),
+    kind: "claude",
+    title: `Claude needs you · ${project}`,
+    body,
+    sessionId: `sess-${project}`,
+    cwd: `/Users/p/${project}`,
+    project,
+    tool,
+    app: "com.googlecode.iterm2",
+    at: new Date(Date.now() - secsAgo * 1000).toISOString(),
+  };
   mockEmit(EV.confirm, e);
   return e;
 }
@@ -664,8 +709,10 @@ export const resizeLog: { w: number; h: number; at: number }[] = [];
 /** every invoke (for tests: assert which commands ran with which args) */
 export const callLog: { cmd: string; args: Record<string, any> }[] = [];
 
-// now-playing widget mock: a track that advances while 'playing'
-const np = { app: "Spotify", title: "Night Owl", artist: "Galimatias", album: "Urban Flora", playing: true, elapsed: 42 };
+// now playing: simulated in mockMedia.ts (Spotify queue with artwork, a video in Chrome);
+// every change is pushed as EV.nowPlaying like the backend does
+const emitNowPlaying = (np: unknown) => mockEmit(EV.nowPlaying, np);
+if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) setTimeout(() => emitNowPlaying(mediaSample()), 400);
 let mockVolume = 55;
 let mockAgentMode = false;
 
@@ -675,7 +722,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "get_settings":
       return { ...settings };
     case "save_settings":
-      Object.assign(settings, args.settings);
+      // like the backend: presence changes only through set_presence
+      Object.assign(settings, args.settings, { presence: settings.presence });
       return null;
     case "set_api_key":
       keys.add(args.provider);
@@ -1079,11 +1127,22 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "slack_connect":
       if (!String(args.token ?? "").startsWith("xox")) throw new Error("That doesn't look like a Slack token (xoxp-…)");
       slackWho = "Parth Gundaniya · Northwind";
+      mockEmit(EV.slack, { connected: true, who: slackWho });
       return slackWho;
+    case "slack_oauth_start": {
+      // the real app opens this in the browser; finish with __floMock.slackDeepLink()
+      await sleep(150);
+      slackPending = "st_" + Math.random().toString(36).slice(2, 10);
+      const url = `${ACCOUNT_URL}/api/slack/install?state=${slackPending}`;
+      openedUrls.push(url);
+      return url;
+    }
     case "slack_status":
       return slackWho;
     case "slack_disconnect":
       slackWho = null;
+      slackRevoked += args.revoke ? 1 : 0;
+      mockEmit(EV.slack, { connected: false });
       return null;
     case "slack_sync_now":
       return 3;
@@ -1124,6 +1183,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     }
     case "list_claude_sessions":
       return claudeSessions.map((s) => ({ ...s }));
+    case "focus_claude_session":
+      return claudeSessions.find((s) => s.sessionId === args.sessionId)?.appBundle ?? "com.googlecode.iterm2";
     case "open_claude_by_session":
     case "dismiss_claude_session": {
       const i = claudeSessions.findIndex((s) => s.sessionId === args.sessionId);
@@ -1150,9 +1211,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return ev?.appBundle ?? "com.microsoft.VSCode";
     }
     case "now_playing":
-      if (!np.playing && np.elapsed === 0) return null;
-      np.elapsed = (np.elapsed + 3) % 214;
-      return { ...np };
+      return mediaSample();
     case "answer_claude_permission":
       (window as any).__floPermissions = [...((window as any).__floPermissions ?? []), { id: args.id, decision: args.decision }];
       return null;
@@ -1165,14 +1224,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "weather":
       return { tempC: 27, code: 2, isDay: true, place: "Ahmedabad" };
     case "media_control":
-      if (args.action === "playpause") np.playing = !np.playing;
-      if (args.action === "next") {
-        np.title = "Weightless";
-        np.artist = "Marconi Union";
-        np.elapsed = 0;
-        np.playing = true;
-      }
-      if (args.action === "previous") np.elapsed = 0;
+      emitNowPlaying(mediaControl(String(args.action)));
       return null;
     case "get_volume":
       return mockVolume;
@@ -1208,6 +1260,12 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       // Projects → Code commands live in their own mock (lib/mockCode.ts)
       const r = await codeMock(cmd, args, { projects, emit: mockEmit });
       if (r !== UNHANDLED) return r;
+      // presence (Active / Away) + paired phones live in lib/mockPresence.ts
+      const pr = await presenceMock(cmd, args, { settings, emit: mockEmit, signedIn: () => account.signedIn });
+      if (pr !== UNHANDLED) return pr;
+      // auto-continue after a Claude usage limit lives in lib/mockAutoContinue.ts
+      const ac = await autoContinueMock(cmd, args, { settings, emit: mockEmit });
+      if (ac !== UNHANDLED) return ac;
       console.warn("[mock] unknown command", cmd, args);
       return null;
     }
@@ -1236,6 +1294,14 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
       emitSessions();
     },
     confirm: mockConfirm,
+    permission: mockPermission,
     confirms: confirmLog,
+    /** browser opens requested by the app (Connect Slack, …) */
+    opened: openedUrls,
+    /** simulate flo://slack?code=… arriving (after Connect Slack in the browser) */
+    slackDeepLink: mockSlackDeepLink,
+    slackRevoked: () => slackRevoked,
+    /** now playing: "spotify" | "youtube" | "paused" | "none" | a NowPlaying | null → emits EV.nowPlaying */
+    setNowPlaying: (v: unknown) => emitNowPlaying(mediaSet(v as never)),
   };
 }

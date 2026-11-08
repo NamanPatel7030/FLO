@@ -96,10 +96,20 @@ pub struct Settings {
     pub system_notifications: bool,
     /// answer Claude Code's permission prompts (Allow / Deny) from the notch
     pub claude_approvals: bool,
+    /// resume a Claude Code session by itself once its usage limit resets (autocontinue.rs)
+    pub claude_auto_continue: bool,
+    /// what the resumed session is told ("Continue where you left off.")
+    pub claude_continue_prompt: String,
     /// two-stop gradient for the notch accent [from, to]; empty = derive from accent
     pub notch_gradient: Vec<String>,
     /// Flo Vault: automatically grow a local knowledge graph from your activity
     pub vault_auto: bool,
+    /// "active" (at the Mac) | "away" (AFK: summaries go to paired phones). Changed only via
+    /// set_presence (see push.rs); save_settings keeps the current value.
+    pub presence: String,
+    /// go Away automatically when the screen locks or after `auto_away_minutes` idle (macOS)
+    pub auto_away: bool,
+    pub auto_away_minutes: u32,
 }
 
 impl Default for Settings {
@@ -151,8 +161,13 @@ impl Default for Settings {
             stop_sound_on: true,
             system_notifications: true,
             claude_approvals: true,
+            claude_auto_continue: false,
+            claude_continue_prompt: "Continue where you left off.".into(),
             notch_gradient: vec![],
             vault_auto: true,
+            presence: "active".into(),
+            auto_away: false,
+            auto_away_minutes: 10,
         }
     }
 }
@@ -338,7 +353,7 @@ pub struct Weather {
     pub place: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NowPlaying {
     pub app: String,
@@ -346,8 +361,22 @@ pub struct NowPlaying {
     pub artist: String,
     pub album: String,
     pub playing: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elapsed: Option<f64>,
+    /// track length in seconds
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
+    /// unix ms when `elapsed` was sampled (the UI advances the progress bar from here while playing)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    /// data: URL of the playing app's icon
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_icon: Option<String>,
+    /// data: URL of the track artwork, when the player exposes it
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

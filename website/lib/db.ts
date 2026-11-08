@@ -37,6 +37,25 @@ async function init() {
           `CREATE TABLE IF NOT EXISTS handoffs(
              code TEXT PRIMARY KEY, state TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
              expires_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)`,
+          // one-click Connect Slack (lib/slack.ts): short-lived, deleted once claimed
+          `CREATE TABLE IF NOT EXISTS slack_states(
+             state TEXT PRIMARY KEY, challenge TEXT NOT NULL, user_id TEXT, expires_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)`,
+          `CREATE TABLE IF NOT EXISTS slack_handoffs(
+             code TEXT PRIMARY KEY, sealed TEXT NOT NULL, challenge TEXT NOT NULL, user_id TEXT, team TEXT NOT NULL DEFAULT '',
+             slack_user TEXT NOT NULL DEFAULT '', expires_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)`,
+          // presence + phone relay (see docs/mobile-api.md, lib/mobile.ts)
+          `CREATE TABLE IF NOT EXISTS presence(
+             user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, status TEXT NOT NULL, since TEXT NOT NULL)`,
+          `CREATE TABLE IF NOT EXISTS mobile_devices(
+             id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL,
+             platform TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, push_token TEXT, created_at TEXT NOT NULL, last_seen TEXT NOT NULL)`,
+          `CREATE TABLE IF NOT EXISTS pair_codes(
+             code_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+             expires_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0)`,
+          `CREATE TABLE IF NOT EXISTS notifications(
+             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+             kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, data TEXT, created_at TEXT NOT NULL)`,
+          `CREATE INDEX IF NOT EXISTS notifications_user ON notifications(user_id, id)`,
         ],
         "write",
       )
@@ -47,6 +66,12 @@ async function init() {
       });
   }
   return ready;
+}
+
+/** The ready (tables created) client, for feature modules like lib/mobile.ts. */
+export async function readyDb(): Promise<Client> {
+  await init();
+  return db();
 }
 
 export const normalizeEmail = (e: string) => e.trim().toLowerCase();
@@ -157,4 +182,77 @@ export async function redeemHandoff(code: string, state?: string): Promise<User 
   if (!r) return null;
   if (state && state !== r.state) return null;
   return findUserById(r.user_id);
+}
+
+// ── one-click Connect Slack (see lib/slack.ts) ──────────────────────────────
+/** One-time OAuth state for Connect Slack, bound to the desktop's challenge (and Flo account when signed in). */
+export async function createSlackState(state: string, challenge: string, userId: string | null, ttlMs: number): Promise<void> {
+  await init();
+  const now = Date.now();
+  await db().execute({ sql: "DELETE FROM slack_states WHERE expires_at < ?", args: [now] });
+  await db().execute({
+    sql: "INSERT INTO slack_states (state, challenge, user_id, expires_at) VALUES (?, ?, ?, ?)",
+    args: [state, challenge, userId, now + ttlMs],
+  });
+}
+
+/** Is this state live (issued, unused, unexpired)? Doesn't consume it. */
+export async function slackStateLive(state: string): Promise<boolean> {
+  await init();
+  const rs = await db().execute({ sql: "SELECT 1 FROM slack_states WHERE state = ? AND used = 0 AND expires_at > ?", args: [state, Date.now()] });
+  return rs.rows.length > 0;
+}
+
+/** Consume a state once (the OAuth callback). */
+export async function consumeSlackState(state: string): Promise<{ challenge: string; userId: string | null } | null> {
+  await init();
+  const rs = await db().execute({
+    sql: "UPDATE slack_states SET used = 1 WHERE state = ? AND used = 0 AND expires_at > ? RETURNING challenge, user_id",
+    args: [state, Date.now()],
+  });
+  const r = rs.rows[0] as unknown as { challenge: string; user_id: string | null } | undefined;
+  if (!r) return null;
+  await db().execute({ sql: "DELETE FROM slack_states WHERE state = ?", args: [state] });
+  return { challenge: String(r.challenge), userId: r.user_id ? String(r.user_id) : null };
+}
+
+/** Park a sealed Slack token under a one-time handoff code (the desktop claims it). */
+export async function createSlackHandoff(h: {
+  code: string;
+  sealed: string;
+  challenge: string;
+  userId: string | null;
+  team: string;
+  slackUser: string;
+  ttlMs: number;
+}): Promise<void> {
+  await init();
+  const now = Date.now();
+  await db().execute({ sql: "DELETE FROM slack_handoffs WHERE expires_at < ?", args: [now] });
+  await db().execute({
+    sql: "INSERT INTO slack_handoffs (code, sealed, challenge, user_id, team, slack_user, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    args: [h.code, h.sealed, h.challenge, h.userId, h.team, h.slackUser, now + h.ttlMs],
+  });
+}
+
+/**
+ * Claim a handoff exactly once: the code, the challenge (sha256 of the desktop's verifier) and — when the
+ * flow was started signed in — the Flo account must all match. The row is deleted on success.
+ */
+export async function claimSlackHandoff(
+  code: string,
+  challenge: string,
+  userId: string | null,
+): Promise<{ sealed: string; team: string; slackUser: string } | null> {
+  await init();
+  const rs = await db().execute({
+    sql: `UPDATE slack_handoffs SET used = 1
+          WHERE code = ? AND challenge = ? AND used = 0 AND expires_at > ? AND (user_id IS NULL OR user_id = ?)
+          RETURNING sealed, team, slack_user`,
+    args: [code, challenge, Date.now(), userId ?? ""],
+  });
+  const r = rs.rows[0] as unknown as { sealed: string; team: string; slack_user: string } | undefined;
+  if (!r) return null;
+  await db().execute({ sql: "DELETE FROM slack_handoffs WHERE code = ?", args: [code] });
+  return { sealed: String(r.sealed), team: String(r.team ?? ""), slackUser: String(r.slack_user ?? "") };
 }

@@ -97,6 +97,10 @@ export interface Settings {
   systemNotifications?: boolean;
   /** answer Claude Code's permission prompts (Allow / Deny) from the notch */
   claudeApprovals?: boolean;
+  /** resume a Claude Code session by itself once its usage limit resets (default off) */
+  claudeAutoContinue?: boolean;
+  /** what the resumed session is told */
+  claudeContinuePrompt?: string;
   /** Typing speed used for "time saved" analytics */
   typingWpm: number;
   userName: string;
@@ -108,6 +112,41 @@ export interface Settings {
   notchStyle: NotchStyle;
   /** two-stop gradient [from, to] for the notch; empty = derive from accent */
   notchGradient: string[];
+  /** "active" (at the Mac) | "away" (phone gets notifications). Change it with set_presence, not save_settings. */
+  presence?: PresenceStatus;
+  /** go Away automatically when the screen locks or after `autoAwayMinutes` idle (macOS) */
+  autoAway?: boolean;
+  autoAwayMinutes?: number;
+}
+
+// ── presence + phone relay (src-tauri/src/push.rs, docs/mobile-api.md) ──────
+export type PresenceStatus = "active" | "away";
+/** get_presence / set_presence and the EV.presence payload */
+export interface PresenceInfo {
+  status: PresenceStatus;
+  /** signed in to a Flo account, so Away can reach a phone */
+  signedIn: boolean;
+  /** went Away by itself (screen lock / idle) */
+  auto: boolean;
+}
+/** pair_phone_start: show a QR of `payload` + the code */
+export interface PairCode {
+  /** "483 920" */
+  code: string;
+  /** "flo-pair://<host>/<digits>" */
+  payload: string;
+  expiresAt: string;
+}
+export interface PhoneDevice {
+  id: string;
+  name: string;
+  platform: string;
+  lastSeen: string;
+}
+export interface PushResult {
+  stored: boolean;
+  pushed: number;
+  reason?: string;
 }
 
 export type ThemeMode = "dark" | "light" | "system";
@@ -433,7 +472,8 @@ export interface AttentionStatus {
 // Claude Code hooks (Stop / Notification / SubagentStop) POST to Flo's
 // localhost-only listener; Flo shows an island reminder + logs the session.
 
-export type ClaudeEventKind = "stop" | "notification" | "subagent_stop";
+/** limit / resumed: one-off notch cards from auto-continue (autocontinue.rs), never stored */
+export type ClaudeEventKind = "stop" | "notification" | "subagent_stop" | "limit" | "resumed";
 
 export interface ClaudeEvent {
   id: string;
@@ -506,6 +546,19 @@ export interface ConfirmEvent {
   kind: "slack" | "claude";
   title: string;
   body: string;
+  // claude permission prompts: who is asking (all optional; older backends send title/body only)
+  /** Claude Code session id (focus its window with focus_claude_session) */
+  sessionId?: string;
+  /** the session's working folder */
+  cwd?: string;
+  /** folder name, e.g. "blog-100-plan" */
+  project?: string;
+  /** Claude Code tool: "Bash", "Edit", "Write", "WebFetch", "mcp__server__tool", … */
+  tool?: string;
+  /** terminal / editor the session runs in (name or bundle id), when known */
+  app?: string | null;
+  /** RFC 3339 time the question was asked */
+  at?: string;
 }
 
 /** Flo noticed you corrected a word it typed. */
@@ -572,7 +625,18 @@ export interface NowPlaying {
   artist: string;
   album: string;
   playing: boolean;
+  /** seconds into the track when it was sampled (see elapsedAt) */
   elapsed?: number;
+  /** source app bundle id, e.g. "com.spotify.client", "com.google.Chrome" */
+  bundleId?: string;
+  /** track length in seconds (absent for live streams / unknown) */
+  duration?: number;
+  /** unix ms when `elapsed` was sampled; interpolate locally while playing */
+  elapsedAt?: number;
+  /** album art / video thumbnail as a data: URL */
+  artwork?: string | null;
+  /** the source app's icon as a data: URL (fallback when there's no artwork) */
+  appIcon?: string | null;
 }
 
 export interface Weather {
@@ -612,11 +676,24 @@ export const EV = {
   confirmDone: "flo://confirm-done",
   /** payload: {signedIn, user?} — e.g. after Google sign-in completes via flo:// deep link */
   account: "flo://account",
+  /** payload: SlackEvent — Slack connected (flo://slack deep link / token) or disconnected */
+  slack: "flo://slack",
   /** payload: {kind: "start"|"step"|"confirm"|"done"|"aborted"|"error", text, voice?} — computer-control agent */
   agent: "flo://agent",
   /** payload: HandsfreeEvent — hands-free agent mode (double-tap fn) */
   handsfree: "flo://handsfree",
+  /** payload: PresenceInfo — Active / Away changed (any window, auto-away, or the phone) */
+  presence: "flo://presence",
+  /** payload: NowPlaying | null — media started / changed / paused / stopped (polling is the fallback) */
+  nowPlaying: "flo://now-playing",
 } as const;
+
+/** EV.slack payload. `who` = "user · workspace" (same as slack_status). */
+export interface SlackEvent {
+  connected: boolean;
+  who?: string;
+  error?: string;
+}
 
 /** Hands-free agent mode: what it's doing and the last request it heard. */
 export interface HandsfreeEvent {
@@ -669,7 +746,8 @@ export interface HandsfreeEvent {
  *  account_google_start() -> {state} (opens browser)   account_exchange({code, state?}) -> AccountUser
  *  account_logout()      — sessions refuse to start while signed out ("Sign in to Flo…")
  *  list_integrations() -> Integration[]   install_integration({id}) / uninstall_integration({id}) -> Integration[]
- *  slack_connect({token}) -> string ("Name · workspace")   slack_status() -> string|null   slack_disconnect()
+ *  slack_connect({token}) -> string ("Name · workspace")   slack_status() -> string|null   slack_disconnect({revoke?})
+ *  slack_oauth_start() -> string (Connect URL, opened in the browser; finishes via flo://slack → EV.slack)
  *  slack_sync_now() -> number (to-dos added)   confirm_action({id, approve}) -> string
  *  list_context_docs() -> ContextDoc[]          get_context_doc({id}) -> {doc: ContextDoc, content: string}
  *  add_context_doc({title, content}) -> ContextDoc   (frontend reads .md/.txt files via FileReader)

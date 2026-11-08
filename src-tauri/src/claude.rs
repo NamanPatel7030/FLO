@@ -292,7 +292,19 @@ fn ask_permission(st: &Shared, req: tiny_http::Request, body: &Value) {
     let tool = body["tool_name"].as_str().unwrap_or("a tool");
     let summary = permission_summary(tool, &body["tool_input"]);
     log::info!("claude permission asked: {project}: {summary}");
-    st.emit("flo://confirm", json!({ "id": id, "kind": "claude", "title": format!("Claude needs you · {project}"), "body": summary }));
+    // who's asking: the card names the session (project / tool / terminal) and can focus its window
+    let session_id = body["session_id"].as_str().unwrap_or("");
+    let known = if session_id.is_empty() { None } else { st.db.get_claude_session(session_id).ok().flatten() };
+    let app = known.as_ref().and_then(|s| s.terminal.clone().or_else(|| s.app_bundle.clone()));
+    st.emit(
+        "flo://confirm",
+        json!({
+            "id": id, "kind": "claude", "title": format!("Claude needs you · {project}"), "body": summary,
+            "sessionId": session_id, "cwd": cwd, "project": project, "tool": tool, "app": app,
+            "at": chrono::Local::now().to_rfc3339(),
+        }),
+    );
+    crate::push::notify(st, crate::push::permission_payload(&project, &summary)); // phone, only while Away
     let st2 = st.clone();
     std::thread::spawn(move || {
         let decision = rx.recv_timeout(std::time::Duration::from_secs(PERMISSION_WAIT_SECS)).unwrap_or_else(|_| "terminal".into());
@@ -671,6 +683,7 @@ fn on_stop(st: &Shared, ev: ClaudeEvent, transcript: Option<&str>, transcript_pa
         if let Err(e) = st.db.insert_claude_event(&ev) {
             log::error!("store claude event: {e}");
         }
+        crate::push::notify_claude(&st, &ev); // phone, only while Away
         st.emit(ev::CLAUDE, ev);
     });
 }
@@ -733,6 +746,7 @@ pub fn spawn_listener(st: Shared) {
                 } else {
                     let transcript = v["transcript_path"].as_str().and_then(safe_transcript);
                     let ev = parse_hook_from(&v, transcript.as_deref(), bundle, term);
+                    crate::autocontinue::observe(&st, &ev, transcript.as_deref()); // usage-limit stops / typing cancels
                     let Some(status) = session_status(&ev) else { continue };
                     if ev.kind == "stop" {
                         on_stop(&st, ev, transcript.as_deref(), v["transcript_path"].as_str());
@@ -749,6 +763,7 @@ pub fn spawn_listener(st: Shared) {
                     if let Err(e) = st.db.insert_claude_event(&ev) {
                         log::error!("store claude event: {e}");
                     }
+                    crate::push::notify_claude(&st, &ev); // phone, only while Away
                     st.emit(ev::CLAUDE, ev);
                 }
             }
