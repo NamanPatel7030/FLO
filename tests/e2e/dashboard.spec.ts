@@ -259,3 +259,23 @@ test("to-dos: delete from a row", async ({ page }) => {
   await row.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByText("Book flight to Bangalore")).toHaveCount(0);
 });
+
+test("skill canvas: hover a node to delete it, hover a connection to detach it", async ({ page }) => {
+  await page.goto("/#/skills");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.getByRole("button", { name: /Follow-up email/ }).click();
+  const ed = page.getByTestId("skill-editor");
+  await expect(ed.getByTestId("node-platform")).toHaveCount(1);
+  // delete the platform node via its hover ×
+  const plat = ed.getByTestId("node-platform");
+  await plat.hover();
+  await plat.getByRole("button", { name: /Delete Platform/ }).click();
+  await expect(ed.getByTestId("node-platform")).toHaveCount(0);
+  await expect(ed.getByTestId("generated-skill")).not.toContainText("Gmail");
+  // detach: hover the connection's midpoint button
+  const before = await ed.locator(".react-flow__edge").count();
+  const detach = ed.getByTestId("edge-detach").first();
+  await detach.hover({ force: true });
+  await detach.click({ force: true });
+  await expect.poll(() => ed.locator(".react-flow__edge").count()).toBe(before - 1);
+});

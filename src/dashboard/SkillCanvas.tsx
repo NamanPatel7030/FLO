@@ -5,6 +5,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import {
   addEdge,
   Background,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
+  type EdgeProps,
   BackgroundVariant,
   Controls,
   Handle,
@@ -47,16 +51,32 @@ const Picks = createContext<{ platforms: Connection[]; mcps: Connection[]; docs:
 
 const inputCls = "nodrag w-full rounded-lg bg-white/[0.06] px-2.5 py-1.5 text-[12.5px] text-white outline-none ring-1 ring-white/10 placeholder:text-white/30 focus:ring-[var(--accent)]";
 
-function Shell({ kind, selected, children, target = true, source = true }: { kind: SkillNodeKind; selected?: boolean; children: React.ReactNode; target?: boolean; source?: boolean }) {
+function Shell({ id, kind, selected, children, target = true, source = true }: { id: string; kind: SkillNodeKind; selected?: boolean; children: React.ReactNode; target?: boolean; source?: boolean }) {
   const k = KIND[kind];
+  const { deleteElements } = useReactFlow();
   return (
     <div
-      className={clsx("w-[240px] rounded-2xl border bg-[#0d1722] shadow-[0_10px_30px_-12px_rgba(0,0,0,0.8)] transition", selected ? "border-white/40" : "border-white/10")}
+      className={clsx("group/node relative w-[240px] rounded-2xl border bg-[#0d1722] shadow-[0_10px_30px_-12px_rgba(0,0,0,0.8)] transition", selected ? "border-white/40" : "border-white/10")}
       style={{ boxShadow: selected ? `0 0 0 1px ${k.color}, 0 12px 34px -12px ${k.color}66` : undefined }}
       data-testid={`node-${kind}`}
     >
-      <div className="flex items-center gap-1.5 rounded-t-2xl px-3 py-2 text-[11px] font-semibold uppercase tracking-wider" style={{ color: k.color, background: `${k.color}14` }}>
-        {k.icon} {k.label}
+      <div className="flex cursor-grab items-center gap-1.5 rounded-t-2xl px-3 py-2 text-[11px] font-semibold uppercase tracking-wider active:cursor-grabbing" style={{ color: k.color, background: `${k.color}14` }}>
+        {k.icon} <span className="flex-1">{k.label}</span>
+        {/* delete: appears on hover (or when selected) */}
+        <button
+          aria-label={`Delete ${k.label}`}
+          title="Delete"
+          onClick={(e) => {
+            e.stopPropagation();
+            deleteElements({ nodes: [{ id }] });
+          }}
+          className={clsx(
+            "nodrag -mr-1 flex h-5 w-5 items-center justify-center rounded-md text-white/50 transition hover:bg-red-500/20 hover:text-red-300",
+            selected ? "opacity-100" : "opacity-0 group-hover/node:opacity-100 focus:opacity-100",
+          )}
+        >
+          <X size={12} />
+        </button>
       </div>
       <div className="px-3 pb-3 pt-2">{children}</div>
       {target && <Handle type="target" position={Position.Left} style={{ background: k.color, width: 10, height: 10, border: "2px solid #0d1722" }} />}
@@ -73,7 +93,7 @@ function useData(id: string) {
 function TriggerNode({ id, data, selected }: NodeProps<FlowNode>) {
   const set = useData(id);
   return (
-    <Shell kind="trigger" selected={selected} target={false}>
+    <Shell id={id} kind="trigger" selected={selected} target={false}>
       <input aria-label="Trigger phrases" className={inputCls} placeholder="proposal for this job, apply…" value={data.text ?? ""} onChange={(e) => set({ text: e.target.value })} />
       <div className="mt-1.5 text-[10.5px] text-white/40">Comma-separated. The skill's name works too.</div>
     </Shell>
@@ -83,7 +103,7 @@ function TriggerNode({ id, data, selected }: NodeProps<FlowNode>) {
 function StepNode({ id, data, selected }: NodeProps<FlowNode>) {
   const set = useData(id);
   return (
-    <Shell kind="step" selected={selected}>
+    <Shell id={id} kind="step" selected={selected}>
       <textarea
         aria-label="Step"
         rows={3}
@@ -100,7 +120,7 @@ function PlatformNode({ id, data, selected }: NodeProps<FlowNode>) {
   const set = useData(id);
   const { platforms } = useContext(Picks);
   return (
-    <Shell kind="platform" selected={selected} source={false}>
+    <Shell id={id} kind="platform" selected={selected} source={false}>
       <select aria-label="Platform" className={inputCls} value={data.ref ?? ""} onChange={(e) => set({ ref: e.target.value })}>
         <option value="">Choose…</option>
         {PLATFORMS.map((p) => (
@@ -127,7 +147,7 @@ function McpNode({ id, data, selected }: NodeProps<FlowNode>) {
   const { mcps } = useContext(Picks);
   const chosen = mcps.find((m) => m.id === data.ref);
   return (
-    <Shell kind="mcp" selected={selected} source={false}>
+    <Shell id={id} kind="mcp" selected={selected} source={false}>
       {mcps.length === 0 ? (
         <div className="text-[11.5px] leading-snug text-white/55">No MCP servers yet. Add one in the Connections tab, then pick it here.</div>
       ) : (
@@ -151,7 +171,7 @@ function KnowledgeNode({ id, data, selected }: NodeProps<FlowNode>) {
   const set = useData(id);
   const { docs } = useContext(Picks);
   return (
-    <Shell kind="knowledge" selected={selected} source={false}>
+    <Shell id={id} kind="knowledge" selected={selected} source={false}>
       {docs.length === 0 ? (
         <div className="text-[11.5px] leading-snug text-white/55">No documents yet. Add them in the Knowledge tab.</div>
       ) : (
@@ -172,7 +192,7 @@ function OutputNode({ id, data, selected }: NodeProps<FlowNode>) {
   const set = useData(id);
   const mode = data.mode ?? "write";
   return (
-    <Shell kind="output" selected={selected} source={false}>
+    <Shell id={id} kind="output" selected={selected} source={false}>
       <div className="nodrag grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Output">
         {(
           [
@@ -196,9 +216,40 @@ function OutputNode({ id, data, selected }: NodeProps<FlowNode>) {
   );
 }
 
+/** A connection you can detach: hover it (or select it) and click the × at its middle. */
+function RemovableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, style, selected }: EdgeProps) {
+  const { deleteElements } = useReactFlow();
+  const [hover, setHover] = useState(false);
+  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  const show = hover || selected;
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{ ...style, strokeWidth: show ? 2.4 : 1.6, stroke: show ? "#9be0ff" : "#66ceff" }} />
+      {/* invisible wide path = easy to hover */}
+      <path d={path} fill="none" stroke="transparent" strokeWidth={22} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} style={{ cursor: "pointer" }} />
+      <EdgeLabelRenderer>
+        <button
+          aria-label="Detach"
+          title="Detach"
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+          onClick={() => deleteElements({ edges: [{ id }] })}
+          className="nodrag nopan absolute flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-[#0d1722] text-white/80 shadow-lg transition hover:border-red-400/60 hover:bg-red-500/20 hover:text-red-200"
+          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, pointerEvents: "all", opacity: show ? 1 : 0 }}
+          data-testid="edge-detach"
+        >
+          <X size={12} />
+        </button>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
+const edgeTypes = { removable: RemovableEdge };
+
 const nodeTypes = { trigger: TriggerNode, step: StepNode, platform: PlatformNode, mcp: McpNode, knowledge: KnowledgeNode, output: OutputNode };
 
-const edgeDefaults = { animated: true, markerEnd: { type: MarkerType.ArrowClosed, color: "#66ceff", width: 16, height: 16 }, style: { stroke: "#66ceff", strokeWidth: 1.6 } };
+const edgeDefaults = { type: "removable", animated: true, markerEnd: { type: MarkerType.ArrowClosed, color: "#66ceff", width: 16, height: 16 }, style: { stroke: "#66ceff", strokeWidth: 1.6 } };
 
 function toFlow(g: SkillGraph): { nodes: FlowNode[]; edges: Edge[] } {
   return {
@@ -345,7 +396,7 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
                 </span>
               </button>
             ))}
-            <div className="px-1 pt-2 text-[10.5px] leading-snug text-white/35">Click or drag onto the canvas. Drag from a dot to connect. Select and press Delete to remove.</div>
+            <div className="px-1 pt-2 text-[10.5px] leading-snug text-white/35">Click or drag onto the canvas. Drag a node by its title. Drag from a dot to another node to connect. Hover a node or a connection and click × to delete or detach.</div>
           </div>
 
           {/* canvas */}
@@ -369,6 +420,7 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               colorMode="dark"
               fitView
               fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
