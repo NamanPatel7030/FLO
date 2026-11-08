@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AudioLines, Minus, Plus, X } from "lucide-react";
+import { Minus, Plus, X } from "lucide-react";
 import { DownloadCTA } from "../DownloadCTA";
 import { EASE_OUT, Reveal } from "../motion/primitives";
+import { Words } from "../motion/Words";
 
 /* Everything after the notch story: one look at the app, how Flo compares, who made it, FAQ, CTA. */
 type Cell = "yes" | "no" | "partial" | string;
@@ -76,13 +77,12 @@ export function Outro() {
     <>
       {/* ── THE APP ──────────────────────────────────────── */}
       <section className="px-5 pb-12 pt-32" id="app">
-        <Reveal blur={false} className="mx-auto max-w-2xl text-center">
-          <p className="eyebrow">Behind the notch</p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-[42px] sm:leading-[1.1]">
-            One calm app keeps <span className="accent-text">all of it</span>
-          </h2>
-          <p className="mt-4 text-[17px] leading-relaxed text-muted">History, notes, to-dos, your dictionary and analytics, in a dashboard that never leaves your Mac.</p>
-        </Reveal>
+        <SectionHead
+          eyebrow="Behind the notch"
+          title="One calm app keeps all of it"
+          accent="all of it"
+          sub="History, notes, to-dos, your dictionary and analytics, in a dashboard that never leaves your Mac."
+        />
         <Reveal blur={false} className="mx-auto mt-12 max-w-5xl">
           <figure className="shot">
             <div className="shot-bar" aria-hidden>
@@ -98,11 +98,12 @@ export function Outro() {
 
         {/* ── COMPARE ──────────────────────────────────────── */}
         <section className="px-5 py-24" id="compare" data-testid="compare">
-          <Reveal blur={false} className="mx-auto max-w-2xl text-center">
-            <p className="eyebrow">Compare</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-[42px] sm:leading-[1.1]">The alternative to Wispr Flow and Lemon</h2>
-            <p className="mt-4 text-[17px] leading-relaxed text-muted">Everything they do, plus the things they don&apos;t, without sending your life to someone else&apos;s server.</p>
-          </Reveal>
+          <SectionHead
+            eyebrow="Compare"
+            title="The alternative to Wispr Flow and Lemon"
+            accent="The alternative"
+            sub="Everything they do, plus the things they don’t, without sending your life to someone else’s server."
+          />
           <Reveal blur={false} className="relative mx-auto mt-14 max-w-5xl">
             
             <div className="glass relative overflow-x-auto rounded-3xl">
@@ -155,7 +156,7 @@ export function Outro() {
                 <img src="/naman.png" alt="Naman Gundaniya" className="relative h-32 w-32 rounded-full object-cover object-top" style={{ background: "radial-gradient(circle at 40% 30%, #3dbbff, #083a57 70%)" }} />
               </div>
               <div className="text-center sm:text-left">
-                <p className="eyebrow">Made by</p>
+                <p className="eyebrow eyebrow-line">Made by</p>
                 <h3 className="mt-2 text-2xl font-semibold">Naman Gundaniya</h3>
                 <p className="text-muted">Forward Deployed Engineer</p>
                 <blockquote className="mt-5 text-[20px] leading-snug text-ink sm:text-[22px]">“I&apos;m the human. AI is my leverage. Together, we build anything.”</blockquote>
@@ -169,10 +170,7 @@ export function Outro() {
 
         {/* ── FAQ ──────────────────────────────────────────── */}
         <section className="px-5 py-24" id="faq" data-testid="faq">
-          <Reveal blur={false} className="mx-auto max-w-2xl text-center">
-            <p className="eyebrow">FAQ</p>
-            <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-[42px] sm:leading-[1.1]">Questions, answered</h2>
-          </Reveal>
+          <SectionHead eyebrow="FAQ" title="Questions, answered" accent="answered" />
           <div className="mx-auto mt-12 flex max-w-3xl flex-col gap-3">
             {FAQ.map((f, i) => (
               <Faq key={f.q} q={f.q} a={f.a} i={i} />
@@ -190,8 +188,10 @@ export function Outro() {
                 animate={{ opacity: [0.5, 1, 0.5], scale: [1, 1.1, 1] }}
                 transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
               />
-              <AudioLines className="relative mx-auto text-brand-300" />
-              <h2 className="relative mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">Start speaking instead of typing</h2>
+              <LaptopArt />
+              <h2 className="relative mt-6 text-3xl font-semibold tracking-tight sm:text-[44px] sm:leading-[1.08]">
+                <Words text="Start speaking instead of typing" accent="speaking" />
+              </h2>
               <p className="relative mx-auto mt-3 max-w-xl text-muted">Free to download. Bring your own AI or stay fully local.</p>
               <div className="relative mt-8 flex justify-center">
                 <DownloadCTA size="lg" testId="cta-download" />
@@ -200,6 +200,70 @@ export function Outro() {
           </Reveal>
         </section>
     </>
+  );
+}
+
+/** Centred section heading: lined eyebrow, words that land, a shimmering accent, a sub that inks in. */
+function SectionHead({ eyebrow, title, accent, sub }: { eyebrow: string; title: string; accent?: string; sub?: string }) {
+  return (
+    <div className="mx-auto max-w-2xl text-center">
+      <Reveal blur={false} y={10}>
+        <p className="eyebrow eyebrow-line eyebrow-c">{eyebrow}</p>
+      </Reveal>
+      <h2 className="mt-4 text-[34px] font-semibold leading-[1.06] tracking-tight text-balance sm:text-[50px]">
+        <Words text={title} accent={accent} base={80} />
+      </h2>
+      {sub && (
+        <p className="mt-5 text-[17px] leading-relaxed text-muted">
+          <Words text={sub} draft base={420} step={18} />
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** CTA illustration: a laptop lid whose notch listens while lines of text write themselves. */
+function LaptopArt() {
+  const lines = [
+    [44, 150],
+    [44, 118],
+    [44, 136],
+    [44, 84],
+  ];
+  return (
+    <div className="relative mx-auto w-[220px] sm:w-[260px]" aria-hidden>
+      <div className="absolute left-1/2 top-2 h-16 w-40 -translate-x-1/2 rounded-full bg-brand-400/30 blur-2xl" />
+      <svg viewBox="0 0 260 158" className="relative w-full">
+        <defs>
+          <linearGradient id="lap-rim" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#c2ecff" stopOpacity="0.7" />
+            <stop offset="1" stopColor="#3dbbff" stopOpacity="0.15" />
+          </linearGradient>
+          <linearGradient id="lap-screen" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#0b2a44" />
+            <stop offset="1" stopColor="#06121f" />
+          </linearGradient>
+          <linearGradient id="lap-line" x1="0" x2="1">
+            <stop offset="0" stopColor="#93ddff" />
+            <stop offset="1" stopColor="#3dbbff" stopOpacity="0.5" />
+          </linearGradient>
+        </defs>
+        <rect x="22" y="4" width="216" height="134" rx="13" fill="url(#lap-screen)" stroke="url(#lap-rim)" strokeWidth="1.2" />
+        <rect x="30" y="12" width="200" height="118" rx="7" fill="#081a2c" opacity="0.7" />
+        <line x1="30" y1="25" x2="230" y2="25" stroke="#93ddff" strokeOpacity="0.12" />
+        {/* the notch, listening */}
+        <path d="M104 12h52v9a6 6 0 0 1-6 6h-40a6 6 0 0 1-6-6z" fill="#000" />
+        {[0, 1, 2, 3, 4].map((k) => (
+          <rect key={k} x={121 + k * 4} y={15} width={2} height={8} rx={1} fill="#66ceff" className="lap-eq" style={{ animationDelay: `${k * 0.11}s` }} />
+        ))}
+        {lines.map(([x, w], k) => (
+          <rect key={k} x={x} y={44 + k * 16} width={w} height={6} rx={3} fill="url(#lap-line)" className="lap-type" style={{ animationDelay: `${0.4 + k * 0.7}s` }} />
+        ))}
+        <rect x={44 + 84 + 4} y={44 + 3 * 16 - 2} width={2} height={10} rx={1} fill="#e3f6ff" className="lap-caret" />
+        <path d="M6 140h248l-10 10a8 8 0 0 1-6 2H22a8 8 0 0 1-6-2z" fill="#0d2236" stroke="url(#lap-rim)" strokeWidth="1" />
+        <rect x="112" y="140" width="36" height="3" rx="1.5" fill="#05090f" />
+      </svg>
+    </div>
   );
 }
 

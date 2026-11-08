@@ -53,7 +53,7 @@ const CUSTOM_VIZ_W = [180, 215, 255, 300];
 function baseSize(id: ChapterId | "idle", phase: number, d: Derived): Size {
   switch (id) {
     case "hero":
-      return phase === 0 ? S(204, 34, 13) : S(300, 40, 16);
+      return phase === 0 ? S(232, 36, 14) : S(316, 42, 17);
     case "dictation":
       return [S(390, 58, 22), S(272, 44, 18), S(276, 42, 17)][phase];
     case "languages":
@@ -137,14 +137,18 @@ export function NotchShell({
     return (
       <div className="relative mx-auto w-full" style={{ maxWidth: size.w, ...vars }} {...data}>
         <div className="relative overflow-hidden bg-black text-white" style={{ minHeight: size.h, borderRadius: `0 0 ${size.r}px ${size.r}px`, boxShadow: rim }}>
+          <span aria-hidden className="notch-inner" />
           {children}
+          <span aria-hidden className="notch-rim" />
         </div>
       </div>
     );
   }
   return (
     <div className="relative" style={vars} {...data} data-testid="notch">
-      {glow && <div aria-hidden className="notch-breathe absolute -bottom-5 left-1/2 h-9 w-[78%] -translate-x-1/2 rounded-full bg-brand-400/35 blur-xl" />}
+      {/* layered glow: a wide soft halo plus a tight bright core under the notch */}
+      <div aria-hidden className={`notch-halo absolute -bottom-10 left-1/2 h-16 w-[130%] -translate-x-1/2 rounded-full bg-brand-500/20 blur-2xl transition-opacity duration-700 ${glow ? "opacity-100" : "opacity-40"}`} />
+      {glow && <div aria-hidden className="notch-breathe absolute -bottom-4 left-1/2 h-8 w-[70%] -translate-x-1/2 rounded-full bg-brand-400/45 blur-xl" />}
       <Ear side="l" />
       <Ear side="r" />
       <motion.div
@@ -156,7 +160,9 @@ export function NotchShell({
         onMouseEnter={onHover ? () => onHover(true) : undefined}
         onMouseLeave={onHover ? () => onHover(false) : undefined}
       >
+        <span aria-hidden className="notch-inner" />
         {children}
+        <span aria-hidden className="notch-rim" />
       </motion.div>
     </div>
   );
@@ -234,10 +240,22 @@ export function NotchContent({ id, phase, cycle, inline, d }: { id: ChapterId | 
   switch (id) {
     case "hero":
       body =
-        phase === 0 ? null : (
-          <Row className="justify-center text-[12.5px] text-white/80">
-            <VoiceBars n={6} h={14} w={2.5} gap={2} energy={0.6} />
-            Hold <Keycap>fn</Keycap> to talk
+        phase === 0 ? (
+          <Row className="justify-between px-4">
+            <span className="mini-eq" aria-hidden>
+              <i />
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className="notch-led" aria-hidden />
+          </Row>
+        ) : (
+          <Row className="justify-center gap-2.5 text-[12.5px] font-medium tracking-[-0.005em] text-white/85">
+            <VoiceBars n={7} h={15} w={2.5} gap={2} energy={0.7} />
+            <span className="flex items-center gap-1.5">
+              Hold <span className="kcap">fn</span> to talk
+            </span>
           </Row>
         );
       break;

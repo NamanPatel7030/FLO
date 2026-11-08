@@ -437,7 +437,7 @@ export function Keycap({ children, pressed = false, className = "" }: { children
   return (
     <span
       className={`inline-flex h-[22px] min-w-[26px] items-center justify-center rounded-[6px] border px-1.5 font-mono text-[11px] transition-all duration-200 ${
-        pressed ? "translate-y-[1px] border-brand-300/60 bg-brand-400/20 text-brand-100 shadow-[0_0_14px_rgb(61_187_255/0.45)]" : "border-white/15 bg-white/[0.06] text-white/70"
+        pressed ? "translate-y-[1px] border-brand-300/60 bg-brand-400/20 text-brand-100 shadow-[0_0_14px_rgb(61_187_255/0.45)]" : "border-white/20 bg-gradient-to-b from-white/[0.14] to-white/[0.03] text-white/80 shadow-[inset_0_1px_0_rgb(255_255_255/0.25),inset_0_-2px_0_rgb(0_0_0/0.4)]"
       } ${className}`}
     >
       {children}

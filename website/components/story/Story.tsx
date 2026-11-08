@@ -1,8 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { ArrowDown, Check, Cpu, Languages, ShieldCheck } from "lucide-react";
 import { CHAPTERS, type Chapter } from "./chapters";
 import { DownloadCTA } from "../DownloadCTA";
+import { Words } from "../motion/Words";
+import { HeroCards, HeroCardsMobile, Menubar } from "./HeroArt";
 import { NotchContent, NotchShell, chapterIdAt, maxNotchH, notchSize } from "./Notch";
 import { Stage } from "./stages";
 import { usePhase, useStory } from "./StoryContext";
@@ -68,17 +71,21 @@ function InlineNotch({ i }: { i: number }) {
   );
 }
 
-function Copy({ c, i }: { c: Chapter; i: number }) {
+function Copy({ c, i, isActive }: { c: Chapter; i: number; isActive: boolean }) {
+  const { pinned } = useStory();
+  // desktop: words land when the chapter becomes the active one; phones: when scrolled into view
+  const show = pinned ? isActive : undefined;
   return (
     <div>
-      <p className="eyebrow rise" style={{ ["--d" as string]: "0ms" }}>
-        <span className="text-brand-300/80">{String(i).padStart(2, "0")}</span> · {c.eyebrow}
+      <p className="eyebrow rise flex items-center gap-3" style={{ ["--d" as string]: "0ms" }}>
+        <span className="ch-idx">{String(i).padStart(2, "0")}</span>
+        <span className="eyebrow-line">{c.eyebrow}</span>
       </p>
-      <h2 id={`h-${c.id}`} className="rise mt-4 text-[clamp(30px,min(3.5vw,5.8vh),52px)] font-semibold leading-[1.03] text-balance" style={{ ["--d" as string]: "60ms" }}>
-        {c.title}
+      <h2 id={`h-${c.id}`} className="mt-4 text-[clamp(30px,min(3.5vw,5.8vh),52px)] font-semibold leading-[1.03] text-balance">
+        <Words text={c.title} accent={c.hl} show={show} base={160} step={65} />
       </h2>
-      <p className="ch-what rise mt-4 max-w-[34rem] text-[16.5px] leading-relaxed text-muted" style={{ ["--d" as string]: "120ms" }}>
-        {c.what}
+      <p className="ch-what mt-4 max-w-[34rem] text-[16.5px] leading-relaxed text-muted">
+        <Words text={c.what} draft show={show} base={420} step={12} />
       </p>
       <div className="why ch-gap rise mt-5 max-w-[34rem] rounded-2xl px-4 py-3.5" style={{ ["--d" as string]: "180ms" }}>
         <div className="text-[10.5px] font-semibold uppercase tracking-[0.18em] text-brand-300">Why it matters</div>
@@ -111,7 +118,7 @@ function ChapterView({ i }: { i: number }) {
         {String(i).padStart(2, "0")}
       </span>
       <div className="ch-grid relative mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] items-center gap-8 md:h-full md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] md:gap-14 md:px-8 md:pb-[104px]" style={{ ["--top" as string]: top }}>
-        <Copy c={c} i={i} />
+        <Copy c={c} i={i} isActive={isActive} />
         <div className="rise" style={{ ["--d" as string]: "200ms" }}>
           <Stage id={c.id} phase={phase} cycle={cycle} live={live} d={d} manual={manual} />
         </div>
@@ -123,28 +130,43 @@ function ChapterView({ i }: { i: number }) {
 function Hero() {
   const c = CHAPTERS[0];
   const { goTo, active } = useStory();
+  // the headline is "dictated" once the page has painted: words land one by one, then the caret blinks
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
   return (
     <article data-chapter={0} data-active={active === 0} className="chapter hero px-4 pb-20 pt-28 md:px-0 md:pb-0 md:pt-0">
       <InlineNotch i={0} />
-      <div className="mx-auto flex max-w-4xl flex-col items-center text-center md:h-full md:justify-center md:pt-10">
-        <p className="hero-in eyebrow" style={{ animationDelay: "80ms" }}>
-          {c.eyebrow}
+      <div aria-hidden className="hero-grid pointer-events-none absolute inset-0 hidden md:block" />
+      <Menubar />
+      <HeroCards />
+      <div className="relative mx-auto flex max-w-4xl flex-col items-center text-center md:h-full md:justify-center md:pt-12">
+        <p className="hero-in eyebrow eyebrow-line eyebrow-c" style={{ animationDelay: "80ms" }}>
+          <span>
+            Flo for macOS <span className="text-white/35">·</span> <span className="text-white/80">lives in your notch</span>
+          </span>
         </p>
-        <h1 className="hero-in mt-5 text-[clamp(44px,8vw,104px)] font-semibold leading-[0.95] tracking-[-0.045em]" style={{ animationDelay: "160ms" }}>
-          Your Mac, at the
+        <h1 className="mt-6 text-[clamp(44px,7.2vw,104px)] font-semibold leading-[0.98] tracking-[-0.045em]">
+          <Words text="Your Mac, at the" show={ready} base={200} step={90} />
           <br />
-          <span className="accent-text">speed of speech.</span>
+          <Words text="speed of speech." accent="speed of speech." show={ready} base={580} className="hero-l2">
+            <span className="hero-in inline-block" style={{ animationDelay: "1.1s" }} aria-hidden>
+              <span className="hero-caret" />
+            </span>
+          </Words>
         </h1>
-        <p className="hero-in mt-6 max-w-xl text-balance text-[17px] leading-relaxed text-muted sm:text-[19px]" style={{ animationDelay: "280ms" }}>
-          {c.what}
+        <p className="mt-7 max-w-xl text-balance text-[17px] leading-relaxed text-muted sm:text-[19px]">
+          <Words text={c.what} draft show={ready} base={850} step={16} />
         </p>
-        <div className="hero-in mt-9 flex flex-col items-center gap-3 sm:flex-row" style={{ animationDelay: "380ms" }}>
+        <div className="hero-in mt-9 flex flex-col items-center gap-3 sm:flex-row" style={{ animationDelay: "900ms" }}>
           <DownloadCTA size="md" testId="hero-get-flo" />
           <button onClick={() => goTo(1)} className="btn btn-glass h-12 px-6 text-[15px]">
             Watch the notch <ArrowDown size={16} />
           </button>
         </div>
-        <div className="hero-in mt-10 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[13px] text-white/75" style={{ animationDelay: "480ms" }}>
+        <div className="hero-in mt-10 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[13px] text-white/75" style={{ animationDelay: "1050ms" }}>
           <span className="flex items-center gap-1.5">
             <Check size={14} className="text-brand-300" /> Free to download
           </span>
@@ -158,7 +180,8 @@ function Hero() {
             <ShieldCheck size={14} className="text-brand-300" /> Bring your own key, or stay offline
           </span>
         </div>
-        <button onClick={() => goTo(1)} className="hero-in scroll-cue mt-14 hidden flex-col items-center gap-2 text-[12px] text-white/60 md:flex" style={{ animationDelay: "700ms" }}>
+        <HeroCardsMobile />
+        <button onClick={() => goTo(1)} className="hero-in scroll-cue mt-12 hidden flex-col items-center gap-2 text-[12px] text-white/60 md:flex" style={{ animationDelay: "1400ms" }}>
           Scroll. The notch will show you.
           <span className="relative h-10 w-px overflow-hidden bg-white/10">
             <span className="cue-dot absolute left-0 top-0 h-3 w-px bg-brand-300" />
