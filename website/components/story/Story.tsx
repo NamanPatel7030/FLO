@@ -24,9 +24,11 @@ export function FixedNotch() {
       : undefined;
   return (
     <div className="pointer-events-none fixed inset-x-0 top-0 z-[60] hidden justify-center md:flex" role="region" aria-label="Flo notch, live demo">
-      <NotchShell size={size} reduce={reduce} glow={id === "hero" || id === "idle"} d={v.d} id={id} onHover={onHover}>
-        {id !== "idle" && <NotchContent id={id} phase={v.phase} cycle={v.cycle} d={v.d} />}
-      </NotchShell>
+      <div className="notch-zoom">
+        <NotchShell size={size} reduce={reduce} glow={id === "hero" || id === "idle"} d={v.d} id={id} onHover={onHover}>
+          {id !== "idle" && <NotchContent id={id} phase={v.phase} cycle={v.cycle} d={v.d} />}
+        </NotchShell>
+      </div>
     </div>
   );
 }
@@ -100,14 +102,15 @@ function ChapterView({ i }: { i: number }) {
   const c = CHAPTERS[i];
   const { isActive, phase, cycle, live, d, manual } = usePhase(i);
   // leave room for the tallest state the notch reaches in this chapter, then centre the rest
-  const top = Math.max(140, maxNotchH(c.id) + 60);
+  // (the desktop notch is drawn at --notch-zoom, so the room it needs scales with it)
+  const top = `max(140px, calc(${maxNotchH(c.id)}px * var(--notch-zoom, 1) + 56px))`;
   return (
     <article data-chapter={i} data-active={isActive} className="chapter px-4 py-16 md:px-0 md:py-0" aria-labelledby={`h-${c.id}`}>
       <InlineNotch i={i} />
       <span aria-hidden className="ch-num pointer-events-none absolute left-[max(2rem,calc(50%-36rem))] top-[64px] hidden font-display text-[150px] font-bold leading-none md:block">
         {String(i).padStart(2, "0")}
       </span>
-      <div className="ch-grid relative mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] items-center gap-8 md:h-full md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] md:gap-14 md:px-8 md:pb-10" style={{ ["--top" as string]: `${top}px` }}>
+      <div className="ch-grid relative mx-auto grid max-w-6xl grid-cols-[minmax(0,1fr)] items-center gap-8 md:h-full md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] md:gap-14 md:px-8 md:pb-[104px]" style={{ ["--top" as string]: top }}>
         <Copy c={c} i={i} />
         <div className="rise" style={{ ["--d" as string]: "200ms" }}>
           <Stage id={c.id} phase={phase} cycle={cycle} live={live} d={d} manual={manual} />

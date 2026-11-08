@@ -2,47 +2,65 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { motion, useScroll, useSpring } from "motion/react";
 import { CircleHelp, Columns3, LogIn, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 import { DownloadCTA } from "../DownloadCTA";
+import { Logo } from "../Logo";
 import { CHAPTER_INDEX } from "./chapters";
 import { useStory } from "./StoryContext";
 
-type Item = { key: string; label: string; icon: React.ReactNode; tint: string; go?: () => void; href?: string };
+type Item = { key: string; label: string; icon: React.ReactNode; go?: () => void; href?: string };
 
-const BASE = 44; // icon tile size (px) at rest
-const MAX_SCALE = 1.55;
-const REACH = 150; // px from the pointer where magnification fades out
+/** Bottom ear: the concave curve where the chin flows into the bottom edge (mirror of the notch's top ears). */
+function Ear({ side }: { side: "l" | "r" }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      aria-hidden
+      className={`absolute bottom-0 ${side === "l" ? "-left-[15.5px]" : "-right-[15.5px] -scale-x-100"}`}
+    >
+      <path d="M16 0 V16 H0 C9 16 16 9 16 0 Z" fill="#05090f" />
+    </svg>
+  );
+}
+
+/** Live mini waveform inside the orb — it "listens" while you scroll. */
+function Wave({ on }: { on: boolean }) {
+  return (
+    <span className="chin-wave" data-on={on || undefined} aria-hidden>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <i key={i} style={{ animationDelay: `${i * 0.11}s` }} />
+      ))}
+    </span>
+  );
+}
 
 /**
- * A macOS-style floating dock at the bottom of the page. On desktop the tiles magnify under the
- * pointer (transforms only, written straight to the DOM each frame); on phones it is a compact bar.
+ * The site dock is the notch's twin: a black "chin" rising from the bottom edge, with concave ears,
+ * text labels, a liquid highlight that slides to whatever you point at (or the section you're in),
+ * a glowing Flo orb in the middle that scrolls you home, and a scroll-progress hairline on its rim.
  */
 export function Dock({ signedIn = false }: { signedIn?: boolean }) {
   const { goTo, active, reduce } = useStory();
   const [section, setSection] = useState<string | null>(null);
-  const [magnify, setMagnify] = useState(false);
-  const bar = useRef<HTMLDivElement>(null);
-  const bg = useRef<HTMLDivElement>(null);
-  const slots = useRef<(HTMLDivElement | null)[]>([]);
-  const tiles = useRef<(HTMLSpanElement | null)[]>([]);
-  const tips = useRef<(HTMLSpanElement | null)[]>([]);
-  const tail = useRef<HTMLDivElement>(null);
-  const mouse = useRef<number | null>(null);
-  const centers = useRef<number[]>([]);
-  const scales = useRef<number[]>([]);
-  const raf = useRef(0);
+  const [hover, setHover] = useState<string | null>(null);
+  const [scrolling, setScrolling] = useState(false);
+  const idle = useRef<number | undefined>(undefined);
+  const { scrollYProgress } = useScroll();
+  const progress = useSpring(scrollYProgress, { stiffness: 140, damping: 30, mass: 0.4 });
 
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-  const items: Item[] = [
-    { key: "features", label: "Features", icon: <Sparkles size={20} />, tint: "from-[#66ceff] to-[#1a9be0]", go: () => goTo(CHAPTER_INDEX.dictation) },
-    { key: "privacy", label: "Privacy", icon: <ShieldCheck size={20} />, tint: "from-[#5eead4] to-[#0e7490]", go: () => goTo(CHAPTER_INDEX.privacy) },
-    { key: "compare", label: "Compare", icon: <Columns3 size={20} />, tint: "from-[#a5b4fc] to-[#4338ca]", go: () => scrollTo("compare") },
-    { key: "faq", label: "FAQ", icon: <CircleHelp size={20} />, tint: "from-[#93c5fd] to-[#1e40af]", go: () => scrollTo("faq") },
-    signedIn
-      ? { key: "account", label: "Your downloads", icon: <UserRound size={20} />, tint: "from-[#cbd5e1] to-[#475569]", href: "/download" }
-      : { key: "signin", label: "Sign in", icon: <LogIn size={20} />, tint: "from-[#cbd5e1] to-[#475569]", href: "/login" },
+  const left: Item[] = [
+    { key: "features", label: "Features", icon: <Sparkles size={15} />, go: () => goTo(CHAPTER_INDEX.dictation) },
+    { key: "privacy", label: "Privacy", icon: <ShieldCheck size={15} />, go: () => goTo(CHAPTER_INDEX.privacy) },
+    { key: "compare", label: "Compare", icon: <Columns3 size={15} />, go: () => scrollTo("compare") },
   ];
-  const n = items.length;
+  const right: Item[] = [{ key: "faq", label: "FAQ", icon: <CircleHelp size={15} />, go: () => scrollTo("faq") }];
+  const account: Item = signedIn
+    ? { key: "account", label: "Downloads", icon: <UserRound size={15} />, href: "/download" }
+    : { key: "signin", label: "Sign in", icon: <LogIn size={15} />, href: "/login" };
 
   // which section is on screen: the story chapter, else whichever outro section crosses the middle
   useEffect(() => {
@@ -57,144 +75,114 @@ export function Dock({ signedIn = false }: { signedIn?: boolean }) {
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, []);
-  const current = active === CHAPTER_INDEX.privacy ? "privacy" : active >= 1 ? "features" : active === 0 ? null : section === "compare" ? "compare" : section === "faq" ? "faq" : null;
 
-  // magnification only for a fine pointer on a wide screen, and never under reduced motion
+  // the orb's waveform dances while the page is moving
   useEffect(() => {
-    const mq = window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 768px)");
-    const on = () => setMagnify(mq.matches && !reduce);
-    on();
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
+    if (reduce) return;
+    const on = () => {
+      setScrolling(true);
+      window.clearTimeout(idle.current);
+      idle.current = window.setTimeout(() => setScrolling(false), 420);
+    };
+    window.addEventListener("scroll", on, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", on);
+      window.clearTimeout(idle.current);
+    };
   }, [reduce]);
 
-  const measure = () => {
-    centers.current = slots.current.map((el) => {
-      if (!el) return 0;
-      const r = el.getBoundingClientRect();
-      // undo the current offset so we measure the resting position
-      const t = new DOMMatrixReadOnly(getComputedStyle(el).transform);
-      return r.left - t.m41 + r.width / 2;
-    });
-  };
+  const current = active === CHAPTER_INDEX.privacy ? "privacy" : active >= 1 ? "features" : active === 0 ? null : section === "compare" ? "compare" : section === "faq" ? "faq" : null;
+  const lit = hover ?? current;
 
-  const frame = () => {
-    raf.current = 0;
-    const m = mouse.current;
-    let moving = false;
-    const target = centers.current.map((c) => {
-      if (m === null) return 1;
-      const dist = Math.abs(m - c);
-      const f = Math.max(0, 1 - (dist / REACH) ** 2);
-      return 1 + (MAX_SCALE - 1) * f;
-    });
-    const next = target.map((t, i) => {
-      const cur = scales.current[i] ?? 1;
-      const v = cur + (t - cur) * 0.22;
-      if (Math.abs(t - v) > 0.002) moving = true;
-      return Math.abs(t - v) < 0.002 ? t : v;
-    });
-    scales.current = next;
-    const extra = next.map((s) => (s - 1) * BASE);
-    const total = extra.reduce((a, b) => a + b, 0);
-    let acc = 0;
-    for (let i = 0; i < n; i++) {
-      const shift = acc + extra[i] / 2 - total / 2;
-      acc += extra[i];
-      const slot = slots.current[i];
-      if (slot) slot.style.transform = `translate3d(${shift.toFixed(2)}px,0,0)`;
-      const tile = tiles.current[i];
-      if (tile) tile.style.transform = `scale(${next[i].toFixed(3)})`;
-      const tip = tips.current[i];
-      if (tip) tip.style.transform = `translate3d(-50%, ${(-(next[i] - 1) * BASE).toFixed(1)}px, 0)`;
-    }
-    if (tail.current) tail.current.style.transform = `translate3d(${(total / 2).toFixed(2)}px,0,0)`;
-    const w = bar.current?.offsetWidth ?? 1;
-    if (bg.current) bg.current.style.transform = `scaleX(${((w + total) / w).toFixed(4)})`;
-    if (moving) raf.current = requestAnimationFrame(frame);
+  const renderItem = (it: Item) => {
+    const on = current === it.key;
+    const body = (
+      <>
+        {lit === it.key && (
+          <motion.span
+            layoutId="chin-pill"
+            className="chin-pill"
+            transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 520, damping: 38, mass: 0.7 }}
+            aria-hidden
+          />
+        )}
+        <span className="relative z-[1] flex items-center gap-1.5">
+          <span className="chin-ico">{it.icon}</span>
+          <span className="hidden lg:inline">{it.label}</span>
+        </span>
+      </>
+    );
+    const common = {
+      className: "chin-item",
+      "aria-label": it.label,
+      title: it.label,
+      "data-testid": `dock-${it.key}`,
+      "data-on": on || undefined,
+      onMouseEnter: () => setHover(it.key),
+      onFocus: () => setHover(it.key),
+      onBlur: () => setHover(null),
+    };
+    return it.href ? (
+      <Link key={it.key} href={it.href} {...common} aria-current={on ? "page" : undefined}>
+        {body}
+      </Link>
+    ) : (
+      <button key={it.key} type="button" onClick={it.go} {...common} aria-current={on ? "true" : undefined}>
+        {body}
+      </button>
+    );
   };
-  const kick = () => {
-    if (!raf.current) raf.current = requestAnimationFrame(frame);
-  };
-  useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   return (
-    <nav aria-label="Site" className="dock-wrap pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-3" data-testid="dock">
-      <div
-        ref={bar}
-        className="pointer-events-auto relative flex items-end gap-1.5 px-2.5 py-2 md:gap-2 md:px-3 md:py-2.5"
-        onPointerEnter={(e) => {
-          if (!magnify || e.pointerType !== "mouse") return;
-          measure();
-          mouse.current = e.clientX;
-          kick();
-        }}
-        onPointerMove={(e) => {
-          if (!magnify || e.pointerType !== "mouse") return;
-          mouse.current = e.clientX;
-          kick();
-        }}
-        onPointerLeave={() => {
-          mouse.current = null;
-          kick();
-        }}
+    <nav aria-label="Site" className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center" data-testid="dock">
+      <motion.div
+        className="chin pointer-events-auto relative"
+        initial={reduce ? false : { y: 80 }}
+        animate={{ y: 0 }}
+        transition={{ type: "spring", stiffness: 260, damping: 28, delay: 0.4 }}
+        onMouseLeave={() => setHover(null)}
       >
-        <div ref={bg} aria-hidden className="dock-glass absolute inset-0 origin-center rounded-[22px] md:rounded-[24px]" />
-        {items.map((it, i) => {
-          const on = current === it.key;
-          const tile = (
-            <>
-              <span
-                ref={(el) => {
-                  tips.current[i] = el;
-                }}
-                className="dock-tip"
-                role="tooltip"
-              >
-                {it.label}
-              </span>
-              <span
-                ref={(el) => {
-                  tiles.current[i] = el;
-                }}
-                className={`dock-tile bg-gradient-to-b ${it.tint}`}
-              >
-                {it.icon}
-              </span>
-              <span className={`dock-dot ${on ? "opacity-100" : "opacity-0"}`} aria-hidden />
-            </>
-          );
-          return (
-            <div
-              key={it.key}
-              ref={(el) => {
-                slots.current[i] = el;
-              }}
-              className="dock-slot relative"
-              data-active={on || undefined}
-            >
-              {it.href ? (
-                <Link href={it.href} className="dock-btn group" aria-label={it.label} aria-current={on ? "page" : undefined} data-testid={`dock-${it.key}`}>
-                  {tile}
-                </Link>
-              ) : (
-                <button type="button" onClick={it.go} className="dock-btn group" aria-label={it.label} aria-current={on ? "true" : undefined} data-testid={`dock-${it.key}`}>
-                  {tile}
-                </button>
-              )}
-            </div>
-          );
-        })}
-        <div ref={tail} className="relative flex items-end gap-1.5 md:gap-2">
-          <span aria-hidden className="mx-0.5 mb-1.5 h-9 w-px self-end bg-white/20 md:mx-1 md:h-10" />
-          <div className="mb-0.5 hidden md:block">
-            <DownloadCTA size="sm" menu="up" testId="dock-download" />
+        <Ear side="l" />
+        <Ear side="r" />
+        {/* scroll progress along the top rim */}
+        <span className="chin-rim" aria-hidden>
+          <motion.span className="chin-rim-fill" style={{ scaleX: progress }} />
+        </span>
+        {/* three columns so the orb sits dead-centre, right under the notch */}
+        <div className="relative grid grid-cols-[1fr_auto_1fr] items-center px-2 pb-[max(10px,env(safe-area-inset-bottom))] pt-2.5 md:px-3">
+          <div className="flex items-center justify-end gap-0.5 md:gap-1">
+            <span className="mr-auto hidden items-center gap-2 pl-1 pr-3 font-display text-[15px] font-bold tracking-tight text-white xl:flex" aria-hidden>
+              <Logo size={22} /> Flo
+            </span>
+            {left.map(renderItem)}
           </div>
-          <div className="mb-0.5 md:hidden">
-            <DownloadCTA size="sm" menu="up" compact testId="dock-download-m" />
+
+          {/* the Flo orb: home */}
+          <button
+            type="button"
+            className="chin-orb mx-1.5 md:mx-2.5"
+            aria-label="Back to top"
+            title="Back to top"
+            data-testid="dock-home"
+            onMouseEnter={() => setHover(null)}
+            onClick={() => window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" })}
+          >
+            <Wave on={scrolling} />
+          </button>
+
+          <div className="flex items-center gap-0.5 md:gap-1">
+            {right.map(renderItem)}
+            {renderItem(account)}
+            <span aria-hidden className="mx-1.5 h-6 w-px bg-white/12 md:mx-2" />
+            <div className="hidden md:block">
+              <DownloadCTA size="sm" menu="up" testId="dock-download" />
+            </div>
+            <div className="md:hidden">
+              <DownloadCTA size="sm" menu="up" compact testId="dock-download-m" />
+            </div>
           </div>
         </div>
-      </div>
+      </motion.div>
     </nav>
   );
 }
