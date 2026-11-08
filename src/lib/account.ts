@@ -45,10 +45,29 @@ let offlineOk = false;
 const subs = new Set<() => void>();
 /** one immutable snapshot per change (useSyncExternalStore compares by identity) */
 let snapshot: { status: AccountStatus | null; offlineOk: boolean } = { status: null, offlineOk: false };
+/** while the sign-in screen plays its short "you're in" beat, a signed-in update waits (UI only) */
+let holding = false;
+let held = false;
+let holdTimer: ReturnType<typeof setTimeout> | undefined;
 const emit = () => {
+  if (holding && current?.signedIn) {
+    held = true;
+    return;
+  }
   snapshot = { status: current, offlineOk };
   subs.forEach((f) => f());
 };
+
+/** Defer the gate closing (sign-in success animation). Always released within 10 s. */
+export function holdSignInGate(on: boolean) {
+  clearTimeout(holdTimer);
+  holding = on;
+  if (on) holdTimer = setTimeout(() => holdSignInGate(false), 10_000);
+  else if (held) {
+    held = false;
+    emit();
+  }
+}
 
 export async function refreshAccount(): Promise<AccountStatus | null> {
   try {
