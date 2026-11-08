@@ -1,0 +1,202 @@
+import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
+import React, { useRef } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+import { colors, fonts, radius } from './theme';
+
+export function tap(style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) {
+  if (Platform.OS !== 'web') void Haptics.impactAsync(style).catch(() => undefined);
+}
+
+function usePressScale() {
+  const scale = useRef(new Animated.Value(1)).current;
+  const to = (v: number) =>
+    Animated.spring(scale, { toValue: v, useNativeDriver: Platform.OS !== 'web', speed: 40, bounciness: 6 }).start();
+  return { scale, onPressIn: () => to(0.97), onPressOut: () => to(1) };
+}
+
+interface BtnProps {
+  label: string;
+  onPress?: () => void;
+  icon?: React.ReactNode;
+  loading?: boolean;
+  disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
+  testID?: string;
+}
+
+export function PrimaryButton({ label, onPress, icon, loading, disabled, style, testID }: BtnProps) {
+  const { scale, onPressIn, onPressOut } = usePressScale();
+  const off = disabled || loading;
+  return (
+    <Animated.View style={[{ transform: [{ scale }] }, style]}>
+      <Pressable
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        disabled={off}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        onPress={() => {
+          tap(Haptics.ImpactFeedbackStyle.Medium);
+          onPress?.();
+        }}
+        style={[styles.primaryShadow, off && { opacity: 0.55 }]}
+      >
+        <LinearGradient
+          colors={['#8fdcff', colors.sky, colors.ocean]}
+          locations={[0, 0.35, 1]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.primary}
+        >
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(255,255,255,0.45)', 'rgba(255,255,255,0)']}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 0.6 }}
+            style={[StyleSheet.absoluteFill, { borderRadius: radius.md }]}
+          />
+          {loading ? (
+            <ActivityIndicator color="#03263d" />
+          ) : (
+            <View style={styles.row}>
+              {icon}
+              <Text style={styles.primaryLabel}>{label}</Text>
+            </View>
+          )}
+        </LinearGradient>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+export function GlassButton({
+  label,
+  onPress,
+  icon,
+  disabled,
+  style,
+  danger,
+  compact,
+  testID,
+}: BtnProps & { danger?: boolean; compact?: boolean }) {
+  const { scale, onPressIn, onPressOut } = usePressScale();
+  return (
+    <Animated.View style={[{ transform: [{ scale }] }, style]}>
+      <Pressable
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        disabled={disabled}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        onPress={() => {
+          tap();
+          onPress?.();
+        }}
+        style={({ pressed }) => [
+          styles.glass,
+          compact && styles.compact,
+          danger && styles.danger,
+          pressed && { backgroundColor: 'rgba(255,255,255,0.09)' },
+          disabled && { opacity: 0.5 },
+        ]}
+      >
+        <View style={styles.row}>
+          {icon}
+          <Text style={[styles.glassLabel, compact && { fontSize: 14 }, danger && { color: colors.danger }]}>
+            {label}
+          </Text>
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+export function IconButton({
+  onPress,
+  children,
+  label,
+  testID,
+}: {
+  onPress: () => void;
+  children: React.ReactNode;
+  label: string;
+  testID?: string;
+}) {
+  const { scale, onPressIn, onPressOut } = usePressScale();
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <Pressable
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        hitSlop={10}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        onPress={() => {
+          tap();
+          onPress();
+        }}
+        style={styles.icon}
+      >
+        {children}
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  primaryShadow: {
+    borderRadius: radius.md,
+    shadowColor: colors.sky,
+    shadowOpacity: 0.45,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  primary: {
+    height: 58,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    overflow: 'hidden',
+  },
+  primaryLabel: { fontFamily: fonts.semibold, fontSize: 16.5, color: '#03263d', letterSpacing: -0.2 },
+  glass: {
+    height: 56,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 22,
+    backgroundColor: colors.glass,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+  },
+  compact: { height: 40, borderRadius: radius.sm, paddingHorizontal: 14 },
+  danger: { borderColor: 'rgba(255,107,107,0.28)', backgroundColor: 'rgba(255,107,107,0.07)' },
+  glassLabel: { fontFamily: fonts.semibold, fontSize: 16, color: colors.ink, letterSpacing: -0.2 },
+  icon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.glass,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+  },
+});

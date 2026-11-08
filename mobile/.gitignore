@@ -1,0 +1,16 @@
+node_modules/
+.expo/
+dist/
+web-build/
+android/
+ios/
+*.apk
+*.aab
+*.jks
+*.keystore
+npm-debug.*
+
+# Firebase config (per-developer, supplied separately; see README)
+google-services.json
+# Never commit FCM service-account keys
+*service-account*.json

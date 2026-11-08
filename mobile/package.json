@@ -1,0 +1,53 @@
+{
+  "name": "flo-companion",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "web": "expo start --web",
+    "android": "expo run:android",
+    "android:apk": "npx --yes eas-cli@25.3.0 build -p android --profile preview",
+    "android:apk:local": "expo prebuild --platform android --no-install && cd android && ./gradlew assembleRelease",
+    "prebuild": "expo prebuild --platform android --no-install",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@expo-google-fonts/inter": "0.4.2",
+    "@expo/metro-runtime": "58.0.15",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "58.0.19",
+    "expo-build-properties": "58.0.11",
+    "expo-camera": "58.0.12",
+    "expo-constants": "58.0.13",
+    "expo-device": "58.0.5",
+    "expo-font": "58.0.10",
+    "expo-haptics": "58.0.7",
+    "expo-linear-gradient": "58.0.3",
+    "expo-notifications": "58.1.6",
+    "expo-secure-store": "58.0.2",
+    "expo-status-bar": "58.0.4",
+    "expo-system-ui": "58.0.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.0",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-svg": "15.16.0",
+    "react-native-web": "0.21.4"
+  },
+  "devDependencies": {
+    "@react-native/jest-preset": "0.88.0",
+    "@types/jest": "30.0.0",
+    "@types/react": "19.3.0",
+    "jest": "30.5.2",
+    "jest-expo": "58.0.12",
+    "typescript": "6.0.3"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "testMatch": [
+      "<rootDir>/__tests__/**/*.test.ts"
+    ]
+  }
+}
