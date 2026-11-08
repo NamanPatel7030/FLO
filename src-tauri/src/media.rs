@@ -94,6 +94,8 @@ mod system {
     use tauri::Emitter;
 
     static LATEST: Mutex<Option<NowPlaying>> = Mutex::new(None);
+    /// artwork data URL per track key ("bundle|title"), so a track is looked up once
+    static ART: Mutex<Option<(String, Option<String>)>> = Mutex::new(None);
     /// the helper is running and reporting (false → use the AppleScript fallback)
     pub static LIVE: AtomicBool = AtomicBool::new(false);
     static STARTED: AtomicBool = AtomicBool::new(false);
@@ -182,8 +184,23 @@ mod system {
                 return true;
             }
             let now = chrono::Utc::now().timestamp_millis();
-            let Some(np) = parse_line(&line, now) else { continue };
+            let Some(mut np) = parse_line(&line, now) else { continue };
             LIVE.store(true, Ordering::SeqCst);
+            if let Some(n) = np.as_mut() {
+                let key = format!("{}|{}", n.bundle_id.clone().unwrap_or_default(), n.title);
+                let known = ART.lock().as_ref().filter(|(k, _)| *k == key).map(|(_, a)| a.clone());
+                match known {
+                    Some(a) => n.artwork = a,
+                    None => {
+                        *ART.lock() = Some((key.clone(), None));
+                        let track = n.clone();
+                        std::thread::Builder::new()
+                            .name("flo-artwork".into())
+                            .spawn(move || resolve_artwork(key, track))
+                            .ok();
+                    }
+                }
+            }
             let changed = {
                 let mut cur = LATEST.lock();
                 let changed = differs(&cur, &np);
@@ -198,6 +215,34 @@ mod system {
         }
         let _ = child.wait();
         false
+    }
+
+    /// Find the real thumbnail for the playing track (YouTube video in a browser tab, or Spotify's
+    /// cover), fetch it through the egress allow-list and push an updated card.
+    fn resolve_artwork(key: String, track: NowPlaying) {
+        let Some(url) = super::artwork_url(&track) else { return };
+        let Some(app) = APP.get() else { return };
+        use tauri::Manager;
+        let st = app.state::<crate::state::Shared>();
+        let data = tauri::async_runtime::block_on(super::fetch_image(&st, &url));
+        let Some(data) = data else { return };
+        {
+            let mut art = ART.lock();
+            if art.as_ref().map(|(k, _)| k != &key).unwrap_or(true) {
+                return; // the track changed while we were fetching
+            }
+            *art = Some((key.clone(), Some(data.clone())));
+        }
+        let updated = {
+            let mut cur = LATEST.lock();
+            if let Some(n) = cur.as_mut() {
+                if format!("{}|{}", n.bundle_id.clone().unwrap_or_default(), n.title) == key {
+                    n.artwork = Some(data);
+                }
+            }
+            cur.clone()
+        };
+        let _ = app.emit(NOW_PLAYING_EVENT, updated);
     }
 
     /// MediaRemote command ids
@@ -227,6 +272,126 @@ function run() {{
             .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "ok")
             .unwrap_or(false)
     }
+}
+
+/// NX_KEYTYPE_* codes for the keyboard's media keys.
+pub fn media_key(action: &str) -> Option<i32> {
+    Some(match action {
+        "playpause" | "toggle" | "play" | "pause" => 16, // NX_KEYTYPE_PLAY
+        "next" => 17,                                     // NX_KEYTYPE_NEXT
+        "previous" | "prev" => 18,                        // NX_KEYTYPE_PREVIOUS
+        _ => return None,
+    })
+}
+
+/// YouTube video id from a watch / short / youtu.be / music.youtube.com URL.
+pub fn youtube_id(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    let host = u.host_str()?.trim_start_matches("www.").trim_start_matches("m.");
+    let id = match host {
+        "youtube.com" | "music.youtube.com" => {
+            if u.path() == "/watch" {
+                u.query_pairs().find(|(k, _)| k == "v").map(|(_, v)| v.to_string())
+            } else {
+                let mut seg = u.path_segments()?;
+                match seg.next()? {
+                    "shorts" | "live" | "embed" => seg.next().map(|s| s.to_string()),
+                    _ => None,
+                }
+            }
+        }
+        "youtu.be" => u.path_segments()?.next().map(|s| s.to_string()),
+        _ => None,
+    }?;
+    (id.len() >= 6 && id.len() <= 20 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then_some(id)
+}
+
+/// Pick the tab that is playing this title: YouTube page titles are "<title> - YouTube".
+pub fn match_tab<'a>(tabs: &'a [(String, String)], title: &str) -> Option<&'a str> {
+    let want = title.trim().to_lowercase();
+    if want.is_empty() {
+        return None;
+    }
+    tabs.iter()
+        .filter(|(url, _)| youtube_id(url).is_some())
+        .find(|(_, t)| {
+            let t = t.to_lowercase();
+            t.contains(&want) || want.contains(t.trim_end_matches(" - youtube").trim_end_matches(" - youtube music").trim())
+        })
+        .map(|(u, _)| u.as_str())
+}
+
+#[cfg(target_os = "macos")]
+const BROWSERS: &[(&str, bool)] = &[
+    ("com.google.Chrome", true),
+    ("com.brave.Browser", true),
+    ("com.microsoft.edgemac", true),
+    ("company.thebrowser.Browser", true),
+    ("com.vivaldi.Vivaldi", true),
+    ("com.apple.Safari", false),
+];
+
+/// Where the thumbnail of the playing track lives, if Flo can find it.
+#[cfg(target_os = "macos")]
+fn artwork_url(np: &NowPlaying) -> Option<String> {
+    let bundle = np.bundle_id.as_deref().unwrap_or("");
+    if bundle == "com.spotify.client" {
+        let u = osa(r#"tell application "Spotify" to return artwork url of current track"#)?;
+        return u.starts_with("https://i.scdn.co/").then_some(u);
+    }
+    let &(id, chromium) = BROWSERS.iter().find(|(b, _)| *b == bundle)?;
+    // url \t title per tab (Chromium browsers call it `title`, Safari `name`)
+    let field = if chromium { "title" } else { "name" };
+    let script = format!(
+        r#"set out to ""
+tell application id "{id}"
+  repeat with w in windows
+    repeat with t in tabs of w
+      set out to out & (URL of t) & tab & ({field} of t) & linefeed
+    end repeat
+  end repeat
+end tell
+return out"#
+    );
+    let raw = osa(&script)?;
+    let tabs: Vec<(String, String)> = raw
+        .lines()
+        .filter_map(|l| l.split_once('\t').map(|(u, t)| (u.to_string(), t.to_string())))
+        .collect();
+    let url = match_tab(&tabs, &np.title)?;
+    let vid = youtube_id(url)?;
+    Some(format!("https://i.ytimg.com/vi/{vid}/hqdefault.jpg"))
+}
+
+/// Download a small image through the egress allow-list and return it as a data: URL.
+#[cfg(target_os = "macos")]
+async fn fetch_image(st: &crate::state::Shared, url: &str) -> Option<String> {
+    use base64::Engine;
+    use crate::egress::Purpose;
+    st.egress.check(url, Purpose::Artwork, true).ok()?;
+    let resp = st
+        .egress
+        .client(Purpose::Artwork, true)
+        .get(url)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let ty = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .filter(|t| t.starts_with("image/"))
+        .unwrap_or("image/jpeg")
+        .to_string();
+    let bytes = resp.bytes().await.ok()?;
+    if bytes.is_empty() || bytes.len() > 600_000 {
+        return None;
+    }
+    Some(format!("data:{ty};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
 
 /// Start reading the system Now Playing in the background (macOS; no-op elsewhere).
@@ -288,6 +453,15 @@ fn apple_script_now_playing() -> Option<NowPlaying> {
 #[cfg(target_os = "macos")]
 pub fn control(action: &str) -> anyhow::Result<()> {
     let Some(id) = system::command_id(action) else { anyhow::bail!("unknown media action {action}") };
+    // 1) the keyboard's media keys: macOS delivers them to whatever is playing (YouTube in a
+    //    browser, Spotify, Music, VLC…) exactly like pressing ⏯ / ⏭ / ⏮. Needs Accessibility,
+    //    which Flo already has for typing.
+    if let Some(key) = media_key(action) {
+        if crate::platform::macos_media_key(key) {
+            return Ok(());
+        }
+    }
+    // 2) MediaRemote command (works without Accessibility, but some players ignore it)
     if system::send(id) {
         return Ok(());
     }
@@ -343,6 +517,31 @@ mod tests {
         assert!(differs(&Some(a.clone()), &Some(d)));
         // stopped
         assert!(differs(&Some(a), &None));
+    }
+
+    #[test]
+    fn finds_youtube_ids_and_the_playing_tab() {
+        use super::{match_tab, youtube_id};
+        assert_eq!(youtube_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1").as_deref(), Some("dQw4w9WgXcQ"));
+        assert_eq!(youtube_id("https://youtu.be/dQw4w9WgXcQ").as_deref(), Some("dQw4w9WgXcQ"));
+        assert_eq!(youtube_id("https://music.youtube.com/watch?v=abcDEF12345").as_deref(), Some("abcDEF12345"));
+        assert_eq!(youtube_id("https://www.youtube.com/shorts/abcDEF12345").as_deref(), Some("abcDEF12345"));
+        assert_eq!(youtube_id("https://example.com/watch?v=abcDEF12345"), None);
+        assert_eq!(youtube_id("https://www.youtube.com/watch?v=<script>"), None);
+        let tabs = vec![
+            ("https://mail.google.com/".to_string(), "Inbox".to_string()),
+            ("https://www.youtube.com/watch?v=abcDEF12345".to_string(), "Charaj | Aghori Muzik | New Navratri Songs - YouTube".to_string()),
+        ];
+        assert_eq!(match_tab(&tabs, "Charaj | Aghori Muzik | New Navratri Songs"), Some("https://www.youtube.com/watch?v=abcDEF12345"));
+        assert_eq!(match_tab(&tabs, "Something else"), None);
+    }
+
+    #[test]
+    fn media_keys_cover_the_controls() {
+        assert_eq!(super::media_key("playpause"), Some(16));
+        assert_eq!(super::media_key("next"), Some(17));
+        assert_eq!(super::media_key("previous"), Some(18));
+        assert_eq!(super::media_key("volume"), None);
     }
 
     #[test]

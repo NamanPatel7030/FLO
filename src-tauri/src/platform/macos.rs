@@ -290,6 +290,38 @@ pub fn key_press(keycode: u16, cmd: bool, shift: bool, alt: bool, ctrl: bool) ->
     Ok(())
 }
 
+/// Press a keyboard media key (NX_KEYTYPE_PLAY = 16, NEXT = 17, PREVIOUS = 18). macOS delivers it to
+/// whatever is playing, exactly like the ⏯ ⏭ ⏮ keys. Needs Accessibility (posting HID events).
+pub fn macos_media_key(key: i32) -> bool {
+    extern "C" {
+        fn CGEventPost(tap: u32, event: *mut std::ffi::c_void);
+        fn AXIsProcessTrusted() -> bool;
+    }
+    if !unsafe { AXIsProcessTrusted() } {
+        return false;
+    }
+    for down in [true, false] {
+        // NSEventTypeSystemDefined (14), subtype 8 = media key; data1 = key << 16 | state << 8
+        let state: isize = if down { 0xa } else { 0xb };
+        let flags: usize = if down { 0xa00 } else { 0xb00 };
+        let data1: isize = ((key as isize) << 16) | (state << 8);
+        let point = objc2_foundation::NSPoint::new(0.0, 0.0);
+        let ctx: *mut AnyObject = std::ptr::null_mut();
+        let ev: *mut AnyObject = unsafe {
+            msg_send![class!(NSEvent), otherEventWithType: 14usize, location: point, modifierFlags: flags, timestamp: 0.0f64, windowNumber: 0isize, context: ctx, subtype: 8i16, data1: data1, data2: -1isize]
+        };
+        if ev.is_null() {
+            return false;
+        }
+        let cg: *mut std::ffi::c_void = unsafe { msg_send![ev, CGEvent] };
+        if cg.is_null() {
+            return false;
+        }
+        unsafe { CGEventPost(0, cg) }; // kCGHIDEventTap
+    }
+    true
+}
+
 /// Common named keys → virtual keycode.
 pub fn keycode_for(name: &str) -> Option<u16> {
     Some(match name.to_lowercase().as_str() {

@@ -18,6 +18,8 @@ pub enum HostClass {
     Provider,
     ModelHub,
     Weather,
+    /// track artwork images (YouTube / Spotify thumbnail CDNs)
+    Artwork,
     Unknown,
 }
 
@@ -35,6 +37,8 @@ pub enum Purpose {
     /// a user-added MCP server (only the hosts the user configured)
     Mcp,
     Account,
+    /// the thumbnail of what's playing (Now Playing card)
+    Artwork,
 }
 
 impl Purpose {
@@ -51,6 +55,7 @@ impl Purpose {
             Purpose::Weather => "weather",
             Purpose::Mcp => "mcp server",
             Purpose::Account => "account sign-in",
+            Purpose::Artwork => "now playing artwork",
         }
     }
 }
@@ -84,6 +89,10 @@ pub fn classify_host(host: &str) -> HostClass {
     if h == "api.open-meteo.com" || h == "ipapi.co" {
         return HostClass::Weather;
     }
+    // now-playing thumbnails: YouTube and Spotify image CDNs only
+    if h == "i.ytimg.com" || h == "i.scdn.co" {
+        return HostClass::Artwork;
+    }
     HostClass::Unknown
 }
 
@@ -93,6 +102,7 @@ pub fn is_allowed(host: &str, purpose: Purpose, cloud_allowed: bool) -> bool {
         HostClass::Provider => cloud_allowed && purpose != Purpose::ModelDownload,
         HostClass::ModelHub => purpose == Purpose::ModelDownload,
         HostClass::Weather => purpose == Purpose::Weather,
+        HostClass::Artwork => purpose == Purpose::Artwork,
         HostClass::Unknown => false,
     }
 }
