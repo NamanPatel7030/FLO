@@ -38,12 +38,18 @@ export default async function SlackSetup() {
         <ol className="mt-7 flex flex-col gap-4">
           <li className={step}>
             <span className={num}>1</span>
-            <span>
-              Open{" "}
-              <a className="text-brand-300 underline-offset-2 hover:underline" href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noreferrer">
-                api.slack.com/apps
-              </a>{" "}
-              → <span className="text-ink">Create New App → From a manifest</span>, pick a workspace you own and paste:
+            <span className="flex flex-col gap-3">
+              <span>Create Flo&apos;s Slack app. The button opens Slack with everything already filled in: just pick a workspace you own and press Create.</span>
+              <a
+                className="btn btn-primary w-fit px-5 py-2.5 text-[14px]"
+                href={`https://api.slack.com/apps?new_app=1&manifest_yaml=${encodeURIComponent(manifestYaml(site))}`}
+                target="_blank"
+                rel="noreferrer"
+                data-testid="slack-create-app"
+              >
+                Create Flo&apos;s Slack app
+              </a>
+              <span className="text-[13px] text-faint">If Slack asks for the manifest instead, choose Create New App → From a manifest and paste this:</span>
             </span>
           </li>
         </ol>
