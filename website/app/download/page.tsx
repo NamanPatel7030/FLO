@@ -4,6 +4,7 @@ import { Apple, Download, KeyRound, LogIn, MonitorDown, Terminal } from "lucide-
 import { auth } from "@/auth";
 import { AuthShell } from "@/components/AuthShell";
 import { SignOutButton } from "@/components/SignOutButton";
+import { downloadUrl, gatedHref } from "@/lib/downloads";
 
 export const metadata = { title: "Download" };
 export const dynamic = "force-dynamic";
@@ -16,10 +17,11 @@ function detect(ua: string): OS {
   return "mac";
 }
 
-const BUILDS: { os: OS; label: string; sub: string; env: string | undefined; icon: typeof Apple }[] = [
-  { os: "mac", label: "macOS", sub: "Apple silicon and Intel · macOS 13+", env: process.env.NEXT_PUBLIC_DOWNLOAD_MAC, icon: Apple },
-  { os: "windows", label: "Windows", sub: "Windows 10 and 11 · beta", env: process.env.NEXT_PUBLIC_DOWNLOAD_WINDOWS, icon: MonitorDown },
-  { os: "linux", label: "Linux", sub: ".deb and AppImage · beta", env: process.env.NEXT_PUBLIC_DOWNLOAD_LINUX, icon: Terminal },
+// file locations stay on the server; the page only links to the signed-in /api/download/<os> route
+const BUILDS: { os: OS; label: string; sub: string; icon: typeof Apple }[] = [
+  { os: "mac", label: "macOS", sub: "Apple silicon and Intel · macOS 13+", icon: Apple },
+  { os: "windows", label: "Windows", sub: "Windows 10 and 11 · beta", icon: MonitorDown },
+  { os: "linux", label: "Linux", sub: ".deb and AppImage · beta", icon: Terminal },
 ];
 
 export default async function DownloadPage() {
@@ -40,7 +42,7 @@ export default async function DownloadPage() {
 
         <div className="mt-10 flex flex-col gap-3" data-testid="downloads">
           {builds.map((b, i) => {
-            const ready = !!b.env;
+            const ready = !!downloadUrl(b.os);
             const primary = i === 0;
             return (
               <div key={b.os} className={`${primary ? "glass-strong" : "glass"} flex items-center gap-4 rounded-3xl p-5`} data-os={b.os}>
@@ -54,7 +56,7 @@ export default async function DownloadPage() {
                   <p className="text-[13.5px] text-muted">{b.sub}</p>
                 </div>
                 {ready ? (
-                  <a href={b.env} className={`btn ${primary ? "btn-primary" : "btn-glass"} px-5 py-2.5 text-[14px]`} data-testid={`download-${b.os}`}>
+                  <a href={gatedHref(b.os)} className={`btn ${primary ? "btn-primary" : "btn-glass"} px-5 py-2.5 text-[14px]`} data-testid={`download-${b.os}`}>
                     <Download size={16} /> Download
                   </a>
                 ) : (
