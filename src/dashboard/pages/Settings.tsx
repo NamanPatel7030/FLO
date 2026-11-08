@@ -17,6 +17,7 @@ import { accountApi, initials, refreshAccount, useAccount } from "../../lib/acco
 import { playCue, SOUND_PACKS, type SoundPack } from "../../lib/cueSounds";
 import { DEFAULT_WIDGETS, WIDGETS, loadWidgets, saveWidgets, type WidgetId } from "../../lib/widgets";
 import { WidgetPreview } from "../../island/Widgets";
+import { UpdateSettingsRow } from "../UpdateCard";
 import { formatZoneTime, hourDiffLabel, loadZones, MAX_ZONES, onZonesChange, saveZones, searchCities, type ClockZone, type ZoneCity } from "../../lib/timezones";
 
 const TABS = ["General", "Appearance", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
@@ -693,6 +694,7 @@ function General({ s, set }: P) {
       </Section>
       <Section title="Preferences">
         <Card className="divide-y divide-[var(--border)] px-5 py-2">
+          <UpdateSettingsRow />
           <Row label="Your name" hint="Used in greetings and to spot messages addressed to you.">
             <Input className="w-56" value={s.userName} onChange={(e) => set({ userName: e.target.value })} />
           </Row>

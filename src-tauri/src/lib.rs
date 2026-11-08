@@ -6,6 +6,7 @@ mod assistant;
 mod attention;
 mod audio;
 mod claude;
+mod code;
 mod commands;
 mod corrections;
 mod db;
@@ -17,6 +18,9 @@ mod livetx;
 mod llm;
 mod meeting;
 mod reminders;
+mod cron;
+mod scheduler;
+mod skillgen;
 mod mcp;
 mod media;
 mod meeting_detect;
@@ -34,6 +38,7 @@ mod slack;
 mod state;
 mod stt;
 mod text;
+mod updater;
 mod weather;
 
 use hotkey::HotkeyEvent;
@@ -340,6 +345,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
@@ -365,6 +371,8 @@ pub fn run() {
             commands::update_todo,
             commands::snooze_todo,
             commands::answer_claude_permission,
+            commands::check_update,
+            commands::install_update,
             commands::list_skills,
             commands::list_connections,
             commands::save_connection,
@@ -442,6 +450,21 @@ pub fn run() {
             commands::add_context_doc,
             commands::update_context_doc,
             commands::delete_context_doc,
+            code::choose_folder,
+            code::validate_repo_url,
+            code::clone_repo,
+            code::link_folder,
+            code::repo_info,
+            code::unlink_code,
+            code::open_code,
+            code::coding_agents,
+            code::agent_sign_in,
+            code::edit_with_ai,
+            code::list_code_runs,
+            code::code_run_log,
+            code::stop_code_run,
+            skillgen::generate_skill_graph,
+            scheduler::run_skill_now,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -504,6 +527,7 @@ pub fn run() {
             }
             mcp::refresh_hosts(&st, None);
             reminders::spawn(st.clone());
+            scheduler::spawn(st.clone());
             attention::spawn(st.clone());
             // both read the hook token from the keychain, which can wait on a macOS permission
             // prompt; never block app start (and the notch) on that
@@ -517,6 +541,7 @@ pub fn run() {
                     })
                     .ok();
             }
+            updater::spawn_auto_check(handle.clone());
             spawn_hover_tracker(handle.clone(), st.clone());
             stt::spawn_idle_unloader(st.whisper.clone());
             Ok(())

@@ -106,8 +106,16 @@ impl Db {
             "ALTER TABLE projects ADD COLUMN client TEXT",
             "ALTER TABLE projects ADD COLUMN client_details TEXT",
             "ALTER TABLE projects ADD COLUMN keywords TEXT",
+            "ALTER TABLE projects ADD COLUMN repo_url TEXT",
+            "ALTER TABLE projects ADD COLUMN local_path TEXT",
+            "CREATE TABLE IF NOT EXISTS code_runs(
+              id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              prompt TEXT NOT NULL, agent TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL,
+              created_at TEXT NOT NULL, finished_at TEXT, exit_code INTEGER)",
             "ALTER TABLE skills ADD COLUMN graph TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE skills ADD COLUMN connections TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE skills ADD COLUMN schedule TEXT",
+            "ALTER TABLE skills ADD COLUMN last_run TEXT",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -161,7 +169,7 @@ impl Db {
                (SELECT COUNT(*) FROM todos t WHERE t.project_id=p.id AND t.status IN ('open','snoozed')),
                (SELECT COUNT(*) FROM todos t WHERE t.project_id=p.id AND t.status='done'),
                (SELECT n.title FROM notes n WHERE n.project_id=p.id ORDER BY n.created_at DESC LIMIT 1),
-               p.client, p.client_details, p.keywords
+               p.client, p.client_details, p.keywords, p.repo_url, p.local_path
              FROM projects p ORDER BY p.updated_at DESC",
         )?;
         let rows = st
@@ -179,6 +187,8 @@ impl Db {
                     client: r.get(9)?,
                     client_details: r.get(10)?,
                     keywords: r.get(11)?,
+                    repo_url: r.get(12)?,
+                    local_path: r.get(13)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -247,10 +257,54 @@ impl Db {
         Ok(())
     }
 
+    // ── project code (see code.rs) ──────────────────────────────────────────
+    /// Link (or with None, None unlink) a repo / folder to a project.
+    pub fn set_project_code(&self, id: &str, repo_url: Option<&str>, local_path: Option<&str>) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE projects SET repo_url=?2, local_path=?3, updated_at=?4 WHERE id=?1",
+            params![id, repo_url, local_path, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_code_run(&self, r: &crate::code::CodeRun) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT INTO code_runs (id,project_id,prompt,agent,mode,status,created_at,finished_at,exit_code) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            params![r.id, r.project_id, r.prompt, r.agent, r.mode, r.status, r.created_at, r.finished_at, r.exit_code],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_code_run(&self, id: &str, status: &str, exit_code: Option<i32>) -> Result<()> {
+        self.conn.lock().execute("UPDATE code_runs SET status=?2, exit_code=?3, finished_at=?4 WHERE id=?1", params![id, status, exit_code, now()])?;
+        Ok(())
+    }
+
+    pub fn list_code_runs(&self, project_id: &str, limit: u32) -> Result<Vec<crate::code::CodeRun>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT id,project_id,prompt,agent,mode,status,created_at,finished_at,exit_code FROM code_runs WHERE project_id=?1 ORDER BY created_at DESC LIMIT ?2")?;
+        let rows = st
+            .query_map(params![project_id, limit], |r| {
+                Ok(crate::code::CodeRun {
+                    id: r.get(0)?,
+                    project_id: r.get(1)?,
+                    prompt: r.get(2)?,
+                    agent: r.get(3)?,
+                    mode: r.get(4)?,
+                    status: r.get(5)?,
+                    created_at: r.get(6)?,
+                    finished_at: r.get(7)?,
+                    exit_code: r.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     // ── skills ──────────────────────────────────────────────────────────────
     pub fn list_skills(&self) -> Result<Vec<Skill>> {
         let c = self.conn.lock();
-        let mut st = c.prepare("SELECT id,name,triggers,instructions,platforms,mode,enabled,uses,created_at,graph,connections FROM skills ORDER BY uses DESC, created_at DESC")?;
+        let mut st = c.prepare("SELECT id,name,triggers,instructions,platforms,mode,enabled,uses,created_at,graph,connections,schedule,last_run FROM skills ORDER BY uses DESC, created_at DESC")?;
         let rows = st
             .query_map([], |r| {
                 Ok(Skill {
@@ -265,6 +319,8 @@ impl Db {
                     created_at: r.get(8)?,
                     graph: r.get(9)?,
                     connections: serde_json::from_str(&r.get::<_, String>(10)?).unwrap_or_default(),
+                    schedule: r.get(11)?,
+                    last_run: r.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -281,9 +337,14 @@ impl Db {
         if s.mode != "do" {
             s.mode = "write".into();
         }
+        // a schedule must be a valid 5-field cron; blank = no schedule
+        s.schedule = s.schedule.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(String::from);
+        if let Some(c) = &s.schedule {
+            crate::cron::Cron::parse(c).map_err(|e| anyhow::anyhow!("Schedule: {e}"))?;
+        }
         self.conn.lock().execute(
-            "INSERT INTO skills (id,name,triggers,instructions,platforms,mode,enabled,uses,created_at,graph,connections) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
-             ON CONFLICT(id) DO UPDATE SET name=?2, triggers=?3, instructions=?4, platforms=?5, mode=?6, enabled=?7, graph=?10, connections=?11",
+            "INSERT INTO skills (id,name,triggers,instructions,platforms,mode,enabled,uses,created_at,graph,connections,schedule) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+             ON CONFLICT(id) DO UPDATE SET name=?2, triggers=?3, instructions=?4, platforms=?5, mode=?6, enabled=?7, graph=?10, connections=?11, schedule=?12",
             params![
                 s.id,
                 s.name.trim(),
@@ -295,7 +356,8 @@ impl Db {
                 s.uses,
                 s.created_at,
                 s.graph,
-                serde_json::to_string(&s.connections)?
+                serde_json::to_string(&s.connections)?,
+                s.schedule
             ],
         )?;
         Ok(self.list_skills()?.into_iter().find(|x| x.id == s.id).unwrap_or(s))
@@ -364,6 +426,12 @@ impl Db {
 
     pub fn delete_skill(&self, id: &str) -> Result<()> {
         self.conn.lock().execute("DELETE FROM skills WHERE id=?1", params![id])?;
+        Ok(())
+    }
+
+    /// Record when a scheduled skill last ran (the scheduler runs each slot once).
+    pub fn set_skill_last_run(&self, id: &str, at: &str) -> Result<()> {
+        self.conn.lock().execute("UPDATE skills SET last_run=?2 WHERE id=?1", params![id, at])?;
         Ok(())
     }
 
@@ -1173,6 +1241,26 @@ mod tests {
         assert_eq!(got.platforms, vec!["upwork".to_string(), "browser".to_string()]);
         db.delete_skill(&s.id).unwrap();
         assert!(db.list_skills().unwrap().is_empty());
+    }
+
+    #[test]
+    fn skill_schedule_and_last_run() {
+        let db = Db::open_in_memory().unwrap();
+        let base = Skill { name: "Digest".into(), instructions: "Summarise".into(), ..Default::default() };
+        // invalid cron is refused
+        assert!(db.save_skill(&Skill { schedule: Some("every day".into()), ..base.clone() }).is_err());
+        // blank = none
+        let s = db.save_skill(&Skill { schedule: Some("  ".into()), ..base.clone() }).unwrap();
+        assert_eq!(s.schedule, None);
+        let mut s = db.save_skill(&Skill { schedule: Some(" 0 9 * * 1-5 ".into()), ..base }).unwrap();
+        assert_eq!(s.schedule.as_deref(), Some("0 9 * * 1-5"));
+        db.set_skill_last_run(&s.id, "2026-11-09T09:00:00+05:30").unwrap();
+        // saving the skill from the editor keeps last_run
+        s.name = "Daily digest".into();
+        s.last_run = None;
+        let got = db.save_skill(&s).unwrap();
+        assert_eq!(got.last_run.as_deref(), Some("2026-11-09T09:00:00+05:30"));
+        assert_eq!(got.name, "Daily digest");
     }
 
 

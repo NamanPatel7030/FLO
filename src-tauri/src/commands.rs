@@ -751,6 +751,18 @@ pub async fn slack_sync_now(st: State<'_, Shared>) -> R<usize> {
     crate::slack::sync(st.inner()).await.map_err(e)
 }
 
+/// Ask our update server whether a newer Flo exists.
+#[tauri::command]
+pub async fn check_update(app: tauri::AppHandle) -> R<crate::updater::UpdateInfo> {
+    crate::updater::check(&app).await
+}
+
+/// Download, verify and install the update found by `check_update` (progress on `flo://update`).
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> R<crate::updater::UpdateInfo> {
+    crate::updater::install(&app).await
+}
+
 /// Answer a Claude Code permission question from the notch: "allow" | "deny" | "terminal".
 #[tauri::command]
 pub fn answer_claude_permission(id: String, decision: String) -> R<()> {

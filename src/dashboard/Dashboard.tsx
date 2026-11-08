@@ -18,6 +18,8 @@ import Typing from "./pages/Typing";
 import { Signature } from "./Signature";
 import { Ocean } from "../island/Ocean";
 import { Kbd } from "./ui";
+import { UpdateSidebarCard } from "./UpdateCard";
+import { checkForUpdate } from "../lib/updates";
 import { Logo } from "./Logo";
 import { missingRequired, usePermissions } from "./usePermissions";
 import { Onboarding } from "./Onboarding";
@@ -65,6 +67,10 @@ export default function Dashboard() {
   const openTodos = todos?.filter((t) => t.status === "open").length ?? 0;
   // Home badge = live Claude sessions needing attention (matches the Home card), not stale events
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
+  // the backend checks every few hours; also check when the window opens so the card is current
+  useEffect(() => {
+    void checkForUpdate();
+  }, []);
   useEffect(() => {
     api.listClaudeSessions().then(setSessions).catch(() => setSessions([]));
     return on<ClaudeSession[]>(EV.claudeSessions, (l) => setSessions(Array.isArray(l) ? l : []));
@@ -132,6 +138,7 @@ export default function Dashboard() {
             })}
           </nav>
           <div className="mt-auto p-3">
+            <UpdateSidebarCard />
             <div className="rounded-2xl glass-strong p-3 text-[12px] text-muted">
               {ready ? (
                 <>

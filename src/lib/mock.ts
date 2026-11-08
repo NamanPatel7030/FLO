@@ -25,6 +25,7 @@ import type {
   TodoStatus, Skill, Connection } from "./types";
 import { EV } from "./types";
 import { countWords } from "./format";
+import { codeMock, UNHANDLED } from "./mockCode";
 
 // ── event bus ───────────────────────────────────────────────────────────────
 type Cb = (payload: any) => void;
@@ -147,7 +148,61 @@ const skills: Skill[] = [
     uses: 4,
     createdAt: iso(2000),
   },
+  {
+    id: "k3",
+    name: "Morning inbox digest",
+    triggers: "inbox digest",
+    instructions: "1. Read my unread Gmail from the last day\n2. Summarise it in 5 bullets: who needs a reply first\nFinish by typing the result into the field I'm in.",
+    platforms: ["gmail"],
+    mode: "write",
+    enabled: true,
+    uses: 9,
+    createdAt: iso(1500),
+    schedule: "0 9 * * 1-5",
+    lastRun: null,
+  },
 ];
+
+/** "Build with AI" in the browser preview: a plausible skill for the description (no model). */
+function mockGenerateSkill(description: string, current?: string): import("./types").GeneratedSkill {
+  const d = description.toLowerCase();
+  const platforms = (["gmail", "slack", "upwork", "linkedin", "whatsapp"] as const).filter((p) => d.includes(p));
+  const mcp = connections.filter((c) => c.kind === "mcp" && d.includes(c.name.toLowerCase())).map((c) => c.id);
+  const at = d.match(/\bat (\d{1,2})(?::(\d{2}))?/);
+  const [h, m] = at ? [Number(at[1]), Number(at[2] ?? 0)] : [9, 0];
+  const schedule = /every (\d+) minutes/.test(d)
+    ? `*/${d.match(/every (\d+) minutes/)![1]} * * * *`
+    : /weekday/.test(d)
+      ? `${m} ${h} * * 1-5`
+      : /every (day|morning)|daily/.test(d)
+        ? `${m} ${h} * * *`
+        : /every hour|hourly/.test(d)
+          ? "0 * * * *"
+          : null;
+  if (current) {
+    // refine: keep the current steps, add the change as a final step
+    const steps = (current.match(/^\d+\. .+$/gm) ?? []).map((s) => s.replace(/^\d+\. /, ""));
+    return { name: current.match(/^Name: (.+)$/m)?.[1] ?? "Refined skill", triggers: (current.match(/^Triggers: (.+)$/m)?.[1] ?? "").split(",").map((t) => t.trim()).filter((t) => t && t !== "(none)"), schedule: current.match(/^Schedule \(cron\): (.+)$/m)?.[1]?.replace("none", "") || schedule, steps: [...steps, description.trim().replace(/^./, (c) => c.toUpperCase())], platforms, mcp, knowledge: [], mode: "write", notes: [] };
+  }
+  const steps: string[] = [];
+  if (d.includes("gmail") || d.includes("email") || d.includes("inbox")) steps.push("Read my unread Gmail from the last day");
+  if (d.includes("summar")) steps.push("Summarise it in 5 short bullets, most urgent first");
+  const post = d.match(/post (?:it )?to (?:slack )?(#[\w-]+)/);
+  if (post) steps.push(`Post the summary to ${post[1]} in Slack`);
+  if (!steps.length) steps.push(description.trim().replace(/^./, (c) => c.toUpperCase()));
+  const name = d.includes("summar") && (d.includes("gmail") || d.includes("inbox")) ? "Daily inbox digest" : description.split(/\s+/).slice(0, 3).join(" ").replace(/^./, (c) => c.toUpperCase());
+  return {
+    name,
+    triggers: [name.toLowerCase(), ...(post ? ["post my digest"] : [])],
+    schedule,
+    steps,
+    platforms,
+    mcp,
+    knowledge: [],
+    mode: post ? "do" : "write",
+    notes: post && !mcp.length ? ["Add a Slack MCP server in Connections so Flo can post for you."] : [],
+  };
+}
 
 const todos: Todo[] = [
   { id: "t1", title: "Reply to Rahul about the invoice", reason: "Rahul asked “can you confirm the invoice by today?”", person: "Rahul", app: "Slack", source: "attention", status: "open", confidence: 0.92, createdAt: iso(25) },
@@ -810,6 +865,32 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       if (i >= 0) skills.splice(i, 1);
       return null;
     }
+    case "generate_skill_graph": {
+      await sleep(qs().has("slowai") ? 6000 : 900);
+      if (!String(args.description ?? "").trim()) throw "Describe what the skill should do.";
+      if (/\bfail\b/i.test(args.description)) throw "The AI didn't return a skill. Try again, or describe it a little differently.";
+      return mockGenerateSkill(args.description, args.current ?? undefined);
+    }
+    case "run_skill_now": {
+      const k = skills.find((x) => x.id === args.id);
+      if (!k) throw "That skill no longer exists.";
+      await sleep(600);
+      k.lastRun = new Date().toISOString();
+      k.uses += 1;
+      const resp: AssistantResponse = {
+        id: uid("a"),
+        query: `Run my “${k.name}” skill`,
+        reply: "• Rahul needs the Apollo deck reviewed by Friday\n• Stripe sent the Hermes webhook keys\n• 3 newsletters, nothing urgent",
+        actions: [],
+        results: [],
+        createdAt: new Date().toISOString(),
+        mode: "quick",
+      };
+      assistantLog.push(resp);
+      mockEmit(EV.assistant, resp);
+      mockEmit(EV.toast, { kind: "success", text: `${k.name} ran` });
+      return resp;
+    }
     case "list_todos":
       return [...todos];
     case "add_todo": {
@@ -952,7 +1033,26 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     }
     case "restart_app":
       perms.hotkeyActive = perms.accessibility && perms.inputMonitoring;
+      (window as any).__floRestarted = ((window as any).__floRestarted ?? 0) + 1;
       return null;
+    case "check_update": {
+      // tests (or a demo) publish a release with window.__floMockRelease = {version, notes}
+      const rel = (window as any).__floMockRelease as { version: string; notes?: string } | undefined;
+      const ready = !!(window as any).__floUpdateReady;
+      return { available: !!rel, current: "0.1.0", version: rel?.version ?? null, notes: rel?.notes ?? null, date: null, ready };
+    }
+    case "install_update": {
+      const rel = (window as any).__floMockRelease as { version: string; notes?: string } | undefined;
+      if (!rel) throw "Flo is already up to date";
+      const total = 18_000_000;
+      for (let i = 1; i <= 6; i++) {
+        await new Promise((r) => setTimeout(r, 120));
+        mockEmit(EV.update, { phase: "downloading", downloaded: Math.round((total * i) / 6), total });
+      }
+      (window as any).__floUpdateReady = true;
+      mockEmit(EV.update, { phase: "ready", version: rel.version });
+      return { available: true, current: "0.1.0", version: rel.version, notes: rel.notes ?? null, date: null, ready: true };
+    }
     case "fix_fn_key":
       return null;
     case "list_claude_events":
@@ -1104,9 +1204,13 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "uninstall_claude_hook":
       hook.installed = false;
       return { ...hook };
-    default:
+    default: {
+      // Projects → Code commands live in their own mock (lib/mockCode.ts)
+      const r = await codeMock(cmd, args, { projects, emit: mockEmit });
+      if (r !== UNHANDLED) return r;
       console.warn("[mock] unknown command", cmd, args);
       return null;
+    }
   }
 }
 

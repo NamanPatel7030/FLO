@@ -286,6 +286,28 @@ export interface Skill {
   graph?: string;
   /** MCP servers / custom platforms it uses ("doc:<id>" = an attached knowledge doc) */
   connections?: string[];
+  /** 5-field cron ("0 9 * * 1-5"): it also runs on its own at these local times */
+  schedule?: string | null;
+  /** when it last ran on its schedule / via Run now (RFC3339) */
+  lastRun?: string | null;
+}
+
+/** A skill drafted by "Build with AI" (generate_skill_graph): the canvas lays nodes out from it. */
+export interface GeneratedSkill {
+  name: string;
+  triggers: string[];
+  schedule?: string | null;
+  /** in run order */
+  steps: string[];
+  /** built-in platform ids or custom-platform connection ids */
+  platforms: string[];
+  /** MCP server connection ids */
+  mcp: string[];
+  /** "doc:<id>" */
+  knowledge: string[];
+  mode: "write" | "do";
+  /** things to set up, names the AI used that don't exist… */
+  notes: string[];
 }
 
 /** A custom platform or MCP server the user added (Skills → Connections). */
@@ -327,6 +349,10 @@ export interface Project {
   clientDetails?: string;
   /** comma-separated words that mean this project; captured items mentioning them are filed here */
   keywords?: string;
+  /** linked code (see lib/code.ts): GitHub URL / git remote */
+  repoUrl?: string;
+  /** linked code: absolute local folder */
+  localPath?: string;
 }
 
 export interface Note {
@@ -559,6 +585,8 @@ export interface Weather {
 
 /** Event names (Rust emits these to all windows) */
 export const EV = {
+  /** in-app updates: {phase: available|downloading|ready|error, ...} */
+  update: "flo://update",
   state: "flo://state",
   level: "flo://level",
   transcript: "flo://transcript",
@@ -648,3 +676,20 @@ export interface HandsfreeEvent {
  *  update_context_doc({id, title?, enabled?, pinned?, content?})   delete_context_doc({id})
  *  open_claude_session({id}) -> string   — focus the editor/terminal running that session (marks seen)
  */
+
+/** What the update server said (check_update / install_update). */
+export interface UpdateInfo {
+  available: boolean;
+  current: string;
+  version: string | null;
+  notes: string | null;
+  date: string | null;
+  /** downloaded and installed; a restart switches to it */
+  ready: boolean;
+}
+
+export type UpdateEvent =
+  | { phase: "available"; version: string; notes?: string | null }
+  | { phase: "downloading"; downloaded: number; total?: number | null }
+  | { phase: "ready"; version: string }
+  | { phase: "error"; message: string };

@@ -319,6 +319,10 @@ pub struct Skill {
     pub graph: String,
     /// ids of the MCP servers / custom platforms (Connections) this skill uses
     pub connections: Vec<String>,
+    /// 5-field cron ("0 9 * * 1-5"): run it on its own at these local times
+    pub schedule: Option<String>,
+    /// when the scheduler (or "Run now") last ran it (RFC3339)
+    pub last_run: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -499,6 +503,11 @@ pub struct Project {
     /// captured to-dos and notes mentioning them are filed here automatically
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keywords: Option<String>,
+    /// linked code (Projects → Code): GitHub URL / remote, and the local folder
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

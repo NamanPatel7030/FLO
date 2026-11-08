@@ -8,6 +8,7 @@ import type {
   ClaudeSession,
   ContextDoc,
   Skill,
+  GeneratedSkill,
   Connection,
   McpTool,
   Integration,
@@ -128,6 +129,8 @@ export const api = {
   openPermissionSettings: (kind: PermissionKind) => call<void>("open_permission_settings", { kind }),
   fixFnKey: () => call<void>("fix_fn_key"),
   restartApp: () => call<void>("restart_app"),
+  checkUpdate: () => call<import("./types").UpdateInfo>("check_update"),
+  installUpdate: () => call<import("./types").UpdateInfo>("install_update"),
 
   listClaudeEvents: (limit = 50) => call<ClaudeEvent[]>("list_claude_events", { limit }),
   markClaudeSeen: (id?: string) => call<void>("mark_claude_seen", { id }),
@@ -153,6 +156,10 @@ export const api = {
   testConnection: (connection: Connection) => call<McpTool[]>("test_connection", { connection }),
   saveSkill: (skill: Skill) => call<Skill>("save_skill", { skill }),
   deleteSkill: (id: string) => call<void>("delete_skill", { id }),
+  /** "Build with AI": draft a skill from a description; with `current` (the compiled skill), refine it */
+  generateSkillGraph: (description: string, current?: string) => call<GeneratedSkill>("generate_skill_graph", { description, current: current ?? null }),
+  /** run a skill now, unattended, like its schedule would (result saved as a note) */
+  runSkillNow: (id: string) => call<AssistantResponse>("run_skill_now", { id }),
   listContextDocs: () => call<ContextDoc[]>("list_context_docs").catch(() => [] as ContextDoc[]),
   getContextDoc: (id: string) => call<{ doc: ContextDoc; content: string }>("get_context_doc", { id }),
   addContextDoc: (title: string, content: string) => call<ContextDoc>("add_context_doc", { title, content }),

@@ -9,3 +9,7 @@ test-results/
 playwright-report/
 tests/.tmp/
 next-env.d.ts.bak
+
+# update releases are build artifacts (scripts/release-mac.sh); deploy them, don't commit them
+public/releases/
+releases/
