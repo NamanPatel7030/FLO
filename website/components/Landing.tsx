@@ -2,6 +2,7 @@
 
 import { MotionConfig } from "motion/react";
 import { Dock } from "./story/Dock";
+import { Everything } from "./story/Everything";
 import { Outro } from "./story/Outro";
 import { FixedNotch, Rail, Story } from "./story/Story";
 import { StoryProvider } from "./story/StoryContext";
@@ -18,6 +19,7 @@ export function Landing({ signedIn }: { signedIn: boolean }) {
         <Rail />
         <main>
           <Story />
+          <Everything />
           <Outro />
         </main>
         <Dock signedIn={signedIn} />

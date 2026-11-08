@@ -7,9 +7,12 @@ export type ChapterId =
   | "dictation"
   | "languages"
   | "assistant"
+  | "skills"
+  | "agent"
   | "learns"
   | "todos"
   | "deadlines"
+  | "projects"
   | "meetings"
   | "claude"
   | "widgets"
@@ -48,9 +51,9 @@ export const CHAPTERS: Chapter[] = [
     id: "dictation",
     label: "Dictation",
     eyebrow: "Dictation",
-    title: "Hold Fn. Talk. It's typed.",
+    title: "Hold Control. Talk. It's typed.",
     hl: "It's typed.",
-    what: "Hold Fn anywhere and speak. Let go, and clean, punctuated text lands right where your cursor is: Slack, Mail, VS Code or any text box.",
+    what: "Hold Control anywhere and speak. Let go, and clean, punctuated text lands right where your cursor is: Slack, Mail, VS Code or any text box.",
     why: "You speak three to four times faster than you type. A reply that took a minute now takes fifteen seconds.",
     bullets: ["Whisper runs on your Mac. Your audio never leaves it.", "Text appears about 0.2 s after you let go.", "No word caps and no usage meter."],
     phases: [3200, 1000, 4200],
@@ -74,10 +77,34 @@ export const CHAPTERS: Chapter[] = [
     eyebrow: "Assistant that reads your screen",
     title: "Ask for a draft. It reads the room first.",
     hl: "reads the room",
-    what: "Hold Control and say what you need, like “draft a Dhanteras wish for the team”. Flo reads the conversation on screen and types the draft into the box you're in.",
+    what: "Hold fn and say what you need, like “draft a Dhanteras wish for the team”. Flo reads the conversation on screen and types the draft into the box you're in.",
     why: "No copying context into a chatbot and pasting back. It replies in the thread's language and tone, and uses people's real names.",
-    bullets: ["Reads the focused window only when you ask", "Writes Hinglish when the thread is Hinglish", "Uses your own AI key or a local model"],
+    bullets: ["Reads the focused window only when you ask", "Go deeper or search the web from any answer", "Uses your own AI key or a local model"],
     phases: [2800, 2400, 5600],
+    still: 2,
+  },
+  {
+    id: "skills",
+    label: "Skills",
+    eyebrow: "Skills & MCP tools",
+    title: "Teach it once. Then just ask.",
+    hl: "just ask.",
+    what: "Draw a skill on a canvas: the phrases that start it, the steps, the apps it works in, the MCP tools it may call and the docs it can read. Then say “write a proposal for this job”.",
+    why: "The way you like things done stops living in your head. Proposals, standups and follow-ups come out your way, every time.",
+    bullets: ["Write mode types the result, Do mode works the screen", "Connect any MCP server and call its tools mid-skill", "Attach Knowledge docs for Flo to draw on"],
+    phases: [2400, 3800, 3600],
+    still: 2,
+  },
+  {
+    id: "agent",
+    label: "Hands-free",
+    eyebrow: "Hands-free agent",
+    title: "Double-tap. Say it. Watch it happen.",
+    hl: "Watch it happen.",
+    what: "Double-tap fn and Flo keeps listening, no key held. Ask it to open apps, search, click and type, and it works your screen step by step while the notch shows every move.",
+    why: "Your hands stay free. And it never sends, posts, buys or deletes anything until you say “yes” out loud.",
+    bullets: ["Say “stop” at any moment and it stops", "“Open Slack” or “volume up” run instantly, offline", "Switches itself off after 5 quiet minutes"],
+    phases: [2600, 4200, 4400],
     still: 2,
   },
   {
@@ -88,7 +115,7 @@ export const CHAPTERS: Chapter[] = [
     hl: "right forever.",
     what: "When you correct a word Flo got wrong, it notices. A small card in the notch confirms the new spelling, with Undo in case you didn't mean it.",
     why: "Names, product terms and jargon stop being a fight. Say Tauri, get Tauri, every single time.",
-    bullets: ["Learns from the edits you make after dictating", "One tap to undo", "Your dictionary stays on your Mac"],
+    bullets: ["Learns from the edits you make after dictating", "“Did I mishear?” saves a word in one tap", "Your dictionary stays on your Mac"],
     phases: [2600, 4000, 2800],
     still: 1,
   },
@@ -117,14 +144,26 @@ export const CHAPTERS: Chapter[] = [
     still: 2,
   },
   {
+    id: "projects",
+    label: "Projects",
+    eyebrow: "Projects & clients",
+    title: "Everything files itself under the right client.",
+    hl: "files itself",
+    what: "Give a project its client, a few details and keywords. From then on, the to-dos, notes and meetings that mention them land in that project on their own.",
+    why: "Open Acme and see everything Acme: what you owe them, what was said and what's next, without sorting a thing.",
+    bullets: ["Filed by client name and keywords", "Progress and open to-dos for every project", "The assistant knows your projects when it drafts"],
+    phases: [2200, 3600, 3400],
+    still: 1,
+  },
+  {
     id: "meetings",
     label: "Meetings",
     eyebrow: "Meeting notes",
     title: "Listen. Flo takes the notes.",
     hl: "takes the notes.",
-    what: "Start recording from the notch. Flo transcribes live on your Mac, then hands you a summary and the action items when the call ends.",
+    what: "When a Zoom, Meet or Teams call starts, the notch offers to take notes. Flo transcribes live on your Mac, then hands you a summary and the action items when the call ends.",
     why: "You stay in the conversation instead of typing through it, and still know who said what and who owes what.",
-    bullets: ["Transcript with who said what", "Action items land in your to-dos", "Transcription happens on device"],
+    bullets: ["Who said what: name a voice once and Flo remembers it", "Action items land in your to-dos", "Transcription happens on device"],
     phases: [4200, 5200],
     still: 1,
   },
@@ -146,9 +185,9 @@ export const CHAPTERS: Chapter[] = [
     eyebrow: "Widgets",
     title: "Glance up. It's all there.",
     hl: "all there.",
-    what: "Open the notch for a panel of live widgets: what's playing, today's to-dos, your Claude sessions and the weather.",
+    what: "Open the notch for live widgets: music, to-dos, Claude sessions, world clocks, weather, focus timers and a note.",
     why: "The things you check fifty times a day are one glance away, and gone the moment you move on.",
-    bullets: ["Choose and reorder the widgets you want", "Everything updates live", "Closes as soon as your pointer leaves"],
+    bullets: ["Choose and reorder any of the 8 widgets", "Add the time zones your team lives in"],
     phases: [7000],
     still: 0,
   },
@@ -188,21 +227,21 @@ export const LANGS = [
 
 /** All 15 listening animations; the first five are the featured chips. */
 export const STYLES = [
-  "Ribbon wave",
-  "Equalizer bars",
-  "Neon line",
+  "Ribbon",
+  "Equalizer",
+  "Neon",
   "Helix",
-  "Sparkles",
-  "Pulse orb",
-  "Dot wave",
-  "Thin bars",
-  "Heartbeat",
-  "Orbit",
+  "Sparkle",
+  "Pulse",
+  "Wave",
+  "Bars",
+  "Aurora",
+  "Orb",
   "Ripple",
-  "Pixel grid",
+  "Spectrum",
   "Comet",
-  "Twin ribbon",
-  "Glow dots",
+  "Liquid",
+  "Constellation",
 ] as const;
 export const FEATURED_STYLES = 5;
 export const SIZES = ["Small", "Big", "Bigger", "Biggest"] as const;
@@ -241,5 +280,74 @@ export const DEADLINES = [
   { say: "in 2 hours", due: "Today, 12:40", ring: "12:35" },
 ] as const;
 
-export const WIDGETS = ["Now Playing", "Today's to-dos", "Claude sessions", "Weather", "Calendar", "Battery"] as const;
+/** The 8 notch widgets the app ships (Settings → Appearance → Widgets); the first four are on by default here. */
+export const WIDGETS = ["Now Playing", "Today's to-dos", "Claude sessions", "Clock & time zones", "Weather", "Pomodoro", "Stopwatch", "Quick note"] as const;
 export type WidgetName = (typeof WIDGETS)[number];
+
+/** Skills chapter: three skills the visitor can run. `attach` = [kind, label] nodes hanging off the steps. */
+export const SKILLS = [
+  {
+    name: "Upwork proposal",
+    say: "write a proposal for this job",
+    steps: ["Read the job post on screen", "Find 2 matching past projects", "Write 300 words, end with a question"],
+    mode: "Write",
+    out: "Type it into the proposal box",
+    attach: [
+      ["platform", "Upwork"],
+      ["mcp", "GitHub · search_repos"],
+      ["doc", "portfolio.md"],
+    ],
+    result: "Proposal typed into Upwork · 312 words",
+  },
+  {
+    name: "Standup update",
+    say: "post my standup",
+    steps: ["Fetch yesterday's issues", "Sort into done, doing, blocked", "Post it in #standup"],
+    mode: "Do",
+    out: "Do it on screen",
+    attach: [
+      ["platform", "Slack"],
+      ["mcp", "Linear · list_issues"],
+      ["doc", "team-norms.md"],
+    ],
+    result: "Standup posted in #standup",
+  },
+  {
+    name: "Client follow-up",
+    say: "follow up with this client",
+    steps: ["Read the email thread", "Check which invoices are open", "Draft a friendly nudge"],
+    mode: "Write",
+    out: "Type it into the reply",
+    attach: [
+      ["platform", "Gmail"],
+      ["mcp", "Stripe · list_invoices"],
+      ["doc", "tone-of-voice.md"],
+    ],
+    result: "Follow-up typed into Gmail",
+  },
+] as const;
+
+/** Hands-free agent: the request, the steps it takes on screen, and instant offline commands. */
+export const AGENT = {
+  say: "email Priya the Q3 deck",
+  steps: ["Opened Mail", "New message to Priya Shah", "Subject: Q3 deck", "Attached Q3-deck.pdf"],
+  confirm: "Send the email to Priya?",
+};
+export const INSTANT = [
+  { say: "open Slack", did: "Opened Slack" },
+  { say: "volume up", did: "Volume 60% → 70%" },
+  { say: "play lofi on YouTube", did: "Playing lofi beats on YouTube" },
+] as const;
+
+/** Projects chapter: clients, and the captured items Flo files into them. */
+export const PROJECTS = [
+  { name: "Website redesign", client: "Acme", color: "#66ceff", done: 0.62 },
+  { name: "Mobile app", client: "Nimbus", color: "#a78bfa", done: 0.35 },
+  { name: "Personal", client: "", color: "#f1e3c6", done: 0.8 },
+] as const;
+export const FILED = [
+  { kind: "To-do", text: "Send Acme the homepage copy", from: "Zoom · Acme weekly", to: 0 },
+  { kind: "Note", text: "Nimbus wants dark mode in v1", from: "Meeting notes", to: 1 },
+  { kind: "To-do", text: "Reply to Acme about the logo", from: "Slack DM · Jon at Acme", to: 0 },
+  { kind: "To-do", text: "Book the dentist", from: "Said to Flo", to: 2 },
+] as const;

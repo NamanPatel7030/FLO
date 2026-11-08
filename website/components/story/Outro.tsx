@@ -29,6 +29,7 @@ const FAQ = [
   { q: "Which AI models can I use?", a: "Claude, OpenAI, Gemini, Groq, OpenRouter, MiniMax, Qwen and Ollama Cloud with your own key, or local models through Ollama and LM Studio." },
   { q: "Does it work on Windows and Linux?", a: "Yes. The island sits in the bottom-right corner. Hold Right Ctrl to dictate and Right Alt for the assistant." },
   { q: "How is this different from Wispr Flow or Lemon?", a: "Flo combines dictation, a screen-aware assistant, meeting notes, to-dos and an agent tray in one app, keeps everything on your device and lets you choose the AI you pay for." },
+  { q: "How do updates work?", a: "Flo checks for new versions itself. Click Update, keep working while it downloads, then restart once. Every download is checked against the signing key built into Flo before it installs." },
   { q: "What does it cost?", a: "Flo is free. You pay your AI provider directly for what you use, or nothing at all with local models." },
 ];
 
@@ -204,7 +205,7 @@ export function Outro() {
 }
 
 /** Centred section heading: lined eyebrow, words that land, a shimmering accent, a sub that inks in. */
-function SectionHead({ eyebrow, title, accent, sub }: { eyebrow: string; title: string; accent?: string; sub?: string }) {
+export function SectionHead({ eyebrow, title, accent, sub }: { eyebrow: string; title: string; accent?: string; sub?: string }) {
   return (
     <div className="mx-auto max-w-2xl text-center">
       <Reveal blur={false} y={10}>

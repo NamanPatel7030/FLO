@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { motion, useScroll, useSpring } from "motion/react";
-import { CircleHelp, Columns3, LogIn, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { CircleHelp, Columns3, LayoutGrid, LogIn, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 import { DownloadCTA } from "../DownloadCTA";
 import { Logo } from "../Logo";
 import { CHAPTER_INDEX } from "./chapters";
 import { useStory } from "./StoryContext";
 
-type Item = { key: string; label: string; icon: React.ReactNode; go?: () => void; href?: string };
+type Item = { key: string; label: string; icon: React.ReactNode; go?: () => void; href?: string; wide?: boolean };
 
 /** Bottom ear: the concave curve where the chin flows into the bottom edge (mirror of the notch's top ears). */
 function Ear({ side }: { side: "l" | "r" }) {
@@ -57,14 +57,17 @@ export function Dock({ signedIn = false }: { signedIn?: boolean }) {
     { key: "privacy", label: "Privacy", icon: <ShieldCheck size={15} />, go: () => goTo(CHAPTER_INDEX.privacy) },
     { key: "compare", label: "Compare", icon: <Columns3 size={15} />, go: () => scrollTo("compare") },
   ];
-  const right: Item[] = [{ key: "faq", label: "FAQ", icon: <CircleHelp size={15} />, go: () => scrollTo("faq") }];
+  const right: Item[] = [
+    { key: "everything", label: "All features", icon: <LayoutGrid size={15} />, go: () => scrollTo("everything"), wide: true },
+    { key: "faq", label: "FAQ", icon: <CircleHelp size={15} />, go: () => scrollTo("faq") },
+  ];
   const account: Item = signedIn
     ? { key: "account", label: "Downloads", icon: <UserRound size={15} />, href: "/download" }
     : { key: "signin", label: "Sign in", icon: <LogIn size={15} />, href: "/login" };
 
   // which section is on screen: the story chapter, else whichever outro section crosses the middle
   useEffect(() => {
-    const ids = ["app", "compare", "maker", "faq"];
+    const ids = ["everything", "app", "compare", "maker", "faq"];
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
     const io = new IntersectionObserver(
       (entries) => {
@@ -91,7 +94,7 @@ export function Dock({ signedIn = false }: { signedIn?: boolean }) {
     };
   }, [reduce]);
 
-  const current = active === CHAPTER_INDEX.privacy ? "privacy" : active >= 1 ? "features" : active === 0 ? null : section === "compare" ? "compare" : section === "faq" ? "faq" : null;
+  const current = active === CHAPTER_INDEX.privacy ? "privacy" : active >= 1 ? "features" : active === 0 ? null : section === "compare" ? "compare" : section === "faq" ? "faq" : section === "everything" ? "everything" : null;
   const lit = hover ?? current;
 
   const renderItem = (it: Item) => {
@@ -113,7 +116,7 @@ export function Dock({ signedIn = false }: { signedIn?: boolean }) {
       </>
     );
     const common = {
-      className: "chin-item",
+      className: it.wide ? "chin-item chin-md" : "chin-item",
       "aria-label": it.label,
       title: it.label,
       "data-testid": `dock-${it.key}`,

@@ -2,11 +2,10 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import {
-  BatteryMedium,
   BellRing,
   CalendarClock,
-  CalendarDays,
   Check,
+  FolderInput,
   Clock,
   CloudSun,
   FileText,
@@ -14,6 +13,7 @@ import {
   Mic,
   Monitor,
   MessageSquare,
+  MousePointerClick,
   Pause,
   Play,
   ShieldCheck,
@@ -21,11 +21,15 @@ import {
   SkipForward,
   Sparkles as SparkIcon,
   Square,
+  StickyNote,
+  Timer as TimerIcon,
   Undo2,
   Video,
   X,
+  Zap,
 } from "lucide-react";
-import { CHAPTER_INDEX, CHAPTERS, DEADLINES, LANGS, PALETTES, PROMPTS, SIZES, STYLES, WIDGETS, type ChapterId } from "./chapters";
+import { useEffect, useState } from "react";
+import { AGENT, CHAPTER_INDEX, CHAPTERS, DEADLINES, FILED, INSTANT, LANGS, PALETTES, PROJECTS, PROMPTS, SIZES, SKILLS, STYLES, WIDGETS, type ChapterId } from "./chapters";
 import { DEFAULT_DEMO, derive, useStory, type Derived } from "./StoryContext";
 import { ClaudeMark, Dots, Keycap, StyleViz, Timer, Typewriter, VoiceBars } from "./viz";
 
@@ -43,7 +47,7 @@ const BAR_PAD = 26;
 
 /** Widget grid shape for `n` widgets turned on. */
 function widgetGrid(n: number) {
-  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 6 ? 3 : 4;
   return { cols, rows: Math.ceil(n / cols) };
 }
 
@@ -60,6 +64,14 @@ function baseSize(id: ChapterId | "idle", phase: number, d: Derived): Size {
       return [S(400, 58, 22), S(272, 44, 18), S(320, 44, 18)][phase];
     case "assistant":
       return [S(450, 86, 26), S(450, 86, 26), S(360, 44, 18)][phase];
+    case "skills":
+      return [S(450, 86, 26), S(450, 140, 28), S(420, 44, 18)][phase];
+    case "agent":
+      if (phase === 0) return d.instant >= 0 ? S(420, 44, 18) : S(440, 58, 22);
+      if (phase === 2 && d.agent !== "ask") return S(410, 44, 18);
+      return phase === 1 ? S(450, 162, 30) : S(450, 112, 28);
+    case "projects":
+      return [S(430, 44, 18), S(450, 108, 28), S(400, 44, 18)][phase];
     case "learns":
       if (phase === 2 && d.learned === "undone") return S(350, 44, 18);
       return [S(260, 40, 16), S(450, 122, 28), S(330, 44, 18)][phase];
@@ -77,7 +89,7 @@ function baseSize(id: ChapterId | "idle", phase: number, d: Derived): Size {
       const n = d.widgets.filter(Boolean).length;
       if (n === 0) return S(340, 44, 18);
       const { cols, rows } = widgetGrid(n);
-      return S(cols === 1 ? 300 : cols === 2 ? 540 : 690, rows === 1 ? 150 : 268, 32);
+      return S([300, 540, 690, 860][cols - 1], rows === 1 ? 150 : 268, 32);
     }
     case "custom":
       return CUSTOM_SIZES[d.size] ?? CUSTOM_SIZES[1];
@@ -232,7 +244,7 @@ export function NotchContent({ id, phase, cycle, inline, d }: { id: ChapterId | 
   const { interact, setPhase, setDemo } = useStory();
   const ch = id === "idle" ? -1 : CHAPTER_INDEX[id];
   // privacy rows highlight in place (hovering them must not re-mount the list)
-  const key = id === "privacy" ? id : `${id}-${phase}-${cycle}-${d.learned}-${d.reminder}-${d.claude}`;
+  const key = id === "privacy" ? id : `${id}-${phase}-${cycle}-${d.learned}-${d.reminder}-${d.claude}-${d.skill}-${d.agent}-${d.instant}-${d.project}`;
   const lang = LANGS[d.lang % LANGS.length];
   const drive = () => interact(ch);
   let body: React.ReactNode = null;
@@ -254,7 +266,7 @@ export function NotchContent({ id, phase, cycle, inline, d }: { id: ChapterId | 
           <Row className="justify-center gap-2.5 text-[12.5px] font-medium tracking-[-0.005em] text-white/85">
             <VoiceBars n={7} h={15} w={2.5} gap={2} energy={0.7} />
             <span className="flex items-center gap-1.5">
-              Hold <span className="kcap">fn</span> to talk
+              Hold <span className="kcap">control</span> to talk
             </span>
           </Row>
         );
@@ -271,7 +283,7 @@ export function NotchContent({ id, phase, cycle, inline, d }: { id: ChapterId | 
             <div className="flex flex-1 justify-center overflow-hidden">
               <VoiceBars n={inline ? 18 : 26} h={26} />
             </div>
-            {id === "languages" ? <span className="rounded-full bg-white/[0.07] px-2 py-0.5 text-[11px] text-white/70 ring-1 ring-white/10">auto</span> : <Keycap pressed>fn</Keycap>}
+            {id === "languages" ? <span className="rounded-full bg-white/[0.07] px-2 py-0.5 text-[11px] text-white/70 ring-1 ring-white/10">auto</span> : <Keycap pressed>control</Keycap>}
           </Row>
         );
       else if (phase === 1)
@@ -299,7 +311,7 @@ export function NotchContent({ id, phase, cycle, inline, d }: { id: ChapterId | 
         body = (
           <div className="flex h-full flex-col justify-center gap-2 px-5">
             <div className="flex items-center gap-2 text-[11.5px] text-white/60">
-              <Keycap pressed>control</Keycap> Assistant is listening
+              <Keycap pressed>fn</Keycap> Assistant is listening
               <span className="ml-auto">
                 <VoiceBars n={10} h={16} w={2.5} gap={2} />
               </span>
@@ -329,6 +341,179 @@ export function NotchContent({ id, phase, cycle, inline, d }: { id: ChapterId | 
           </Row>
         );
       break;
+
+    case "skills": {
+      const sk = SKILLS[d.skill % SKILLS.length];
+      if (phase === 0)
+        body = (
+          <div className="flex h-full flex-col justify-center gap-2 px-5">
+            <div className="flex items-center gap-2 text-[11.5px] text-white/60">
+              <Keycap pressed>fn</Keycap> Assistant is listening
+              <span className="ml-auto">
+                <VoiceBars n={10} h={16} w={2.5} gap={2} />
+              </span>
+            </div>
+            <Typewriter text={sk.say} speed={45} className="text-[15px] text-white" />
+          </div>
+        );
+      else if (phase === 1)
+        body = (
+          <div className="flex h-full flex-col justify-center gap-[5px] px-5 py-3">
+            <div className="flex items-center gap-2 text-[13px] font-semibold">
+              <Zap size={13} className="text-brand-300" /> {sk.name} <Muted>· skill · {sk.mode}</Muted>
+              <span className="ml-auto">
+                <Dots />
+              </span>
+            </div>
+            {sk.steps.map((st, k) => (
+              <div key={st} className="chip-in flex items-center gap-2 text-[12px] text-white/85" style={{ animationDelay: `${0.15 + k * 0.75}s` }}>
+                <MiniOk /> {st}
+              </div>
+            ))}
+            <div className="chip-in truncate pl-[22px] font-mono text-[11px] text-brand-100/90" style={{ animationDelay: "1.1s" }}>
+              ↳ MCP · {sk.attach[1][1]}
+            </div>
+          </div>
+        );
+      else
+        body = (
+          <Row className="justify-center text-[13px]">
+            <Ok /> {sk.result}
+          </Row>
+        );
+      break;
+    }
+
+    case "agent": {
+      if (phase === 0)
+        body =
+          d.instant >= 0 ? (
+            <Row className="justify-center text-[13px]">
+              <Zap size={14} className="text-brand-300" /> {INSTANT[d.instant].did} <Muted>· instant, no AI call</Muted>
+            </Row>
+          ) : (
+            <Row>
+              <span className="agent-ring relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-400/15 text-brand-200 ring-1 ring-brand-300/30">
+                <Mic size={15} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-brand-300/90">Hands-free · listening</div>
+                <Typewriter text={`“${AGENT.say}”`} speed={42} className="block truncate text-[13.5px] text-white" />
+              </div>
+              <VoiceBars n={9} h={18} w={2.5} gap={2} energy={0.8} />
+            </Row>
+          );
+      else if (phase === 1)
+        body = (
+          <div className="flex h-full flex-col justify-center gap-[5px] px-5 py-3">
+            <div className="flex items-center gap-2 text-[13px] font-semibold">
+              <MousePointerClick size={14} className="text-brand-300" /> Working on your screen
+              <span className="ml-auto">
+                <Btn
+                  testId="agent-stop"
+                  onClick={() => {
+                    drive();
+                    setDemo({ agent: "no" });
+                    setPhase(ch, 2);
+                  }}
+                >
+                  <Square size={9} className="fill-current" /> Stop
+                </Btn>
+              </span>
+            </div>
+            {AGENT.steps.map((st, k) => (
+              <div key={st} className="chip-in flex items-center gap-2 text-[12px] text-white/85" style={{ animationDelay: `${0.2 + k * 0.8}s` }}>
+                <MiniOk /> {st}
+              </div>
+            ))}
+          </div>
+        );
+      else if (d.agent === "yes")
+        body = (
+          <Row className="justify-center text-[13px]">
+            <Ok /> Sent to Priya <Muted>· still listening</Muted>
+          </Row>
+        );
+      else if (d.agent === "no")
+        body = (
+          <Row className="justify-center text-[13px]">
+            <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white/20 text-white">
+              <X size={11} strokeWidth={3.2} />
+            </span>
+            Stopped. Nothing was sent.
+          </Row>
+        );
+      else
+        body = (
+          <div className="flex h-full flex-col justify-center gap-2 px-5">
+            <div className="flex items-center gap-2 text-[11.5px] text-amber-200">
+              <Mic size={13} className="bell-ring" /> Say “yes” or “no”
+            </div>
+            <div className="text-[15px] font-semibold">{AGENT.confirm}</div>
+            <div className="flex justify-end gap-2">
+              <Btn
+                testId="agent-no"
+                onClick={() => {
+                  drive();
+                  setDemo({ agent: "no" });
+                  setPhase(ch, 2);
+                }}
+              >
+                “No”
+              </Btn>
+              <Btn
+                primary
+                testId="agent-yes"
+                onClick={() => {
+                  drive();
+                  setDemo({ agent: "yes" });
+                  setPhase(ch, 2);
+                }}
+              >
+                <Mic size={12} /> “Yes”
+              </Btn>
+            </div>
+          </div>
+        );
+      break;
+    }
+
+    case "projects": {
+      const it = FILED[d.project % FILED.length];
+      const pj = PROJECTS[it.to];
+      const label = pj.client ? `${pj.client} · ${pj.name}` : pj.name;
+      if (phase === 0)
+        body = (
+          <Row className="justify-center text-[12.5px] text-white/85">
+            <ListTodo size={15} className="shrink-0 text-[#f1e3c6]" /> <span className="shrink-0">New {it.kind.toLowerCase()}:</span> <span className="truncate text-white">“{it.text}”</span>
+          </Row>
+        );
+      else if (phase === 1)
+        body = (
+          <div className="flex h-full flex-col justify-center gap-2 px-4">
+            <div className="flex items-center gap-1.5 px-1 text-[11px] text-white/60">
+              <FolderInput size={12} /> Filed automatically {pj.client ? <>· matched “{pj.client}”</> : "· no client, kept personal"}
+            </div>
+            <div className="flex items-center gap-3 rounded-2xl bg-white/[0.06] px-3 py-2 ring-1 ring-white/10">
+              <Ring v={pj.done} color={pj.color} />
+              <div className="min-w-0">
+                <div className="truncate text-[13px] font-semibold">{label}</div>
+                <div className="truncate text-[11px] text-white/60">{it.text}</div>
+              </div>
+              <span className="chip-in ml-auto shrink-0 rounded-full bg-brand-400/20 px-2 py-0.5 text-[10.5px] font-semibold text-brand-100" style={{ animationDelay: "0.5s" }}>
+                +1 {it.kind.toLowerCase()}
+              </span>
+            </div>
+          </div>
+        );
+      else
+        body = (
+          <Row className="justify-center text-[13px]">
+            <Ok /> Filed under {pj.client || pj.name} <Muted>· nothing to sort</Muted>
+          </Row>
+        );
+      break;
+    }
 
     case "learns":
       if (phase === 0)
@@ -814,6 +999,8 @@ function Widget({ i, d, onToggle }: { i: number; d: Derived; onToggle: () => voi
         </div>
       );
     case 3:
+      return <ClockTile />;
+    case 4:
       return (
         <div className="flex min-w-0 items-center gap-3 rounded-[18px] bg-gradient-to-br from-brand-700/50 to-brand-900/60 p-3 ring-1 ring-brand-300/20">
           <CloudSun size={34} className="shrink-0 text-brand-100" />
@@ -824,28 +1011,106 @@ function Widget({ i, d, onToggle }: { i: number; d: Derived; onToggle: () => voi
           </div>
         </div>
       );
-    case 4:
+    case 5:
+      return <PomodoroTile />;
+    case 6:
       return (
         <div className="flex min-w-0 flex-col justify-center gap-1 rounded-[18px] bg-white/[0.07] p-3 ring-1 ring-white/10">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-red-300">
-            <CalendarDays size={12} /> Sat 7
+          <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-white/55">
+            <TimerIcon size={12} /> Stopwatch
           </div>
-          <div className="text-[13px] font-semibold">Design sync</div>
-          <div className="text-[11px] text-white/60">15:00 · in 40 min · Zoom</div>
+          <div className="font-display text-[24px] font-semibold leading-none">
+            <Timer from={12 * 60 + 4} />
+          </div>
         </div>
       );
     default:
       return (
-        <div className="flex min-w-0 items-center gap-3 rounded-[18px] bg-white/[0.07] p-3 ring-1 ring-white/10">
-          <BatteryMedium size={30} className="shrink-0 text-emerald-300" />
-          <div>
-            <div className="font-display text-[22px] font-semibold leading-none">82%</div>
-            <div className="mt-1 text-[11px] text-white/60">About 9 h left</div>
+        <div className="beige flex min-w-0 flex-col rounded-[18px] p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-[12px] font-bold">
+            <StickyNote size={12} /> Quick note
           </div>
+          <p className="text-[11.5px] leading-snug opacity-80">Wi-fi: flo-guest. Ask Rahul for the staging password.</p>
         </div>
       );
   }
 }
+
+/** Wall-clock time, mounted-only (server and first client render agree), ticking every second. */
+function useNow() {
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
+const ZONES = [
+  ["London", "Europe/London"],
+  ["San Francisco", "America/Los_Angeles"],
+] as const;
+
+function fmt(now: Date | null, tz?: string) {
+  if (!now) return "--:--";
+  return now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz });
+}
+
+function ClockTile() {
+  const now = useNow();
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-[18px] bg-white/[0.07] p-3 ring-1 ring-white/10">
+      <div className="shrink-0">
+        <div className="font-display text-[24px] font-semibold leading-none tabular-nums" data-testid="clock-local">
+          {fmt(now)}
+        </div>
+        <div className="mt-1 text-[11px] text-white/60">{now ? now.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) : "Today"}</div>
+      </div>
+      <div className="ml-auto flex min-w-0 flex-col gap-0.5 border-l border-white/10 pl-3">
+        {ZONES.map(([city, tz]) => (
+          <div key={city} className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="truncate text-white/60">{city}</span>
+            <span className="font-mono tabular-nums text-white/90">{fmt(now, tz)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PomodoroTile() {
+  const now = useNow();
+  const [start] = useState(() => Date.now());
+  const left = Math.max(0, 18 * 60 - (now ? Math.floor((now.getTime() - start) / 1000) : 0));
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-[18px] bg-white/[0.07] p-3 ring-1 ring-white/10">
+      <Ring v={1 - left / (25 * 60)} color="#f59e9e" size={40} />
+      <div>
+        <div className="font-display text-[22px] font-semibold leading-none tabular-nums">{`${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`}</div>
+        <div className="mt-1 text-[11px] text-white/60">Focus · Pomodoro</div>
+      </div>
+    </div>
+  );
+}
+
+/** Small progress ring (stroke-dashoffset set per render, never animated). */
+function Ring({ v, color, size = 34 }: { v: number; color: string; size?: number }) {
+  const r = size / 2 - 3;
+  const c = 2 * Math.PI * r;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0 -rotate-90" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(255 255 255 / 0.12)" strokeWidth="3" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - v)} />
+    </svg>
+  );
+}
+
+const MiniOk = () => (
+  <span className="flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full text-black" style={{ background: "var(--va, #66ceff)" }}>
+    <Check size={9} strokeWidth={3.4} />
+  </span>
+);
 
 function Pointer({ className = "" }: { className?: string }) {
   return (

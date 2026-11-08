@@ -1,8 +1,37 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, GripVertical, Hash, KeyRound, Lock, MessageSquare, Mic, Monitor, Play, RotateCcw, Square, Video, Volume2, WifiOff } from "lucide-react";
-import { CHAPTER_INDEX, DEADLINES, FEATURED_STYLES, LANGS, PALETTES, PROMPTS, SIZES, SOUNDS, STYLES, WIDGETS, type ChapterId } from "./chapters";
+import { Fragment, useRef, useState } from "react";
+import {
+  AppWindow,
+  ArrowRight,
+  BookText,
+  Check,
+  ChevronDown,
+  FileText,
+  FolderKanban,
+  GripVertical,
+  Hash,
+  KeyRound,
+  ListChecks,
+  Lock,
+  Mail,
+  MessageSquare,
+  Mic,
+  Monitor,
+  MousePointerClick,
+  Paperclip,
+  Play,
+  Plug,
+  RotateCcw,
+  Send,
+  Square,
+  Type,
+  Video,
+  Volume2,
+  WifiOff,
+  Zap,
+} from "lucide-react";
+import { AGENT, CHAPTER_INDEX, DEADLINES, FEATURED_STYLES, FILED, INSTANT, LANGS, PALETTES, PROJECTS, PROMPTS, SIZES, SKILLS, SOUNDS, STYLES, WIDGETS, type ChapterId } from "./chapters";
 import { playSound } from "./sound";
 import { useStory, type Derived } from "./StoryContext";
 import { Caret, Keycap, StyleViz, Typewriter } from "./viz";
@@ -126,7 +155,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
             </Composer>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <span className="flex items-center gap-2 text-[12px] text-white/60">
-                <Keycap pressed={phase === 0}>fn</Keycap>
+                <Keycap pressed={phase === 0}>control</Keycap>
                 {phase === 0 ? "held, listening…" : phase === 1 ? "released" : "typed where your cursor was"}
               </span>
               <HoldToTalk
@@ -139,7 +168,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
               />
             </div>
           </Win>
-          <Try>Press and hold the button, like holding Fn, then let go.</Try>
+          <Try>Press and hold the button, like holding Control, then let go.</Try>
         </div>
       );
     }
@@ -230,6 +259,208 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
                 <Play size={11} className="opacity-70" /> “{p.say}”
               </button>
             ))}
+          </div>
+        </div>
+      );
+    }
+
+    case "skills":
+      return <SkillCanvas ch={ch} phase={phase} cycle={cycle} d={d} manual={manual} />;
+
+    case "agent": {
+      const ask = phase === 2 && d.agent === "ask";
+      const filled = phase >= 1;
+      return (
+        <div>
+          <Win title="Mail · New message" icon={<Mail size={12} />} hl={ask}>
+            <div className="flex flex-col gap-2 text-[13.5px]">
+              <div className="flex items-center gap-2 border-b border-white/[0.07] pb-2">
+                <span className="w-14 shrink-0 text-white/45">To</span>
+                {filled ? (
+                  <span key={`to-${cycle}`} className="chip-in rounded-full bg-brand-400/15 px-2.5 py-0.5 text-brand-100 ring-1 ring-brand-300/30" style={{ animationDelay: phase === 1 ? "0.9s" : "0s" }}>
+                    Priya Shah
+                  </span>
+                ) : (
+                  <span className="text-white/35">
+                    <Caret />
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 border-b border-white/[0.07] pb-2">
+                <span className="w-14 shrink-0 text-white/45">Subject</span>
+                {filled && (
+                  <span key={`su-${cycle}`} className="chip-in text-white/90" style={{ animationDelay: phase === 1 ? "1.7s" : "0s" }}>
+                    Q3 deck
+                  </span>
+                )}
+              </div>
+              <div className="min-h-[44px] text-white/80">
+                {filled && (
+                  <span key={`bo-${cycle}`} className="chip-in block" style={{ animationDelay: phase === 1 ? "2s" : "0s" }}>
+                    Hi Priya, here&apos;s the Q3 deck we went through this morning.
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="relative">
+                  {filled && (
+                    <span key={`at-${cycle}`} className="chip-in inline-flex items-center gap-1.5 rounded-lg bg-white/[0.07] px-2.5 py-1 text-[12px] text-white/85 ring-1 ring-white/12" style={{ animationDelay: phase === 1 ? "2.6s" : "0s" }}>
+                      <Paperclip size={12} /> Q3-deck.pdf
+                    </span>
+                  )}
+                  {phase === 1 && <Cursor key={`c1-${cycle}`} className="pointer-in-late absolute left-16 top-3" />}
+                </span>
+                <span className="relative">
+                  <span
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-semibold transition-colors ${
+                      phase === 2 && d.agent === "yes" ? "bg-emerald-400/90 text-[#00140a]" : ask ? "agent-send bg-gradient-to-b from-brand-200 to-brand-400 text-[#001522]" : "bg-white/[0.1] text-white/70"
+                    }`}
+                  >
+                    {phase === 2 && d.agent === "yes" ? (
+                      <>
+                        <Check size={13} strokeWidth={3} /> Sent
+                      </>
+                    ) : phase === 2 && d.agent === "no" ? (
+                      "Kept as draft"
+                    ) : (
+                      <>
+                        <Send size={12} /> Send
+                      </>
+                    )}
+                  </span>
+                  {ask && <Cursor key={`c2-${cycle}`} className="pointer-in absolute left-10 top-4" />}
+                </span>
+              </div>
+            </div>
+          </Win>
+          <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Agent controls">
+            {ask ? (
+              <>
+                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-200/90">Say it</span>
+                <button
+                  type="button"
+                  className="chip"
+                  data-testid="stage-agent-yes"
+                  onClick={() => {
+                    interact(ch);
+                    setDemo({ agent: "yes" });
+                  }}
+                >
+                  <Mic size={11} /> “Yes”
+                </button>
+                <button
+                  type="button"
+                  className="chip"
+                  data-testid="stage-agent-no"
+                  onClick={() => {
+                    interact(ch);
+                    setDemo({ agent: "no" });
+                  }}
+                >
+                  <Mic size={11} /> “No”
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="chip"
+                data-testid="agent-run"
+                onClick={() => {
+                  setDemo({ agent: "ask", instant: -1 });
+                  play(ch, [[0, 2600], [1, 4200], [2]]);
+                }}
+              >
+                <Play size={11} className="opacity-70" /> “{AGENT.say}”
+              </button>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Instant commands">
+            <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-200/80">Instant</span>
+            {INSTANT.map((x, k) => (
+              <button
+                type="button"
+                key={x.say}
+                aria-pressed={manual && phase === 0 && d.instant === k}
+                data-testid={`instant-${k}`}
+                onClick={() => {
+                  setDemo({ instant: k });
+                  interact(ch);
+                  setPhase(ch, 0, true);
+                }}
+                className="chip"
+              >
+                <Zap size={11} className="opacity-70" /> “{x.say}”
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    case "projects": {
+      const cur = d.project % FILED.length;
+      const filedUpTo = phase >= 1 ? cur : cur - 1;
+      const base = [4, 2, 3];
+      const counts = PROJECTS.map((_, p) => base[p] + FILED.filter((f, k) => k <= filedUpTo && f.to === p).length);
+      return (
+        <div className="flex flex-col gap-3">
+          <div className="stage-card rounded-2xl p-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-200/90">Captured today · tap one to file it</div>
+            <div className="mt-2 flex flex-col gap-1">
+              {FILED.map((f, k) => {
+                const on = k === cur;
+                const filed = k <= filedUpTo;
+                const pj = PROJECTS[f.to];
+                return (
+                  <button
+                    type="button"
+                    key={f.text}
+                    data-testid={`file-${k}`}
+                    aria-pressed={on}
+                    onClick={() => {
+                      setDemo({ project: k });
+                      play(ch, [[0, 1500], [1, 2800], [2]]);
+                    }}
+                    className={`row-btn flex items-center gap-3 rounded-xl px-2.5 py-2 text-left ${on ? "is-on" : ""}`}
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.07] text-brand-200 ring-1 ring-white/10">
+                      {f.kind === "Note" ? <FileText size={14} /> : <ListChecks size={14} />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] text-white/90">{f.text}</span>
+                      <span className="block truncate text-[11px] text-white/50">{f.from}</span>
+                    </span>
+                    <span
+                      className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-all duration-500 ${filed ? "opacity-100" : "translate-x-1 opacity-0"}`}
+                      style={{ color: pj.color, background: `color-mix(in srgb, ${pj.color} 14%, transparent)` }}
+                    >
+                      <ArrowRight size={11} /> {pj.client || pj.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {PROJECTS.map((p, k) => {
+              const hit = phase >= 1 && FILED[cur].to === k;
+              return (
+                <div key={p.name} className={`stage-card relative min-w-0 rounded-2xl p-3 transition-transform duration-500 ${hit ? "stage-hl -translate-y-0.5" : ""}`}>
+                  <FolderKanban size={15} style={{ color: p.color }} />
+                  <div className="mt-2 truncate text-[13px] font-semibold">{p.client || "Personal"}</div>
+                  <div className="truncate text-[11px] text-white/55">{p.client ? p.name : "No client"}</div>
+                  <div className="mt-2 flex items-baseline gap-1">
+                    <span className="font-display text-[20px] font-semibold tabular-nums">{counts[k]}</span>
+                    <span className="text-[11px] text-white/50">items</span>
+                  </div>
+                  {hit && (
+                    <span key={`${cur}-${cycle}`} className="chip-in absolute right-2.5 top-2.5 rounded-full bg-brand-400/20 px-1.5 text-[10.5px] font-semibold text-brand-100">
+                      +1
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       );
@@ -482,7 +713,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
       return (
         <div className="stage-card rounded-2xl p-4">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-200/90">Widgets · tap to toggle</div>
-          <div className="mt-3 flex flex-col gap-1">
+          <div className="mt-3 grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2">
             {WIDGETS.map((n, i) => {
               const on = d.widgets[i];
               return (
@@ -499,7 +730,7 @@ export function Stage({ id, phase, cycle, live, d, manual }: { id: ChapterId; ph
                   className="row-btn flex items-center gap-3 rounded-xl px-2 py-2 text-left text-[14px]"
                 >
                   <GripVertical size={14} className="text-white/35" />
-                  <span className={on ? "text-white/90" : "text-white/55"}>{n}</span>
+                  <span className={`truncate ${on ? "text-white/90" : "text-white/55"}`}>{n}</span>
                   <span className={`ml-auto flex h-5 w-9 items-center rounded-full p-0.5 transition-colors ${on ? "bg-brand-400" : "bg-white/15"}`}>
                     <span className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? "translate-x-4" : ""}`} />
                   </span>
@@ -628,4 +859,79 @@ function Customise({ ch, d, manual }: { ch: number; d: Derived; manual: boolean 
 
 function Label({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <div className={`text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-200/90 ${className}`}>{children}</div>;
+}
+
+/** A mini skill canvas: Trigger → Steps → Output down the left, Platform / MCP / Knowledge nodes attached on the right. */
+function SkillCanvas({ ch, phase, cycle, d, manual }: { ch: number; phase: number; cycle: number; d: Derived; manual: boolean }) {
+  const { play, setDemo } = useStory();
+  const sk = SKILLS[d.skill % SKILLS.length];
+  const ATTACH_ICON = { platform: <AppWindow size={13} />, mcp: <Plug size={13} />, doc: <BookText size={13} /> } as const;
+  const ATTACH_SUB = { platform: "Platform", mcp: "MCP tool", doc: "Knowledge" } as const;
+  // lit: 0 = idle, 1 = running now (staggered), 2 = done
+  const lit = (row: number) => (phase === 2 ? 2 : phase === 1 ? (row === 0 ? 2 : 1) : row === 0 ? 1 : 0);
+  const rows: { kind: "trigger" | "step" | "output"; sub: string; label: string; icon: React.ReactNode; attach?: (typeof sk.attach)[number] }[] = [
+    { kind: "trigger", sub: "Trigger", label: `“${sk.say}”`, icon: <Mic size={13} /> },
+    ...sk.steps.map((st, k) => ({ kind: "step" as const, sub: `Step ${k + 1}`, label: st, icon: <span className="text-[11px] font-bold">{k + 1}</span>, attach: sk.attach[k] })),
+    { kind: "output", sub: `Output · ${sk.mode}`, label: sk.out, icon: sk.mode === "Do" ? <MousePointerClick size={13} /> : <Type size={13} /> },
+  ];
+  return (
+    <div>
+      <div className="stage-card canvas-grid relative overflow-hidden rounded-2xl p-4" data-testid="skill-canvas">
+        <div className="mb-3 flex items-center gap-2 text-[12px] text-white/60">
+          <Zap size={13} className="text-brand-300" /> Skill canvas · <span className="text-white/90">{sk.name}</span>
+          <span className="ml-auto rounded-full bg-white/[0.07] px-2 py-0.5 text-[10.5px] text-white/70 ring-1 ring-white/12">{sk.mode} mode</span>
+        </div>
+        <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-x-5 gap-y-3" key={`${sk.name}-${cycle}`}>
+          {rows.map((r, i) => (
+            <Fragment key={r.sub}>
+              <div className={`cnode cnode-${r.kind} ${i < rows.length - 1 ? "cnode-link" : ""}`} data-lit={lit(i)} style={{ ["--d" as string]: `${(i - 1) * 0.75}s` }}>
+                <span className="cnode-ico">{r.icon}</span>
+                <span className="min-w-0">
+                  <span className="block text-[9.5px] font-semibold uppercase tracking-[0.14em] text-white/45">{r.sub}</span>
+                  <span className="block text-[12.5px] leading-tight text-white/90">{r.label}</span>
+                </span>
+              </div>
+              {r.attach ? (
+                <div className={`cnode cnode-att cnode-${r.attach[0]}`} data-lit={lit(i)} style={{ ["--d" as string]: `${(i - 1) * 0.75 + 0.3}s` }}>
+                  <span className="cnode-ico">{ATTACH_ICON[r.attach[0]]}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[9.5px] font-semibold uppercase tracking-[0.14em] text-white/45">{ATTACH_SUB[r.attach[0]]}</span>
+                    <span className="block truncate text-[12px] leading-tight text-white/85">{r.attach[1]}</span>
+                  </span>
+                </div>
+              ) : (
+                <div aria-hidden />
+              )}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Run a skill">
+        <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-200/80">Run a skill</span>
+        {SKILLS.map((s, k) => (
+          <button
+            type="button"
+            key={s.name}
+            aria-pressed={manual && k === d.skill % SKILLS.length}
+            data-testid={`skill-${k}`}
+            onClick={() => {
+              setDemo({ skill: k });
+              play(ch, [[0, 2000], [1, 3600], [2]]);
+            }}
+            className="chip"
+          >
+            <Play size={11} className="opacity-70" /> {s.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Cursor({ className = "" }: { className?: string }) {
+  return (
+    <svg width="16" height="20" viewBox="0 0 16 20" className={`pointer-events-none ${className}`} aria-hidden>
+      <path d="M1 1l0 15 4-4 3 7 3-1.4-3-6.6h5.5z" fill="#fff" stroke="#000" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  );
 }

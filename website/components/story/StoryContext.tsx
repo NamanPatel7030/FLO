@@ -16,6 +16,11 @@ export type Demo = {
   reminder: "ring" | "snoozed" | "done";
   claude: "ask" | "allowed" | "denied";
   opened: boolean;
+  skill: number;
+  agent: "ask" | "yes" | "no";
+  /** instant (offline) command the visitor tried in the agent chapter, or -1 */
+  instant: number;
+  project: number;
   /** kept across the loop */
   widgets: boolean[];
   /** kept across the loop */
@@ -32,6 +37,10 @@ export const DEFAULT_DEMO: Demo = {
   reminder: "ring",
   claude: "ask",
   opened: false,
+  skill: 0,
+  agent: "ask",
+  instant: -1,
+  project: 0,
   widgets: WIDGETS.map((_, i) => i < 4),
   playing: true,
 };
@@ -51,6 +60,10 @@ export function derive(id: ChapterId | "idle", phase: number, cycle: number, d: 
     reminder: auto ? "ring" : d.reminder,
     claude: auto ? "ask" : d.claude,
     opened: auto ? false : d.opened,
+    skill: auto ? cycle % 3 : d.skill,
+    agent: auto ? "ask" : d.agent,
+    instant: auto ? -1 : d.instant,
+    project: auto ? 0 : d.project,
     style: auto && id === "custom" ? phase : d.custom.style,
     size: auto && id === "custom" ? ([0, 1, 2, 3, 1][phase] ?? 1) : d.custom.size,
     sound: auto && id === "custom" ? phase % 4 : d.custom.sound,
@@ -184,7 +197,7 @@ export function StoryProvider({ children }: { children: ReactNode }) {
   const release = useCallback(() => {
     clearSeq();
     setManual(-1);
-    setDemoState((d) => ({ ...d, learned: "pending", reminder: "ring", claude: "ask", opened: false, todos: [false, false, false] }));
+    setDemoState((d) => ({ ...d, learned: "pending", reminder: "ring", claude: "ask", opened: false, agent: "ask", instant: -1, todos: [false, false, false] }));
   }, [setManual]);
 
   // New chapter: restart its loop, drop any visitor control.

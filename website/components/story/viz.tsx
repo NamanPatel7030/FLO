@@ -274,6 +274,36 @@ export function Heartbeat({ w = 220, h = 32 }: { w?: number; h?: number }) {
   );
 }
 
+/** Soft colour clouds drifting across the wing, swelling with the voice (transform + opacity only). */
+export function Aurora({ w = 220, h = 32 }: { w?: number; h?: number }) {
+  const blobs = useRef<(HTMLSpanElement | null)[]>([]);
+  const cols = [HI, A, B, A];
+  useRaf((t) => {
+    const env = 0.35 + 0.65 * envelope(t);
+    blobs.current.forEach((el, i) => {
+      if (!el) return;
+      const x = Math.sin(t * (0.5 + i * 0.17) + i * 1.9) * w * 0.32;
+      const sc = 0.7 + env * (0.55 + 0.2 * Math.sin(t * 1.3 + i));
+      el.style.transform = `translate3d(${x.toFixed(1)}px,0,0) scale(${sc.toFixed(3)})`;
+      el.style.opacity = (0.35 + env * 0.5).toFixed(2);
+    });
+  });
+  return (
+    <div className="relative" style={{ width: w, height: h }} aria-hidden>
+      {cols.map((c, i) => (
+        <span
+          key={i}
+          ref={(el) => {
+            blobs.current[i] = el;
+          }}
+          className="absolute rounded-full"
+          style={{ left: w / 2 - h * 0.9, top: h * 0.1, width: h * 1.8, height: h * 0.8, background: c, filter: `blur(${Math.round(h / 3)}px)` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** Dots orbiting on a tilted ring. */
 export function Orbit({ w = 220, h = 32 }: { w?: number; h?: number }) {
   const n = 10;
@@ -371,7 +401,7 @@ export function StyleViz({ style, w, h = 32 }: { style: number; w: number; h?: n
     case 7:
       return <VoiceBars n={Math.round(w / 5)} h={h - 2} w={1.5} gap={3.5} />;
     case 8:
-      return <Heartbeat w={w} h={h} />;
+      return <Aurora w={w} h={h} />;
     case 9:
       return <Orbit w={w} h={h} />;
     case 10:
