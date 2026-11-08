@@ -354,6 +354,18 @@ pub async fn stop_meeting(st: State<'_, Shared>) -> R<Note> {
     meeting::stop(st.inner().clone()).await.map_err(e)
 }
 
+/// Capture mode + speakers of a meeting note (None for notes recorded before speaker support).
+#[tauri::command]
+pub fn meeting_info(st: State<Shared>, note_id: String) -> R<Option<meeting::MeetingInfo>> {
+    Ok(meeting::info(st.inner(), &note_id))
+}
+
+/// "Speaker 2" → "Rahul" across the note; Flo remembers the voice for future meetings.
+#[tauri::command]
+pub fn rename_speaker(st: State<Shared>, note_id: String, from: String, to: String) -> R<Note> {
+    meeting::rename_speaker(st.inner(), &note_id, &from, &to).map_err(e)
+}
+
 #[tauri::command]
 pub fn list_dictionary(st: State<Shared>) -> R<Vec<DictionaryEntry>> {
     st.db.list_dictionary().map_err(e)
@@ -544,6 +556,24 @@ const MAX_CONTEXT_CHARS: usize = 400_000;
 #[tauri::command]
 pub fn stop_agent(st: State<Shared>) {
     st.agent_abort.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Hands-free agent mode on/off (also: double-tap fn). Returns the new state.
+#[tauri::command]
+pub async fn toggle_agent_mode(st: State<'_, Shared>) -> R<bool> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::handsfree::toggle(&st)).await.map_err(e)?.map_err(e)
+}
+
+#[tauri::command]
+pub fn agent_mode_status() -> bool {
+    crate::handsfree::is_active()
+}
+
+/// Answer the screen agent's confirm question (island Yes / No). False if nothing was pending.
+#[tauri::command]
+pub fn agent_confirm(yes: bool) -> bool {
+    crate::agent::answer_confirm(yes)
 }
 
 #[tauri::command]

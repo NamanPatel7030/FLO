@@ -133,7 +133,9 @@ export type IslandVariant =
   | "trayTooltip"
   | "correction"
   | "meetingPrompt"
-  | "confirm";
+  | "confirm"
+  /** hands-free agent mode: persistent "listening" pill with the last heard request */
+  | "agentMode";
 
 // ── hotkeys + statuses ───────────────────────────────────────────────────────
 export const HOTKEY_OPTIONS: HotkeyCombo[] = ["fn", "ctrl", "alt", "fn+ctrl", "ctrl+alt", "cmd+alt", "fn+shift"];
@@ -304,6 +306,8 @@ export interface CardContent {
   agentSteps?: number;
   /** agent card status (confirm/done/error/aborted change the body height) */
   agentDone?: boolean;
+  /** agent card is asking a yes/no question (question + Yes / No row) */
+  agentConfirm?: boolean;
 }
 
 /** Height of the assistant card body (below the notch) for given content. */
@@ -353,7 +357,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
         return { width: Math.round(380 * notchScale), height: nh + ISLAND_GAP + Math.round((content?.widgetBody ?? 232) * notchScale) };
       case "agent":
         // top gap + header row + bottom padding, then a taller body while running vs a one-line result
-        return { width: 468, height: nh + 54 + (content?.agentDone ? 28 : 58) };
+        return { width: 468, height: nh + 54 + (content?.agentConfirm ? 74 : content?.agentDone ? 28 : 58) };
+      case "agentMode":
+        return { width: 440, height: nh + ISLAND_GAP + 52 };
       // live states: icons only, flush with the notch (no text row)
       case "listening":
       case "working":
@@ -402,7 +408,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "widgets":
       return { width: 360 + pad, height: (content?.widgetBody ?? 232) + pad };
     case "agent":
-      return { width: 420 + pad, height: (content?.agentDone ? 82 : 112) + pad };
+      return { width: 420 + pad, height: (content?.agentConfirm ? 128 : content?.agentDone ? 82 : 112) + pad };
+    case "agentMode":
+      return { width: 380 + pad, height: 60 + pad };
     case "listening":
     case "working":
     case "done":

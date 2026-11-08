@@ -123,6 +123,17 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     if let Some(k) = &skill {
         let _ = st.db.bump_skill_use(&k.id);
         log::info!("skill: {} ({})", k.name, k.mode);
+        // skills wired to MCP servers on the canvas run with those servers' tools
+        let servers: Vec<crate::model::Connection> = st
+            .db
+            .list_connections()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| c.kind == "mcp" && c.enabled && k.connections.contains(&c.id))
+            .collect();
+        if !servers.is_empty() {
+            return run_skill_with_tools(st, query, k, &servers, front, screen.as_deref(), mode).await;
+        }
         if k.mode == "do" {
             // operate the screen: hand the request + the skill's steps to the computer-control agent
             let goal = format!("{query}\n\nDo it the way my \"{}\" skill says:\n{}", k.name, k.instructions);
@@ -185,6 +196,7 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     }
     if let Some(k) = &skill {
         system.push_str(&prompts::skill_note(&k.name, &k.instructions, &k.platforms));
+        system.push_str(&skill_docs(st, k));
     }
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));
@@ -235,6 +247,71 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
         created_at: chrono::Local::now().to_rfc3339(),
         mode: mode.into(),
         sources,
+    })
+}
+
+/// The Knowledge documents a skill attaches ("doc:<id>" on the canvas), as prompt text.
+fn skill_docs(st: &Shared, k: &crate::model::Skill) -> String {
+    let docs = st.db.list_context_docs().unwrap_or_default();
+    let mut out = String::new();
+    for id in k.connections.iter().filter_map(|c| c.strip_prefix("doc:")) {
+        let title = docs.iter().find(|d| d.id == id).map(|d| d.title.clone()).unwrap_or_else(|| "Document".into());
+        if let Ok(Some(content)) = st.db.get_context_content(id) {
+            out.push_str(&format!("\n\nReference document \"{title}\" (attached to this skill):\n\"\"\"\n{}\n\"\"\"", text::truncate_chars(&content, 6000)));
+        }
+    }
+    out
+}
+
+/// Run an invoked skill with the tools of its MCP servers, then type the result (write) or report it (do).
+async fn run_skill_with_tools(
+    st: &Shared,
+    query: &str,
+    k: &crate::model::Skill,
+    servers: &[crate::model::Connection],
+    front: &FrontApp,
+    screen: Option<&str>,
+    mode: &str,
+) -> Result<AssistantResponse> {
+    let s = st.settings();
+    let cfgl = LlmConfig::from_settings(&s);
+    if !cfgl.is_configured() {
+        return Err(anyhow!("Pick an AI model in Settings → AI to run skills."));
+    }
+    let context = build_context(st, query, None, front, screen);
+    let system = prompts::skill_tools_system(&context, &k.name, &k.instructions, &k.mode, &skill_docs(st, k));
+    let image = if k.mode != "do" && s.assistant_screen_context && llm::supports_vision(&s.llm_provider) && crate::platform::permissions().screen {
+        tokio::task::spawn_blocking(|| crate::attention::capture_focused_jpeg(1280)).await.ok().flatten().map(|(_, b)| b)
+    } else {
+        None
+    };
+    let (text_out, used) = crate::mcp::run_with_tools(st, &cfgl, &system, query, image.as_deref().map(|b| ("image/jpeg", b)), servers, s.assistant_cloud_allowed).await?;
+    let text_out = text::strip_ai_dashes(&text_out);
+    let mut actions = vec![];
+    let mut results = vec![];
+    if !used.is_empty() {
+        results.push(format!("Used {} tool call{}: {}", used.len(), if used.len() == 1 { "" } else { "s" }, used.join(", ")));
+    }
+    let reply = if k.mode == "do" || text_out.is_empty() {
+        text_out.clone()
+    } else {
+        let action = AssistantAction::InsertText { text: text_out.clone() };
+        match execute(st, &action, front, false).await {
+            Ok(r) => results.push(r),
+            Err(e) => results.push(format!("⚠️ {e}")),
+        }
+        actions.push(action);
+        format!("Done with your {} skill.", k.name)
+    };
+    Ok(AssistantResponse {
+        id: db::new_id(),
+        query: query.into(),
+        reply: if reply.is_empty() { "Done.".into() } else { reply },
+        actions,
+        results,
+        created_at: chrono::Local::now().to_rfc3339(),
+        mode: mode.into(),
+        sources: vec![],
     })
 }
 

@@ -10,6 +10,7 @@ mod commands;
 mod corrections;
 mod db;
 mod egress;
+mod handsfree;
 mod hotkey;
 mod intents;
 mod livetx;
@@ -26,6 +27,8 @@ mod secrets;
 mod session;
 mod selftest;
 mod settings;
+mod speakers;
+mod sysaudio;
 mod vault;
 mod slack;
 mod state;
@@ -266,6 +269,15 @@ fn start_hotkeys(st: Shared) {
                 // keys may now be released; the session keeps going
                 tauri::async_runtime::spawn_blocking(move || session::lock(&st, mode));
             }
+            HotkeyEvent::DoubleTap(_) => {
+                // double-tap fn: toggle hands-free agent mode (the first tap's session cancels itself)
+                st.ptt_down.store(false, std::sync::atomic::Ordering::SeqCst);
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = handsfree::toggle(&st) {
+                        st.state(model::Phase::Error, Mode::Assistant, Some(e.to_string()));
+                    }
+                });
+            }
             HotkeyEvent::Cancel => {
                 st.ptt_down.store(false, std::sync::atomic::Ordering::SeqCst);
                 st.lock_pending.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -305,6 +317,13 @@ pub fn run() {
     if let Some(i) = args.iter().position(|a| a == "--diag") {
         let out = args.get(i + 1).cloned().unwrap_or_else(|| "/tmp/flo-diag.json".into());
         let _ = std::fs::write(&out, serde_json::to_string_pretty(&platform::diagnostics()).unwrap_or_default());
+        return;
+    }
+    // `open -n -a Flo.app --args --tap-probe 10 /tmp/flo-tap.wav` → record call/system audio
+    if let Some(i) = args.iter().position(|a| a == "--tap-probe") {
+        let secs = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(10.0);
+        let out = args.get(i + 2).cloned().unwrap_or_else(|| "/tmp/flo-tap.wav".into());
+        sysaudio::probe(secs, &out);
         return;
     }
     if let Some(i) = args.iter().position(|a| a == "--bench-stt") {
@@ -363,6 +382,8 @@ pub fn run() {
             commands::delete_note,
             commands::start_meeting,
             commands::stop_meeting,
+            commands::meeting_info,
+            commands::rename_speaker,
             commands::list_dictionary,
             commands::add_dictionary,
             commands::remove_dictionary,
@@ -402,6 +423,9 @@ pub fn run() {
             commands::slack_sync_now,
             commands::confirm_action,
             commands::stop_agent,
+            commands::toggle_agent_mode,
+            commands::agent_mode_status,
+            commands::agent_confirm,
             commands::now_playing,
             commands::weather,
             commands::media_control,

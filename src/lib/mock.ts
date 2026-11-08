@@ -188,12 +188,12 @@ const notes: Note[] = [
       "Team agreed to move the Apollo dashboard to glass cards with a violet→cyan accent. Ana owns the component library; launch target is the 20th. Open question: dark-mode contrast for charts.",
     actionItems: ["Ana to finalize component library by Monday", "Send updated deck to Northwind", "Check chart contrast in dark mode"],
     transcript: [
-      { t: 4, text: "Okay, let's start with the dashboard cards." },
-      { t: 31, text: "I like the frosted look, it feels much lighter than the old one." },
-      { t: 88, text: "Ana, can you own the component library?" },
-      { t: 95, text: "Yes, I can have it by Monday." },
-      { t: 160, text: "We should double-check contrast for the charts in dark mode." },
-      { t: 240, text: "Launch target is still the twentieth." },
+      { t: 4, text: "Okay, let's start with the dashboard cards.", speaker: "You" },
+      { t: 31, text: "I like the frosted look, it feels much lighter than the old one.", speaker: "Speaker 1" },
+      { t: 88, text: "Ana, can you own the component library?", speaker: "You" },
+      { t: 95, text: "Yes, I can have it by Monday.", speaker: "Speaker 2" },
+      { t: 160, text: "We should double-check contrast for the charts in dark mode.", speaker: "Speaker 1" },
+      { t: 240, text: "Launch target is still the twentieth.", speaker: "Speaker 2" },
     ],
   },
   {
@@ -612,6 +612,7 @@ export const callLog: { cmd: string; args: Record<string, any> }[] = [];
 // now-playing widget mock: a track that advances while 'playing'
 const np = { app: "Spotify", title: "Night Owl", artist: "Galimatias", album: "Urban Flora", playing: true, elapsed: 42 };
 let mockVolume = 55;
+let mockAgentMode = false;
 
 export async function mockInvoke(cmd: string, args: Record<string, any> = {}): Promise<unknown> {
   callLog.push({ cmd, args });
@@ -883,6 +884,19 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return startMockMeeting(args.title, args.projectId);
     case "stop_meeting":
       return stopMockMeeting();
+    case "meeting_info": {
+      if (args.noteId === "n1") return { capture: "mic+call", voiced: ["Speaker 1", "Speaker 2"] };
+      if (args.noteId === "n2") return { capture: "mic", captureNote: "Call audio capture needs macOS 14.2 or later", voiced: [] };
+      return liveNote && args.noteId === liveNote.id ? { capture: "mic+call", voiced: [] } : null;
+    }
+    case "rename_speaker": {
+      const n = notes.find((x) => x.id === args.noteId);
+      const to = String(args.to ?? "").trim();
+      if (!n || !to || to === args.from) return n ?? null;
+      n.transcript = n.transcript.map((s) => (s.speaker === args.from ? { ...s, speaker: to } : s));
+      mockEmit(EV.notes, {});
+      return { ...n };
+    }
     case "list_dictionary":
       return [...dictionary];
     case "add_dictionary": {
@@ -1067,6 +1081,20 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return mockVolume;
     case "stop_agent":
       return undefined;
+    case "toggle_agent_mode":
+      mockAgentMode = !mockAgentMode;
+      mockEmit(EV.handsfree, { active: mockAgentMode, phase: "listening", message: mockAgentMode ? null : "Agent mode off." });
+      return mockAgentMode;
+    case "agent_mode_status":
+      return mockAgentMode;
+    case "agent_confirm":
+      // like the backend: yes → the agent carries on and finishes; no → it stops
+      if (args.yes) {
+        mockEmit(EV.agent, { kind: "step", text: "Confirmed — continuing" });
+        setTimeout(() => mockEmit(EV.agent, { kind: "done", text: "Sent." }), 700);
+      } else mockEmit(EV.agent, { kind: "aborted", text: "Cancelled — you said no." });
+      if (mockAgentMode) mockEmit(EV.handsfree, { active: true, phase: args.yes ? "acting" : "listening" });
+      return true;
     case "claude_hook_status":
       return { ...hook };
     case "install_claude_hook":

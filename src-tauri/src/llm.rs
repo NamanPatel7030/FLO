@@ -6,7 +6,7 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LlmConfig {
     pub provider: String,
     pub model: String,
@@ -383,6 +383,171 @@ async fn anthropic(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extra
     Ok((text, sources))
 }
 
+/// A tool the model may call (e.g. from an MCP server).
+#[derive(Debug, Clone)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub schema: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolStep {
+    /// the model is done; its final text
+    Final(String),
+    /// the model wants these tools run
+    Calls(Vec<ToolCall>),
+}
+
+/// A multi-turn tool-use conversation (Anthropic Messages, or OpenAI-compatible chat completions).
+/// Claude's replies are appended unchanged (incl. thinking blocks), as the API requires.
+pub struct ToolChat {
+    anthropic: bool,
+    cfg: LlmConfig,
+    model: String,
+    system: String,
+    messages: Vec<Value>,
+    tools: Value,
+}
+
+impl ToolChat {
+    pub fn new(cfg: &LlmConfig, system: &str, user: &str, image: Option<(&str, &str)>, tools: &[ToolSpec]) -> Result<Self> {
+        if !cfg.is_configured() {
+            bail!("No AI model configured. Pick one in Settings → AI.");
+        }
+        let model = if cfg.model.trim().is_empty() { default_model(&cfg.provider).to_string() } else { cfg.model.clone() };
+        let anthropic = cfg.provider == "anthropic";
+        if cfg.provider == "gemini" {
+            bail!("Skills that use MCP tools need Claude, OpenAI or an OpenAI-compatible model (Settings → AI).");
+        }
+        if !anthropic {
+            openai_base(cfg)?;
+        }
+        let (first, tools_json) = if anthropic {
+            let mut content = vec![];
+            if let Some((mt, data)) = image {
+                content.push(json!({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}}));
+            }
+            content.push(json!({"type": "text", "text": user}));
+            (
+                json!({"role": "user", "content": content}),
+                Value::Array(tools.iter().map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.schema})).collect()),
+            )
+        } else {
+            let content = match image {
+                Some((mt, data)) => json!([{"type": "text", "text": user}, {"type": "image_url", "image_url": {"url": format!("data:{mt};base64,{data}")}}]),
+                None => json!(user),
+            };
+            (
+                json!({"role": "user", "content": content}),
+                Value::Array(
+                    tools.iter().map(|t| json!({"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.schema}})).collect(),
+                ),
+            )
+        };
+        Ok(Self { anthropic, cfg: cfg.clone(), model, system: system.to_string(), messages: vec![first], tools: tools_json })
+    }
+
+    /// Ask the model for its next move.
+    pub async fn step(&mut self, egress: &Egress, purpose: Purpose, cloud_allowed: bool) -> Result<ToolStep> {
+        let req = ChatRequest { system: &self.system, user: "", image_b64: None, json: false, purpose, cloud_allowed, max_tokens: 2000 };
+        if self.anthropic {
+            let url = "https://api.anthropic.com/v1/messages".to_string();
+            let key = key_for("anthropic").await?.unwrap_or_default();
+            let body = json!({
+                "model": self.model,
+                "max_tokens": 4096,
+                "system": self.system,
+                "messages": self.messages,
+                "tools": self.tools,
+                "output_config": {"effort": "medium"},
+            });
+            let v = send(egress, &url, &req, |c| c.post(&url).header("x-api-key", key.as_str()).header("anthropic-version", "2026-10-21"), body).await?;
+            if v["stop_reason"].as_str() == Some("refusal") {
+                bail!("The model declined this request.");
+            }
+            let blocks = v["content"].as_array().cloned().unwrap_or_default();
+            self.messages.push(json!({"role": "assistant", "content": blocks}));
+            Ok(anthropic_step(&v))
+        } else {
+            let url = format!("{}/chat/completions", openai_base(&self.cfg)?);
+            let key = key_for(&self.cfg.provider).await?;
+            let mut messages = vec![json!({"role": "system", "content": self.system})];
+            messages.extend(self.messages.iter().cloned());
+            let mut body = json!({"model": self.model, "messages": messages, "tools": self.tools, "stream": false});
+            if self.cfg.provider == "openai" {
+                body["max_completion_tokens"] = json!(if openai_reasoning(&self.model) { 4096 } else { 2000 });
+            } else {
+                body["max_tokens"] = json!(2000);
+            }
+            let v = send(egress, &url, &req, |c| {
+                let b = c.post(&url);
+                match &key {
+                    Some(k) => b.bearer_auth(k),
+                    None => b,
+                }
+            }, body)
+            .await?;
+            let msg = v["choices"][0]["message"].clone();
+            self.messages.push(msg.clone());
+            Ok(openai_step(&msg))
+        }
+    }
+
+    /// Feed tool results back: (call id, output text, is_error).
+    pub fn add_results(&mut self, results: &[(String, String, bool)]) {
+        if self.anthropic {
+            // all results for one turn go in a single user message
+            let content: Vec<Value> = results.iter().map(|(id, text, err)| json!({"type": "tool_result", "tool_use_id": id, "content": text, "is_error": err})).collect();
+            self.messages.push(json!({"role": "user", "content": content}));
+        } else {
+            for (id, text, _) in results {
+                self.messages.push(json!({"role": "tool", "tool_call_id": id, "content": text}));
+            }
+        }
+    }
+}
+
+/// Parse an Anthropic Messages reply into the next step.
+pub fn anthropic_step(v: &Value) -> ToolStep {
+    let blocks = v["content"].as_array().cloned().unwrap_or_default();
+    let calls: Vec<ToolCall> = blocks
+        .iter()
+        .filter(|b| b["type"] == "tool_use")
+        .map(|b| ToolCall { id: b["id"].as_str().unwrap_or_default().into(), name: b["name"].as_str().unwrap_or_default().into(), input: b["input"].clone() })
+        .collect();
+    if v["stop_reason"].as_str() == Some("tool_use") && !calls.is_empty() {
+        return ToolStep::Calls(calls);
+    }
+    ToolStep::Final(blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("").trim().to_string())
+}
+
+/// Parse an OpenAI-compatible assistant message into the next step.
+pub fn openai_step(msg: &Value) -> ToolStep {
+    let calls: Vec<ToolCall> = msg["tool_calls"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|c| ToolCall {
+            id: c["id"].as_str().unwrap_or_default().into(),
+            name: c["function"]["name"].as_str().unwrap_or_default().into(),
+            input: c["function"]["arguments"].as_str().and_then(|a| serde_json::from_str(a).ok()).unwrap_or_else(|| json!({})),
+        })
+        .collect();
+    if !calls.is_empty() {
+        return ToolStep::Calls(calls);
+    }
+    ToolStep::Final(msg["content"].as_str().unwrap_or_default().trim().to_string())
+}
+
 async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extras) -> Result<(String, Vec<crate::model::Source>)> {
     let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
     let key = key_for("gemini").await?.unwrap_or_default();
@@ -424,6 +589,36 @@ async fn gemini(egress: &Egress, model: &str, req: ChatRequest<'_>, ex: Extras) 
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn reads_tool_calls_from_both_providers() {
+        let a = json!({"stop_reason": "tool_use", "content": [
+            {"type": "thinking", "thinking": ""},
+            {"type": "text", "text": "Let me look."},
+            {"type": "tool_use", "id": "tu_1", "name": "notion__search", "input": {"q": "roadmap"}}
+        ]});
+        assert_eq!(anthropic_step(&a), ToolStep::Calls(vec![ToolCall { id: "tu_1".into(), name: "notion__search".into(), input: json!({"q": "roadmap"}) }]));
+        let done = json!({"stop_reason": "end_turn", "content": [{"type": "text", "text": "Here it is."}]});
+        assert_eq!(anthropic_step(&done), ToolStep::Final("Here it is.".into()));
+        let o = json!({"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "files__read", "arguments": "{\"path\":\"a.md\"}"}}]});
+        assert_eq!(openai_step(&o), ToolStep::Calls(vec![ToolCall { id: "call_1".into(), name: "files__read".into(), input: json!({"path": "a.md"}) }]));
+        assert_eq!(openai_step(&json!({"role": "assistant", "content": "Done"})), ToolStep::Final("Done".into()));
+    }
+
+    #[test]
+    fn tool_results_go_back_in_the_right_shape() {
+        let cfg = LlmConfig { provider: "anthropic".into(), model: "claude-haiku-5-5".into(), ..LlmConfig::default() };
+        let mut chat = ToolChat::new(&cfg, "sys", "hi", None, &[ToolSpec { name: "t".into(), description: "d".into(), schema: json!({"type": "object"}) }]).unwrap();
+        chat.add_results(&[("tu_1".into(), "42".into(), false), ("tu_2".into(), "boom".into(), true)]);
+        let last = chat.messages.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"].as_array().unwrap().len(), 2); // one message for all results
+        assert_eq!(last["content"][1]["is_error"], true);
+        assert_eq!(chat.tools[0]["input_schema"]["type"], "object");
+        let gem = LlmConfig { provider: "gemini".into(), model: "x".into(), ..LlmConfig::default() };
+        assert!(ToolChat::new(&gem, "s", "u", None, &[]).is_err());
+    }
+
 
     #[test]
     fn retries_the_same_statuses_as_the_sdks() {

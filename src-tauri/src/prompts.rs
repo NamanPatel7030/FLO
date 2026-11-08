@@ -79,6 +79,19 @@ pub fn skill_note(name: &str, instructions: &str, platforms: &[String]) -> Strin
     )
 }
 
+/// System prompt for running a skill with MCP tools. The model calls tools as needed, then
+/// answers with plain text only (no JSON): the finished text to type (write) or a short summary (do).
+pub fn skill_tools_system(context: &str, name: &str, instructions: &str, mode: &str, docs: &str) -> String {
+    let finish = if mode == "do" {
+        "When the work is done, answer with one or two short sentences saying what you did."
+    } else {
+        "When you have what you need, answer with ONLY the finished text to type into the user's field: no preamble, no quotes, no explanation."
+    };
+    format!(
+        "You are Flo, the user's assistant on their Mac. The user invoked their skill \"{name}\". Follow its instructions exactly:\n\"\"\"\n{instructions}\n\"\"\"\nYou have tools from the user's MCP servers. Call them whenever they help (look things up, read, create, update). Never invent results; if a tool fails, say so briefly.\nAsk for nothing: you can't receive replies mid-task. Never do anything destructive (delete, pay, send to new people) unless the instructions clearly ask for it.\n{finish}\nPlain punctuation only: no em dashes.{docs}\n\nContext:\n{context}"
+    )
+}
+
 /// Incremental update: previous summary + only the new lines (keeps cost flat as meetings grow).
 pub fn meeting_update_user(previous_summary: &str, new_lines: &str) -> String {
     if previous_summary.trim().is_empty() {
@@ -109,6 +122,9 @@ pub fn meeting_summary_system(final_pass: bool) -> String {
     format!(
         "You summarize meeting transcripts. {extra}\n\
 Respond with ONLY JSON: {{\"title\":\"<short title>\",\"summary\":\"<3-6 concise bullet points as markdown '- ' lines>\",\"actionItems\":[\"<owner if known>: <task>\"]}}.\n\
+Transcript lines look like `[mm:ss] Speaker: text`. `You` is the user taking these notes; other names, or `Speaker N`, are the other participants.\n\
+Write every action item as `Owner: task`, using the person who committed to it or was asked to do it (e.g. `Rahul: send the pricing deck by Friday`, `You: review the PR`). If the owner is unclear, write the task without an owner. Never invent names; keep `Speaker N` labels as they are.\n\
+In the summary, attribute decisions and opinions to the people who voiced them.\n\
 Keep the transcript's language. Do not invent facts. No em dashes."
     )
 }

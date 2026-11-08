@@ -251,6 +251,90 @@ pub fn sse_reply(body: &str, id: u64) -> Option<Value> {
     })
 }
 
+/// Tool name the model sees: "<server>__<tool>", only [a-zA-Z0-9_-], at most 64 chars.
+pub fn exposed_name(server: &str, tool: &str) -> String {
+    let clean = |t: &str| t.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect::<String>();
+    let mut n = format!("{}__{}", clean(&server.to_lowercase()), clean(tool));
+    n.truncate(64);
+    n
+}
+
+/// Run a request with the tools of these MCP servers: the model calls tools, Flo runs them and
+/// returns results, until the model answers (at most `MAX_TOOL_ROUNDS`). Returns (final text,
+/// tools used). Servers that can't be reached are skipped.
+pub async fn run_with_tools(
+    st: &Shared,
+    cfg: &crate::llm::LlmConfig,
+    system: &str,
+    user: &str,
+    image: Option<(&str, &str)>,
+    servers: &[Connection],
+    cloud_allowed: bool,
+) -> Result<(String, Vec<String>)> {
+    const MAX_TOOL_ROUNDS: usize = 8;
+    let mut sessions = vec![];
+    let mut specs = vec![];
+    let mut route: std::collections::HashMap<String, (usize, String)> = Default::default();
+    for c in servers {
+        match Session::connect(st, c).await {
+            Ok(mut s) => match s.list_tools().await {
+                Ok(tools) => {
+                    let idx = sessions.len();
+                    for t in tools {
+                        let name = exposed_name(&c.name, &t.name);
+                        route.insert(name.clone(), (idx, t.name.clone()));
+                        specs.push(crate::llm::ToolSpec { name, description: format!("[{}] {}", c.name, t.description), schema: t.input_schema });
+                    }
+                    sessions.push(s);
+                }
+                Err(e) => log::warn!("mcp {}: list tools failed: {e:#}", c.name),
+            },
+            Err(e) => log::warn!("mcp {}: connect failed: {e:#}", c.name),
+        }
+    }
+    if specs.is_empty() {
+        for s in sessions {
+            s.close().await;
+        }
+        bail!("Couldn't reach the skill's MCP servers. Check them in Skills → Connections (Test).");
+    }
+    let mut chat = crate::llm::ToolChat::new(cfg, system, user, image, &specs)?;
+    let mut used = vec![];
+    let mut outcome: Result<String> = Err(anyhow!("The skill used too many tool steps without finishing."));
+    for _ in 0..MAX_TOOL_ROUNDS {
+        match chat.step(&st.egress, Purpose::Assistant, cloud_allowed).await {
+            Ok(crate::llm::ToolStep::Final(text)) => {
+                outcome = Ok(text);
+                break;
+            }
+            Ok(crate::llm::ToolStep::Calls(calls)) => {
+                let mut results = vec![];
+                for call in calls {
+                    let (text, err) = match route.get(&call.name) {
+                        Some((idx, tool)) => match sessions[*idx].call_tool(tool, call.input.clone()).await {
+                            Ok((t, e)) => (t, e),
+                            Err(e) => (format!("Tool failed: {e:#}"), true),
+                        },
+                        None => (format!("No tool named {}", call.name), true),
+                    };
+                    log::info!("mcp tool {} → {} chars{}", call.name, text.len(), if err { " (error)" } else { "" });
+                    used.push(call.name.clone());
+                    results.push((call.id, crate::text::truncate_chars(&text, 12_000), err));
+                }
+                chat.add_results(&results);
+            }
+            Err(e) => {
+                outcome = Err(e);
+                break;
+            }
+        }
+    }
+    for s in sessions {
+        s.close().await;
+    }
+    outcome.map(|t| (t, used))
+}
+
 /// Allow (Purpose::Mcp only) the hosts of the user's HTTP MCP servers, plus one being tested.
 pub fn refresh_hosts(st: &Shared, extra: Option<String>) {
     let mut hosts: Vec<String> = st
@@ -299,6 +383,13 @@ mod tests {
         let (msg, is_err) = s.call_tool("nope", serde_json::json!({})).await.unwrap();
         assert!(is_err && msg.contains("unknown tool"));
         s.close().await;
+    }
+
+    #[test]
+    fn tool_names_are_safe_and_routable() {
+        assert_eq!(exposed_name("Notion", "search-pages"), "notion__search-pages");
+        assert_eq!(exposed_name("My Files!", "read.file"), "my_files___read_file");
+        assert!(exposed_name(&"x".repeat(80), "tool").len() <= 64);
     }
 
     #[test]

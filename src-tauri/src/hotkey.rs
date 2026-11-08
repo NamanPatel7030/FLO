@@ -4,6 +4,12 @@
 //! Pressing any other key while holding cancels (so ctrl+C etc. keep working).
 //! Windows: hold Right Ctrl → dictation; hold Right Alt → assistant.
 use crate::model::Mode;
+use std::time::{Duration, Instant};
+
+/// Two taps of the assistant key within this window toggle hands-free agent mode.
+pub const DOUBLE_TAP_MS: u64 = 350;
+/// A press shorter than this counts as a tap (longer is push-to-talk).
+pub const TAP_MAX_MS: u64 = 300;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyEvent {
@@ -15,6 +21,8 @@ pub enum HotkeyEvent {
     Cancel,
     /// Space pressed while holding → hands-free: keep listening after the keys are released
     Lock(Mode),
+    /// the assistant key was tapped twice quickly → toggle hands-free agent mode
+    DoubleTap(Mode),
 }
 
 pub const KEY_SPACE: i64 = 49;
@@ -96,11 +104,29 @@ pub struct Machine {
     locked: bool,
     /// while locked: is the base combo currently held (to detect the finishing tap)
     base_held: bool,
+    /// when the current press started (to tell a tap from a hold)
+    pressed_at: Option<Instant>,
+    /// when the last quick tap of the assistant key was released (double-tap detection)
+    last_tap: Option<Instant>,
+    /// the current press is the second tap of a double-tap: its release is silent
+    double: bool,
 }
 
 impl Machine {
     /// Feed the full current modifier state.
     pub fn update_mods(&mut self, m: Mods, cfg: &HotkeyConfig) -> Option<HotkeyEvent> {
+        self.update_mods_at(m, cfg, Instant::now())
+    }
+
+    /// Same, at an explicit time (unit tests drive the double-tap clock).
+    pub fn update_mods_at(&mut self, m: Mods, cfg: &HotkeyConfig, now: Instant) -> Option<HotkeyEvent> {
+        if self.double {
+            // second tap of a double-tap: swallow everything until the key is let go
+            if !m.contains(&self.base) {
+                self.reset();
+            }
+            return None;
+        }
         if self.locked {
             let holding = m.contains(&self.base);
             let was = self.base_held;
@@ -121,16 +147,26 @@ impl Machine {
                 } else {
                     return None;
                 };
+                let quick_second = mode == Mode::Assistant && self.last_tap.is_some_and(|t| now.saturating_duration_since(t) <= Duration::from_millis(DOUBLE_TAP_MS));
+                self.last_tap = None;
                 self.mode = Some(mode);
                 self.held = true;
                 self.base = m;
+                self.pressed_at = Some(now);
+                if quick_second {
+                    self.double = true;
+                    return Some(HotkeyEvent::DoubleTap(mode));
+                }
                 Some(HotkeyEvent::Press(mode))
             }
             Some(mode) => {
                 let combo = if mode == Mode::Assistant { cfg.assistant } else { cfg.dictation };
                 if !m.contains(&self.base) {
+                    let tap = mode == Mode::Assistant && self.pressed_at.is_some_and(|p| now.saturating_duration_since(p) <= Duration::from_millis(TAP_MAX_MS));
                     self.mode = None;
                     self.held = false;
+                    self.pressed_at = None;
+                    self.last_tap = tap.then_some(now);
                     return Some(HotkeyEvent::Release);
                 }
                 // growing into the other (superset) combo switches mode, e.g. ctrl → fn+ctrl
@@ -149,6 +185,9 @@ impl Machine {
         self.held = false;
         self.locked = false;
         self.base_held = false;
+        self.pressed_at = None;
+        self.last_tap = None;
+        self.double = false;
     }
 
     pub fn is_locked(&self) -> bool {
@@ -157,7 +196,15 @@ impl Machine {
 
     /// A non-modifier key went down. Returns (event, swallow_the_key).
     pub fn key_down_code(&mut self, keycode: i64) -> (Option<HotkeyEvent>, bool) {
-        let Some(mode) = self.mode else { return (None, false) };
+        let Some(mode) = self.mode else {
+            // typing between two taps means it wasn't a double-tap
+            self.last_tap = None;
+            return (None, false);
+        };
+        if self.double {
+            self.reset();
+            return (None, false);
+        }
         if self.locked {
             return match keycode {
                 KEY_ESC => {
@@ -335,6 +382,64 @@ mod tests {
         assert_eq!(mc.update(true, false), Some(HotkeyEvent::Press(Mode::Dictation)));
         assert_eq!(mc.update(true, true), Some(HotkeyEvent::Switch(Mode::Assistant)));
         assert_eq!(mc.update(false, false), Some(HotkeyEvent::Release));
+    }
+
+    fn ms(t0: Instant, n: u64) -> Instant {
+        t0 + Duration::from_millis(n)
+    }
+
+    #[test]
+    fn double_tap_fn_toggles_agent_mode() {
+        let cfg = HotkeyConfig::default();
+        let mut mc = Machine::default();
+        let t0 = Instant::now();
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, t0), Some(HotkeyEvent::Press(Mode::Assistant)));
+        assert_eq!(mc.update_mods_at(m(""), &cfg, ms(t0, 120)), Some(HotkeyEvent::Release));
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, ms(t0, 300)), Some(HotkeyEvent::DoubleTap(Mode::Assistant)));
+        assert_eq!(mc.update_mods_at(m(""), &cfg, ms(t0, 400)), None); // its release is silent
+        // a third tap right after starts fresh (not another toggle)
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, ms(t0, 500)), Some(HotkeyEvent::Press(Mode::Assistant)));
+    }
+
+    #[test]
+    fn slow_second_tap_or_long_hold_is_not_a_double_tap() {
+        let cfg = HotkeyConfig::default();
+        let mut mc = Machine::default();
+        let t0 = Instant::now();
+        mc.update_mods_at(m("fn"), &cfg, t0);
+        mc.update_mods_at(m(""), &cfg, ms(t0, 100));
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, ms(t0, 600)), Some(HotkeyEvent::Press(Mode::Assistant))); // > 350 ms gap
+        mc.update_mods_at(m(""), &cfg, ms(t0, 1600)); // held 1 s = push-to-talk, not a tap
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, ms(t0, 1700)), Some(HotkeyEvent::Press(Mode::Assistant)));
+    }
+
+    #[test]
+    fn double_tap_only_for_assistant_and_typing_breaks_it() {
+        let cfg = HotkeyConfig::default();
+        let mut mc = Machine::default();
+        let t0 = Instant::now();
+        mc.update_mods_at(m("ctrl"), &cfg, t0);
+        mc.update_mods_at(m(""), &cfg, ms(t0, 80));
+        assert_eq!(mc.update_mods_at(m("ctrl"), &cfg, ms(t0, 200)), Some(HotkeyEvent::Press(Mode::Dictation)));
+        mc.update_mods_at(m(""), &cfg, ms(t0, 260));
+        // fn tap, a key typed, fn tap → no toggle
+        mc.update_mods_at(m("fn"), &cfg, ms(t0, 1000));
+        mc.update_mods_at(m(""), &cfg, ms(t0, 1080));
+        assert_eq!(mc.key_down_code(12), (None, false));
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, ms(t0, 1200)), Some(HotkeyEvent::Press(Mode::Assistant)));
+    }
+
+    #[test]
+    fn hands_free_finish_tap_is_not_half_a_double_tap() {
+        let cfg = HotkeyConfig::default();
+        let mut mc = Machine::default();
+        let t0 = Instant::now();
+        mc.update_mods_at(m("fn"), &cfg, t0);
+        mc.key_down_code(KEY_SPACE);
+        mc.update_mods_at(m(""), &cfg, ms(t0, 100));
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, ms(t0, 2000)), Some(HotkeyEvent::Release)); // finishing tap
+        assert_eq!(mc.update_mods_at(m(""), &cfg, ms(t0, 2080)), None);
+        assert_eq!(mc.update_mods_at(m("fn"), &cfg, ms(t0, 2200)), Some(HotkeyEvent::Press(Mode::Assistant)));
     }
 
     #[test]

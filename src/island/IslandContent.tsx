@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { AlertTriangle, AlarmClock, Bell, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
+import { AlertTriangle, AlarmClock, AudioLines, Bell, Check, Copy, Globe, LayoutGrid, LogIn, History, LayoutDashboard, Lock, Maximize2, MessageSquareText, Mic, Radio, Settings2, Sparkles, Square, X } from "lucide-react";
 import { api } from "../lib/api";
 import { formatClock, ISLAND_GAP, ISLAND_WING, wantsFix, type IslandVariant } from "../lib/format";
 import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, Phase, Todo } from "../lib/types";
@@ -37,6 +37,8 @@ interface Props {
   onStopMeeting: () => void;
   onStartMeeting: () => void;
   onWidgets: () => void;
+  /** turn on hands-free agent mode */
+  onAgentMode?: () => void;
   /** peek tile under the cursor (backend hit-testing), -1 = none */
   hotTile?: number;
   /** configured push-to-talk keys, already formatted ("⌃", "fn") */
@@ -50,7 +52,7 @@ interface Props {
 }
 
 /** Number of quick actions in the peek menu (for hit-testing). */
-export const PEEK_ACTIONS = 6;
+export const PEEK_ACTIONS = 7;
 
 function CopyButton({ text, label = false }: { text: string; label?: boolean }) {
   const [done, setDone] = useState(false);
@@ -177,6 +179,7 @@ export function IslandContent(p: Props) {
       const actions = [
         { icon: <Mic size={16} />, label: "Dictate", run: () => api.startSession("dictation") },
         { icon: <Sparkles size={16} />, label: "Ask", run: () => api.startSession("assistant") },
+        { icon: <AudioLines size={16} />, label: "Agent", run: () => p.onAgentMode?.() },
         p.meeting.live
           ? { icon: <Square size={14} fill="currentColor" className="text-red-400" />, label: "Stop meeting", run: p.onStopMeeting }
           : { icon: <Radio size={16} />, label: "Meeting", run: p.onStartMeeting },
@@ -187,7 +190,7 @@ export function IslandContent(p: Props) {
       return (
         <div className="flex h-full flex-col">
           {notch && <div style={{ height: top }} />}
-          <div className={"grid flex-1 grid-cols-6 items-center gap-1.5 " + (notch ? "px-3 pb-2 pt-1" : "px-2 py-1.5")}>
+          <div className={"grid flex-1 grid-cols-7 items-center gap-1.5 " + (notch ? "px-3 pb-2 pt-1" : "px-2 py-1.5")}>
             {actions.map((a, i) => (
               <Quick key={a.label} index={i} hot={p.hotTile === i} icon={a.icon} label={a.label} onClick={a.run} />
             ))}

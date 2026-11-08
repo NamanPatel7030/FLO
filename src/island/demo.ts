@@ -1,6 +1,6 @@
 // Browser-only demo for the island. ?demo=1 cycles through every state; other values pin one state
 // for screenshots: listening|assistant|working|result|error|history|claude|card|meeting|meetingExpanded|
-// peek|swell|tray|trayTooltip|correction|meetingPrompt.
+// peek|swell|tray|trayTooltip|correction|meetingPrompt|agent|agentmode (&hold=pill|steps|confirm).
 // Note: the query must come BEFORE the hash, e.g. /?demo=tray&nh=38#/island
 import { api } from "../lib/api";
 import { mockClaudeEvent, mockClaudeSession, mockCorrection, mockEmit, mockInvoke, mockMeetingDetected } from "../lib/mock";
@@ -50,6 +50,34 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
       at(3100, () => mockEmit(EV.agent, { kind: "step", text: "Clicking the first video" }));
       at(4600, () => mockEmit(EV.agent, { kind: "done", text: "Playing the lofi video." }));
       break;
+    // hands-free agent mode: pill → a heard request → live steps → a spoken-confirm question.
+    // `?demo=agentmode&hold=pill|steps|confirm` pins one state for screenshots.
+    case "agentmode": {
+      const hold = new URLSearchParams(location.search).get("hold");
+      const hf = (p: Record<string, unknown>) => mockEmit(EV.handsfree, { active: true, phase: "listening", ...p });
+      at(300, () => mockInvoke("toggle_agent_mode"));
+      if (hold === "pill") break;
+      at(1200, () => hf({ phase: "thinking", heard: "Open Gmail and email Rahul that the invoice is attached" }));
+      at(1600, () => {
+        hf({ phase: "acting", heard: "Open Gmail and email Rahul that the invoice is attached" });
+        mockEmit(EV.agent, { kind: "start", text: "Open Gmail and email Rahul that the invoice is attached" });
+      });
+      at(2200, () => mockEmit(EV.agent, { kind: "step", text: "Opening mail.google.com" }));
+      at(2900, () => mockEmit(EV.agent, { kind: "step", text: "Clicking Compose" }));
+      at(3600, () => mockEmit(EV.agent, { kind: "step", text: "Typing “Hi Rahul, the invoice is attached”" }));
+      if (hold === "steps") break;
+      at(4400, () => {
+        hf({ phase: "confirming", heard: "Open Gmail and email Rahul that the invoice is attached" });
+        mockEmit(EV.agent, { kind: "confirm", text: "Send the email to Rahul?", voice: true });
+      });
+      if (hold === "confirm") break;
+      // the user says "yes"
+      at(7000, () => {
+        hf({ phase: "acting", heard: "yes" });
+        mockInvoke("agent_confirm", { yes: true });
+      });
+      break;
+    }
     case "tray":
       break; // mock sessions + urgent to-dos show up on load
     case "trayTooltip":

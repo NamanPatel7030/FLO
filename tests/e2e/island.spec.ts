@@ -508,3 +508,51 @@ test("claude permission: the notch shows what Claude wants, and Allow / terminal
   await emit(page, "flo://confirm-done", { id: "q3" });
   await expect(page.getByTestId("claude-permission-card")).toHaveCount(0);
 });
+
+test("agent mode: hands-free pill, a heard request, live steps, and a spoken yes resolves the confirm", async ({ page }) => {
+  await openIsland(page);
+  const invoke = (cmd: string, args: Record<string, unknown> = {}) => page.evaluate(([c, a]) => (window as any).__floMock.invoke(c, a), [cmd, args] as const);
+  // double-tap fn / the island's Agent tile → agent mode on: a persistent listening pill
+  expect(await invoke("toggle_agent_mode")).toBe(true);
+  const pill = page.getByTestId("agent-mode-pill");
+  await expect(pill).toBeVisible();
+  await expect(pill).toContainText(/agent mode · listening/i);
+  await expect(pill).toContainText(/double-tap .* or say “stop”/);
+
+  // a request is heard (no key press) and shown
+  const goal = "Open Gmail and email Rahul that the invoice is attached";
+  await emit(page, "flo://handsfree", { active: true, phase: "thinking", heard: goal });
+  await expect(page.getByTestId("agent-mode-heard")).toContainText(goal);
+
+  // the screen agent runs every step by itself; the card says Flo is still listening
+  await emit(page, "flo://handsfree", { active: true, phase: "acting", heard: goal });
+  await emit(page, "flo://agent", { kind: "start", text: goal });
+  await emit(page, "flo://agent", { kind: "step", text: "Opening mail.google.com" });
+  await emit(page, "flo://agent", { kind: "step", text: "Clicking Compose" });
+  await expect(page.getByTestId("agent-step")).toContainText("Clicking Compose");
+  await expect(page.getByTestId("agent-handsfree")).toBeVisible();
+
+  // a risky step pauses for a spoken answer
+  await emit(page, "flo://agent", { kind: "confirm", text: "Send the email to Rahul?", voice: true });
+  const confirm = page.getByTestId("agent-confirm");
+  await expect(confirm).toContainText("Send the email to Rahul?");
+  await expect(confirm).toContainText("Say “yes” or “no”");
+  // the backend heard "yes" → the agent continues and finishes
+  await invoke("agent_confirm", { yes: true });
+  await expect(confirm).toHaveCount(0);
+  await expect(page.getByText("Sent.")).toBeVisible();
+  // the finished card steps aside and the listening pill comes back
+  await expect(pill).toBeVisible({ timeout: 8000 });
+
+  // buttons answer too: No stops the agent
+  await emit(page, "flo://agent", { kind: "start", text: "Delete the draft" });
+  await emit(page, "flo://agent", { kind: "confirm", text: "Delete the draft?", voice: true });
+  await page.getByTestId("agent-confirm").getByRole("button", { name: "No" }).click();
+  await expect(page.getByText("Cancelled — you said no.")).toBeVisible();
+
+  // exit: the pill's X (same as double-tap fn / saying "stop"); the card waits while hovered
+  await page.mouse.move(5, 800);
+  await expect(pill).toBeVisible({ timeout: 8000 });
+  await pill.getByRole("button", { name: "Turn off agent mode" }).click();
+  await expect(pill).toHaveCount(0);
+});

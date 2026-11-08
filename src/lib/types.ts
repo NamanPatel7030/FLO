@@ -204,6 +204,16 @@ export interface MeetingSegment {
   speaker?: string;
 }
 
+/** How a meeting was recorded and which speakers Flo can remember by voice. */
+export interface MeetingInfo {
+  /** "mic+call" = your mic as "You" + the call's audio (others); "mic" = microphone only */
+  capture: "mic+call" | "mic" | string;
+  /** why call audio wasn't captured, or a warning about it */
+  captureNote?: string;
+  /** speaker labels with a stored voice (renaming them teaches Flo the voice) */
+  voiced: string[];
+}
+
 export interface MeetingEvent {
   noteId: string;
   segment?: MeetingSegment;
@@ -574,9 +584,21 @@ export const EV = {
   confirmDone: "flo://confirm-done",
   /** payload: {signedIn, user?} — e.g. after Google sign-in completes via flo:// deep link */
   account: "flo://account",
-  /** payload: {kind: "start"|"step"|"confirm"|"done"|"aborted"|"error", text} — computer-control agent */
+  /** payload: {kind: "start"|"step"|"confirm"|"done"|"aborted"|"error", text, voice?} — computer-control agent */
   agent: "flo://agent",
+  /** payload: HandsfreeEvent — hands-free agent mode (double-tap fn) */
+  handsfree: "flo://handsfree",
 } as const;
+
+/** Hands-free agent mode: what it's doing and the last request it heard. */
+export interface HandsfreeEvent {
+  active: boolean;
+  phase: "listening" | "thinking" | "acting" | "confirming";
+  heard?: string | null;
+  /** said while the agent was busy; runs next */
+  queued?: string | null;
+  message?: string | null;
+}
 
 /**
  * Tauri commands (snake_case names, camelCase args):

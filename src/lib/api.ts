@@ -19,6 +19,7 @@ import type {
   Mode,
   NetworkLogEntry,
   Note,
+  MeetingInfo,
   Permissions,
   Project,
   ProjectStatus,
@@ -107,6 +108,10 @@ export const api = {
   deleteNote: (id: string) => call<void>("delete_note", { id }),
   startMeeting: (title?: string, projectId?: string) => call<Note>("start_meeting", { title, projectId }),
   stopMeeting: () => call<Note>("stop_meeting"),
+  /** capture mode + speakers of a meeting (null for notes recorded before speaker support) */
+  meetingInfo: (noteId: string) => call<MeetingInfo | null>("meeting_info", { noteId }),
+  /** "Speaker 2" → "Rahul" across the note; Flo remembers the voice for next time */
+  renameSpeaker: (noteId: string, from: string, to: string) => call<Note>("rename_speaker", { noteId, from, to }),
 
   listDictionary: () => call<DictionaryEntry[]>("list_dictionary"),
   addDictionary: (word: string, replacement?: string) => call<DictionaryEntry>("add_dictionary", { word, replacement }),
@@ -167,6 +172,11 @@ export const api = {
   setVolume: (level: number) => call<number>("set_volume", { level }),
   /** abort the running computer-control agent */
   stopAgent: () => call<void>("stop_agent").catch(() => {}),
+  /** hands-free agent mode on/off (also: double-tap fn) → new state */
+  toggleAgentMode: () => call<boolean>("toggle_agent_mode"),
+  agentModeStatus: () => call<boolean>("agent_mode_status").catch(() => false),
+  /** answer the screen agent's confirm question (Yes / No) */
+  agentConfirm: (yes: boolean) => call<boolean>("agent_confirm", { yes }).catch(() => false),
   claudeHookStatus: () => call<ClaudeHookStatus>("claude_hook_status"),
   installClaudeHook: () => call<ClaudeHookStatus>("install_claude_hook"),
   uninstallClaudeHook: () => call<ClaudeHookStatus>("uninstall_claude_hook"),

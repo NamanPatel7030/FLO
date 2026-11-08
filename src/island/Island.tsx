@@ -29,6 +29,7 @@ import {
   type ConfirmEvent,
   type CorrectionEvent,
   type Dictation,
+  type HandsfreeEvent,
   type HoverEvent,
   type IslandGeometry,
   type MeetingDetectedEvent,
@@ -45,7 +46,7 @@ import { ConfirmCard, CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, 
 import { runDemo } from "./demo";
 import { NotchViz } from "./Ribbon";
 import { Widgets } from "./Widgets";
-import { AgentCard, type AgentState } from "./AgentCard";
+import { AgentCard, AgentModePill, type AgentState } from "./AgentCard";
 import { loadWidgets, onWidgetsChange, widgetsBodyHeight, type WidgetId } from "../lib/widgets";
 import { applyTheme, onNotchPreview, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
@@ -132,6 +133,8 @@ export default function Island() {
   const [widgetsOpen, setWidgetsOpen] = useState(false);
   const [widgetIds, setWidgetIds] = useState<WidgetId[]>(() => loadWidgets());
   const [agent, setAgent] = useState<AgentState | null>(null);
+  /** hands-free agent mode (double-tap fn): null when off */
+  const [handsfree, setHandsfree] = useState<HandsfreeEvent | null>(null);
   // hover: backend cursor tracking (non-activating panel) + DOM fallback.
   // Raw positions live in refs; React state only changes when the hovered item/tile changes.
   const [hover, setHover] = useState(false);
@@ -259,6 +262,7 @@ export default function Island() {
     api.getSettings().then(setSettings).catch(() => {});
     api.listClaudeSessions().then(setSessions);
     api.listTodos().then(setTodos).catch(() => {});
+    api.agentModeStatus().then((on) => on && setHandsfree((h) => h ?? { active: true, phase: "listening" }));
   }, []);
 
   // theme + accent: apply on change, and re-read when the dashboard window edits settings
@@ -364,7 +368,11 @@ export default function Island() {
         backendHover.current = true;
         handleHoverRef.current(e);
       }),
-      on<{ kind: string; text: string }>(EV.agent, (e) => {
+      on<HandsfreeEvent>(EV.handsfree, (e) => {
+        if (!e || typeof e !== "object") return;
+        setHandsfree(e.active ? e : null);
+      }),
+      on<{ kind: string; text: string; voice?: boolean }>(EV.agent, (e) => {
         if (!e || !e.kind) return;
         setAgent((prev) => {
           if (e.kind === "start") return { goal: e.text ?? "", steps: [], status: "running" };
@@ -373,7 +381,7 @@ export default function Island() {
             case "step":
               return { ...base, status: "running", steps: [...base.steps, e.text].slice(-6) };
             case "confirm":
-              return { ...base, status: "confirm", text: e.text };
+              return { ...base, status: "confirm", text: e.text, voice: !!e.voice };
             case "done":
               return { ...base, status: "done", text: e.text };
             case "aborted":
@@ -573,12 +581,14 @@ export default function Island() {
     if (history) return "history";
     if (meeting.live) return meetingOpen ? "meetingExpanded" : "meeting";
     if (widgetsOpen) return "widgets";
+    // agent mode stays visible (it's listening) — above hover/tray, below anything with content
+    if (handsfree) return "agentMode";
     if (preview) return "listening"; // show the selected notch style live for ~3s
     if (hover && dwell && tipItem) return "trayTooltip";
     if (hover && dwell) return "peek";
     if (trayItems.all.length) return "tray";
     return "collapsed";
-  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headReminder, headClaude, history, meeting.live, meetingOpen, widgetsOpen, preview, hover, dwell, tipItem, trayItems.all.length]);
+  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headReminder, headClaude, history, meeting.live, meetingOpen, widgetsOpen, handsfree, preview, hover, dwell, tipItem, trayItems.all.length]);
 
   // no expansion before the dwell completes (prevents an enter-resize that could feed back into hover)
   const swell = false;
@@ -602,7 +612,11 @@ export default function Island() {
       case "confirm":
         return { claude: headConfirm?.kind === "claude" };
       case "agent":
-        return { agentSteps: agent?.steps.length ?? 0, agentDone: !!agent && agent.status !== "running" && agent.status !== "confirm" };
+        return {
+          agentSteps: agent?.steps.length ?? 0,
+          agentDone: !!agent && agent.status !== "running" && agent.status !== "confirm",
+          agentConfirm: agent?.status === "confirm",
+        };
       case "collapsed":
         return swell ? { swell: true } : undefined;
       case "tray":
@@ -661,6 +675,7 @@ export default function Island() {
       if (widgetsOpen) setWidgetsOpen(false);
       else if (agent && (agent.status === "running" || agent.status === "confirm")) api.stopAgent();
       else if (agent) setAgent(null);
+      else if (handsfree) api.toggleAgentMode().catch(() => {});
       else if (phase === "listening" && mode !== "meeting") api.cancelSession();
       else if (history) setHistory(null);
       else if (headFix) setCorrections((q) => q.slice(1));
@@ -682,7 +697,7 @@ export default function Island() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", onBlur);
     };
-  }, [phase, mode, card, headReminder, headClaude, history, result, headFix, promptOpen, agent, widgetsOpen]);
+  }, [phase, mode, card, headReminder, headClaude, history, result, headFix, promptOpen, agent, widgetsOpen, handsfree]);
 
   // watchdog: if the backend stopped confirming activity, return to idle (never spin forever)
   useEffect(() => {
@@ -776,7 +791,7 @@ export default function Island() {
             ? { width: trayW - 2 * EAR, height: geo.notchHeight }
             : { width: size.width - EAR * 2, height: size.height }
     : { width: size.width - 24, height: size.height - 24 };
-  const bigCard = ["card", "claude", "reminder", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm"].includes(shown);
+  const bigCard = ["card", "claude", "reminder", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm", "agent"].includes(shown);
   const radius = notch
     ? collapsed
       ? "0 0 9px 9px"
@@ -807,7 +822,7 @@ export default function Island() {
     asst: geo.platform === "windows" ? "Right Alt" : formatHotkey(settings?.hotkeyAssistant ?? "fn"),
   };
 
-  const glow = notch && (swollen || shown === "listening");
+  const glow = notch && (swollen || shown === "listening" || shown === "agentMode");
   // premium hover feedback: instant accent rim-glow (no resize) the moment the cursor is on the notch
   const hovering = notch && hover;
   const island = (
@@ -938,7 +953,24 @@ export default function Island() {
                   }}
                 />
               ) : shown === "agent" && agent ? (
-                <AgentCard agent={agent} notch={notch} geo={geo} onStop={() => api.stopAgent()} onDismiss={() => setAgent(null)} />
+                <AgentCard
+                  agent={agent}
+                  notch={notch}
+                  geo={geo}
+                  onStop={() => api.stopAgent()}
+                  onDismiss={() => setAgent(null)}
+                  onAnswer={(yes) => api.agentConfirm(yes)}
+                  handsfree={!!handsfree}
+                  queued={handsfree?.queued}
+                />
+              ) : shown === "agentMode" && handsfree ? (
+                <AgentModePill
+                  hf={handsfree}
+                  notch={notch}
+                  geo={geo}
+                  exitHint={geo.platform === "macos" ? `double-tap ${keys.asst} or say “stop”` : "say “stop” to exit"}
+                  onExit={() => api.toggleAgentMode().catch(() => setHandsfree(null))}
+                />
               ) : shown === "confirm" && headConfirm ? (
                 <ConfirmCard c={headConfirm} more={confirms.length - 1} notch={notch} geo={geo} onAnswer={(ok) => answerConfirm(headConfirm, ok)} />
               ) : shown === "correction" && headFix ? (
@@ -1001,6 +1033,12 @@ export default function Island() {
                   onCloseHistory={() => setHistory(null)}
                   onOpenHistory={openHistory}
                   onWidgets={() => setWidgetsOpen(true)}
+                  onAgentMode={() =>
+                    api.toggleAgentMode().catch((err) => {
+                      setPhase("error");
+                      setMessage(String(err));
+                    })
+                  }
                   onClaude={dismissClaude}
                   onToggleMeeting={() => setMeetingOpen((v) => !v)}
                   onStopMeeting={stopMeeting}

@@ -14,10 +14,111 @@ use crate::{platform, settings as cfg, text};
 use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 use serde_json::json;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::Duration;
 
 const MAX_STEPS: usize = 14;
 const IMG_MAX_W: u32 = 1366;
+/// how long a confirm question waits for an answer in agent mode (spoken yes/no) — then it's a no
+pub const VOICE_CONFIRM_SECS: u64 = 15;
+/// … and when answered with the island buttons (push-to-talk run)
+pub const BUTTON_CONFIRM_SECS: u64 = 60;
+/// a run never asks more than this many confirmations (a model stuck re-asking stops instead)
+const MAX_CONFIRMS: usize = 4;
+
+// ── run + confirmation state (one agent at a time) ──────────────────────────
+static RUNNING: AtomicBool = AtomicBool::new(false);
+static RUNS: AtomicU64 = AtomicU64::new(0);
+/// the question the agent is waiting on (Some = paused for a yes/no)
+static PENDING: Mutex<Option<String>> = Mutex::new(None);
+static ANSWER: Mutex<Option<bool>> = Mutex::new(None);
+
+/// Is the screen agent running right now?
+pub fn is_running() -> bool {
+    RUNNING.load(Ordering::SeqCst)
+}
+
+/// How many runs have started (lets a caller wait for a run it just triggered).
+pub fn runs_started() -> u64 {
+    RUNS.load(Ordering::SeqCst)
+}
+
+/// The confirm question the agent is paused on, if any.
+pub fn pending_confirm() -> Option<String> {
+    PENDING.lock().ok().and_then(|g| g.clone())
+}
+
+/// Answer the paused confirm question (voice or island button). Returns false if nothing was pending.
+pub fn answer_confirm(yes: bool) -> bool {
+    if pending_confirm().is_none() {
+        return false;
+    }
+    if let Ok(mut a) = ANSWER.lock() {
+        *a = Some(yes);
+    }
+    true
+}
+
+struct RunGuard;
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        RUNNING.store(false, Ordering::SeqCst);
+        if let Ok(mut p) = PENDING.lock() {
+            *p = None;
+        }
+    }
+}
+
+/// What the agent does with the user's answer to a confirm step (pure; unit tested).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmOutcome {
+    /// yes → remember the approval in the history and let the model perform that step next turn
+    Proceed { history_line: String },
+    /// no / no answer / stopped → stop the run with this message
+    Stop { message: String },
+}
+
+pub fn confirm_outcome(answer: Option<bool>, question: &str, aborted: bool, confirms_so_far: usize) -> ConfirmOutcome {
+    if aborted {
+        return ConfirmOutcome::Stop { message: "Stopped.".into() };
+    }
+    match answer {
+        Some(true) if confirms_so_far <= MAX_CONFIRMS => ConfirmOutcome::Proceed {
+            history_line: format!("USER CONFIRMED: \"{}\" — perform exactly that step now, without asking again", text::truncate_chars(question, 160)),
+        },
+        Some(true) => ConfirmOutcome::Stop { message: "Too many confirmations — stopping to be safe.".into() },
+        Some(false) => ConfirmOutcome::Stop { message: "Cancelled — you said no.".into() },
+        None => ConfirmOutcome::Stop { message: "No answer, so I didn't do it.".into() },
+    }
+}
+
+/// Pause until the user answers `question` (or the timeout / an abort). Never auto-confirms.
+async fn wait_for_answer(st: &Shared, question: &str, timeout: Duration) -> (Option<bool>, bool) {
+    if let Ok(mut a) = ANSWER.lock() {
+        *a = None;
+    }
+    if let Ok(mut p) = PENDING.lock() {
+        *p = Some(question.to_string());
+    }
+    let start = std::time::Instant::now();
+    let res = loop {
+        if st.agent_abort.load(Ordering::SeqCst) {
+            break (None, true);
+        }
+        if let Some(a) = ANSWER.lock().ok().and_then(|mut g| g.take()) {
+            break (Some(a), false);
+        }
+        if start.elapsed() >= timeout {
+            break (None, false);
+        }
+        tokio::time::sleep(Duration::from_millis(120)).await;
+    };
+    if let Ok(mut p) = PENDING.lock() {
+        *p = None;
+    }
+    res
+}
 
 fn system_prompt() -> String {
     r#"You control a macOS computer to accomplish the user's GOAL, like a person using the mouse and keyboard. Each turn you are given a screenshot of the whole screen (its pixel size is stated) and the actions taken so far. Reply with ONE next action as a single JSON object, nothing else:
@@ -37,6 +138,7 @@ Rules:
 - Prefer open_url over clicking when a direct URL exists (e.g. a YouTube search). Prefer open_app to launch apps.
 - Do ONE thing per turn; you will see the result in the next screenshot. Use wait after navigation.
 - NEVER do anything irreversible or outward-facing (send a message, post, pay, delete, change settings) without first returning a "confirm" action and waiting.
+- When "Actions so far" contains USER CONFIRMED for a step, the user approved it: do that step now (e.g. click Send) and don't ask again for the same step.
 - When the goal is achieved, return "done". Output only the JSON."#.to_string()
 }
 
@@ -82,8 +184,12 @@ pub async fn run(st: &Shared, goal: &str) -> Result<String> {
     }
     let cfgl = LlmConfig::from_settings(&s);
     st.agent_abort.store(false, Ordering::SeqCst);
+    RUNNING.store(true, Ordering::SeqCst);
+    RUNS.fetch_add(1, Ordering::SeqCst);
+    let _guard = RunGuard;
     emit(st, "start", goal);
     let mut history: Vec<String> = vec![];
+    let mut confirms = 0usize;
 
     for step in 0..MAX_STEPS {
         if st.agent_abort.load(Ordering::SeqCst) {
@@ -127,9 +233,22 @@ pub async fn run(st: &Shared, goal: &str) -> Result<String> {
             }
             "confirm" => {
                 let q = v["summary"].as_str().unwrap_or("Confirm this step?").to_string();
-                emit(st, "confirm", &q);
-                // v1: stop and hand control back rather than act without explicit UI confirmation
-                return Ok(format!("Paused: {q} (confirm actions aren't automated yet)"));
+                confirms += 1;
+                // agent mode answers by voice (short wait); otherwise the island's Yes / No buttons
+                let voice = crate::handsfree::is_active();
+                st.emit(ev::AGENT, json!({ "kind": "confirm", "text": q, "voice": voice }));
+                let wait = Duration::from_secs(if voice { VOICE_CONFIRM_SECS } else { BUTTON_CONFIRM_SECS });
+                let (answer, aborted) = wait_for_answer(st, &q, wait).await;
+                match confirm_outcome(answer, &q, aborted, confirms) {
+                    ConfirmOutcome::Proceed { history_line } => {
+                        history.push(history_line);
+                        emit(st, "step", "Confirmed — continuing");
+                    }
+                    ConfirmOutcome::Stop { message } => {
+                        emit(st, "aborted", &message);
+                        return Ok(message);
+                    }
+                }
             }
             "open_app" => {
                 let name = v["name"].as_str().unwrap_or_default();
@@ -188,4 +307,39 @@ pub async fn run(st: &Shared, goal: &str) -> Result<String> {
     }
     emit(st, "done", "Reached the step limit.");
     Ok("Reached the step limit; stopping.".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn yes_continues_with_the_approval_in_history() {
+        match confirm_outcome(Some(true), "Send the email to Rahul?", false, 1) {
+            ConfirmOutcome::Proceed { history_line } => {
+                assert!(history_line.starts_with("USER CONFIRMED"));
+                assert!(history_line.contains("Send the email to Rahul?"));
+            }
+            o => panic!("expected proceed, got {o:?}"),
+        }
+    }
+
+    #[test]
+    fn no_timeout_or_abort_never_acts() {
+        assert!(matches!(confirm_outcome(Some(false), "Buy it?", false, 1), ConfirmOutcome::Stop { .. }));
+        assert!(matches!(confirm_outcome(None, "Buy it?", false, 1), ConfirmOutcome::Stop { .. }));
+        // stop wins even over a yes that raced in
+        assert!(matches!(confirm_outcome(Some(true), "Buy it?", true, 1), ConfirmOutcome::Stop { .. }));
+    }
+
+    #[test]
+    fn a_model_that_keeps_asking_is_stopped() {
+        assert!(matches!(confirm_outcome(Some(true), "Post?", false, MAX_CONFIRMS), ConfirmOutcome::Proceed { .. }));
+        assert!(matches!(confirm_outcome(Some(true), "Post?", false, MAX_CONFIRMS + 1), ConfirmOutcome::Stop { .. }));
+    }
+
+    #[test]
+    fn answering_with_nothing_pending_is_a_no_op() {
+        assert!(!answer_confirm(true));
+    }
 }
