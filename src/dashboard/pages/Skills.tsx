@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { BookText, CheckCircle2, Clock, Loader2, MousePointerClick, PenLine, Play, Plug, Plus, Sparkles, Trash2, X, Zap } from "lucide-react";
-import { api } from "../../lib/api";
+import { api, on } from "../../lib/api";
 import { cronError, describeCron, formatRun, nextRun } from "../../lib/cron";
 import type { Connection, McpTool, Skill } from "../../lib/types";
 import { SkillCanvasEditor } from "../SkillCanvas";
@@ -255,6 +255,25 @@ export function ConnectionsPanel() {
   const load = () => api.listConnections().then(setList).catch(() => setList([]));
   useEffect(() => {
     load();
+  }, []);
+  // "connect to Mobbin MCP" said to Flo: open the form ready to save (or the existing server)
+  useEffect(() => {
+    const take = () =>
+      api
+        .takeMcpPrefill()
+        .then(async (p) => {
+          if (!p) return;
+          if (p.id) {
+            const c = (await api.listConnections()).find((x) => x.id === p.id);
+            if (c) setEditing(c);
+            return;
+          }
+          const url = (p.url ?? "").trim();
+          setEditing({ ...EMPTY_CONN, name: p.name ?? "", url, transport: "http" });
+        })
+        .catch(() => {});
+    take();
+    return on("flo://mcp-prefill", take);
   }, []);
   return (
     <div>

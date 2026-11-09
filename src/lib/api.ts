@@ -152,6 +152,8 @@ export const api = {
   // context library
   listSkills: () => call<Skill[]>("list_skills"),
   listConnections: () => call<Connection[]>("list_connections"),
+  /** a pending Add MCP server form from a voice request ("connect to Mobbin MCP"), taken once */
+  takeMcpPrefill: () => call<{ name?: string; url?: string; id?: string } | null>("take_mcp_prefill"),
   saveConnection: (connection: Connection) => call<Connection>("save_connection", { connection }),
   deleteConnection: (id: string) => call<void>("delete_connection", { id }),
   /** connect to an MCP server and list its tools (works before saving) */

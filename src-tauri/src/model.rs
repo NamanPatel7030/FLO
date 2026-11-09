@@ -303,6 +303,12 @@ pub enum AssistantAction {
     Automate {
         goal: String,
     },
+    /// "connect to Mobbin MCP": open Flo Agent > Apps with an Add MCP server form filled in
+    ConnectMcp {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -428,6 +428,7 @@ pub fn run() {
             commands::get_island_geometry,
             commands::island_resize,
             commands::open_dashboard,
+            commands::take_mcp_prefill,
             commands::start_session,
             commands::stop_session,
             commands::cancel_session,

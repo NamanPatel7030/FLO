@@ -427,8 +427,10 @@ function cardBody(c: CardContent | undefined, charsPerLine: number): number {
   // header + up to 4 reply lines + results + action row (Go deeper / Web / Open full answer)
   if (!c || c.replyChars === undefined) return 250;
   const lines = Math.min(4, Math.max(1, Math.ceil(c.replyChars / charsPerLine)));
-  // header row 40 + reply lines + result chips + action row; measured against the rendered card
-  return Math.min(250, 46 + lines * 19 + ((c.results ?? 0) > 0 ? 34 : 0) + 34);
+  // measured against the rendered card: padding 8 + 12, header 21, gaps 8, action row 28, reply
+  // lines at 13.5 px x 1.45 (20 px), result chips 22 + gap. The old sum ran ~6 px short, which
+  // squeezed the reply and clipped the descenders of its last line.
+  return Math.min(250, 90 + lines * 20 + ((c.results ?? 0) > 0 ? 30 : 0));
 }
 
 const lines = (chars: number | undefined, perLine: number, max: number) =>
@@ -498,8 +500,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "meetingExpanded":
         return { width: 520, height: nh + 160 };
       case "card":
-        // ~72 characters fit on a line of the 520 px card (13.5 px text beside the 20 px icon)
-        return { width: 520, height: nh + cardBody(content, 72) };
+        // ~72 characters fit on a line of the 520 px card (13.5 px text beside the 20 px icon), but
+        // words wrap early, so estimate 62 to never under-count a line
+        return { width: 520, height: nh + cardBody(content, 62) };
       case "claude":
       case "reminder":
         // 500 wide: two-line messages wrap at a natural width instead of crowding the buttons
@@ -544,7 +547,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "meetingExpanded":
       return { width: 440 + pad, height: 240 + pad };
     case "card":
-      return { width: 440 + pad, height: Math.min(240, cardBody(content, 60) + 12) + pad };
+      return { width: 440 + pad, height: Math.min(240, cardBody(content, 52) + 12) + pad };
     case "claude":
     case "reminder":
       return { width: 380 + pad, height: 74 + pad };

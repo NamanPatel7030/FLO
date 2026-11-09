@@ -113,11 +113,88 @@ fn open_target(target: &str) -> Option<Intent> {
     Some(Intent { reply: format!("Opening {}", title_case(t)), action: AssistantAction::OpenApp { name: title_case(t) } })
 }
 
+/// MCP servers with a public remote endpoint we're confident about. Others get a blank URL the
+/// user fills in from the provider's docs.
+pub const KNOWN_MCP: &[(&str, &str, Option<&str>)] = &[
+    ("mobbin", "Mobbin", None),
+    ("github", "GitHub", Some("https://api.githubcopilot.com/mcp/")),
+    ("linear", "Linear", Some("https://mcp.linear.app/mcp")),
+    ("notion", "Notion", Some("https://mcp.notion.com/mcp")),
+    ("figma", "Figma", Some("https://mcp.figma.com/mcp")),
+    ("supabase", "Supabase", Some("https://mcp.supabase.com/mcp")),
+    ("vercel", "Vercel", Some("https://mcp.vercel.com")),
+    ("sentry", "Sentry", Some("https://mcp.sentry.dev/mcp")),
+    ("stripe", "Stripe", Some("https://mcp.stripe.com")),
+    ("slack", "Slack", None),
+];
+
+/// Edit distance (small strings only).
+fn lev(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            cur.push((prev[j] + usize::from(ca != *cb)).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// A spoken name → the known MCP server it most likely means ("mobin" → Mobbin), allowing one or
+/// two misheard letters for longer names.
+pub fn known_mcp(name: &str) -> Option<(&'static str, Option<&'static str>)> {
+    let n: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase();
+    if n.is_empty() {
+        return None;
+    }
+    KNOWN_MCP
+        .iter()
+        .map(|(k, display, url)| (lev(&n, k), *display, *url))
+        .filter(|(d, _, _)| *d == 0 || (n.len() >= 4 && *d <= if n.len() >= 6 { 2 } else { 1 }))
+        .min_by_key(|(d, _, _)| *d)
+        .map(|(_, display, url)| (display, url))
+}
+
+/// "connect to Mobbin MCP", "add the Linear MCP server", "set up GitHub M C P" → (name, url).
+pub fn parse_connect_mcp(q: &str) -> Option<(String, Option<String>)> {
+    let q = q.replace("m c p", "mcp").replace("m.c.p", "mcp");
+    let has_mcp = q.split_whitespace().any(|w| w == "mcp" || w == "mcps");
+    if !has_mcp {
+        return None;
+    }
+    let mut rest = None;
+    for p in ["connect to ", "connect ", "add ", "set up ", "setup ", "install ", "hook up ", "link ", "integrate ", "enable "] {
+        if let Some(r) = q.strip_prefix(p) {
+            rest = Some(r);
+            break;
+        }
+    }
+    let rest = rest?;
+    let name = rest
+        .split_whitespace()
+        .filter(|w| !matches!(*w, "the" | "my" | "a" | "an" | "to" | "mcp" | "mcps" | "server" | "servers" | "with" | "flo" | "please"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if name.is_empty() || name.split_whitespace().count() > 3 {
+        return None;
+    }
+    Some(match known_mcp(&name) {
+        Some((display, url)) => (display.to_string(), url.map(String::from)),
+        None => (title_case(&name), None),
+    })
+}
+
 /// Recognise a short, unambiguous command. Returns None for anything else (→ LLM).
 pub fn parse(query: &str) -> Option<Intent> {
     let q = clean(query);
     if q.is_empty() || q.split_whitespace().count() > 10 {
         return None;
+    }
+    // "connect to Mobbin MCP" → open Apps with the server filled in
+    if let Some((name, url)) = parse_connect_mcp(&q) {
+        return Some(Intent { reply: format!("Opening Apps so you can connect {name}"), action: AssistantAction::ConnectMcp { name, url } });
     }
     // YouTube
     if let Some(rest) = q.strip_prefix("play ") {
@@ -253,5 +330,22 @@ mod tests {
         assert!(act("what's blocked across my projects").is_none());
         assert!(act("make this shorter").is_none());
         assert!(act("open the pod bay doors and then summarize every note from this week please").is_none());
+    }
+
+    #[test]
+    fn connect_mcp_by_voice() {
+        let p = |q: &str| match parse(q).map(|i| i.action) {
+            Some(AssistantAction::ConnectMcp { name, url }) => Some((name, url)),
+            _ => None,
+        };
+        assert_eq!(p("connect to Mobbin MCP"), Some(("Mobbin".into(), None)));
+        assert_eq!(p("connect to Mobin MCP."), Some(("Mobbin".into(), None)));
+        assert_eq!(p("add the linear mcp server"), Some(("Linear".into(), Some("https://mcp.linear.app/mcp".into()))));
+        assert_eq!(p("set up GitHub M C P"), Some(("GitHub".into(), Some("https://api.githubcopilot.com/mcp/".into()))));
+        assert_eq!(p("connect acme crm mcp"), Some(("Acme Crm".into(), None)));
+        assert!(p("connect to slack").is_none());
+        assert!(p("open mcp docs").is_none());
+        assert_eq!(known_mcp("notoin").map(|k| k.0), Some("Notion"));
+        assert!(known_mcp("xyz").is_none());
     }
 }

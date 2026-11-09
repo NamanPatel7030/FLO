@@ -317,6 +317,10 @@ pub fn named_servers(goal: &str, servers: &[String]) -> Vec<String> {
 
 /// Pick the worker for a request. `skills` are (name, triggers) of enabled skills.
 pub fn plan(goal: &str, skills: &[(String, String)], servers: &[String], cfg: &AgentConfig) -> RoutePlan {
+    // "connect to Mobbin MCP" is about setting up an app, not using one: Flo opens Apps for it
+    if crate::intents::parse_connect_mcp(goal.trim().trim_end_matches(['.', '!', '?']).to_lowercase().trim()).is_some() {
+        return RoutePlan { route: "answer".into(), reason: "Sets up an app connection".into(), target: None };
+    }
     if cfg.allow_skills {
         if let Some(i) = text::match_skill(goal, skills) {
             let name = skills[i].0.clone();

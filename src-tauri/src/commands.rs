@@ -111,6 +111,11 @@ pub fn island_resize(app: tauri::AppHandle, width: f64, height: f64) -> R<()> {
 }
 
 #[tauri::command]
+pub fn take_mcp_prefill() -> R<Option<serde_json::Value>> {
+    Ok(crate::assistant::MCP_PREFILL.lock().take())
+}
+
+#[tauri::command]
 pub fn open_dashboard(app: tauri::AppHandle, route: Option<String>) -> R<()> {
     crate::show_dashboard(&app, route.as_deref());
     Ok(())

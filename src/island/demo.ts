@@ -160,7 +160,8 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
       at(300, () => hooks.openHistory());
       break;
     case "card":
-      at(300, () => mockInvoke("ask_assistant", { text: "Add a to-do to Apollo: send the deck by Friday" }));
+      // ?demo=card&q=... asks something else (e.g. "connect to Mobin MCP")
+      at(300, () => mockInvoke("ask_assistant", { text: new URLSearchParams(location.search).get("q") || "Add a to-do to Apollo: send the deck by Friday" }));
       break;
     case "claude":
       at(300, () => mockClaudeEvent("stop", "Flo", "Built the island UI and glass dashboard, all tests pass."));

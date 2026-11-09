@@ -133,6 +133,7 @@ const projectsBase: Omit<Project, "openTodos" | "doneTodos">[] = [
 ];
 const projects = new Map(projectsBase.map((p) => [p.id, { ...p }]));
 
+let mcpPrefill: { name?: string; url?: string; id?: string } | null = null;
 const connections: Connection[] = [
   {
     id: "c1",
@@ -902,6 +903,27 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
     case "ask_assistant": {
       await sleep(700);
+      // mirror the app's "connect to <X> MCP" intent: open Apps with the form filled in
+      const m = /^(?:connect(?: to)?|add|set ?up|install)\s+(?:the\s+|my\s+)?(.+?)\s+mcp(?:\s+server)?\.?$/i.exec(String(args.text ?? "").trim());
+      if (m && (args.mode ?? "quick") === "quick") {
+        const raw = m[1].trim();
+        const name = /^mob+in$/i.test(raw) ? "Mobbin" : raw.replace(/\b\w/g, (c: string) => c.toUpperCase());
+        mcpPrefill = { name, url: "" };
+        mockEmit("flo://mcp-prefill", null);
+        const r = {
+          id: uid("a"),
+          query: args.text,
+          reply: `Opened Apps with ${name} filled in. Paste its MCP URL or command, then Save.`,
+          actions: [{ type: "connect_mcp", name }],
+          results: [],
+          createdAt: new Date().toISOString(),
+          mode: "quick",
+          sources: [],
+        } as unknown as AssistantResponse;
+        assistantLog.unshift(r);
+        mockEmit(EV.assistant, r);
+        return r;
+      }
       const r = args.mode && args.mode !== "quick" ? fakeDepth(args.text, args.mode) : fakeAssistant(args.text);
       assistantLog.unshift(r);
       mockEmit(EV.assistant, r);
@@ -923,6 +945,11 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return buildAnalytics(args.days ?? 30);
     case "list_connections":
       return connections.map((c) => ({ ...c }));
+    case "take_mcp_prefill": {
+      const p = mcpPrefill;
+      mcpPrefill = null;
+      return p;
+    }
     case "save_connection": {
       const c = { ...args.connection } as Connection;
       if (!c.id) {

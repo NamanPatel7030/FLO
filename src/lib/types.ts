@@ -252,7 +252,9 @@ export type AssistantAction =
   | { type: "open_app"; name: string }
   | { type: "insert_text"; text: string }
   /** staged — the user confirms in the notch (flo://confirm) before sending */
-  | { type: "slack_send"; to: string; text: string };
+  | { type: "slack_send"; to: string; text: string }
+  /** "connect to Mobbin MCP": opens Flo Agent > Apps with the Add MCP server form filled in */
+  | { type: "connect_mcp"; name: string; url?: string };
 
 export type AssistantMode = "quick" | "deep" | "web";
 

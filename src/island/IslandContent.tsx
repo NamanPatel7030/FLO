@@ -556,12 +556,12 @@ export function IslandContent(p: Props) {
                 <NotchViz style="ribbon" width={Math.max(120, p.pillW - 32)} height={38} notchWidth={0} wing={Math.max(120, p.pillW - 32) / 2} mode="think" leftWing />
               </div>
             ) : (
-              <div className="flex min-h-0 gap-2.5">
+              <div className="flex shrink-0 gap-2.5">
                 <span className="accent-gradient mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full">
                   <Sparkles size={11} />
                 </span>
                 <p
-                  className="selectable line-clamp-4 overflow-hidden whitespace-pre-line text-[13.5px] leading-snug text-white/95"
+                  className="selectable line-clamp-4 overflow-hidden whitespace-pre-line pb-[2px] text-[13.5px] leading-[1.45] text-white/95"
                   style={long ? { WebkitMaskImage: "linear-gradient(180deg,#000 60%,transparent)", maskImage: "linear-gradient(180deg,#000 60%,transparent)" } : undefined}
                   data-testid="card-reply"
                 >

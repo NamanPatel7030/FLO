@@ -74,6 +74,9 @@ struct Ctx {
 }
 static RECENT: parking_lot::Mutex<Vec<(String, Ctx)>> = parking_lot::Mutex::new(Vec::new());
 
+/// A pending "Add MCP server" form for the dashboard (set by a voice request, taken once).
+pub static MCP_PREFILL: parking_lot::Mutex<Option<serde_json::Value>> = parking_lot::Mutex::new(None);
+
 fn remember(id: &str, c: Ctx) {
     let mut r = RECENT.lock();
     r.push((id.to_string(), c));
@@ -424,6 +427,31 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
                 }
             });
             Ok(format!("On it — {goal}"))
+        }
+        AssistantAction::ConnectMcp { name, url } => {
+            let want = name.to_lowercase();
+            let existing = st.db.list_connections().unwrap_or_default().into_iter().find(|c| {
+                c.kind == "mcp" && {
+                    let have = c.name.to_lowercase();
+                    have == want || have.contains(&want) || want.contains(&have) || crate::intents::known_mcp(&c.name).map(|k| k.0.eq_ignore_ascii_case(name)).unwrap_or(false)
+                }
+            });
+            if let Some(c) = existing {
+                if c.enabled {
+                    return Ok(format!("{} is already connected. Ask me to use it, like \"use {} to …\"", c.name, c.name));
+                }
+                *MCP_PREFILL.lock() = Some(serde_json::json!({ "id": c.id }));
+                crate::show_dashboard(&st.app, Some("agent/apps"));
+                st.emit("flo://mcp-prefill", ());
+                return Ok(format!("{} is added but turned off. Opening it so you can turn it on.", c.name));
+            }
+            *MCP_PREFILL.lock() = Some(serde_json::json!({ "name": name, "url": url.clone().unwrap_or_default() }));
+            crate::show_dashboard(&st.app, Some("agent/apps"));
+            st.emit("flo://mcp-prefill", ());
+            Ok(match url {
+                Some(_) => format!("Opened Apps with {name} filled in. Check it and press Save."),
+                None => format!("Opened Apps with {name} filled in. Paste its MCP URL or command, then Save."),
+            })
         }
         AssistantAction::Media { action } => {
             match action.as_str() {
