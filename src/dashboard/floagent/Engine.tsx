@@ -382,7 +382,7 @@ export function SlackGateway({ cfg, save }: { cfg: AgentConfig | null; save: Sav
         <div className="flex flex-col gap-4">
           <Card className="p-5">
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#fff]">
                 <SlackIcon size={20} />
               </span>
               <div>

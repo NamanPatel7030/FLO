@@ -145,7 +145,7 @@ export function Onboarding() {
   const showContinue = step !== "welcome" && step !== "try" && step !== "glimpse-tray";
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col text-white" role="dialog" aria-modal aria-label="Set up Flo" data-testid="onboarding" data-step={step}>
+    <div className="hw fixed inset-0 z-50 flex flex-col text-white" role="dialog" aria-modal aria-label="Set up Flo" data-testid="onboarding" data-step={step}>
       <Aurora />
 
       {/* top bar: back · progress rail · sound · skip */}

@@ -22,7 +22,7 @@ const GeminiMark = ({ size = 18 }: { size?: number }) => (
 
 export const AGENT_LOOK: Record<AgentId, { icon: React.ReactNode; bg: string }> = {
   claude: { icon: <Asterisk size={18} strokeWidth={3} />, bg: "bg-[#d97757] text-white" },
-  codex: { icon: <Terminal size={16} />, bg: "bg-white text-black" },
+  codex: { icon: <Terminal size={16} />, bg: "bg-[#fff] text-black" },
   gemini: { icon: <GeminiMark />, bg: "bg-[#131a2a] border border-white/10" },
 };
 

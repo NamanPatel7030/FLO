@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown, Maximize2, Globe2, Plus, Search } from "lucide-react";
+import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown, Maximize2, Globe2, Plus, Search, SunMoon } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
-import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize } from "../../lib/types";
+import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
 import { useStore } from "../store";
@@ -274,12 +274,78 @@ function HexField({ value, onChange }: { value: string; onChange: (hex: string) 
 function Appearance({ s, set }: P) {
   return (
     <div className="space-y-6">
-      <Section first title="Colour" hint="One accent recolours everything: buttons, logo, charts and the notch.">
+      <Section first title="Theme" hint="How Flo's window looks. The notch stays black: it's part of your Mac.">
+        <ThemeCard s={s} set={set} />
+      </Section>
+      <Section title="Colour" hint="One accent recolours everything: buttons, logo, charts and the notch.">
         <AccentCard s={s} set={set} />
         <NotchColoursCard s={s} set={set} />
       </Section>
       <Notch s={s} set={set} />
     </div>
+  );
+}
+
+const THEMES: { id: ThemeMode; label: string; hint: string }[] = [
+  { id: "light", label: "Light", hint: "Frosted glass" },
+  { id: "dark", label: "Dark", hint: "Deep ocean" },
+  { id: "system", label: "System", hint: "Follows macOS" },
+];
+
+/** A tiny window drawn in the given look, so each option previews itself. */
+function ThemeSwatch({ look }: { look: "light" | "dark" }) {
+  const light = look === "light";
+  return (
+    <div
+      className="relative h-full w-full overflow-hidden"
+      style={{
+        background: light
+          ? "radial-gradient(70% 90% at 0% 0%, #bfe3ff, transparent 70%), radial-gradient(70% 90% at 100% 0%, #e2d8ff, transparent 70%), radial-gradient(70% 90% at 50% 120%, #ffdccb, transparent 70%), #f6f7fc"
+          : "radial-gradient(70% 90% at 0% 0%, rgba(61,187,255,0.28), transparent 70%), linear-gradient(180deg, #08111c, #02050a)",
+      }}
+    >
+      <div className="absolute inset-y-2 left-2 w-[26%] rounded-lg" style={{ background: light ? "rgba(255,255,255,0.7)" : "rgba(147,221,255,0.08)", border: `1px solid ${light ? "#fff" : "rgba(147,221,255,0.14)"}` }} />
+      <div className="absolute left-[34%] right-2 top-2 h-[34%] rounded-lg" style={{ background: light ? "rgba(255,255,255,0.75)" : "rgba(147,221,255,0.08)", border: `1px solid ${light ? "#fff" : "rgba(147,221,255,0.14)"}` }} />
+      <div className="absolute bottom-2 left-[34%] h-[30%] w-[30%] rounded-lg" style={{ background: light ? "rgba(255,255,255,0.75)" : "rgba(147,221,255,0.08)" }} />
+      <div className="absolute bottom-[14%] right-3 h-2 w-9 rounded-full" style={{ background: light ? "#0b1220" : "var(--accent)" }} />
+    </div>
+  );
+}
+
+function ThemeCard({ s, set }: P) {
+  const mode: ThemeMode = s.theme === "dark" || s.theme === "system" ? s.theme : "light";
+  return (
+    <Card className="p-4">
+      <CardTitle icon={<SunMoon size={15} />}>Appearance</CardTitle>
+      <div className="mt-3 grid grid-cols-3 gap-3" role="radiogroup" aria-label="Theme">
+        {THEMES.map((t) => (
+          <button
+            key={t.id}
+            role="radio"
+            aria-checked={mode === t.id}
+            aria-label={t.label}
+            onClick={() => set({ theme: t.id })}
+            data-testid={`theme-${t.id}`}
+            className={clsx("group rounded-2xl border p-2.5 text-left transition", mode === t.id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong")}
+          >
+            <div className="h-[78px] overflow-hidden rounded-xl ring-1 ring-black/5">
+              {t.id === "system" ? (
+                <div className="flex h-full">
+                  <div className="h-full w-1/2 overflow-hidden"><div className="h-full w-[200%]"><ThemeSwatch look="light" /></div></div>
+                  <div className="h-full w-1/2 overflow-hidden"><div className="h-full w-[200%] -translate-x-1/2"><ThemeSwatch look="dark" /></div></div>
+                </div>
+              ) : (
+                <ThemeSwatch look={t.id} />
+              )}
+            </div>
+            <div className="mt-2.5 flex items-center justify-between px-1">
+              <span className="text-[13px] font-semibold">{t.label}</span>
+              {mode === t.id ? <Check size={14} className="text-[var(--accent)]" /> : <span className="text-[11.5px] text-faint">{t.hint}</span>}
+            </div>
+          </button>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -1281,7 +1347,7 @@ function SoundRow({
           onClick={() => onToggle(!on)}
           className={clsx("relative h-6 w-10 shrink-0 rounded-full transition", on ? "bg-[var(--accent)]" : "bg-white/15")}
         >
-          <span className={clsx("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all", on ? "left-[18px]" : "left-0.5")} />
+          <span className={clsx("absolute top-0.5 h-5 w-5 rounded-full bg-[#fff] shadow transition-all", on ? "left-[18px]" : "left-0.5")} />
         </button>
       </div>
       <div className={clsx("mt-2.5 grid grid-cols-4 gap-1.5", !on && "pointer-events-none opacity-40")} role="radiogroup" aria-label={`${label} style`}>

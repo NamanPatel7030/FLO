@@ -72,7 +72,7 @@ function Field({
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.18 }}
-            className={`flex items-center gap-1.5 overflow-hidden text-[12px] ${error ? "text-amber-300 [html[data-theme=light]_&]:text-amber-700" : "text-[var(--fg-muted)]"}`}
+            className={`flex items-center gap-1.5 overflow-hidden text-[12px] ${error ? "text-amber-300" : "text-[var(--fg-muted)]"}`}
           >
             {error || hint}
           </motion.p>
@@ -237,7 +237,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                 </motion.div>
               ) : !google ? (
                 <motion.div key="main" {...slide(-1)}>
-                  <p className="flex items-center gap-2 text-[13px] font-medium text-brand-300 [html[data-theme=light]_&]:text-brand-700">
+                  <p className="flex items-center gap-2 text-[13px] font-medium text-brand-300">
                     <span className="relative flex h-2 w-2">
                       <span className="absolute inset-0 animate-ping rounded-full bg-brand-400/60 motion-reduce:animate-none" />
                       <span className="relative h-2 w-2 rounded-full bg-brand-400" />
@@ -255,7 +255,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                     type="button"
                     onClick={startGoogle}
                     disabled={!!busy}
-                    className="mt-7 flex h-12 w-full items-center justify-center gap-3 rounded-[14px] border border-black/10 bg-white text-[14.5px] font-semibold text-[#1f1f1f] shadow-[0_1px_0_rgb(255_255_255/0.6)_inset,0_10px_24px_-14px_rgb(0_0_0/0.6)] transition hover:bg-[#f5f8fb] active:scale-[0.99] disabled:opacity-60"
+                    className="mt-7 flex h-12 w-full items-center justify-center gap-3 rounded-[14px] border border-black/10 bg-[#fff] text-[14.5px] font-semibold text-[#1f1f1f] shadow-[0_1px_0_rgb(255_255_255/0.6)_inset,0_10px_24px_-14px_rgb(0_0_0/0.6)] transition hover:bg-[#f5f8fb] active:scale-[0.99] disabled:opacity-60"
                   >
                     {busy === "google" ? <Loader2 size={18} className="animate-spin text-[#5f6368]" /> : <GoogleG />} Continue with Google
                   </button>
@@ -338,7 +338,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0 }}
                           role="alert"
-                          className="flex items-start gap-2.5 rounded-[14px] border border-amber-400/30 bg-amber-400/10 px-3.5 py-3 text-[13px] leading-snug text-amber-200 [html[data-theme=light]_&]:text-amber-800"
+                          className="flex items-start gap-2.5 rounded-[14px] border border-amber-400/30 bg-amber-400/10 px-3.5 py-3 text-[13px] leading-snug text-amber-200"
                         >
                           <AlertCircle size={16} className="mt-px shrink-0" /> {err}
                         </motion.p>
@@ -350,7 +350,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                       whileTap={busy ? undefined : { scale: 0.985 }}
                       disabled={!!busy}
                       aria-busy={busy === "password"}
-                      className="btn-primary group mt-1 flex h-12 [html[data-theme=light]_&]:!text-[#03304d] [html[data-theme=light]_&]:[text-shadow:none] w-full items-center justify-center gap-2 rounded-[14px] text-[15px] disabled:opacity-80"
+                      className="btn-primary group mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-[14px] text-[15px] disabled:opacity-80"
                     >
                       {busy === "password" ? (
                         <>
@@ -366,7 +366,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
 
                   <p className="mt-6 text-center text-[13.5px] text-[var(--fg-muted)]">
                     New to Flo?{" "}
-                    <button type="button" className="inline-flex items-center gap-1 font-semibold text-brand-300 underline-offset-4 hover:underline [html[data-theme=light]_&]:text-brand-700" onClick={() => openExternal(`${site}/signup`)}>
+                    <button type="button" className="inline-flex items-center gap-1 font-semibold text-brand-300 underline-offset-4 hover:underline" onClick={() => openExternal(`${site}/signup`)}>
                       Create a free account <Globe size={12} aria-hidden />
                     </button>
                   </p>
@@ -387,7 +387,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                   <button type="button" className="-ml-1 flex items-center gap-1.5 rounded-lg px-1 py-0.5 text-[13px] text-[var(--fg-muted)] hover:text-[var(--fg)]" onClick={() => setGoogle(null)}>
                     <ArrowLeft size={14} /> Back
                   </button>
-                  <div className="mt-6 grid h-14 w-14 place-items-center rounded-2xl border border-[var(--border)] bg-white shadow-[0_10px_30px_-12px_rgb(var(--accent-rgb)/0.6)]">
+                  <div className="mt-6 grid h-14 w-14 place-items-center rounded-2xl border border-[var(--border)] bg-[#fff] shadow-[0_10px_30px_-12px_rgb(var(--accent-rgb)/0.6)]">
                     <GoogleG size={26} />
                   </div>
                   <h1 id={`${ids}-title`} className="mt-5 text-[28px] font-semibold leading-tight tracking-tight">
@@ -397,7 +397,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                     We opened Google in your browser. Pick your account and we'll bring you right back here.
                   </p>
                   <div className="mt-5 flex items-center gap-3 rounded-[14px] border border-[var(--border)] bg-[var(--glass)] px-4 py-3 text-[13px] text-[var(--fg-muted)]">
-                    <Loader2 size={16} className="shrink-0 animate-spin text-brand-300 [html[data-theme=light]_&]:text-brand-600" /> Waiting for Google…
+                    <Loader2 size={16} className="shrink-0 animate-spin text-brand-300" /> Waiting for Google…
                   </div>
 
                   <form onSubmit={exchange} className="mt-7">
@@ -415,7 +415,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                         onChange={(e) => setCode(e.target.value)}
                         className={`${inputCls} ${inputState(false)} font-mono uppercase tracking-[0.2em]`}
                       />
-                      <button type="submit" disabled={!code.trim() || !!busy} className="btn-primary flex h-12 shrink-0 [html[data-theme=light]_&]:!text-[#03304d] [html[data-theme=light]_&]:[text-shadow:none] items-center gap-1.5 rounded-[14px] px-5 text-[14.5px] disabled:opacity-50">
+                      <button type="submit" disabled={!code.trim() || !!busy} className="btn-primary flex h-12 shrink-0 items-center gap-1.5 rounded-[14px] px-5 text-[14.5px] disabled:opacity-50">
                         {busy === "code" ? <Loader2 size={16} className="animate-spin" aria-label="Checking" /> : "Continue"}
                       </button>
                     </div>
@@ -428,7 +428,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
                         role="alert"
-                        className="mt-4 flex items-start gap-2.5 rounded-[14px] border border-amber-400/30 bg-amber-400/10 px-3.5 py-3 text-[13px] leading-snug text-amber-200 [html[data-theme=light]_&]:text-amber-800"
+                        className="mt-4 flex items-start gap-2.5 rounded-[14px] border border-amber-400/30 bg-amber-400/10 px-3.5 py-3 text-[13px] leading-snug text-amber-200"
                       >
                         <AlertCircle size={16} className="mt-px shrink-0" /> {err}
                       </motion.p>
@@ -460,7 +460,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
         {/* ── right: the notch, alive ────────────────────────────────────── */}
         <aside className="relative hidden p-3 md:block" aria-hidden>
           <div
-            className="relative flex h-full min-h-[560px] flex-col overflow-hidden rounded-[28px] border border-white/10"
+            className="hw relative flex h-full min-h-[560px] flex-col overflow-hidden rounded-[28px] border border-white/10"
             style={{
               background:
                 "radial-gradient(120% 70% at 50% -10%, rgba(61,187,255,0.30), transparent 60%), radial-gradient(80% 60% at 100% 100%, rgba(26,155,224,0.22), transparent 60%), linear-gradient(170deg, #0a2a44 0%, #061726 45%, #03080e 100%)",

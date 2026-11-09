@@ -30,7 +30,7 @@ pub enum Phase {
     Error,
 }
 
-pub const SETTINGS_VERSION: u32 = 6;
+pub const SETTINGS_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -147,7 +147,7 @@ impl Default for Settings {
             play_sounds: true,
             typing_wpm: 40,
             user_name: String::new(),
-            theme: "dark".into(),
+            theme: "light".into(),
             accent: "#3dbbff".into(),
             notch_style: "ribbon".into(),
             notch_size: "big".into(),

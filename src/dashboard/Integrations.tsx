@@ -12,7 +12,7 @@ import { Button, Card, CardTitle, Skeleton } from "./ui";
 
 const LOOK: Record<string, { icon: React.ReactNode; bg: string }> = {
   claude: { icon: <Asterisk size={18} strokeWidth={3} />, bg: "bg-[#d97757] text-white" },
-  codex: { icon: <Terminal size={17} />, bg: "bg-white text-black" },
+  codex: { icon: <Terminal size={17} />, bg: "bg-[#fff] text-black" },
   cursor: { icon: <MousePointer2 size={16} />, bg: "bg-[#0b0b0b] text-white border border-white/20" },
   webhook: { icon: <Webhook size={17} />, bg: "bg-brand-400/20 text-brand-200 border border-brand-300/30" },
 };

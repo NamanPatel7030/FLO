@@ -39,9 +39,15 @@ export default function Home() {
               <Logo size={20} glow={false} />
               <span>{new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</span>
             </div>
-            <h1 className="mt-1 text-[30px] font-semibold tracking-tight">
+            <h1 className="mt-1 text-[32px] font-semibold tracking-tight">
               {greeting(new Date().getHours())}
-              {settings?.userName ? `, ${settings.userName}` : ""}.
+              {settings?.userName ? (
+                <>
+                  , <span className="serif-accent ink-grad pr-1 text-[1.14em]">{settings.userName}.</span>
+                </>
+              ) : (
+                "."
+              )}
             </h1>
             <p className="mt-2 max-w-lg text-[14px] text-muted">
               Hold <Kbd>{hotkeyLabel(geo, settings)}</Kbd> to dictate anywhere. Hold <Kbd>{assistantHotkeyLabel(geo, settings)}</Kbd> to ask Flo, “add a to-do to Apollo”, “what's blocked?”, “start meeting notes”.

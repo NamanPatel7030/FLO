@@ -58,8 +58,19 @@ export function resolveTheme(mode: ThemeMode): "dark" | "light" {
 export function applyTheme(settings: Pick<Settings, "theme" | "accent" | "notchGradient">, mirror = true): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  // Flo is dark-only; the light/system theme switcher was removed. Keep accent customization.
-  root.dataset.theme = "dark";
+  // The notch is hardware: the island window is always dark. Every other window follows the
+  // Light / Dark / System choice from Settings → Appearance.
+  const island = root.classList.contains("island");
+  const mode: ThemeMode = settings.theme === "dark" || settings.theme === "system" ? settings.theme : "light";
+  const theme = island ? "dark" : resolveTheme(mode);
+  root.dataset.theme = theme;
+  root.style.colorScheme = theme;
+  // remember the mode so the next window opens in the right theme from its first frame (index.html)
+  if (!island) try {
+    if (localStorage.getItem(MODE_KEY) !== mode) localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    /* storage unavailable */
+  }
 
   const accent = normalizeHex(settings.accent || DEFAULT_ACCENT);
   const [gf, gt] = deriveGradient(settings);
@@ -88,12 +99,23 @@ export function applyTheme(settings: Pick<Settings, "theme" | "accent" | "notchG
 }
 
 const THEME_KEY = "flo:theme";
+/** Light / Dark / System, mirrored for the pre-paint script in index.html. */
+export const MODE_KEY = "flo:theme-mode";
+
+function cachedMode(): ThemeMode {
+  try {
+    const m = localStorage.getItem(MODE_KEY);
+    return m === "dark" || m === "system" ? m : "light";
+  } catch {
+    return "light";
+  }
+}
 
 function applyCached(raw: string | null): void {
   if (!raw) return;
   try {
     const t = JSON.parse(raw);
-    if (t && typeof t.accent === "string") applyTheme({ theme: "dark", accent: t.accent, notchGradient: Array.isArray(t.notchGradient) ? t.notchGradient : [] }, false);
+    if (t && typeof t.accent === "string") applyTheme({ theme: cachedMode(), accent: t.accent, notchGradient: Array.isArray(t.notchGradient) ? t.notchGradient : [] }, false);
   } catch {
     /* ignore */
   }
@@ -109,6 +131,12 @@ if (typeof window !== "undefined" && typeof document !== "undefined") {
   }
   window.addEventListener("storage", (e) => {
     if (e.key === THEME_KEY) applyCached(e.newValue);
+    // the theme was switched in another window: follow it (the island ignores it and stays dark)
+    if (e.key === MODE_KEY && !document.documentElement.classList.contains("island")) {
+      const t = resolveTheme(cachedMode());
+      document.documentElement.dataset.theme = t;
+      document.documentElement.style.colorScheme = t;
+    }
   });
 }
 

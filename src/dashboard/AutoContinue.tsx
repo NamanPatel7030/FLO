@@ -40,7 +40,7 @@ export function MiniSwitch({ checked, onChange, label }: { checked: boolean; onC
       <motion.span
         layout
         transition={{ type: "spring", stiffness: 700, damping: 35 }}
-        className="absolute top-[3px] h-3 w-3 rounded-full bg-white shadow"
+        className="absolute top-[3px] h-3 w-3 rounded-full bg-[#fff] shadow"
         style={{ left: checked ? 15 : 3 }}
       />
     </button>

@@ -48,7 +48,7 @@ export function ConnectSlackButton({ onClick, busy, className }: { onClick: () =
         className,
       )}
     >
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white">
+      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#fff]">
         {busy ? <Loader2 size={16} className="animate-spin text-[#4A154B]" /> : <SlackIcon size={18} />}
       </span>
       Connect Slack
@@ -151,7 +151,7 @@ export function SlackCard() {
           <div className="flex items-center gap-3 rounded-2xl bg-[var(--glass)] p-3">
             <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#611f69] to-[#4A154B] text-[15px] font-semibold text-white">
               {me.initials}
-              <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-md bg-white shadow">
+              <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-md bg-[#fff] shadow">
                 <SlackIcon size={12} />
               </span>
             </span>

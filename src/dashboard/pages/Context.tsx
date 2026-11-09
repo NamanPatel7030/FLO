@@ -243,7 +243,7 @@ function MiniSwitch({ on, onChange, label }: { on: boolean; onChange: (v: boolea
       className="flex items-center gap-1.5 text-[11.5px] text-muted hover:text-[var(--fg)]"
     >
       <span className={clsx("relative h-[16px] w-[28px] rounded-full transition", on ? "accent-gradient" : "bg-[var(--border-strong)]")}>
-        <span className="absolute top-[2px] h-3 w-3 rounded-full bg-white shadow transition-all" style={{ left: on ? 14 : 2 }} />
+        <span className="absolute top-[2px] h-3 w-3 rounded-full bg-[#fff] shadow transition-all" style={{ left: on ? 14 : 2 }} />
       </span>
       {label}
     </button>

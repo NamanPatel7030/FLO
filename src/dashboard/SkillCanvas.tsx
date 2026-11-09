@@ -669,7 +669,7 @@ function Canvas({ initial, onSave, onDelete, onClose }: { initial: Skill; onSave
               onClick={() => setEnabled(!enabled)}
               className={clsx("relative h-6 w-10 rounded-full transition", enabled ? "bg-[var(--accent)]" : "bg-white/15")}
             >
-              <span className={clsx("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all", enabled ? "left-[18px]" : "left-0.5")} />
+              <span className={clsx("absolute top-0.5 h-5 w-5 rounded-full bg-[#fff] shadow transition-all", enabled ? "left-[18px]" : "left-0.5")} />
             </button>
             Enabled
           </label>

@@ -52,6 +52,11 @@ pub fn migrate(s: &mut Settings) -> bool {
     if s.settings_version < 6 {
         s.vault_auto = true;
     }
+    if s.settings_version < 7 {
+        // the Light / Dark / System switch is back and light is the new look. Before v7 the app was
+        // dark-only (nobody chose "dark"), so everyone starts on light once and can switch back.
+        s.theme = "light".into();
+    }
     s.settings_version = crate::model::SETTINGS_VERSION;
     true
 }
@@ -97,6 +102,18 @@ mod tests {
         assert_eq!((s.hotkey_dictation.as_str(), s.hotkey_assistant.as_str()), ("ctrl", "fn"));
         assert!(s.onboarded); // upgraded installs skip the wizard
         assert!(!Settings::default().onboarded); // fresh installs see it
+    }
+
+    #[test]
+    fn v7_moves_everyone_to_light_once() {
+        let mut s: Settings = serde_json::from_str(r#"{"settingsVersion":6,"theme":"dark"}"#).unwrap();
+        assert!(migrate(&mut s));
+        assert_eq!(s.theme, "light");
+        // a later explicit choice sticks
+        s.theme = "dark".into();
+        assert!(!migrate(&mut s));
+        assert_eq!(s.theme, "dark");
+        assert_eq!(Settings::default().theme, "light");
     }
 
     #[test]

@@ -68,7 +68,10 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <div className="mb-6 flex items-end justify-between gap-4">
       <div>
-        <h1 className="text-[26px] font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-[28px] font-semibold tracking-[-0.03em]">
+          {title}
+          <span aria-hidden className="serif-accent ink-grad pl-0.5 text-[1.1em]">.</span>
+        </h1>
         {subtitle && <p className="mt-1 text-[13.5px] text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
@@ -139,7 +142,7 @@ export function Toggle({ checked, onChange, label, hint }: { checked: boolean; o
         <motion.span
           layout
           transition={{ type: "spring", stiffness: 700, damping: 35 }}
-          className="absolute top-[3px] h-4 w-4 rounded-full bg-white shadow"
+          className="absolute top-[3px] h-4 w-4 rounded-full bg-[#fff] shadow"
           style={{ left: checked ? 19 : 3 }}
         />
       </button>

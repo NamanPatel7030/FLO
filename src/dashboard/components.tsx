@@ -99,7 +99,7 @@ export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
 
 const SOURCE_STYLE: Record<string, { cls: string; icon: React.ReactNode; label: string }> = {
   claude: { cls: "bg-[#d97757] text-white", icon: <Asterisk size={10} strokeWidth={3} />, label: "Claude Code" },
-  codex: { cls: "bg-white text-black", icon: <SquareTerminal size={10} strokeWidth={2.5} />, label: "Codex" },
+  codex: { cls: "bg-[#fff] text-black", icon: <SquareTerminal size={10} strokeWidth={2.5} />, label: "Codex" },
   cursor: { cls: "bg-[#0b0b0b] text-white ring-1 ring-white/20", icon: <MousePointer2 size={9} strokeWidth={2.5} />, label: "Cursor" },
   other: { cls: "bg-brand-400 text-black", icon: <Webhook size={9} strokeWidth={2.5} />, label: "Webhook" },
 };

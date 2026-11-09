@@ -369,7 +369,7 @@ function PairDialog({ known, onClose }: { known: PhoneDevice[]; onClose: () => v
             <p className="mt-1 text-[12.5px] leading-relaxed text-white/60">Open Flo on your phone, tap “Pair with Mac”, and scan this code. Or type the 6 digits.</p>
 
             <div className="mt-5 flex flex-col items-center">
-              <div className="relative rounded-[18px] bg-white p-3 shadow-[0_12px_40px_-12px_rgba(61,187,255,0.45)]" data-testid="pair-qr">
+              <div className="relative rounded-[18px] bg-[#fff] p-3 shadow-[0_12px_40px_-12px_rgba(61,187,255,0.45)]" data-testid="pair-qr">
                 {code ? (
                   <svg
                     viewBox={`0 0 ${size} ${size}`}

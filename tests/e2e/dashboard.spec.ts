@@ -66,13 +66,33 @@ test("network log shows tokens for AI calls", async ({ page }) => {
   await expect(page.getByText(/Network log/i)).toBeVisible();
 });
 
-test("appearance: dark-only (no theme toggle), accent and notch style apply and persist", async ({ page }) => {
+test("appearance: light by default, Light / Dark / System switch persists; the notch stays dark", async ({ page }) => {
   await page.goto("/#/settings/appearance");
   await expect(page.getByText("Accent", { exact: true })).toBeVisible();
 
-  // the Theme switcher was removed: app is dark-only
-  await expect(page.getByRole("button", { name: "Light" })).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("dark");
+  // light is the default look
+  const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+  await expect.poll(theme).toBe("light");
+  await expect(page.getByTestId("theme-light")).toHaveAttribute("aria-checked", "true");
+
+  // switch to dark: applied at once, saved to settings, mirrored for the next window's first paint
+  await page.getByTestId("theme-dark").click();
+  await expect.poll(theme).toBe("dark");
+  await expect.poll(() => page.evaluate(() => (window as any).__floMock.invoke("get_settings").then((s: any) => s.theme))).toBe("dark");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("flo:theme-mode"))).toBe("dark");
+
+  // a fresh window paints dark before React even loads (no flash)
+  await page.reload();
+  await expect.poll(theme).toBe("dark");
+
+  // System follows macOS
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.getByTestId("theme-system").click();
+  await expect.poll(theme).toBe("light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(theme).toBe("dark");
+  await page.getByTestId("theme-light").click();
+  await expect.poll(theme).toBe("light");
 
   // pick the Violet accent → --accent CSS var updates
   await page.getByLabel("Violet").click();
@@ -449,4 +469,10 @@ test("skills: a scheduled skill shows its next run, and Run now runs it", async 
   await expect(page.getByTestId("skill-editor")).toHaveCount(0);
   const k = await page.evaluate(() => (window as any).__floMock.invoke("list_skills").then((ks: any[]) => ks.find((x) => x.id === "k3")));
   expect(k.lastRun).toBeTruthy();
+});
+
+test("the notch window stays dark when the app is light", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("flo:theme-mode", "light"));
+  await page.goto("/?nh=38&nw=200#/island");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe("dark");
 });

@@ -99,7 +99,7 @@ export default function Dashboard() {
             <Logo size={34} />
             <div className="leading-tight">
               <div className="text-[15.5px] font-semibold tracking-tight">Flo</div>
-              <div className="text-[11px] font-medium tracking-wide text-brand-300/70">Your Assistant</div>
+              <div className="serif-accent ink-grad text-[14px] leading-none">Your Assistant</div>
             </div>
           </div>
           <nav className="flex flex-col gap-0.5 px-2.5">
@@ -197,7 +197,7 @@ export default function Dashboard() {
 /** Subtle ocean: deep navy → black gradient + a slow, low-opacity wave band along the bottom. */
 function Backdrop() {
   return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+    <div className="dark-only pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
       <div
         className="absolute inset-0"
         style={{

@@ -23,7 +23,7 @@ import type {
   Settings,
   Todo,
   TodoStatus, Skill, Connection } from "./types";
-import { EV } from "./types";
+import { EV, type ThemeMode } from "./types";
 import { countWords } from "./format";
 import { codeMock, UNHANDLED } from "./mockCode";
 import { mediaControl, mediaSample, mediaSet } from "./mockMedia";
@@ -100,7 +100,15 @@ const settings: Settings = {
   claudeContinuePrompt: "Continue where you left off.",
   typingWpm: 40,
   userName: "Parth",
-  theme: "dark",
+  // previews and tests can pick the theme up front (the real app keeps it in settings.json)
+  theme: ((): ThemeMode => {
+    try {
+      const m = typeof localStorage === "undefined" ? null : localStorage.getItem("flo:theme-mode");
+      return m === "dark" || m === "system" ? m : "light";
+    } catch {
+      return "light";
+    }
+  })(),
   accent: "#3dbbff",
   notchStyle: "ribbon",
   notchGradient: [],
