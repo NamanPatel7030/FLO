@@ -67,7 +67,8 @@ fi
 cp website/releases/latest.json "$OUT/latest.json"
 ASSETS=("$OUT/$NAME" "$OUT/$NAME.sig" "$OUT/latest.json")
 [ -n "$DMG" ] && ASSETS+=("$DMG")
-gh release create "v$VERSION" -R "$REPO" --target "$(git rev-parse --abbrev-ref HEAD | sed 's/^worktree-//')" \
+git push -q "$(git remote | head -1)" HEAD 2>/dev/null || true  # the tagged commit must exist on GitHub
+gh release create "v$VERSION" -R "$REPO" --target "$(git rev-parse HEAD)" \
   --title "Flo $VERSION" --notes "${NOTES:-Flo $VERSION}" --latest "${ASSETS[@]}"
 # the local manifest would shadow the published one on a dev server; keep it out of the way
 rm -f website/releases/latest.json
