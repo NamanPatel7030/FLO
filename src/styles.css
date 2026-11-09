@@ -991,3 +991,8 @@ html.island .selectable {
 @media (prefers-reduced-motion: reduce) {
   .notchling *, .notchling { animation: none !important; }
 }
+
+/* dashboard page switch: a quick fade, no blur, no waiting for the old page to leave */
+.page-in { animation: page-in 0.14s ease-out; }
+@keyframes page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .page-in { animation: none; } }

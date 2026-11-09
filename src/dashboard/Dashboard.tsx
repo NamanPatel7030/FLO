@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import clsx from "clsx";
 import { api, on } from "../lib/api";
@@ -82,7 +82,12 @@ export default function Dashboard() {
   const claudeAttention = sessions.filter((s) => s.status !== "working").length;
   void claude;
   const liveMeeting = notes?.some((n) => n.live);
-  const Current = PAGES[page];
+  // Pages you've opened stay mounted (hidden) so switching back is instant and keeps scroll + data.
+  const [visited, setVisited] = useState<Page[]>(() => [page]);
+  useEffect(() => {
+    // the typing test listens to every key, so it never stays alive in the background
+    setVisited((v) => [...v.filter((p) => p !== "typing" || p === page), ...(v.includes(page) ? [] : [page])]);
+  }, [page]);
   const mac = geo?.platform !== "windows";
   const perms = usePermissions(5000);
   const missing = missingRequired(perms);
@@ -172,18 +177,9 @@ export default function Dashboard() {
           <UpdateBanner />
           <div data-tauri-drag-region className="h-8 shrink-0" />
           <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-10 xl:px-12">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={page}
-                initial={{ opacity: 0, y: 10, filter: "blur(4px)" }}
-                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                exit={{ opacity: 0, y: -6, filter: "blur(4px)" }}
-                transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-                className="mx-auto w-full max-w-[1240px]"
-              >
-                <Current />
-              </motion.div>
-            </AnimatePresence>
+            {visited.map((p) => (
+              <KeptPage key={p} id={p} active={p === page} />
+            ))}
           </div>
         </main>
         <Toasts />
@@ -193,6 +189,17 @@ export default function Dashboard() {
     </MotionConfig>
   );
 }
+
+/** One dashboard page, kept mounted once opened. Memoised, so switching tabs only re-renders the
+ *  two pages whose visibility changed, not every page you've visited. */
+const KeptPage = memo(function KeptPage({ id, active }: { id: Page; active: boolean }) {
+  const Comp = PAGES[id];
+  return (
+    <div hidden={!active} data-page={id} className={clsx("mx-auto w-full max-w-[1240px]", active && "page-in")}>
+      <Comp />
+    </div>
+  );
+});
 
 /** Static glow backdrop (no infinite animation → near-zero GPU when idle). */
 /** Subtle ocean: deep navy → black gradient + a slow, low-opacity wave band along the bottom. */
