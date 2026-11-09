@@ -1,7 +1,8 @@
+import { useEffect, useState } from "react";
 // The in-app update UI: a card in the sidebar (only while an update is available / downloading /
 // ready) and a full "Updates" row in Settings → General. Both drive the same shared state.
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowDownToLine, CheckCircle2, Loader2, RefreshCw, RotateCw, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowDownToLine, CheckCircle2, Loader2, RefreshCw, RotateCw, Sparkles, TriangleAlert, X } from "lucide-react";
 import { checkForUpdate, installUpdate, progressPct, restartToUpdate, useUpdate, type UpdateState } from "../lib/updates";
 import { Button } from "./ui";
 
@@ -133,6 +134,77 @@ export function UpdateSettingsRow() {
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Full-width bar at the top of the window whenever a new version exists: "Flo 0.1.2 is available ·
+ * Update now". Shows progress while downloading and "Restart to finish" when ready. Hidden for this
+ * version once dismissed (it comes back for the next one). Checks once when the window opens.
+ */
+export function UpdateBanner() {
+  const s = useUpdate();
+  const [hidden, setHidden] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem("flo:update-dismissed");
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    const t = setTimeout(() => void checkForUpdate().catch(() => {}), 1500);
+    return () => clearTimeout(t);
+  }, []);
+  const show = (s.phase === "available" || s.phase === "downloading" || s.phase === "ready") && !(s.phase === "available" && hidden === s.version);
+  if (!show) return null;
+  const pct = progressPct(s);
+  return (
+    <div className="hw relative z-20 mx-4 mt-3 flex items-center gap-3 overflow-hidden rounded-2xl bg-[#0b1220] px-4 py-2.5 text-white shadow-[0_10px_30px_-12px_rgba(11,18,32,0.6)]" role="status" data-testid="update-banner">
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#5fb8ff] to-[#b48cff]">
+        <ArrowDownToLine size={16} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[13.5px] font-semibold">
+          {s.phase === "ready" ? `Flo ${s.version ?? ""} is ready` : s.phase === "downloading" ? `Downloading Flo ${s.version ?? ""}` : `Flo ${s.version ?? ""} is available`}
+        </p>
+        <p className="truncate text-[12px] text-white/60">
+          {s.phase === "ready" ? "Restart once to finish. Your work is saved." : s.phase === "downloading" ? (pct != null ? `${pct}% · keep working` : "In the background, keep working") : (s.notes?.split("\n")[0]?.replace(/\*\*/g, "") ?? "New features and fixes")}
+        </p>
+      </div>
+      {s.phase === "downloading" && (
+        <div className="absolute inset-x-0 bottom-0 h-[3px] bg-white/10">
+          <div className="h-full bg-gradient-to-r from-[#5fb8ff] to-[#b48cff] transition-[width] duration-300" style={{ width: `${pct ?? 15}%` }} />
+        </div>
+      )}
+      {s.phase === "available" && (
+        <>
+          <button type="button" onClick={() => void installUpdate()} className="shrink-0 rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-[#0b1220] transition hover:bg-white/90" data-testid="update-now">
+            Update now
+          </button>
+          <button
+            type="button"
+            aria-label="Remind me later"
+            title="Remind me later"
+            onClick={() => {
+              try {
+                localStorage.setItem("flo:update-dismissed", s.version ?? "");
+              } catch {
+                /* private mode */
+              }
+              setHidden(s.version ?? "");
+            }}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/60 hover:bg-white/10 hover:text-white"
+          >
+            <X size={14} />
+          </button>
+        </>
+      )}
+      {s.phase === "ready" && (
+        <button type="button" onClick={restartToUpdate} className="shrink-0 rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-[#0b1220] transition hover:bg-white/90" data-testid="update-restart">
+          Restart now
+        </button>
+      )}
     </div>
   );
 }

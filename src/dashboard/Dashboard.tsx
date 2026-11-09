@@ -19,7 +19,7 @@ import Typing from "./pages/Typing";
 import { Signature } from "./Signature";
 import { Ocean } from "../island/Ocean";
 import { Kbd } from "./ui";
-import { UpdateSidebarCard } from "./UpdateCard";
+import { UpdateBanner, UpdateSidebarCard } from "./UpdateCard";
 import { PresenceSidebarCard } from "./Presence";
 import { checkForUpdate } from "../lib/updates";
 import { Logo } from "./Logo";
@@ -169,6 +169,7 @@ export default function Dashboard() {
 
         {/* content */}
         <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+          <UpdateBanner />
           <div data-tauri-drag-region className="h-8 shrink-0" />
           <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-10 xl:px-12">
             <AnimatePresence mode="wait">
