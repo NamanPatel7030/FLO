@@ -3,23 +3,21 @@
 import { buildProfile, type Answers, type App, type Lang, type Role, type Use } from "../../lib/profile";
 import type { NotchlingMood } from "../../lib/notchling";
 
-export const STEPS = [
-  "welcome", "try", "role", "uses", "voice", "personalise", "permissions", "setup", "powers", "typing", "done",
-] as const;
+export const STEPS = ["welcome", "permissions", "try", "setup", "role", "uses", "done"] as const;
 export type Step = (typeof STEPS)[number];
 
 export const STEP_NAME: Record<Step, string> = {
-  welcome: "Welcome", try: "Try it", role: "What you do", uses: "Where you write", voice: "Your voice",
-  personalise: "Personalise", permissions: "Permissions", setup: "Voice & AI", powers: "Superpowers",
-  typing: "Typing speed", done: "Ready",
+  welcome: "Welcome", permissions: "Permissions", try: "Try it", setup: "Voice & AI",
+  role: "What you do", uses: "Where you write", done: "Ready",
 };
 
-/** Chapters group steps in the progress rail so eleven steps read as four short moments. */
+/** Chapters group steps in the progress rail. Permissions come before the try-out so the mic,
+ *  the Flo key and typing already work when the person first talks. */
 export const CHAPTERS: { name: string; steps: Step[] }[] = [
-  { name: "Hello", steps: ["welcome", "try"] },
-  { name: "You", steps: ["role", "uses", "voice", "personalise"] },
-  { name: "Setup", steps: ["permissions", "setup"] },
-  { name: "Extras", steps: ["powers", "typing", "done"] },
+  { name: "Hello", steps: ["welcome"] },
+  { name: "Setup", steps: ["permissions", "try", "setup"] },
+  { name: "You", steps: ["role", "uses"] },
+  { name: "Ready", steps: ["done"] },
 ];
 
 export const stepIndex = (s: Step) => STEPS.indexOf(s);
@@ -27,8 +25,7 @@ export const clampStep = (n: number) => Math.max(0, Math.min(STEPS.length - 1, n
 
 /** Notchling's default mood on each step (steps with live state override it). */
 export const STEP_MOOD: Record<Step, NotchlingMood> = {
-  welcome: "happy", try: "happy", role: "think", uses: "excited", voice: "talk", personalise: "proud",
-  permissions: "listen", setup: "think", powers: "cool", typing: "fire", done: "love",
+  welcome: "happy", permissions: "listen", try: "happy", setup: "think", role: "think", uses: "excited", done: "love",
 };
 
 export type Tone = "" | "polished" | "friendly" | "crisp" | "playful";
@@ -91,15 +88,21 @@ export function headline(step: Step, name: string, hour = new Date().getHours())
   const n = name.trim();
   switch (step) {
     case "welcome": return { title: n ? `Hi ${n}, I'm Flo.` : "Hi, I'm Flo.", sub: `${hello(hour)} I live in your notch and turn your voice into words, in any app.` };
-    case "try": return { title: "Let's try it right now", sub: "" };
+    case "permissions": return { title: "Let me hear you and type for you", sub: "Three switches in System Settings. I'll notice the moment you flip each one." };
+    case "try": return { title: "Now say something", sub: "" };
+    case "setup": return { title: "How should I listen and think?", sub: "Good defaults are set. Change anything, anytime." };
     case "role": return { title: n ? `So ${n}, what do you do?` : "So, what do you do?", sub: "I'll learn the words you use most." };
-    case "uses": return { title: "Where will your voice go?", sub: "Pick everything that fits. I'll match each place." };
-    case "voice": return { title: "How do you sound?", sub: "Your languages and the tone you like." };
-    case "personalise": return { title: "I wrote this just for you", sub: "This is how I'll write in your voice. Edit anything." };
-    case "permissions": return { title: "Let me hear and help", sub: "Grant these in System Settings. I'll notice the moment you do." };
-    case "setup": return { title: "How should I listen and think?", sub: "Sensible defaults are set. Change anything, anytime." };
-    case "powers": return { title: "A few more tricks", sub: "Try one, or take a look and move on." };
-    case "typing": return { title: "How fast do you type?", sub: "One minute, and I'll show how much time talking saves you." };
-    case "done": return { title: "We're all set", sub: "Here's everything you need. Make me yours if you like." };
+    case "uses": return { title: "Where will you use your voice?", sub: "Pick everything that fits, and the languages you speak." };
+    case "done": return { title: n ? `You're all set, ${n}` : "You're all set", sub: "Three keys are all you need. Hold one, talk, let go." };
   }
+}
+
+/** Turn a backend error into something a person can act on. */
+export function friendlyError(msg: string): { text: string; fixMic?: boolean } {
+  const m = msg.toLowerCase();
+  if (m.includes("microphone unavailable") || m.includes("privacy → microphone") || m.includes("not authorized"))
+    return { text: "Allow the microphone first, then try again.", fixMic: true };
+  if (m.includes("didn't hear")) return { text: "I couldn't hear you. Check your mic is on and picked in System Settings, Sound, then try again.", fixMic: true };
+  if (m.includes("didn't catch")) return { text: "That was a bit short. Hold a little longer and say the whole line." };
+  return { text: msg.replace(/[—–]/g, ",") };
 }

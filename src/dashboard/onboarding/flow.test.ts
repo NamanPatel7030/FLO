@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHAPTERS, EMPTY_ANSWERS, STEPS, STEP_NAME, clampStep, deriveRole, headline, profileFor, toggle } from "./flow";
+import { CHAPTERS, EMPTY_ANSWERS, STEPS, STEP_NAME, clampStep, deriveRole, friendlyError, headline, profileFor, stepIndex, toggle } from "./flow";
 
 describe("onboarding flow", () => {
   it("every step belongs to exactly one chapter, in order", () => {
@@ -7,10 +7,13 @@ describe("onboarding flow", () => {
     expect(flat).toEqual([...STEPS]);
   });
 
-  it("keeps every functional step", () => {
-    for (const s of ["try", "personalise", "permissions", "setup", "typing", "done"]) expect(STEPS).toContain(s);
-    expect(STEPS[0]).toBe("welcome");
-    expect(STEPS[STEPS.length - 1]).toBe("done");
+  it("is short and focused: hello, permissions, try, voice and AI, two questions, ready", () => {
+    expect([...STEPS]).toEqual(["welcome", "permissions", "try", "setup", "role", "uses", "done"]);
+    expect(STEPS.length).toBeLessThanOrEqual(7);
+  });
+
+  it("asks for permissions before the first dictation (the mic and the Flo key must work)", () => {
+    expect(stepIndex("permissions")).toBeLessThan(stepIndex("try"));
   });
 
   it("clamps navigation to the step range", () => {
@@ -46,5 +49,15 @@ describe("onboarding flow", () => {
       expect(h.title + h.sub + STEP_NAME[s]).not.toMatch(/[—–]/);
     }
     expect(headline("role", "Priya").title).toContain("Priya");
+  });
+
+  it("turns backend mic errors into a clear next step", () => {
+    const silent = friendlyError("I didn't hear anything. Check the microphone in System Settings → Sound.");
+    expect(silent.fixMic).toBe(true);
+    expect(silent.text).toMatch(/couldn't hear you/);
+    const denied = friendlyError("Microphone unavailable (no device). Allow Flo in System Settings → Privacy → Microphone.");
+    expect(denied).toEqual({ text: "Allow the microphone first, then try again.", fixMic: true });
+    expect(friendlyError("Didn't catch that. Try speaking a bit longer.").fixMic).toBeUndefined();
+    for (const m of ["x — y", "a – b"]) expect(friendlyError(m).text).not.toMatch(/[—–]/);
   });
 });

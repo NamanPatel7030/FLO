@@ -80,6 +80,8 @@ export const api = {
   startSession: (mode: Mode) => call<void>("start_session", { mode }),
   stopSession: () => call<void>("stop_session"),
   cancelSession: () => call<void>("cancel_session"),
+  /** first-run setup's try-out: keep dictations made in Flo's own window inside Flo (no paste) */
+  setSetupCapture: (on: boolean) => call<void>("set_setup_capture", { on }),
   askAssistant: (text: string, mode: AssistantMode = "quick") => call<AssistantResponse>("ask_assistant", { text, mode }),
   /** re-ask a previous answer: deep = reads the focused window, detailed; web = web search + sources */
   assistantFollowup: (id: string, mode: "deep" | "web") => call<AssistantResponse>("assistant_followup", { id, mode }),

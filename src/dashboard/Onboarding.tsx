@@ -1,9 +1,9 @@
 // First-run setup (after sign-in, while settings.onboarded === false). Always light: airy pastel
 // glass with Notchling hanging from the top edge like a real notch, guiding each step with its
-// mood. A dictation try-out first, then a few playful questions, permissions, voice and AI, some
-// optional tricks, and a signature finale before Flo opens. Reopen from Settings → General →
+// mood. Seven steps: hello and your name, permissions, a real first dictation, voice and AI, two
+// short questions about you, the keys to remember, then a signature finale before Flo opens. Reopen from Settings → General →
 // "Run setup again". Step list and profile logic live in onboarding/flow.ts (unit-tested).
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import clsx from "clsx";
 import { ArrowRight, Check, ChevronLeft, Volume2, VolumeX } from "lucide-react";
@@ -19,8 +19,8 @@ import { Sky } from "./onboarding/Aurora";
 import { HangingNotch, useWakeUp } from "./onboarding/Mascot";
 import { Btn, EASE } from "./onboarding/parts";
 import { Finale } from "./onboarding/Finale";
-import { Personalise, RoleStep, TryDemo, UsesStep, VoiceStep, Welcome } from "./onboarding/Steps";
-import { Done, Permissions, Powers, SetupStep, Typing } from "./onboarding/SetupSteps";
+import { RoleStep, TryDemo, UsesStep, Welcome } from "./onboarding/Steps";
+import { Done, Permissions, SetupStep } from "./onboarding/SetupSteps";
 import { CHAPTERS, EMPTY_ANSWERS, STEPS, STEP_MOOD, STEP_NAME, clampStep, headline, profileFor, type SetupAnswers, type Step } from "./onboarding/flow";
 import "./onboarding/onboarding.css";
 
@@ -60,20 +60,16 @@ export function Onboarding() {
   const [maxReached, setMaxReached] = useState(0);
   const [muted, setMuted] = useState(!snd.soundOn());
   const [answers, setAnswers] = useState<SetupAnswers>(() => ({ ...EMPTY_ANSWERS, name: (status?.user?.name ?? settings?.userName ?? "").split(/\s+/)[0] ?? "" }));
-  const [prompt, setPrompt] = useState<string | null>(null);
-  const [seeds, setSeeds] = useState<string[]>([]);
-  const [chosenSeeds, setChosenSeeds] = useState<Set<string>>(new Set());
-  const profileKey = useRef("");
   const [moodOverride, setMoodOverride] = useState<NotchlingMood | null>(null);
   const [tried, setTried] = useState(false);
   const [permsOk, setPermsOk] = useState(false);
-  const [measuring, setMeasuring] = useState(false);
   const [phase, setPhase] = useState<"steps" | "finale" | "leaving">("steps");
   const wake = useWakeUp(true);
   useLightTheme(phase !== "leaving");
 
   const setMood = useCallback((m: NotchlingMood | null) => setMoodOverride(m), []);
   const onPerms = useCallback((ok: boolean) => setPermsOk(ok), []);
+  const onTried = useCallback(() => setTried(true), []);
 
   if (!settings) return null;
   const s = settings;
@@ -90,20 +86,9 @@ export function Onboarding() {
 
   const go = (d: number) => {
     const n = clampStep(i + d);
-    if (STEPS[n] === "personalise") {
-      const k = JSON.stringify(answers);
-      if (k !== profileKey.current) {
-        const p = profileFor(answers);
-        profileKey.current = k;
-        setPrompt(p.systemPrompt);
-        setSeeds(p.dictionary);
-        setChosenSeeds(new Set(p.dictionary));
-      }
-    }
     if (n === i) return;
     snd.playStep();
     setMoodOverride(null);
-    setMeasuring(false);
     setDir(d);
     setI(n);
     setMaxReached((m) => Math.max(m, n));
@@ -111,18 +96,19 @@ export function Onboarding() {
   const jump = (n: number) => {
     if (n === i || n > maxReached) return;
     setMoodOverride(null);
-    setMeasuring(false);
     setDir(n < i ? -1 : 1);
     setI(n);
   };
+  // the answers become a personal prompt, the speech language and dictionary words, saved when
+  // the last question is answered
   const savePersonal = async () => {
     const p = profileFor(answers);
-    await setSettings({ ...s, systemPrompt: prompt ?? p.systemPrompt, userName: answers.name.trim() || s.userName, language: p.language });
+    await setSettings({ ...s, systemPrompt: p.systemPrompt, userName: answers.name.trim() || s.userName, language: p.language });
     const have = new Set((await api.listDictionary().catch(() => [])).map((d) => d.word.toLowerCase()));
-    for (const w of chosenSeeds) if (!have.has(w.toLowerCase())) await api.addDictionary(w).catch(() => {});
+    for (const w of p.dictionary) if (!have.has(w.toLowerCase())) await api.addDictionary(w).catch(() => {});
   };
   const next = async () => {
-    if (step === "personalise") await savePersonal();
+    if (step === "uses") await savePersonal();
     if (step === "done") {
       snd.playFinish();
       goPage("home");
@@ -152,14 +138,10 @@ export function Onboarding() {
         : step === "permissions"
           ? permsOk
             ? [{ label: "Continue", kind: "primary" }]
-            : [{ label: "I'll do this later", kind: "soft" }, { label: "Continue", kind: "primary", disabled: true }]
-          : step === "typing"
-            ? [{ label: "I'll do this later", kind: "soft" }]
-            : step === "personalise"
-              ? [{ label: "Save & continue", kind: "primary" }]
-              : step === "done"
-                ? [{ label: "Start using Flo", kind: "primary", icon: <Check size={16} strokeWidth={2.6} /> }]
-                : [{ label: "Continue", kind: "primary" }];
+            : [{ label: "I'll do this later", kind: "soft" }]
+          : step === "done"
+            ? [{ label: "Start using Flo", kind: "primary", icon: <Check size={17} strokeWidth={2.6} /> }]
+            : [{ label: "Continue", kind: "primary" }];
 
   return (
     <motion.div
@@ -205,31 +187,27 @@ export function Onboarding() {
             animate="center"
             exit="exit"
             transition={{ type: "spring", stiffness: 240, damping: 30, filter: { duration: 0.3 } }}
-            className="flex h-full w-full max-w-[760px] flex-col overflow-y-auto overflow-x-hidden px-1"
+            className="flex h-full w-full max-w-[940px] flex-col overflow-y-auto overflow-x-hidden px-1"
           >
             <div className={clsx("my-auto flex w-full flex-col items-center pb-2", step === "welcome" ? "pt-2" : "pt-1")}>
             {step === "welcome" && <Welcome title={h.title} sub={h.sub} name={answers.name} setName={(name) => patch({ name })} onStart={() => go(1)} />}
-            {step === "try" && <TryDemo keyLabel={keys.dict} keyWord={geo?.platform === "windows" ? undefined : hotkeyWords(s.hotkeyDictation)} onDone={() => go(1)} onSuccess={() => setTried(true)} setMood={setMood} />}
+            {step === "permissions" && <Permissions title={h.title} sub={h.sub} setMood={setMood} onStatus={onPerms} />}
+            {step === "try" && <TryDemo keyLabel={keys.dict} keyWord={geo?.platform === "windows" ? undefined : hotkeyWords(s.hotkeyDictation)} onSuccess={onTried} setMood={setMood} />}
+            {step === "setup" && <SetupStep title={h.title} sub={h.sub} s={s} set={set} />}
             {step === "role" && <RoleStep title={h.title} sub={h.sub} a={answers} set={patch} onPicked={() => go(1)} />}
             {step === "uses" && <UsesStep title={h.title} sub={h.sub} a={answers} set={patch} />}
-            {step === "voice" && <VoiceStep title={h.title} sub={h.sub} a={answers} set={patch} />}
-            {step === "personalise" && <Personalise title={h.title} sub={h.sub} prompt={prompt ?? ""} setPrompt={setPrompt} seeds={seeds} chosen={chosenSeeds} setChosen={setChosenSeeds} setMood={setMood} />}
-            {step === "permissions" && <Permissions title={h.title} sub={h.sub} setMood={setMood} onStatus={onPerms} />}
-            {step === "setup" && <SetupStep title={h.title} sub={h.sub} s={s} set={set} />}
-            {step === "powers" && <Powers title={h.title} sub={h.sub} keys={keys} s={s} set={set} setMood={setMood} />}
-            {step === "typing" && <Typing title={h.title} sub={h.sub} s={s} measuring={measuring} setMeasuring={setMeasuring} onDone={() => go(1)} />}
-            {step === "done" && <Done title={h.title} sub={h.sub} keys={keys} s={s} set={set} />}
+            {step === "done" && <Done title={h.title} sub={h.sub} keys={keys} />}
             </div>
           </motion.div>
         </AnimatePresence>
       </div>
 
       {/* footer: chapters on the left, Back + forward on the right */}
-      <div className="relative z-10 flex h-[84px] shrink-0 items-center justify-between gap-4 px-8">
+      <div className="relative z-10 flex h-[96px] shrink-0 items-center justify-between gap-4 px-10">
         <nav className="flex items-center gap-5" aria-label={`Step ${i + 1} of ${STEPS.length}`}>
           {CHAPTERS.map((c, ci) => (
             <div key={c.name} className="flex flex-col gap-1.5">
-              <span className={clsx("text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors duration-300", ci === chapter ? "text-[#0b1220]" : ci < chapter ? "text-[#5b6678]" : "text-[#a3acbb]")}>{c.name}</span>
+              <span className={clsx("text-[12px] font-semibold uppercase tracking-[0.12em] transition-colors duration-300", ci === chapter ? "text-[#0b1220]" : ci < chapter ? "text-[#5b6678]" : "text-[#a3acbb]")}>{c.name}</span>
               <div className="flex items-center gap-1">
                 {c.steps.map((nm) => {
                   const k = STEPS.indexOf(nm);
@@ -242,7 +220,7 @@ export function Onboarding() {
                       aria-current={k === i ? "step" : undefined}
                       disabled={k > maxReached || k === i}
                       onClick={() => jump(k)}
-                      className={clsx("onb-dot", k === i ? "w-6 bg-gradient-to-r from-[#2f8cff] to-[#7a6cff]" : k <= maxReached ? "w-2.5 cursor-pointer bg-[#0b1220]/35 hover:bg-[#0b1220]/60" : "w-2.5 bg-[#0b1220]/10")}
+                      className={clsx("onb-dot", k === i ? "w-8 bg-gradient-to-r from-[#2f8cff] to-[#7a6cff]" : k <= maxReached ? "w-3 cursor-pointer bg-[#0b1220]/35 hover:bg-[#0b1220]/60" : "w-3 bg-[#0b1220]/10")}
                     />
                   );
                 })}
@@ -253,14 +231,14 @@ export function Onboarding() {
         <div className="flex items-center gap-2.5">
           {i > 0 && (
             <Btn kind="soft" aria-label="Back" onClick={() => go(-1)} className="!px-4">
-              <ChevronLeft size={17} className="-ml-1" />
+              <ChevronLeft size={18} className="-ml-1" />
               Back
             </Btn>
           )}
           <AnimatePresence mode="popLayout" initial={false}>
             {forward.map((f) => (
               <motion.div key={`${f.kind}-${f.label}`} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ type: "spring", stiffness: 380, damping: 28 }}>
-                <Btn kind={f.kind} disabled={f.disabled} onClick={f.kind === "soft" ? () => go(1) : next} icon={f.icon ?? (f.kind === "primary" ? <ArrowRight size={16} /> : undefined)}>
+                <Btn kind={f.kind} disabled={f.disabled} onClick={f.kind === "soft" ? () => go(1) : next} icon={f.icon ?? (f.kind === "primary" ? <ArrowRight size={17} /> : undefined)}>
                   {f.label}
                 </Btn>
               </motion.div>

@@ -33,7 +33,7 @@ export function Heading({ title, sub, big }: { title: string; sub?: string; big?
   const words = title.split(" ");
   return (
     <div className="flex flex-col items-center text-center">
-      <h1 className="onb-title" style={big ? { fontSize: 46, letterSpacing: "-0.035em" } : undefined} aria-label={title}>
+      <h1 className="onb-title" style={big ? { fontSize: 54, letterSpacing: "-0.035em" } : undefined} aria-label={title}>
         {words.map((w, k) => (
           <motion.span
             key={k + w}
@@ -50,7 +50,7 @@ export function Heading({ title, sub, big }: { title: string; sub?: string; big?
       </h1>
       {sub ? (
         <motion.p
-          className="onb-sub mt-2.5 max-w-[520px]"
+          className="onb-sub mt-3 max-w-[620px]"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.12 + words.length * 0.05, duration: 0.45, ease: EASE }}
@@ -92,15 +92,15 @@ export function ChoiceCard({
       aria-checked={on}
       aria-label={label}
       onClick={onClick}
-      className={clsx("onb-choice flex flex-col items-center justify-center gap-2.5 rounded-[22px] px-3 text-center", className)}
+      className={clsx("onb-choice flex flex-col items-center justify-center gap-3 rounded-[24px] px-4 text-center", className)}
     >
-      {icon && <span className="onb-icon h-12 w-12">{icon}</span>}
-      <span className="text-[14px] font-semibold leading-tight">{label}</span>
-      {hint && <span className="onb-faint -mt-1.5 text-[11.5px] leading-snug">{hint}</span>}
+      {icon && <span className="onb-icon h-16 w-16">{icon}</span>}
+      <span className="text-[17px] font-semibold leading-tight">{label}</span>
+      {hint && <span className="onb-faint -mt-1.5 text-[13.5px] leading-snug">{hint}</span>}
       {children}
       {on && (
-        <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 600, damping: 20 }} className="onb-tick absolute right-2.5 top-2.5">
-          <Check size={12} strokeWidth={3.5} />
+        <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 600, damping: 20 }} className="onb-tick absolute right-3 top-3">
+          <Check size={14} strokeWidth={3.5} />
         </motion.span>
       )}
     </motion.button>
@@ -120,8 +120,8 @@ export function Chip({ on, onClick, children, label }: { on: boolean; onClick: (
       className="onb-choice onb-chip"
     >
       {on && (
-        <motion.span initial={{ width: 0, opacity: 0 }} animate={{ width: 14, opacity: 1 }} className="inline-flex overflow-hidden text-[#2f8cff]">
-          <Check size={14} strokeWidth={3} />
+        <motion.span initial={{ width: 0, opacity: 0 }} animate={{ width: 16, opacity: 1 }} className="inline-flex overflow-hidden text-[#2f8cff]">
+          <Check size={16} strokeWidth={3} />
         </motion.span>
       )}
       {children}

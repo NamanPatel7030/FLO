@@ -643,6 +643,11 @@ const nameFromEmail = (e: string) =>
     .join(" ");
 
 const perms = { microphone: true, accessibility: true, inputMonitoring: false, screen: false, hotkeyActive: false };
+// ?perms=none starts the preview with nothing granted (first launch on a fresh Mac)
+if (typeof location !== "undefined" && new URLSearchParams(location.search).get("perms") === "none") {
+  perms.microphone = false;
+  perms.accessibility = false;
+}
 
 // ── context library ──────────────────────────────────────────────────────────
 const ctxContent = new Map<string, string>();
@@ -899,6 +904,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       }, 1000);
       return null;
     }
+    case "set_setup_capture":
+      return null;
     case "cancel_session":
       stopLevels();
       mockEmit(EV.state, { phase: "idle", mode: sessionMode });

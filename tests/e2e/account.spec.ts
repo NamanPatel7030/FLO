@@ -9,7 +9,17 @@ const invoke = (page: Page, cmd: string, args: Record<string, unknown> = {}) =>
 const calls = (page: Page, cmd: string) => page.evaluate((c) => (window as any).__floMock.calls.filter((x: any) => x.cmd === c).map((x: any) => x.args), cmd);
 const step = (page: Page, s: string) => expect(page.locator('[data-testid="onboarding"]')).toHaveAttribute("data-step", s);
 
-test("sign in → hello → try-out → playful questions → personalised prompt saved → setup → signature finale", async ({ page }) => {
+/** Hold the try-out's mic button like a person would (press, talk, let go). */
+async function holdToTalk(page: Page, ms = 900) {
+  const mic = page.locator('[data-testid="onboarding"]').getByTestId("try-mic");
+  const box = (await mic.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(ms);
+  await page.mouse.up();
+}
+
+test("sign in → hello → permissions → a real first dictation → voice & AI → about you (saved) → ready → signature finale", async ({ page }) => {
   test.slow(); // long cinematic walkthrough with animations; headroom under parallel load
   await page.goto("/?onboard=1#/home");
   await mock(page);
@@ -38,92 +48,114 @@ test("sign in → hello → try-out → playful questions → personalised promp
   await expect(ob.getByLabel("Your name")).toHaveValue("Priya");
   await btn("Let's begin").click();
 
-  // the try-out: dictation before any question (simulated in preview); auto-advances on success
+  // permissions come BEFORE the try-out: the three dictation needs, as big cards
+  await step(page, "permissions");
+  await expect(ob.locator('[data-testid="perm-row"]')).toHaveCount(3);
+  await expect(btn("Continue")).toHaveCount(0); // Input Monitoring is still off in the mock
+  await btn("Allow Input Monitoring").click();
+  await expect(ob.locator('[data-testid="perm-row"][data-granted="true"]')).toHaveCount(3, { timeout: 6000 });
+  await expect(ob.locator('[data-testid="onboard-line"]')).toContainText("All set");
+  expect((await calls(page, "open_permission_settings")).map((a: any) => a.kind)).toContain("input");
+  await btn("Continue").click();
+
+  // the try-out: hold the mic button, the mic level moves, the words land in the box
   await step(page, "try");
+  await expect.poll(async () => (await calls(page, "set_setup_capture")).at(-1)).toEqual({ on: true });
   await expect(btn("I'll try it later")).toBeVisible();
-  await btn("Simulate (preview)").click();
-  await expect(ob.getByLabel("Demo text box")).toHaveValue(/Hello Flo, this is my first dictation/);
+  const mic = ob.getByTestId("try-mic");
+  const box = (await mic.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(mic).toHaveAttribute("data-live", "true");
+  await expect(ob.getByText("I'm listening. Let go when you're done.")).toBeVisible();
+  await page.waitForTimeout(500);
+  await page.mouse.up();
+  await expect(ob.getByLabel("Demo text box")).toHaveValue("Hey team, the build is ready for review.");
   await expect(ob.locator('[data-testid="demo-success"]')).toBeVisible();
+  expect(await calls(page, "start_session")).toEqual([{ mode: "dictation" }]);
+  expect((await calls(page, "stop_session")).length).toBe(1);
+  await btn("Continue").click();
+
+  // voice + ai in one step; leaving the try-out hands dictation back to other apps
+  await step(page, "setup");
+  await expect.poll(async () => (await calls(page, "set_setup_capture")).at(-1)).toEqual({ on: false });
+  await expect(ob.getByRole("radio", { name: "On this Mac" })).toHaveAttribute("aria-checked", "true");
+  await btn("Continue").click();
 
   // what you do: one tap picks and moves on
   await step(page, "role");
   await ob.getByRole("radio", { name: "I build software" }).click();
 
-  // where your voice goes + apps
+  // where your voice goes + languages; Continue saves the personal profile
   await step(page, "uses");
   await ob.getByRole("checkbox", { name: "Coding prompts" }).click();
   await ob.getByRole("checkbox", { name: "Slack & chat" }).click();
   await expect(ob.getByRole("checkbox", { name: "Coding prompts" })).toHaveAttribute("aria-checked", "true");
-  await ob.locator('[data-testid="apps"]').getByRole("checkbox", { name: "Notion" }).click();
-  await btn("Continue").click();
-
-  // languages + tone
-  await step(page, "voice");
   await ob.locator('[data-testid="languages"]').getByRole("checkbox", { name: "English" }).click();
-  await ob.getByRole("radio", { name: "Crisp" }).click();
   await btn("Continue").click();
 
-  // personalise: generated from role + uses + tone; editable; saved
-  await step(page, "personalise");
-  await expect(ob.locator('[data-testid="personalising"]')).toBeVisible();
-  const prompt = ob.getByLabel("System prompt");
-  await expect(prompt).toHaveValue(/Priya/);
-  await prompt.click(); // focus switches from the typewriter preview to the full editable prompt
-  await expect(prompt).toHaveValue(/software developer/);
-  await expect(prompt).toHaveValue(/coding agents/);
-  await expect(prompt).toHaveValue(/crisp and direct/);
-  await expect(ob.locator('[data-testid="seeds"]')).toContainText("Claude Code");
-  await expect(ob.locator('[data-testid="seeds"]')).toContainText("Notion");
-  await prompt.fill((await prompt.inputValue()) + "\nKeep replies short.");
-  await btn("Save & continue").click();
-
-  await step(page, "permissions");
+  // ready: the keys to remember
+  await step(page, "done");
   const set = await invoke(page, "get_settings");
   expect(set.userName).toBe("Priya");
   expect(set.language).toBe("en");
-  expect(set.systemPrompt).toMatch(/Keep replies short\.$/);
+  expect(set.systemPrompt).toMatch(/software developer/);
+  expect(set.systemPrompt).toMatch(/coding agents/);
   const dict = (await invoke(page, "list_dictionary")).map((d: any) => d.word);
-  expect(dict).toEqual(expect.arrayContaining(["Claude Code", "TypeScript", "Notion"]));
-  // a way forward even when a permission is still missing
-  await expect(ob.locator('[data-testid="perm-row"]')).toHaveCount(4);
-  await ob.getByRole("button", { name: /I'll do this later|Continue/ }).first().click();
-
-  // voice + ai condensed into one step
-  await step(page, "setup");
-  await btn("Continue").click();
-
-  // superpowers: optional mini demos in one step
-  await step(page, "powers");
-  await btn("Simulate (preview)").click();
-  await expect(ob.locator('[data-testid="demo-success"]')).toBeVisible();
-  await ob.getByRole("tab", { name: "Agent tray" }).click();
-  await btn("Show me").click();
-  await expect(ob.locator('[data-testid="tray-preview"]')).toBeVisible();
-  await btn("Continue").click();
-
-  // optional typing offer; Back returns to the previous step
-  await step(page, "typing");
-  await expect(ob.locator('[data-testid="typing-offer"]')).toBeVisible();
-  await btn("Back").click();
-  await step(page, "powers");
-  await btn("Continue").click();
-  await step(page, "typing");
-  // "Measure now" starts the test inline (not a navigate-away dead-end)
-  await btn("Measure now").click();
-  await expect(ob.locator('[data-testid="typing-inline"]')).toBeVisible();
-  await expect(ob.locator('[data-testid="typing-passage"]')).toBeVisible();
-  await btn("I'll do this later").click();
-
-  // ready, then the signature finale opens the app
-  await step(page, "done");
+  expect(dict).toEqual(expect.arrayContaining(["Claude Code", "TypeScript", "Priya"]));
+  await expect(ob.locator('[data-testid="cheatsheet"]')).toContainText("Hold to dictate");
   await expect(ob.locator('[data-testid="cheatsheet"]')).toContainText("Hands-free");
   await expect(page.getByText(/[—–]/)).toHaveCount(0);
+
+  // the signature finale opens the app
   await btn("Start using Flo").click();
   await expect(ob.locator('[data-testid="finale"]')).toBeVisible();
   await expect(ob.locator('[data-testid="finale"]')).toHaveAttribute("aria-label", "Invented by Naman");
   await expect(page.locator('[data-testid="onboarding"]')).toHaveCount(0, { timeout: 8000 });
   await expect.poll(async () => (await invoke(page, "get_settings")).onboarded).toBe(true);
   await expect(page.getByRole("heading", { name: /Good (morning|afternoon|evening)|Working late/ })).toBeVisible();
+});
+
+test("try-out on a fresh Mac: no mic yet → clear fix right there; silence → human error; a quick tap explains itself", async ({ page }) => {
+  await page.goto("/?signedin=1&onboard=1&perms=none#/home");
+  await mock(page);
+  const ob = page.locator('[data-testid="onboarding"]');
+  const btn = (name: string) => ob.getByRole("button", { name, exact: true });
+  await btn("Let's begin").click();
+  await step(page, "permissions");
+  await expect(ob.locator('[data-testid="perm-row"][data-granted="false"]')).toHaveCount(3);
+  await btn("I'll do this later").click();
+
+  await step(page, "try");
+  const needs = ob.getByTestId("try-needs");
+  await expect(needs).toContainText("Allow the microphone first");
+  // holding the button without a mic never starts a session; it says what to do instead
+  await holdToTalk(page, 300);
+  await expect(ob.getByTestId("demo-error")).toContainText("Allow the microphone first");
+  expect(await calls(page, "start_session")).toEqual([]);
+  await needs.getByRole("button", { name: "Allow microphone" }).click();
+  expect((await calls(page, "open_permission_settings")).at(-1)).toEqual({ kind: "microphone" });
+  await expect(needs).toContainText("Accessibility and Input Monitoring", { timeout: 6000 }); // mic granted; the key still needs its two
+
+  // the backend heard nothing: a human error and a way to the mic settings
+  await page.evaluate(() => (window as any).__floMock.emit("flo://state", { phase: "error", mode: "dictation", message: "I didn't hear anything. Check the microphone in System Settings → Sound." }));
+  await expect(ob.getByTestId("demo-error")).toContainText("I couldn't hear you");
+  await expect(ob.getByRole("button", { name: "Open mic settings" })).toBeVisible();
+
+  // a quick tap is cancelled and explained, not left recording (press + release in one tick, so a
+  // busy machine can't stretch it into a real hold)
+  await ob.getByTestId("try-mic").evaluate((el) => {
+    el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 9 }));
+    el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 9 }));
+  });
+  await expect(ob.getByText("Keep holding while you talk, then let go.")).toBeVisible();
+  await expect.poll(async () => (await calls(page, "cancel_session")).length).toBe(1);
+
+  // a real hold works now
+  await holdToTalk(page, 800);
+  await expect(ob.getByLabel("Demo text box")).toHaveValue("Hey team, the build is ready for review.");
+  await expect(ob.getByTestId("demo-success")).toBeVisible();
+  await expect(btn("Continue")).toBeVisible();
 });
 
 test("Continue with Google: waiting state, bad code → friendly error, pasted code signs in", async ({ page }) => {
@@ -193,13 +225,15 @@ test("onboarding: no Back on step 1; Back and a progress dot jump to earlier ste
   await step(page, "welcome");
   await expect(ob.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
   await ob.getByRole("button", { name: "Let's begin" }).click();
-  await step(page, "try");
+  await step(page, "permissions");
   await ob.getByRole("button", { name: "Back", exact: true }).click();
   await step(page, "welcome");
-  // advance past the try-out, then a progress dot jumps back to the first step
+  // advance past permissions and the try-out, then a progress dot jumps back to the first step
   await ob.getByRole("button", { name: "Let's begin" }).click();
+  await ob.getByRole("button", { name: "I'll do this later" }).click();
+  await step(page, "try");
   await ob.getByRole("button", { name: "I'll try it later" }).click();
-  await step(page, "role");
+  await step(page, "setup");
   await ob.getByRole("button", { name: "Welcome", exact: true }).click();
   await step(page, "welcome");
 });
