@@ -169,6 +169,12 @@ pub fn cancel_session(st: State<Shared>) {
     session::cancel(st.inner());
 }
 
+/// First-run setup's try-out is showing: keep dictations made in Flo's own window inside Flo.
+#[tauri::command]
+pub fn set_setup_capture(on: bool) {
+    session::set_setup_capture(on);
+}
+
 #[tauri::command]
 pub async fn ask_assistant(st: State<'_, Shared>, text: String, mode: Option<String>) -> R<AssistantResponse> {
     let st = st.inner().clone();

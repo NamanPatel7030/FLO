@@ -14,6 +14,21 @@ const MAX_RECORDING_SECS: u64 = 120;
 /// hands-free recordings may run longer
 const MAX_HANDS_FREE_SECS: u64 = 600;
 
+/// First-run setup's try-out is on screen. A dictation made while Flo's own window is in front is
+/// then handed to that screen (final transcript event) instead of switching to the last other app
+/// and pasting there, which is what normally happens when Flo is frontmost.
+static SETUP_CAPTURE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_setup_capture(on: bool) {
+    SETUP_CAPTURE.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Keep the text inside Flo (no app switch, no paste)? Only while setup asked for it and only when
+/// Flo itself is the frontmost app, so dictating into another app during setup still pastes there.
+fn keep_in_flo(capture: bool, front_pid: i32, own_pid: u32) -> bool {
+    capture && front_pid > 0 && front_pid as u32 == own_pid
+}
+
 /// ctrl/fn + Space: keep listening after the keys are released.
 pub fn lock(st: &Shared, mode: Mode) {
     use std::sync::atomic::Ordering;
@@ -229,6 +244,12 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     st.emit(ev::TRANSCRIPT, TranscriptEvent { text: raw.clone(), is_final: false });
 
     match mode {
+        Mode::Dictation if keep_in_flo(SETUP_CAPTURE.load(std::sync::atomic::Ordering::SeqCst), platform::frontmost_app().pid, std::process::id()) => {
+            // setup's try-out: the words land in Flo's own box via the event; nothing is pasted
+            let final_text = cleanup(st, &raw, "Flo").await;
+            st.emit(ev::TRANSCRIPT, TranscriptEvent { text: final_text, is_final: true });
+            st.finish(Phase::Done, mode, None);
+        }
         Mode::Dictation | Mode::Meeting => {
             let final_text = cleanup(st, &raw, &front.name).await;
             platform::activate_app(front.pid);
@@ -357,5 +378,32 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
             text::basic_cleanup(&base)
         }
         Err(_) => text::basic_cleanup(&base),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keep_in_flo;
+
+    #[test]
+    fn setup_capture_keeps_text_in_flo_only_when_flo_is_in_front() {
+        let me = 4242;
+        assert!(keep_in_flo(true, me as i32, me));
+        // another app in front: paste there as usual
+        assert!(!keep_in_flo(true, 999, me));
+        // setup not asking: never swallow a dictation
+        assert!(!keep_in_flo(false, me as i32, me));
+        // unknown front app
+        assert!(!keep_in_flo(true, 0, me));
+        assert!(!keep_in_flo(true, -1, me));
+    }
+
+    #[test]
+    fn setup_capture_flag_toggles() {
+        use std::sync::atomic::Ordering;
+        super::set_setup_capture(true);
+        assert!(super::SETUP_CAPTURE.load(Ordering::SeqCst));
+        super::set_setup_capture(false);
+        assert!(!super::SETUP_CAPTURE.load(Ordering::SeqCst));
     }
 }

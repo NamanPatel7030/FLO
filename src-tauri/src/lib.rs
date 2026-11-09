@@ -436,6 +436,7 @@ pub fn run() {
             commands::start_session,
             commands::stop_session,
             commands::cancel_session,
+            commands::set_setup_capture,
             commands::ask_assistant,
             commands::assistant_followup,
             commands::list_assistant,
