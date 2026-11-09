@@ -72,7 +72,7 @@ ASSETS=("$OUT/$NAME" "$OUT/$NAME.sig" "$OUT/latest.json")
 # the Android APK stays until a new one is uploaded.
 CARRY="$OUT/carry"
 rm -rf "$CARRY" && mkdir -p "$CARRY"
-for f in Flo-android.apk Flo-windows-x64-setup.exe Flo-windows-x64.msi Flo-linux-x86_64.AppImage Flo-linux-amd64.deb; do
+for f in Flo-android.apk android-latest.json Flo-windows-x64-setup.exe Flo-windows-x64.msi Flo-linux-x86_64.AppImage Flo-linux-amd64.deb; do
   if gh release download -R "$REPO" -p "$f" -D "$CARRY" >/dev/null 2>&1; then ASSETS+=("$CARRY/$f"); else echo "  (no $f on the current release to carry forward)"; fi
 done
 git push -q "$(git remote | head -1)" HEAD 2>/dev/null || true  # the tagged commit must exist on GitHub

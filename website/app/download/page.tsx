@@ -6,6 +6,7 @@ import { Logo } from "@/components/Logo";
 import { SignOutButton } from "@/components/SignOutButton";
 import { PastelBackdrop } from "@/components/site/Backdrop";
 import { downloadUrl, gatedHref, type DownloadOS } from "@/lib/downloads";
+import { latestRelease } from "@/lib/release-info";
 import { getUser } from "@/lib/supabase/server";
 
 export const metadata = { title: "Download" };
@@ -32,6 +33,9 @@ export default async function DownloadPage() {
   const os = detect((await headers()).get("user-agent") ?? "");
   const builds = [...BUILDS].sort((a, b) => (a.os === os ? -1 : b.os === os ? 1 : 0));
   const first = user.name.split(" ")[0];
+  const rel = await latestRelease();
+  const date = rel ? new Date(rel.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  const versionOf = (os: DownloadOS) => (rel ? (os === "android" ? (rel.android?.version ?? rel.version) : rel.version) : null);
 
   return (
     <div className="v2 min-h-dvh px-4 py-6 sm:px-6">
@@ -54,6 +58,14 @@ export default async function DownloadPage() {
             Get <span className="serif-i grad-text pr-1">Flo.</span>
           </h1>
           <p className="mt-4 text-[15px] mut">Signed in as {user.email}</p>
+          {rel && (
+            <p className="mt-2 text-[14px] mut">
+              Latest release <b className="ink">v{rel.version}</b> ·{" "}
+              <a href="/changelog" className="font-semibold text-[#2f8cff] hover:underline">
+                What&apos;s new
+              </a>
+            </p>
+          )}
         </div>
 
         <div className="mt-12 grid gap-3 sm:grid-cols-2" data-testid="downloads">
@@ -72,6 +84,12 @@ export default async function DownloadPage() {
                     {primary && <span className="ml-2 rounded-full bg-[rgba(255,255,255,0.8)] px-2.5 py-1 align-middle text-[11.5px] font-semibold ink-2">your device</span>}
                   </p>
                   <p className="mt-1 text-[14px] mut">{b.sub}</p>
+                  {versionOf(b.os) && (
+                    <p className="mt-1.5 flex items-center gap-2 text-[12.5px] font-semibold ink-2" data-testid={`version-${b.os}`}>
+                      <span className="rounded-full bg-white/80 px-2 py-0.5">v{versionOf(b.os)}</span>
+                      <span className="font-normal fnt">Latest · {date}</span>
+                    </p>
+                  )}
                 </div>
                 <div className="mt-5 sm:mt-0">
                   {ready ? (
