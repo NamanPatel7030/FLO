@@ -1,6 +1,7 @@
 // App state: session, presence, inbox, mutes, permission, in-app banner.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
+import { bubble } from '../lib/bubble';
 import { ApiError, claimPairing, createHttpApi, type FloApi } from '../api/client';
 import { createMockApi, isMockMode, MOCK_SESSION, mockStartScreen } from '../api/mock';
 import type { InboxItem, Presence, PresenceStatus, Session } from '../api/types';
@@ -96,6 +97,11 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
     return session ? createHttpApi(session.server, session.deviceToken) : null;
   }, [session, mockApi]);
 
+  // the voice bubble (other apps) asks questions with this phone's pairing
+  useEffect(() => {
+    if (!booting && !mockApi) bubble.setSession(session?.server ?? null, session?.deviceToken ?? null);
+  }, [session, booting, mockApi]);
+
   // ---- boot -------------------------------------------------------------
   useEffect(() => {
     installForegroundHandler();
@@ -169,18 +175,29 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!api) return;
     void refresh();
-    let timer: ReturnType<typeof setInterval> | null = setInterval(() => {
-      void Promise.all([fetchPresence(), fetchInbox(false)]).catch(handleError);
-    }, POLL_MS);
+    // Only while Flo is on screen: in the background the app does no network work at all
+    // (push notifications and the voice bubble don't need it).
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const poll = () => void Promise.all([fetchPresence(), fetchInbox(false)]).catch(handleError);
+    const start = () => {
+      if (!timer) timer = setInterval(poll, POLL_MS);
+    };
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+    if (AppState.currentState !== 'background') start();
     const sub = AppState.addEventListener('change', (st) => {
       if (st === 'active') {
-        void Promise.all([fetchPresence(), fetchInbox(false)]).catch(handleError);
+        poll();
+        start();
         if (!mock) void getPermission().then(setPermission).catch(() => undefined);
+      } else if (st === 'background') {
+        stop();
       }
     });
     return () => {
-      if (timer) clearInterval(timer);
-      timer = null;
+      stop();
       sub.remove();
     };
   }, [api, refresh, fetchPresence, fetchInbox, handleError, mock]);
