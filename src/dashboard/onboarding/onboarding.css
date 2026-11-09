@@ -1,0 +1,199 @@
+/* First-run setup: always light, airy pastel glass (the flo.hellonaman.com look).
+   Colours are explicit here (not theme tokens) so setup looks the same whatever theme the app is in. */
+.onb {
+  --o-ink: #0b1220;
+  --o-ink-2: #2a3446;
+  --o-muted: #5b6678;
+  --o-faint: #8a94a6;
+  --o-line: rgb(20 40 80 / 0.09);
+  --o-blue: #2f8cff;
+  --o-violet: #7a6cff;
+  --o-mint: #1f9e78;
+  --o-grad: linear-gradient(100deg, #2f8cff, #7a6cff 60%, #c264ff);
+  color: var(--o-ink);
+  background: #f5f7fc;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: light;
+}
+.onb ::selection { background: rgb(122 108 255 / 0.22); }
+
+.onb-title {
+  font-size: 34px;
+  line-height: 1.12;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  color: var(--o-ink);
+}
+.onb-sub { font-size: 15px; line-height: 1.5; color: var(--o-muted); text-wrap: balance; }
+.onb-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--o-faint); }
+.onb-grad-text { background: var(--o-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.onb-muted { color: var(--o-muted); }
+.onb-faint { color: var(--o-faint); }
+
+/* frosted glass surface */
+.onb-glass {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.82), rgb(255 255 255 / 0.56));
+  border: 1px solid rgb(255 255 255 / 0.95);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgb(20 30 60 / 0.04),
+    0 18px 44px -24px rgb(60 70 140 / 0.32);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5);
+  backdrop-filter: blur(22px) saturate(1.5);
+  border-radius: 22px;
+}
+
+/* selectable cards and chips */
+.onb-choice {
+  position: relative;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.74), rgb(255 255 255 / 0.48));
+  border: 1px solid rgb(255 255 255 / 0.95);
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgb(20 30 60 / 0.04), 0 10px 26px -18px rgb(60 70 140 / 0.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  color: var(--o-ink-2);
+  transition: box-shadow 0.25s ease, background 0.25s ease, color 0.2s ease;
+}
+.onb-choice:hover { background: rgb(255 255 255 / 0.9); color: var(--o-ink); }
+.onb-choice[aria-checked="true"] {
+  background: #fff;
+  color: var(--o-ink);
+  box-shadow:
+    0 0 0 2px rgb(255 255 255),
+    0 0 0 3.5px rgb(47 140 255 / 0.85),
+    0 14px 34px -14px rgb(47 140 255 / 0.55);
+}
+.onb-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  color: #3e4a8a;
+  background: linear-gradient(135deg, #d9efff, #e8e1ff 55%, #ffe4d8);
+  box-shadow: inset 0 1px 0 #fff, 0 6px 14px -8px rgb(80 80 180 / 0.4);
+}
+[aria-checked="true"] > .onb-icon { color: #fff; background: linear-gradient(135deg, #2f8cff, #7a6cff); box-shadow: 0 8px 18px -8px rgb(80 100 255 / 0.7); }
+.onb-tick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(135deg, #2f8cff, #7a6cff);
+  box-shadow: 0 4px 10px -4px rgb(80 100 255 / 0.8);
+}
+.onb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 15px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.onb-chip[aria-checked="true"] {
+  background: #f3f8ff;
+  box-shadow: inset 0 0 0 1.5px rgb(47 140 255 / 0.75), 0 8px 18px -12px rgb(47 140 255 / 0.7);
+}
+
+/* buttons */
+.onb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-size: 14.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: transform 0.18s ease, box-shadow 0.25s ease, background 0.2s ease, opacity 0.2s ease;
+}
+.onb-btn:disabled { opacity: 0.38; cursor: default; }
+.onb-btn-primary {
+  color: #fff;
+  background: linear-gradient(180deg, #1b2438, #0b1220);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 10px 24px -10px rgb(11 18 32 / 0.6), 0 2px 4px rgb(11 18 32 / 0.12);
+}
+.onb-btn-primary:hover:not(:disabled) { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), 0 16px 32px -12px rgb(80 90 255 / 0.55), 0 2px 4px rgb(11 18 32 / 0.12); }
+.onb-btn-soft {
+  color: var(--o-ink-2);
+  background: rgb(255 255 255 / 0.7);
+  border: 1px solid rgb(255 255 255 / 0.95);
+  box-shadow: inset 0 1px 0 #fff, 0 6px 16px -10px rgb(60 70 140 / 0.35);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.onb-btn-soft:hover:not(:disabled) { background: #fff; color: var(--o-ink); }
+.onb-link { color: var(--o-blue); font-weight: 500; }
+.onb-link:hover { text-decoration: underline; }
+
+/* inputs */
+.onb-field {
+  width: 100%;
+  border-radius: 18px;
+  border: 1px solid rgb(20 40 80 / 0.08);
+  background: rgb(255 255 255 / 0.85);
+  color: var(--o-ink);
+  outline: none;
+  box-shadow: inset 0 1px 2px rgb(20 30 60 / 0.04);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.onb-field::placeholder { color: #a3acbb; }
+.onb-field:focus { border-color: rgb(47 140 255 / 0.55); box-shadow: 0 0 0 4px rgb(47 140 255 / 0.14); }
+
+/* a physical-looking key */
+.onb-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  margin: 0 2px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--o-ink);
+  background: linear-gradient(180deg, #fff, #eef1f8);
+  border: 1px solid rgb(20 40 80 / 0.12);
+  box-shadow: 0 2px 0 rgb(20 40 80 / 0.14), 0 6px 12px -8px rgb(20 40 80 / 0.4);
+  vertical-align: middle;
+}
+.onb-key-big { min-width: 64px; height: 56px; font-size: 22px; border-radius: 14px; box-shadow: 0 4px 0 rgb(20 40 80 / 0.16), 0 14px 26px -12px rgb(20 40 80 / 0.45); }
+.onb-key-big[data-down="true"] {
+  transform: translateY(3px);
+  color: #fff;
+  background: linear-gradient(135deg, #2f8cff, #7a6cff);
+  border-color: transparent;
+  box-shadow: 0 1px 0 rgb(20 40 80 / 0.2), 0 14px 30px -10px rgb(80 100 255 / 0.75);
+}
+
+/* the hardware notch (always black) */
+.onb-notch { background: #05070c; color: #fff; }
+
+/* progress rail */
+.onb-dot { height: 6px; border-radius: 999px; transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* finale: the signature */
+.onb-sig-ink { filter: drop-shadow(0 6px 18px rgb(110 100 255 / 0.35)); }
+.onb-shine {
+  background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.85) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: onb-shine 1.4s ease 1 both;
+}
+@keyframes onb-shine { from { background-position: 120% 0; } to { background-position: -40% 0; } }
+
+/* embedded app components (selects, keys, typing test) use the light theme tokens */
+.onb .glass, .onb .glass-strong { box-shadow: inset 0 1px 0 #fff, 0 10px 26px -18px rgb(60 70 140 / 0.35); }
+
+@media (prefers-reduced-motion: reduce) {
+  .onb-shine { animation: none; }
+  .onb-dot { transition: none; }
+}

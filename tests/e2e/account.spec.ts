@@ -9,7 +9,7 @@ const invoke = (page: Page, cmd: string, args: Record<string, unknown> = {}) =>
 const calls = (page: Page, cmd: string) => page.evaluate((c) => (window as any).__floMock.calls.filter((x: any) => x.cmd === c).map((x: any) => x.args), cmd);
 const step = (page: Page, s: string) => expect(page.locator('[data-testid="onboarding"]')).toHaveAttribute("data-step", s);
 
-test("sign in → wow demo → one question → personalised prompt saved → glimpses → done", async ({ page }) => {
+test("sign in → hello → try-out → playful questions → personalised prompt saved → setup → signature finale", async ({ page }) => {
   test.slow(); // long cinematic walkthrough with animations; headroom under parallel load
   await page.goto("/?onboard=1#/home");
   await mock(page);
@@ -26,85 +26,104 @@ test("sign in → wow demo → one question → personalised prompt saved → gl
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(gate).toHaveCount(0);
 
-  // welcome
+  const ob = page.locator('[data-testid="onboarding"]');
+  const btn = (name: string) => ob.getByRole("button", { name, exact: true });
+  // no generic Skip anywhere in setup
+  await expect(ob.getByRole("button", { name: /skip/i })).toHaveCount(0);
+
+  // hello: Notchling + the name question (prefilled from the account)
   await step(page, "welcome");
-  await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Get started" }).click();
+  await expect(btn("Back")).toHaveCount(0);
+  await expect(ob.locator('[data-testid="onboard-guide"]')).toBeVisible();
+  await expect(ob.getByLabel("Your name")).toHaveValue("Priya");
+  await btn("Let's begin").click();
 
-  // the wow: dictation before any question (simulated in preview); auto-advances on success
+  // the try-out: dictation before any question (simulated in preview); auto-advances on success
   await step(page, "try");
-  await page.getByRole("button", { name: "Simulate (preview)" }).click();
-  await expect(page.getByLabel("Demo text box")).toHaveValue(/Hello Flo, this is my first dictation/);
-  await expect(page.locator('[data-testid="demo-success"]')).toBeVisible();
+  await expect(btn("I'll try it later")).toBeVisible();
+  await btn("Simulate (preview)").click();
+  await expect(ob.getByLabel("Demo text box")).toHaveValue(/Hello Flo, this is my first dictation/);
+  await expect(ob.locator('[data-testid="demo-success"]')).toBeVisible();
 
-  // one light question: name (prefilled) + use tiles
-  await step(page, "profile");
-  await expect(page.getByLabel("Your name")).toHaveValue("Priya");
-  await page.getByRole("checkbox", { name: "Coding prompts" }).click();
-  await page.getByRole("checkbox", { name: "Slack & chat" }).click();
-  await expect(page.getByRole("checkbox", { name: "Coding prompts" })).toHaveAttribute("aria-checked", "true");
-  await page.getByRole("button", { name: "Continue" }).click();
+  // what you do: one tap picks and moves on
+  await step(page, "role");
+  await ob.getByRole("radio", { name: "I build software" }).click();
 
-  // personalise: generated from derived role (developer) + uses; editable; saved
+  // where your voice goes + apps
+  await step(page, "uses");
+  await ob.getByRole("checkbox", { name: "Coding prompts" }).click();
+  await ob.getByRole("checkbox", { name: "Slack & chat" }).click();
+  await expect(ob.getByRole("checkbox", { name: "Coding prompts" })).toHaveAttribute("aria-checked", "true");
+  await ob.locator('[data-testid="apps"]').getByRole("checkbox", { name: "Notion" }).click();
+  await btn("Continue").click();
+
+  // languages + tone
+  await step(page, "voice");
+  await ob.locator('[data-testid="languages"]').getByRole("checkbox", { name: "English" }).click();
+  await ob.getByRole("radio", { name: "Crisp" }).click();
+  await btn("Continue").click();
+
+  // personalise: generated from role + uses + tone; editable; saved
   await step(page, "personalise");
-  await expect(page.locator('[data-testid="personalising"]')).toBeVisible();
-  const prompt = page.getByLabel("System prompt");
+  await expect(ob.locator('[data-testid="personalising"]')).toBeVisible();
+  const prompt = ob.getByLabel("System prompt");
   await expect(prompt).toHaveValue(/Priya/);
   await prompt.click(); // focus switches from the typewriter preview to the full editable prompt
   await expect(prompt).toHaveValue(/software developer/);
   await expect(prompt).toHaveValue(/coding agents/);
-  await expect(page.locator('[data-testid="seeds"]')).toContainText("Claude Code");
-  await expect(page.locator('[data-testid="seeds"]')).toContainText("TypeScript");
+  await expect(prompt).toHaveValue(/crisp and direct/);
+  await expect(ob.locator('[data-testid="seeds"]')).toContainText("Claude Code");
+  await expect(ob.locator('[data-testid="seeds"]')).toContainText("Notion");
   await prompt.fill((await prompt.inputValue()) + "\nKeep replies short.");
-  await page.getByRole("button", { name: "Save & continue" }).click();
+  await btn("Save & continue").click();
 
   await step(page, "permissions");
   const set = await invoke(page, "get_settings");
   expect(set.userName).toBe("Priya");
-  expect(set.language).toBe("auto");
+  expect(set.language).toBe("en");
   expect(set.systemPrompt).toMatch(/Keep replies short\.$/);
   const dict = (await invoke(page, "list_dictionary")).map((d: any) => d.word);
-  expect(dict).toEqual(expect.arrayContaining(["Claude Code", "TypeScript"]));
+  expect(dict).toEqual(expect.arrayContaining(["Claude Code", "TypeScript", "Notion"]));
+  // a way forward even when a permission is still missing
+  await expect(ob.locator('[data-testid="perm-row"]')).toHaveCount(4);
+  await ob.getByRole("button", { name: /I'll do this later|Continue/ }).first().click();
 
   // voice + ai condensed into one step
-  await page.getByRole("button", { name: "Continue" }).click();
   await step(page, "setup");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await btn("Continue").click();
 
-  // optional glimpses
-  await step(page, "glimpse-handsfree");
-  await page.getByRole("button", { name: "Simulate (preview)" }).click();
-  await expect(page.locator('[data-testid="demo-success"]')).toBeVisible();
-  await step(page, "glimpse-ask"); // auto-advances after success
-  await page.getByRole("button", { name: "Skip", exact: true }).click();
-  await step(page, "glimpse-tray");
-  await page.getByRole("button", { name: "Show me" }).click();
-  await expect(page.locator('[data-testid="tray-preview"]')).toBeVisible();
-  await page.getByRole("button", { name: "Skip", exact: true }).click();
-  await step(page, "glimpse-meetings");
-  await page.getByRole("button", { name: "Continue" }).click();
+  // superpowers: optional mini demos in one step
+  await step(page, "powers");
+  await btn("Simulate (preview)").click();
+  await expect(ob.locator('[data-testid="demo-success"]')).toBeVisible();
+  await ob.getByRole("tab", { name: "Agent tray" }).click();
+  await btn("Show me").click();
+  await expect(ob.locator('[data-testid="tray-preview"]')).toBeVisible();
+  await btn("Continue").click();
 
-  // optional typing offer; Back chevron returns to the previous step
+  // optional typing offer; Back returns to the previous step
   await step(page, "typing");
-  await expect(page.locator('[data-testid="typing-offer"]')).toBeVisible();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await step(page, "glimpse-meetings");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(ob.locator('[data-testid="typing-offer"]')).toBeVisible();
+  await btn("Back").click();
+  await step(page, "powers");
+  await btn("Continue").click();
   await step(page, "typing");
   // "Measure now" starts the test inline (not a navigate-away dead-end)
-  await page.getByRole("button", { name: "Measure now" }).click();
-  await expect(page.locator('[data-testid="typing-inline"]')).toBeVisible();
-  await expect(page.locator('[data-testid="typing-passage"]')).toBeVisible();
-  await page.getByRole("button", { name: "Skip", exact: true }).click();
+  await btn("Measure now").click();
+  await expect(ob.locator('[data-testid="typing-inline"]')).toBeVisible();
+  await expect(ob.locator('[data-testid="typing-passage"]')).toBeVisible();
+  await btn("I'll do this later").click();
 
-  // done
+  // ready, then the signature finale opens the app
   await step(page, "done");
-  await expect(page.locator('[data-testid="cheatsheet"]')).toContainText("Hands-free");
-  await page.getByRole("button", { name: "Start using Flo" }).click();
-  await expect(page.locator('[data-testid="onboarding"]')).toHaveCount(0);
+  await expect(ob.locator('[data-testid="cheatsheet"]')).toContainText("Hands-free");
+  await expect(page.getByText(/[—–]/)).toHaveCount(0);
+  await btn("Start using Flo").click();
+  await expect(ob.locator('[data-testid="finale"]')).toBeVisible();
+  await expect(ob.locator('[data-testid="finale"]')).toHaveAttribute("aria-label", "Invented by Naman");
+  await expect(page.locator('[data-testid="onboarding"]')).toHaveCount(0, { timeout: 8000 });
   await expect.poll(async () => (await invoke(page, "get_settings")).onboarded).toBe(true);
   await expect(page.getByRole("heading", { name: /Good (morning|afternoon|evening)|Working late/ })).toBeVisible();
-  await expect(page.getByText(/[—–]/)).toHaveCount(0);
 });
 
 test("Continue with Google: waiting state, bad code → friendly error, pasted code signs in", async ({ page }) => {
@@ -167,19 +186,20 @@ test("Settings → Account shows the user and Sign out returns to the gate", asy
   await expect(page.locator('[data-testid="signin"]')).toBeVisible();
 });
 
-test("onboarding: no Back on step 1; Back chevron and a progress dot jump to earlier steps", async ({ page }) => {
+test("onboarding: no Back on step 1; Back and a progress dot jump to earlier steps", async ({ page }) => {
   await page.goto("/?signedin=1&onboard=1#/home");
   await mock(page);
+  const ob = page.locator('[data-testid="onboarding"]');
   await step(page, "welcome");
-  await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Get started" }).click();
+  await expect(ob.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
+  await ob.getByRole("button", { name: "Let's begin" }).click();
   await step(page, "try");
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await ob.getByRole("button", { name: "Back", exact: true }).click();
   await step(page, "welcome");
-  // advance past the wow demo, then a progress dot jumps back to the first step
-  await page.getByRole("button", { name: "Get started" }).click();
-  await page.getByRole("button", { name: "Simulate (preview)" }).click();
-  await step(page, "profile");
-  await page.getByRole("button", { name: "Welcome", exact: true }).click();
+  // advance past the try-out, then a progress dot jumps back to the first step
+  await ob.getByRole("button", { name: "Let's begin" }).click();
+  await ob.getByRole("button", { name: "I'll try it later" }).click();
+  await step(page, "role");
+  await ob.getByRole("button", { name: "Welcome", exact: true }).click();
   await step(page, "welcome");
 });
