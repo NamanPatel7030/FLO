@@ -8,11 +8,14 @@
 #   1. sets the version in tauri.conf.json, Cargo.toml and package.json
 #   2. builds Flo.app and signs it with the stable local identity (permissions survive the update)
 #   3. packs Flo_<v>_<arch>.app.tar.gz and signs it with the update key (~/.flo-signing/updater.key)
-#   4. publishes it: website/public/releases/<v>/ + website/releases/latest.json (served by
-#      website/app/api/updates/...). Deploy the website and every user gets the update.
+#   4. builds the installer DMG (scripts/make-dmg.sh) under a stable name, Flo-mac-<arch>.dmg
+#   5. publishes GitHub Release v<version> on NamanPatel7030/FLO with the bundle, latest.json and
+#      the DMG. The website's update server reads latest.json from the newest release and the
+#      Download button points at releases/latest/download/Flo-mac-arm64.dmg, so nothing else
+#      needs deploying. The release notes double as the public changelog (/changelog).
 #
-# Hosting the file elsewhere (GitHub Releases, S3, ...): set RELEASE_BASE_URL to the folder URL,
-# upload the .tar.gz there, and latest.json points at it instead.
+# NO_PUBLISH=1 builds everything locally without creating the GitHub release.
+# RELEASE_BASE_URL overrides where latest.json says the bundle lives.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -30,6 +33,8 @@ APP="src-tauri/target/release/bundle/macos/Flo.app"
 bash scripts/sign-mac.sh "$APP"
 
 case "$(uname -m)" in arm64) ARCH=aarch64 ;; *) ARCH=x86_64 ;; esac
+REPO="${RELEASE_REPO:-NamanPatel7030/FLO}"
+export RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://github.com/$REPO/releases/download/v$VERSION}"
 NAME="Flo_${VERSION}_${ARCH}.app.tar.gz"
 OUT="website/public/releases/$VERSION"
 mkdir -p "$OUT"
@@ -39,9 +44,33 @@ npx tauri signer sign -f "$KEY" -p "" "$OUT/$NAME" >/dev/null
 [ -f "$OUT/$NAME.sig" ] || { echo "Signing the update failed"; exit 1; }
 
 python3 scripts/write-release-manifest.py "$VERSION" "darwin-$ARCH" "$NAME" "$OUT/$NAME.sig" "$NOTES"
+
+DMG_ARCH=$([ "$ARCH" = aarch64 ] && echo arm64 || echo x86_64)
+DMG="$OUT/Flo-mac-$DMG_ARCH.dmg"
+if command -v "${DMGBUILD:-dmgbuild}" >/dev/null 2>&1; then
+  bash scripts/make-dmg.sh "$APP" "$DMG"
+else
+  echo "dmgbuild not found (pip install dmgbuild); skipping the installer DMG"
+  DMG=""
+fi
+
 echo
-echo "Published Flo $VERSION for darwin-$ARCH"
-echo "  file:     $OUT/$NAME ($(du -h "$OUT/$NAME" | cut -f1))"
+echo "Built Flo $VERSION for darwin-$ARCH"
+echo "  update:   $OUT/$NAME ($(du -h "$OUT/$NAME" | cut -f1))"
 echo "  manifest: website/releases/latest.json"
-[ -n "${RELEASE_BASE_URL:-}" ] && echo "  upload $OUT/$NAME to $RELEASE_BASE_URL/ before users update"
-echo "Deploy the website; installed copies offer the update within a few hours (or on Check for updates)."
+[ -n "$DMG" ] && echo "  install:  $DMG"
+
+if [ "${NO_PUBLISH:-}" = "1" ]; then
+  echo "NO_PUBLISH=1: not creating the GitHub release."
+  exit 0
+fi
+cp website/releases/latest.json "$OUT/latest.json"
+ASSETS=("$OUT/$NAME" "$OUT/$NAME.sig" "$OUT/latest.json")
+[ -n "$DMG" ] && ASSETS+=("$DMG")
+gh release create "v$VERSION" -R "$REPO" --target "$(git rev-parse --abbrev-ref HEAD | sed 's/^worktree-//')" \
+  --title "Flo $VERSION" --notes "${NOTES:-Flo $VERSION}" --latest "${ASSETS[@]}"
+# the local manifest would shadow the published one on a dev server; keep it out of the way
+rm -f website/releases/latest.json
+echo
+echo "Published https://github.com/$REPO/releases/tag/v$VERSION"
+echo "Installed copies offer the update at their next check (within a few hours, or Check for updates)."

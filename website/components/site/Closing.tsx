@@ -372,6 +372,7 @@ export function SiteFooter() {
               <a href="/#features" className="mut hover:text-[var(--v2-ink)]">Features</a>
               <a href="/#compare" className="mut hover:text-[var(--v2-ink)]">Compare</a>
               <Link href="/download" className="mut hover:text-[var(--v2-ink)]">Download</Link>
+              <Link href="/changelog" className="mut hover:text-[var(--v2-ink)]">What&apos;s new</Link>
             </div>
             <div className="flex flex-col gap-2.5">
               <span className="font-semibold ink">Company</span>
