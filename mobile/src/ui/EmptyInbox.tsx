@@ -13,8 +13,8 @@ export function EmptyInbox({ away }: { away: boolean }) {
       <Text style={[type.title, styles.title]}>You're all caught up</Text>
       <Text style={[type.body, styles.text]}>
         {away
-          ? 'Nothing new from your Mac yet. Claude results, to-dos, reminders and summaries will land here.'
-          : "When you're Away, Claude results, to-dos, reminders and meeting summaries from your Mac land here."}
+          ? 'Nothing new from your computer yet. Claude results, to-dos, reminders and summaries will land here.'
+          : "When you're Away, Claude results, to-dos, reminders and meeting summaries from your computer land here."}
       </Text>
     </View>
   );

@@ -148,7 +148,7 @@ export function PresenceCard({
             <View style={[styles.dot, { backgroundColor: accent }]} />
           </View>
           <Text style={[type.micro, { color: away ? onAway : colors.inkMuted }]}>
-            {presence ? (away ? 'Away from your Mac' : 'At your Mac') : 'Checking…'}
+            {presence ? (away ? 'Away from your computer' : 'At your computer') : 'Checking…'}
           </Text>
         </View>
         {busy ? (
@@ -167,8 +167,8 @@ export function PresenceCard({
 
       <Text style={[type.body, styles.explain, away && { color: onAwaySoft }]}>
         {away
-          ? "While you're Away, Flo sends your Mac's updates here."
-          : "You're at your Mac, so updates stay there. Switch to Away when you step out. Your Mac does it by itself when you go idle."}
+          ? "While you're Away, Flo sends your computer's updates here."
+          : "You're at your computer, so updates stay there. Switch to Away when you step out. Your computer does it by itself when you go idle."}
       </Text>
 
       <Segmented value={presence?.status ?? 'active'} onChange={onChange} disabled={!presence || busy} />

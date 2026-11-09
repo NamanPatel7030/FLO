@@ -52,7 +52,7 @@ export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; on
 
   const permCopy =
     perm.state === 'granted'
-      ? { label: 'Allowed', color: colors.green, text: 'Flo can alert you when your Mac has something for you.' }
+      ? { label: 'Allowed', color: colors.green, text: 'Flo can alert you when your computer has something for you.' }
       : perm.state === 'unsupported'
         ? { label: 'Unavailable', color: colors.inkMuted, text: 'Notifications are only available on Android.' }
         : {
@@ -226,7 +226,7 @@ export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; on
         onPress={async () => {
           const ok = await confirm(
             'Unpair this phone?',
-            'You will stop getting updates here until you pair again from your Mac.',
+            'You will stop getting updates here until you pair again from your computer.',
             'Unpair',
           );
           if (!ok) return;

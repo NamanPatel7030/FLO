@@ -139,7 +139,7 @@ export function kindLabel(kind: string | null | undefined): string {
     case 'meeting_summary':
       return 'Meeting summary';
     case 'flo_answer':
-      return 'Flo · Your Mac answered';
+      return 'Flo · Your computer answered';
     default:
       return 'Flo';
   }

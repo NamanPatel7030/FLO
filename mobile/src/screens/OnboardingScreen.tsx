@@ -140,7 +140,7 @@ export function OnboardingScreen({ onScan, onEnterCode, error }: { onScan: () =>
               Hi, I'm <Text style={styles.serif}>Flo.</Text>
             </Text>
             <Text style={[type.body, { marginTop: 12 }]}>
-              I live in your Mac's notch. On your phone, I keep you posted while you're away, answer questions and take your notes by voice.
+              I live on your computer. On your phone, I keep you posted while you're away, answer questions and take your notes by voice.
             </Text>
           </View>
         )}
@@ -148,13 +148,13 @@ export function OnboardingScreen({ onScan, onEnterCode, error }: { onScan: () =>
         {page === 1 && (
           <View style={{ marginTop: 14 }}>
             <Text style={[type.display, styles.headline]}>
-              Your Mac, <Text style={styles.serif}>in your pocket.</Text>
+              Your computer, <Text style={styles.serif}>in your pocket.</Text>
             </Text>
             <View style={{ gap: 10, marginTop: 18 }}>
               <Feature delay={80} icon="claude" title="Know when work is done" body="Claude finished, to-dos due, reminders and meeting notes, while you're Away." />
-              <Feature delay={160} icon="sparkle" title="Ask Flo by voice" body="Your Mac answers with your own assistant and your own data." />
-              <Feature delay={240} icon="mic" title="Dictate on the go" body="Speak a to-do or a note and it lands on your Mac." />
-              <Feature delay={320} icon="moon" title="Away mode" body="Lock your Mac and updates follow you here. Come back and they stop." />
+              <Feature delay={160} icon="sparkle" title="Ask Flo by voice" body="Your computer answers with your own assistant and your own data." />
+              <Feature delay={240} icon="mic" title="Dictate on the go" body="Speak a to-do or a note and it lands on your computer." />
+              <Feature delay={320} icon="moon" title="Away mode" body="Lock your computer and updates follow you here. Come back and they stop." />
             </View>
           </View>
         )}
@@ -168,9 +168,9 @@ export function OnboardingScreen({ onScan, onEnterCode, error }: { onScan: () =>
               {allGranted ? 'All set. Thank you!' : anyDenied ? 'No problem. You can turn these on later in Settings.' : 'Each one has a single job. Nothing is recorded or shared without you.'}
             </Text>
             <View style={{ gap: 10, marginTop: 16 }}>
-              <PermRow testID="allow-camera" icon="qr" title="Camera" body="Only to scan the pairing code on your Mac." state={cam} onPress={() => void askCamera()} />
+              <PermRow testID="allow-camera" icon="qr" title="Camera" body="Only to scan the pairing code on your computer." state={cam} onPress={() => void askCamera()} />
               <PermRow testID="allow-mic" icon="mic" title="Microphone" body="Only while you hold Ask or Dictate." state={mic} onPress={() => void askMic()} />
-              <PermRow testID="allow-notifications" icon="bell" title="Notifications" body="Updates from your Mac while you're Away." state={notif} onPress={() => void flo.requestPermission()} />
+              <PermRow testID="allow-notifications" icon="bell" title="Notifications" body="Updates from your computer while you're Away." state={notif} onPress={() => void flo.requestPermission()} />
             </View>
           </View>
         )}
@@ -178,9 +178,9 @@ export function OnboardingScreen({ onScan, onEnterCode, error }: { onScan: () =>
         {page === 3 && (
           <View style={{ marginTop: 14 }}>
             <Text style={[type.display, styles.headline]}>
-              Let's meet <Text style={styles.serif}>your Mac.</Text>
+              Let's meet <Text style={styles.serif}>your computer.</Text>
             </Text>
-            <Text style={[type.body, { marginTop: 10 }]}>On your Mac, open Flo, then Settings, General, Your phones, and click Pair your Android phone.</Text>
+            <Text style={[type.body, { marginTop: 10 }]}>On your computer, open Flo, then Settings, General, Your phones, and click Pair your Android phone.</Text>
             {!!error && (
               <View style={styles.error}>
                 <Text style={styles.errorText}>{error}</Text>
@@ -207,7 +207,7 @@ export function OnboardingScreen({ onScan, onEnterCode, error }: { onScan: () =>
         </View>
       ) : (
         <View style={{ gap: 10 }}>
-          <PrimaryButton testID="scan" label="Pair with your Mac" icon={<QrGlyph color={colors.onPrimary} />} onPress={onScan} />
+          <PrimaryButton testID="scan" label="Pair with your computer" icon={<QrGlyph color={colors.onPrimary} />} onPress={onScan} />
           <GlassButton testID="enter-code" label="Enter code instead" icon={<Icon name="keypad" size={18} color={colors.inkSoft} />} onPress={onEnterCode} />
         </View>
       )}

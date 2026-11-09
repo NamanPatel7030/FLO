@@ -150,7 +150,7 @@ export function CustomizeScreen({ onBack }: { onBack: () => void }) {
           <Toggle value={a.cheeks} label="Rosy cheeks" onChange={(cheeks) => setA({ cheeks })} />
         </View>
       </GlassCard>
-      <Text style={styles.footnote}>Saved on this phone. Your Mac has its own avatar in Settings, Appearance.</Text>
+      <Text style={styles.footnote}>Saved on this phone. Your computer has its own avatar in Settings, Appearance.</Text>
     </ScrollView>
   );
 }

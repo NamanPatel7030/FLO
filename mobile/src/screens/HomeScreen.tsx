@@ -114,7 +114,7 @@ export function HomeScreen({ onSettings, onVoice }: { onSettings: () => void; on
                 <Icon name="sparkle" size={20} color={colors.onPrimary} />
                 <View>
                   <Text style={styles.askTitle}>Ask Flo</Text>
-                  <Text style={styles.askSub}>Your Mac answers</Text>
+                  <Text style={styles.askSub}>Your computer answers</Text>
                 </View>
               </View>
             </Pressable>

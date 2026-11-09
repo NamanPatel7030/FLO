@@ -146,6 +146,9 @@ export async function claimPairing(
   await db.begin(async (tx) => {
     // an FCM token belongs to one device: move it if another (re-installed) device had it
     if (pushToken) await tx`update app.mobile_devices set push_token = null where push_token = ${pushToken}`;
+    // re-pairing the same phone replaces its old entry (and signs the old pairing out),
+    // so the desktop doesn't list one phone several times
+    await tx`delete from app.mobile_devices where user_id = ${user.id} and name = ${deviceName} and platform = ${platform}`;
     await tx`
       insert into app.mobile_devices (user_id, name, platform, token_hash, push_token)
       values (${user.id}, ${deviceName}, ${platform}, ${hashSecret("device", deviceToken)}, ${pushToken})`;

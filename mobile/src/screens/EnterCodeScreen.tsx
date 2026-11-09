@@ -42,7 +42,7 @@ export function EnterCodeScreen({
 
   async function submit() {
     if (!serverUrl) return setError('That server address looks wrong. Leave it as flo.hellonaman.com unless you run your own.');
-    if (!isValidCode(code)) return setError('The code is 6 digits. It is shown under the QR code on your Mac.');
+    if (!isValidCode(code)) return setError('The code is 6 digits. It is shown under the QR code on your computer.');
     setBusy(true);
     setError(null);
     try {
@@ -55,7 +55,7 @@ export function EnterCodeScreen({
             : `Couldn't reach ${serverUrl}. Check the address under Advanced, or switch back to flo.hellonaman.com.`,
         );
       } else if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 404)) {
-        setError('That code is wrong or has expired. Make a new one on your Mac (codes last 5 minutes).');
+        setError('That code is wrong or has expired. Make a new one on your computer (codes last 5 minutes).');
       } else {
         setError(e instanceof Error ? e.message : 'Pairing failed.');
       }
@@ -82,7 +82,7 @@ export function EnterCodeScreen({
         <Text style={[type.micro, { marginTop: 22 }]}>Pair manually</Text>
         <Text style={[type.display, { marginTop: 8 }]}>Enter your code</Text>
         <Text style={[type.body, { marginTop: 10 }]}>
-          Find the 6-digit code under the QR on your Mac. It expires after 5 minutes.
+          Find the 6-digit code under the QR on your computer. It expires after 5 minutes.
         </Text>
 
         <Text style={styles.label}>Pairing code</Text>

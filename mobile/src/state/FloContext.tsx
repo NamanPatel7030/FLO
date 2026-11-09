@@ -127,7 +127,7 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
   const handleError = useCallback(
     (e: unknown) => {
       if (e instanceof ApiError && e.isUnauthorized) {
-        void signOutLocally('This phone was unpaired from your Mac. Pair again to keep getting updates.');
+        void signOutLocally('This phone was unpaired from your computer. Pair again to keep getting updates.');
         return;
       }
       setError(e instanceof Error ? e.message : String(e));
@@ -271,7 +271,7 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
       const s: Session = { server: res.server, deviceToken: res.deviceToken, user: res.user };
       if (!mockApi) await storage.saveSession(s);
       setSession(s);
-      setPairedNotice(res.user.name ? `Paired with ${res.user.name.split(' ')[0]}'s Mac` : 'Paired with your Mac');
+      setPairedNotice(res.user.name ? `Paired with ${res.user.name.split(' ')[0]}'s computer` : 'Paired with your computer');
       // Ask for notification permission right after a successful pair.
       if (!mockApi) setPermission(await askPermission().catch(() => permission));
     },

@@ -172,7 +172,7 @@ export async function showQuickActions(): Promise<void> {
     identifier: QUICK_ID,
     content: {
       title: 'Flo is ready',
-      body: 'Ask your Mac anything, or dictate a note or to-do.',
+      body: 'Ask your computer anything, or dictate a note or to-do.',
       categoryIdentifier: QUICK_CATEGORY,
       data: { kind: QUICK_KIND },
       sticky: true,

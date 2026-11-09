@@ -128,7 +128,7 @@ export function ScanScreen({
                 </View>
               )}
             </View>
-            <Text style={styles.caption}>Point your camera at the QR code on your Mac</Text>
+            <Text style={styles.caption}>Point your camera at the QR code on your computer</Text>
           </>
         ) : (
           <GlassCard style={styles.permCard}>

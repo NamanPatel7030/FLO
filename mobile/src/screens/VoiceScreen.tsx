@@ -15,9 +15,9 @@ import { Notchling, type Mood } from '../ui/Notchling';
 import { colors, fonts, radius, themed, type } from '../ui/theme';
 
 const MODES: { id: AskMode; label: string; icon: IconName; hint: string }[] = [
-  { id: 'ask', label: 'Ask Flo', icon: 'sparkle', hint: 'Your Mac answers with your own assistant.' },
-  { id: 'todo', label: 'To-do', icon: 'todos', hint: 'Added to your to-dos on the Mac.' },
-  { id: 'note', label: 'Note', icon: 'note', hint: 'Saved to Notes on the Mac.' },
+  { id: 'ask', label: 'Ask Flo', icon: 'sparkle', hint: 'Your computer answers with your own assistant.' },
+  { id: 'todo', label: 'To-do', icon: 'todos', hint: 'Added to your to-dos on your computer.' },
+  { id: 'note', label: 'Note', icon: 'note', hint: 'Saved to Notes on your computer.' },
 ];
 
 /** Poll the request until the Mac answers (or give up after ~90 s). */
@@ -30,7 +30,7 @@ async function waitForAnswer(get: (id: string) => Promise<AskRequest>, id: strin
     if (last.status === 'done' || last.status === 'failed') return last;
   }
   if (last) return last;
-  throw new Error('Your Mac did not answer.');
+  throw new Error('Your computer did not answer.');
 }
 
 export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initialMode?: AskMode; autoStart?: boolean; onClose: () => void }) {
@@ -79,18 +79,18 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
     setPhase('sending');
     try {
       const api = flo.api;
-      if (!api) throw new Error('Pair with your Mac first.');
+      if (!api) throw new Error('Pair with your computer first.');
       const r = await api.ask(mode, text);
       setPhase('waiting');
       const done = await waitForAnswer((id) => api.getAsk(id), r.id, () => cancelled.current);
       setAnswer(done.answer ?? '');
       setPhase(done.status === 'done' ? 'answered' : 'failed');
-      if (done.status !== 'done' && !done.answer) setErr("Your Mac couldn't do that.");
+      if (done.status !== 'done' && !done.answer) setErr("Your computer couldn't do that.");
       void flo.refresh();
     } catch (e) {
       setErr(
-        e instanceof Error && e.message === 'Your Mac did not answer.'
-          ? "Your Mac didn't answer. Make sure Flo is open on it and signed in."
+        e instanceof Error && e.message === 'Your computer did not answer.'
+          ? "Your computer didn't answer. Make sure Flo is open on it and signed in."
           : describeError(e),
       );
       setPhase('failed');
@@ -106,9 +106,9 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
   const status = voice.listening
     ? 'Listening…'
     : phase === 'sending'
-      ? 'Sending to your Mac…'
+      ? 'Sending to your computer…'
       : phase === 'waiting'
-        ? 'Your Mac is on it…'
+        ? 'Your computer is on it…'
         : phase === 'answered'
           ? mode === 'ask'
             ? 'Flo says'
@@ -180,7 +180,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
 
       {phase === 'answered' && !!answer && (
         <GlassCard radius={radius.lg} style={styles.answer} tint={colors.sky}>
-          <Text style={type.micro}>{mode === 'ask' ? 'Answer from your Mac' : 'Your Mac'}</Text>
+          <Text style={type.micro}>{mode === 'ask' ? 'Answer from your computer' : 'Your computer'}</Text>
           <Text style={styles.answerText} testID="voice-answer">
             {answer}
           </Text>
@@ -225,13 +225,13 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
         <PrimaryButton
           testID="send"
           style={{ flex: 1.4 }}
-          label={mode === 'ask' ? 'Ask your Mac' : mode === 'todo' ? 'Add to-do' : 'Save note'}
+          label={mode === 'ask' ? 'Ask your computer' : mode === 'todo' ? 'Add to-do' : 'Save note'}
           loading={busy}
           disabled={!voice.text.trim() || voice.listening || !flo.session}
           onPress={() => void send()}
         />
       </View>
-      {!flo.session && <Text style={[type.small, { textAlign: 'center', marginTop: 10 }]}>Pair with your Mac to send. You can still copy the text.</Text>}
+      {!flo.session && <Text style={[type.small, { textAlign: 'center', marginTop: 10 }]}>Pair with your computer to send. You can still copy the text.</Text>}
     </ScrollView>
   );
 }

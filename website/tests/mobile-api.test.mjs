@@ -125,6 +125,17 @@ test("pairing: QR payload + code, single use, device token works for mobile rout
   assert.equal((await call("GET", "/api/presence", { token: dev })).status, 401);
 });
 
+test("re-pairing the same phone replaces its old entry instead of listing it twice", { skip }, async () => {
+  const { token } = await newUser();
+  const first = await pairPhone(token, "fcm-a");
+  const second = await pairPhone(token, "fcm-b");
+  const list = await call("GET", "/api/mobile/devices", { token });
+  assert.equal(list.json.length, 1, JSON.stringify(list.json));
+  // the old pairing is signed out, the new one works
+  assert.equal((await call("GET", "/api/presence", { token: first.claim.deviceToken })).status, 401);
+  assert.equal((await call("GET", "/api/presence", { token: second.claim.deviceToken })).status, 200);
+});
+
 test("phone can sign itself out", { skip }, async () => {
   const { token } = await newUser();
   const { claim } = await pairPhone(token);

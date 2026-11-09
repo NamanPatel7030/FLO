@@ -111,7 +111,7 @@ async function request<T>(
 function defaultMessage(status: number): string {
   if (status === 401 || status === 403) return 'This phone is no longer paired.';
   if (status === 404) return 'That code was not found — it may have expired.';
-  if (status === 410) return 'That code has expired. Generate a new one on your Mac.';
+  if (status === 410) return 'That code has expired. Generate a new one on your computer.';
   if (status === 429) return 'Too many attempts. Wait a moment and try again.';
   return `Server error (${status}).`;
 }
