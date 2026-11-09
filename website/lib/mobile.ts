@@ -2,6 +2,7 @@ import "server-only";
 import { createHmac, randomBytes, randomInt } from "node:crypto";
 import type postgres from "postgres";
 import { findUserById, isUuid, sql, toIso, type User } from "./db";
+import type { ActionIn, ActionKind, ComputerState } from "./desktop-state";
 import { bearer, verifyAppToken } from "./tokens";
 
 /**
@@ -167,6 +168,8 @@ export async function listDevices(userId: string): Promise<Device[]> {
 export async function removeDevice(userId: string, id: string): Promise<boolean> {
   if (!isUuid(id)) return false;
   const rows = await sql()`delete from app.mobile_devices where id = ${id} and user_id = ${userId} returning id`;
+  // the last phone is gone: nobody reads the computer's snapshot any more
+  if (rows.length > 0 && (await deviceCount(userId)) === 0) await clearDesktopState(userId);
   return rows.length > 0;
 }
 
@@ -303,4 +306,89 @@ export async function finishRequest(userId: string, id: number, ok: boolean, ans
      where user_id = ${userId} and id = ${id}
     returning id, mode, text, status, answer, created_at`;
   return rows[0] ? toRequest(rows[0] as never) : null;
+}
+
+// ── the computer's state for the phone (to-dos, approvals, settings) ─────────
+
+export type StoredState = { state: ComputerState; updatedAt: string };
+export type PhoneAction = { id: number; kind: ActionKind; target: string; value: unknown; status: string; message: string | null; createdAt: string };
+
+type ActionRow = { id: string | number; kind: ActionKind; target: string; value: unknown; status: string; message: string | null; created_at: Date };
+const toAction = (r: ActionRow): PhoneAction => ({
+  id: Number(r.id),
+  kind: r.kind,
+  target: r.target,
+  value: r.value ?? null,
+  status: r.status,
+  message: r.message,
+  createdAt: new Date(r.created_at).toISOString(),
+});
+
+/** Desktop: replace the snapshot. Stored only while a phone is paired (nothing to show otherwise). */
+export async function putDesktopState(userId: string, state: ComputerState): Promise<StoredState | null> {
+  const db = sql();
+  if ((await deviceCount(userId)) === 0) {
+    await db`delete from app.desktop_state where user_id = ${userId}`;
+    return null;
+  }
+  const rows = await db<{ updated_at: Date }[]>`
+    insert into app.desktop_state (user_id, state, updated_at) values (${userId}, ${db.json(state as postgres.JSONValue)}, now())
+    on conflict (user_id) do update set state = excluded.state, updated_at = excluded.updated_at
+    returning updated_at`;
+  return { state, updatedAt: toIso(rows[0].updated_at) };
+}
+
+/** Desktop signed out (or the user asked): forget the snapshot. */
+export async function clearDesktopState(userId: string): Promise<void> {
+  await sql()`delete from app.desktop_state where user_id = ${userId}`;
+}
+
+export async function getDesktopState(userId: string): Promise<StoredState | null> {
+  const rows = await sql()<{ state: ComputerState; updated_at: Date }[]>`
+    select state, updated_at from app.desktop_state where user_id = ${userId}`;
+  return rows[0] ? { state: rows[0].state, updatedAt: toIso(rows[0].updated_at) } : null;
+}
+
+/** Phone: queue an action for the computer. Old actions (1 day) are cleaned up on the way. */
+export async function queueAction(userId: string, deviceId: string | null, a: ActionIn): Promise<PhoneAction> {
+  const db = sql();
+  await db`delete from app.mobile_actions where user_id = ${userId} and created_at < now() - interval '1 day'`;
+  const value = a.value === null ? null : db.json(a.value as postgres.JSONValue);
+  const [r] = await db<ActionRow[]>`
+    insert into app.mobile_actions (user_id, device_id, kind, target, value) values (${userId}, ${deviceId}, ${a.kind}, ${a.target}, ${value})
+    returning id, kind, target, value, status, message, created_at`;
+  return toAction(r);
+}
+
+/** Phone: its recent actions (last 10 minutes), so it can show "sending" / "couldn't" states. */
+export async function recentActions(userId: string): Promise<PhoneAction[]> {
+  const rows = await sql()<ActionRow[]>`
+    select id, kind, target, value, status, message, created_at from app.mobile_actions
+     where user_id = ${userId} and created_at > now() - interval '10 minutes'
+     order by id desc limit 50`;
+  return rows.map(toAction);
+}
+
+/** Desktop: take pending actions (each handed out once; stale 'taken' ones retry after a minute; older than 10 minutes are dropped). */
+export async function takeActions(userId: string, limit = 20): Promise<PhoneAction[]> {
+  const rows = await sql()<ActionRow[]>`
+    update app.mobile_actions set status = 'taken', taken_at = now()
+     where id in (
+       select id from app.mobile_actions
+        where user_id = ${userId}
+          and (status = 'pending' or (status = 'taken' and taken_at < now() - interval '1 minute'))
+          and created_at > now() - interval '10 minutes'
+        order by id limit ${limit}
+        for update skip locked)
+    returning id, kind, target, value, status, message, created_at`;
+  return rows.map(toAction).sort((a, b) => a.id - b.id);
+}
+
+/** Desktop: finish an action. Returns null if it isn't this user's. */
+export async function finishAction(userId: string, id: number, ok: boolean, message: string | null): Promise<PhoneAction | null> {
+  const rows = await sql()<ActionRow[]>`
+    update app.mobile_actions set status = ${ok ? "done" : "failed"}, message = ${message}, done_at = now()
+     where user_id = ${userId} and id = ${id}
+    returning id, kind, target, value, status, message, created_at`;
+  return rows[0] ? toAction(rows[0]) : null;
 }

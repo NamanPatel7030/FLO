@@ -240,3 +240,79 @@ test("inbox keeps the newest 100 per account", { skip }, async () => {
   assert.equal(first.json.length, 100);
   assert.equal(first.json.at(-1).title, "last one");
 });
+
+test("computer state: stored only while a phone is paired, phone reads it, routes are role-bound", { skip }, async () => {
+  const { token } = await newUser();
+  const snapshot = {
+    v: 1,
+    computer: { platform: "linux", appVersion: "0.9.1" },
+    todos: { open: [{ id: "t1", title: "Call the bank", createdAt: "2026-11-09T08:00:00Z" }], done: [] },
+    approvals: [{ id: "q1", project: "api", summary: "Run: npm publish", tool: "Bash", at: "x", expiresAt: "y" }],
+    settings: [
+      { key: "playSounds", label: "Play sounds", section: "Sounds", kind: "toggle", value: true, editable: true },
+      { key: "openaiApiKey", label: "Key", section: "AI", kind: "text", value: "sk-nope", editable: false },
+    ],
+  };
+  const before = await call("POST", "/api/app/state", { token, body: snapshot });
+  assert.equal(before.status, 200);
+  assert.equal(before.json.stored, false, "no phone yet: nothing stored");
+
+  const { claim } = await pairPhone(token);
+  const dev = claim.deviceToken;
+  assert.equal((await call("POST", "/api/app/state", { token: dev, body: snapshot })).status, 401, "phone can't publish");
+  assert.equal((await call("GET", "/api/mobile/state", { token })).status, 401, "desktop token can't read the phone route");
+  const empty = await call("GET", "/api/mobile/state", { token: dev });
+  assert.equal(empty.status, 200);
+  assert.equal(empty.json.state, null);
+
+  const put = await call("POST", "/api/app/state", { token, body: snapshot });
+  assert.equal(put.json.stored, true);
+  const got = await call("GET", "/api/mobile/state", { token: dev });
+  assert.equal(got.json.state.todos.open[0].title, "Call the bank");
+  assert.equal(got.json.state.approvals[0].id, "q1");
+  assert.deepEqual(got.json.state.settings.map((s) => s.key), ["playSounds"], "secret-looking settings are dropped");
+  assert.ok(Date.parse(got.json.updatedAt));
+  assert.equal((await call("POST", "/api/app/state", { token, body: [] })).status, 400);
+
+  // unpairing the last phone forgets the snapshot
+  await call("DELETE", "/api/mobile/device", { token: dev });
+  const uid = (await call("GET", "/api/app/me", { token })).json.user.id;
+  const [{ n }] = await sql`select count(*)::int as n from app.desktop_state where user_id = ${uid}`;
+  assert.equal(n, 0);
+});
+
+test("phone actions: queued, handed to the computer once, finished, visible to the phone", { skip }, async () => {
+  const { token } = await newUser();
+  const { claim } = await pairPhone(token);
+  const dev = claim.deviceToken;
+  const bad = await call("POST", "/api/mobile/actions", { token: dev, body: { kind: "rm_rf", target: "x" } });
+  assert.equal(bad.status, 400);
+  assert.equal((await call("POST", "/api/mobile/actions", { token, body: { kind: "approve", target: "q1" } })).status, 401);
+
+  const a = await call("POST", "/api/mobile/actions", { token: dev, body: { kind: "approve", target: "q1" } });
+  assert.equal(a.status, 202);
+  assert.equal(a.json.action.status, "pending");
+  const s = await call("POST", "/api/mobile/actions", { token: dev, body: { kind: "setting", target: "playSounds", value: false } });
+  assert.equal(s.json.action.value, false);
+
+  // old desktops (no ?actions=1) never take actions
+  const old = await call("GET", "/api/app/requests", { token });
+  assert.equal(old.json.actions, undefined);
+  const take = await call("GET", "/api/app/requests?actions=1", { token });
+  assert.deepEqual(take.json.actions.map((x) => x.kind), ["approve", "setting"]);
+  assert.deepEqual(take.json.requests, []);
+  const again = await call("GET", "/api/app/requests?actions=1", { token });
+  assert.deepEqual(again.json.actions, [], "handed out once");
+
+  const fin = await call("POST", `/api/app/actions/${a.json.action.id}`, { token, body: { ok: false, message: "That question already closed." } });
+  assert.equal(fin.status, 200);
+  assert.equal((await call("POST", `/api/app/actions/${a.json.action.id}`, { token: dev, body: { ok: true } })).status, 401);
+  const st = await call("GET", "/api/mobile/state", { token: dev });
+  const mine = st.json.actions.find((x) => x.id === a.json.action.id);
+  assert.equal(mine.status, "failed");
+  assert.equal(mine.message, "That question already closed.");
+
+  // another account can't finish it
+  const other = await newUser();
+  assert.equal((await call("POST", `/api/app/actions/${s.json.action.id}`, { token: other.token, body: { ok: true } })).status, 404);
+});

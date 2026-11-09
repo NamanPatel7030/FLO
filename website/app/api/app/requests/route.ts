@@ -1,10 +1,16 @@
-import { desktopCaller, takeRequests, unauthorized } from "@/lib/mobile";
+import { desktopCaller, takeActions, takeRequests, unauthorized } from "@/lib/mobile";
 
 export const runtime = "nodejs";
 
-/** Desktop: take pending phone requests (each is handed out once) → {requests: [...]}. */
+/**
+ * Desktop: take pending phone requests (each is handed out once) → {requests: [...]}. With
+ * `?actions=1` (desktop apps that understand them) it also hands out pending phone actions →
+ * {requests, actions}, so one poll covers both.
+ */
 export async function GET(req: Request) {
   const c = await desktopCaller(req);
   if (!c) return unauthorized();
-  return Response.json({ requests: await takeRequests(c.user.id) }, { headers: { "Cache-Control": "no-store" } });
+  const withActions = new URL(req.url).searchParams.get("actions") === "1";
+  const [requests, actions] = await Promise.all([takeRequests(c.user.id), withActions ? takeActions(c.user.id) : Promise.resolve(null)]);
+  return Response.json(actions ? { requests, actions } : { requests }, { headers: { "Cache-Control": "no-store" } });
 }

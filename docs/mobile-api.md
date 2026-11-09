@@ -32,5 +32,18 @@ The desktop (`src-tauri/src/autocontinue.rs`) notices when a Claude Code session
 - After 3 resumes in a day that all hit the limit again, the desktop stops and sends `claude_needs_you` ("Claude stopped in api").
 - Proposed, not built yet (needs settings sync): `POST /api/claude/auto-continue { enabled, sessionId? }` (mobile) so a tap on a `claude_limit` notification can turn auto-continue on; the desktop would pick it up on its presence poll. Until then the phone only informs.
 
+## Your computer on the phone (to-dos, approvals, settings)
+Migration `0006_computer_state.sql`. The phone never talks to the computer directly: the computer publishes a snapshot, the phone queues actions, the computer applies them on its existing poll.
+
+- `POST /api/app/state` (desktop) `{ v: 1, computer: { platform, appVersion }, todos: { open: [...], done: [...] }, approvals: [...], waiting: [...], settings: [...] }` → `{ stored, updatedAt }`.
+  Published by `src-tauri/src/phone_state.rs` when something changes (1.2 s debounce) and every 5 min as a heartbeat, only while signed in. The server rebuilds it from known fields with caps (`website/lib/desktop-state.ts`), drops any setting whose key looks like a credential, and **stores nothing while no phone is paired** (unpairing the last phone deletes it). `DELETE /api/app/state` (desktop) forgets it.
+  - `approvals`: Claude Code permission prompts still waiting `{ id, project, summary, tool, at, expiresAt }` (the computer hands them back to the terminal after 2 min).
+  - `waiting`: sessions waiting for a typed reply `{ id, project, message, status, at }` (read-only on the phone).
+  - `settings`: an explicit allow-list `{ key, label, section, kind: toggle|select|number|text|list, value, editable, options?, min?, max?, hint? }`. Never API keys, tokens, the account URL, the system prompt or local server URLs. Privacy settings (screen awareness, cloud use) are read-only.
+- `GET /api/mobile/state` (mobile) → `{ state | null, updatedAt | null, actions: [{ id, kind, target, value, status, message, createdAt }] }` (actions from the last 10 min). The phone polls this only while the app is open.
+- `POST /api/mobile/actions` (mobile) `{ kind: todo_done | todo_reopen | approve | reject | setting, target, value? }` → 202 `{ action }`. `value` only for `setting` (boolean, number or short string).
+- `GET /api/app/requests?actions=1` (desktop) → `{ requests, actions }`: pending actions are handed out once (retried after 1 min if not finished, dropped after 10 min). Without `?actions=1` (older desktops) actions are left alone.
+- `POST /api/app/actions/:id` (desktop) `{ ok, message? }`. The computer re-checks everything: unknown to-dos, closed questions and non-editable settings fail with a message the phone shows.
+
 ## Payload size / privacy
 Titles/bodies are short summaries (e.g. "Claude finished in api — 3 files changed"), never transcripts or code.
