@@ -762,6 +762,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_cleanup_leaves_hindi_gujarati_and_hinglish_intact() {
+        for t in ["कल सुबह 10 बजे मीटिंग है, सबको याद दिला देना।", "કાલે સવારે દસ વાગ્યે મીટિંગ છે.", "Kal subah meeting hai, sabko yaad dila dena."] {
+            assert_eq!(basic_cleanup(t), t);
+        }
+        assert_eq!(basic_cleanup("um मुझे राहुल को invoice भेजना है।"), "मुझे राहुल को invoice भेजना है।");
+        let dict = vec![("राहुल".to_string(), "Rahul".to_string())];
+        assert_eq!(apply_dictionary("मुझे राहुल को invoice भेजना है।", &dict), "मुझे Rahul को invoice भेजना है।");
+    }
+
+    #[test]
     fn counts_words() {
         assert_eq!(word_count("Hello, world — it's me"), 4);
         assert_eq!(word_count("   "), 0);
