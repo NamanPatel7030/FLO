@@ -114,30 +114,34 @@ function ProjectCard({ p, onClick, onAddCode }: { p: Project; onClick: () => voi
   const total = p.openTodos + p.doneTodos;
   const pct = total ? p.doneTodos / total : 0;
   return (
-    <Card onClick={onClick} className="relative h-full overflow-hidden p-5">
-      <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-30 blur-2xl" style={{ background: p.color }} />
+    <Card onClick={onClick} className="relative isolate flex h-full flex-col overflow-hidden p-5 [clip-path:inset(0_round_16px)]">
+      {/* soft colour wash in the corner: a gradient (no blur filter), so it stays inside the rounded card */}
+      <div className="pointer-events-none absolute inset-0 -z-10" style={{ background: `radial-gradient(180px 140px at 100% 0%, ${p.color}33, transparent 70%)` }} />
       <div className="relative flex items-start justify-between">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl text-[15px] font-semibold text-white" style={{ background: p.color }}>
-          {p.name[0]}
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl text-[16px] font-semibold text-white shadow-sm" style={{ background: p.color }}>
+          {p.name[0]?.toUpperCase()}
         </div>
-        <ProgressRing value={pct} color={p.color}>
-          {Math.round(pct * 100)}%
+        <ProgressRing value={pct} color={p.color} size={48} stroke={4}>
+          <span className="text-[10.5px] tabular-nums tracking-tight">{Math.round(pct * 100)}%</span>
         </ProgressRing>
       </div>
-      <div className="relative mt-3 text-[16px] font-semibold tracking-tight">{p.name}</div>
-      {p.client && (
-        <div className="relative mt-0.5 flex items-center gap-1 text-[12px] text-brand-200">
-          <Briefcase size={11} /> {p.client}
-        </div>
-      )}
-      <div className="relative mt-0.5 line-clamp-2 min-h-[34px] text-[12.5px] text-muted">{p.description}</div>
-      <div className="relative mt-3 flex items-center justify-between">
+      <div className="relative mt-4 truncate text-[16px] font-semibold tracking-tight">{p.name}</div>
+      {/* fixed-height meta block so every card's footer lines up */}
+      <div className="relative mt-1 h-[54px]">
+        {p.client && (
+          <div className="flex items-center gap-1.5 truncate text-[12.5px] font-medium text-[var(--accent)]">
+            <Briefcase size={12} className="shrink-0" /> {p.client}
+          </div>
+        )}
+        {p.description && <div className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-muted">{p.description}</div>}
+      </div>
+      <div className="relative mt-auto flex items-center justify-between pt-3">
         <StatusPill status={p.status} />
         <span className="text-[11.5px] text-faint">
           {p.openTodos} open · {relativeTime(p.updatedAt)}
         </span>
       </div>
-      <div className="relative mt-3 flex items-center border-t border-white/[0.06] pt-3">
+      <div className="relative mt-3.5 flex items-center border-t border-[var(--border)] pt-3.5">
         <CodeChip p={p} onAdd={onAddCode} />
       </div>
     </Card>
@@ -151,21 +155,22 @@ function Drawer({ p, onClose }: { p: Project; onClose: () => void }) {
   const pnotes = notes?.filter((n) => n.projectId === p.id) ?? [];
   return (
     <>
-      <motion.div className="fixed inset-0 z-30 bg-black/30" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+      <motion.div className="fixed inset-0 z-30 bg-[rgb(15_22_40/0.25)]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
       <motion.aside
         initial={{ x: 480, opacity: 0.6 }}
         animate={{ x: 0, opacity: 1 }}
         exit={{ x: 480, opacity: 0 }}
         transition={{ type: "spring", stiffness: 380, damping: 38 }}
         // solid surface: a translucent drawer let the project cards behind it show through its fields
-        className="fixed bottom-3 right-3 top-3 z-40 flex w-[440px] flex-col overflow-clip rounded-3xl border border-white/10 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.85)]"
-        style={{ background: "linear-gradient(180deg, #0f1b27 0%, #0a121b 100%)" }}
+        // solid, theme-aware surface: a translucent drawer let the cards behind show through its fields
+        className="fixed bottom-3 right-3 top-3 z-40 flex w-[440px] flex-col overflow-clip rounded-3xl border border-[var(--border-strong)] shadow-[0_30px_80px_-24px_rgb(15_25_50/0.35)]"
+        style={{ background: "var(--sheet-bg)" }}
       >
         <div className="relative p-5">
-          <div className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full opacity-35 blur-3xl" style={{ background: p.color }} />
+          <div className="pointer-events-none absolute inset-0" style={{ background: `radial-gradient(260px 180px at 100% 0%, ${p.color}2e, transparent 70%)` }} />
           <div className="relative flex items-start justify-between">
             <div>
-              <div className="text-[20px] font-semibold tracking-tight">{p.name}</div>
+              <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">{p.name}</div>
               <div className="mt-1 text-[13px] text-muted">{p.description}</div>
             </div>
             <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:bg-[var(--glass)]">
@@ -247,7 +252,7 @@ function ClientSection({ p }: { p: Project }) {
     setKeywords(p.keywords ?? "");
   }, [p.id, p.client, p.clientDetails, p.keywords]);
   const save = (patch: { client?: string; clientDetails?: string; keywords?: string }) => api.updateProject(p.id, patch).catch(() => {});
-  const field = "w-full rounded-xl bg-[var(--glass)] px-3 py-2 text-[13px] outline-none ring-1 ring-transparent transition placeholder:text-faint focus:ring-[var(--accent)]";
+  const field = "w-full rounded-xl bg-[var(--glass)] px-3 py-2 text-[13px] outline-none ring-1 ring-[var(--border-strong)] transition placeholder:text-faint focus:ring-[var(--accent)]";
   return (
     <div className="mb-5 rounded-2xl glass p-3.5" data-testid="client-section">
       <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-faint">
