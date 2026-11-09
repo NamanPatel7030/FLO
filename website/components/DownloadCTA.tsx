@@ -108,13 +108,29 @@ export function DownloadCTA({
     };
   }, [open]);
 
-  const label =
-    os === null ? (compact ? "Get Flo" : "Download Flo") : mobile ? (compact ? "Get Flo" : "Get Flo for Mac") : compact ? OS_LABEL[os] : `Download for ${OS_LABEL[os]}`;
+  // On an Android phone the main button gets the Android app; on iPhone it points at the Mac app.
+  const android = detected === "android";
+  const label = android
+    ? compact
+      ? "Get the app"
+      : "Download for Android"
+    : os === null
+      ? compact
+        ? "Get Flo"
+        : "Download Flo"
+      : mobile
+        ? compact
+          ? "Get Flo"
+          : "Get Flo for Mac"
+        : compact
+          ? OS_LABEL[os]
+          : `Download for ${OS_LABEL[os]}`;
+  const mainHref = android ? "/api/download/android" : downloadHref(os ?? "mac");
 
   return (
     <div ref={wrap} className={`relative inline-flex ${className}`} data-os={detected ?? "unknown"}>
       <div className="btn-primary btn inline-flex items-stretch overflow-hidden p-0">
-        <a href={downloadHref(os ?? "mac")} className={`inline-flex items-center gap-2 ${PAD[size]}`} data-testid={testId} data-launch={OS_LABEL[os ?? "mac"]}>
+        <a href={mainHref} className={`inline-flex items-center gap-2 ${PAD[size]}`} data-testid={testId} data-launch={android ? "Android" : OS_LABEL[os ?? "mac"]}>
           <OsIcon os={os} size={size === "lg" ? 19 : size === "md" ? 17 : 15} />
           <span suppressHydrationWarning>{label}</span>
         </a>

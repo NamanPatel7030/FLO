@@ -39,6 +39,8 @@ pub enum Purpose {
     Account,
     /// the thumbnail of what's playing (Now Playing card)
     Artwork,
+    /// end-to-end encrypted sync (ciphertext only, to the account host)
+    Sync,
 }
 
 impl Purpose {
@@ -56,6 +58,7 @@ impl Purpose {
             Purpose::Mcp => "mcp server",
             Purpose::Account => "account sign-in",
             Purpose::Artwork => "now playing artwork",
+            Purpose::Sync => "encrypted sync",
         }
     }
 }
@@ -166,7 +169,7 @@ impl Egress {
     }
 
     fn is_account_host(&self, host: &str, purpose: Purpose) -> bool {
-        (purpose == Purpose::Account && self.account_host.lock().as_deref() == Some(host.to_ascii_lowercase().as_str()))
+        ((purpose == Purpose::Account || purpose == Purpose::Sync) && self.account_host.lock().as_deref() == Some(host.to_ascii_lowercase().as_str()))
             || (purpose == Purpose::Mcp && self.mcp_hosts.lock().contains(&host.to_ascii_lowercase()))
     }
 

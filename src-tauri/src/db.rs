@@ -34,6 +34,11 @@ impl Db {
         Self::init(conn)
     }
 
+    /// Direct access for generic, table-level work (encrypted sync, see sync.rs).
+    pub(crate) fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
+        f(&self.conn.lock())
+    }
+
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)

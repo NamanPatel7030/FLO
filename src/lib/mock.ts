@@ -117,7 +117,12 @@ const settings: Settings = {
   autoAway: false,
   autoAwayMinutes: 10,
   avatar: { ...DEFAULT_AVATAR },
+  sync: { enabled: false, categories: ["todos", "notes", "settings", "history"] },
 };
+
+// ── sync your data (mock): ?syncjoin=1 pretends another Mac already set Sync up ──
+const MOCK_RECOVERY = "7K2QF-M9X4D-HT8VB-3RJ6W-PZC1N-Y5GAE-QK7M2-XD9TF-4HV8R-JB3WN-6PC2K";
+const syncMock = { hasKey: false, lastSync: null as string | null, items: 0, running: false };
 
 const keys = new Set<string>(["groq"]);
 
@@ -811,6 +816,45 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       mockEmit("flo://account", { signedIn: true, user: account.user });
       return account.user;
     }
+    case "sync_status":
+      return { enabled: !!settings.sync?.enabled, categories: settings.sync?.categories ?? [], hasKey: syncMock.hasKey, running: syncMock.running, lastSync: syncMock.lastSync, lastError: null, syncedItems: syncMock.items };
+    case "sync_enable": {
+      if (!account.signedIn) throw new Error("Sign in to Flo to use Sync.");
+      if (qs().has("syncjoin") && !syncMock.hasKey) return { enabled: false, recoveryKey: null, needsRecoveryKey: true };
+      const first = !syncMock.hasKey;
+      syncMock.hasKey = true;
+      settings.sync = { enabled: true, categories: settings.sync?.categories ?? ["todos", "notes", "settings", "history"] };
+      syncMock.lastSync = new Date().toISOString();
+      syncMock.items = 1284;
+      return { enabled: true, recoveryKey: first ? MOCK_RECOVERY : null, needsRecoveryKey: false };
+    }
+    case "sync_join": {
+      const k = String((args as { recoveryKey?: string })?.recoveryKey ?? "").replace(/[^0-9a-z]/gi, "");
+      if (k.length !== 55) throw new Error("That recovery key is the wrong length. It has 55 letters and numbers.");
+      syncMock.hasKey = true;
+      settings.sync = { enabled: true, categories: settings.sync?.categories ?? ["todos", "notes", "settings", "history"] };
+      syncMock.lastSync = new Date().toISOString();
+      syncMock.items = 1284;
+      return null;
+    }
+    case "sync_disable":
+      settings.sync = { ...(settings.sync ?? { categories: [] }), enabled: false } as typeof settings.sync;
+      return null;
+    case "sync_now":
+      syncMock.lastSync = new Date().toISOString();
+      return { pulled: 3, pushed: 2, skipped: 0 };
+    case "sync_set_categories":
+      settings.sync = { enabled: !!settings.sync?.enabled, categories: (args as { categories: string[] }).categories as never };
+      return null;
+    case "sync_recovery_key":
+      if (!syncMock.hasKey) throw new Error("This Mac has no sync key yet.");
+      return MOCK_RECOVERY;
+    case "sync_delete_remote":
+      syncMock.hasKey = false;
+      syncMock.items = 0;
+      syncMock.lastSync = null;
+      settings.sync = { enabled: false, categories: settings.sync?.categories ?? [] };
+      return null;
     case "account_logout":
       account.signedIn = false;
       account.user = undefined;

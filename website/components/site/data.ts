@@ -211,7 +211,7 @@ export const CHAPTERS: Chapter[] = [
     hl: "Enforced,",
     what: "Your voice, notes and to-dos stay on your Mac in an encrypted database. Bring your own AI key, or run fully local with Ollama.",
     why: "Every network call passes through one allow-list you can see, host by host. Anything not on it is blocked.",
-    bullets: ["Your keys live in the macOS Keychain", "Fully offline mode with local models", "We never see your dictation, notes or to-dos"],
+    bullets: ["Your keys live in the macOS Keychain", "Fully offline mode with local models", "We never see your dictation, notes or to-dos, even with Sync on"],
     phases: [1600, 1600, 1600, 1600],
     still: 3,
   },

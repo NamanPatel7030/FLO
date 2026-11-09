@@ -43,6 +43,7 @@ mod vault;
 mod slack;
 mod state;
 mod stt;
+mod sync;
 mod text;
 mod updater;
 mod weather;
@@ -409,6 +410,14 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
+            commands::sync_status,
+            commands::sync_enable,
+            commands::sync_join,
+            commands::sync_disable,
+            commands::sync_now,
+            commands::sync_set_categories,
+            commands::sync_recovery_key,
+            commands::sync_delete_remote,
             commands::save_settings,
             commands::set_api_key,
             commands::has_api_key,
@@ -618,6 +627,7 @@ pub fn run() {
             scheduler::spawn(st.clone());
             floagent::spawn(st.clone());
             push::spawn(st.clone());
+            sync::spawn(st.clone());
             autocontinue::spawn(st.clone());
             attention::spawn(st.clone());
             // both read the hook token from the keychain, which can wait on a macOS permission

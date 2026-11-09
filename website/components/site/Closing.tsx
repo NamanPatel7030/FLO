@@ -58,13 +58,13 @@ export function PrivacySection() {
             tag="14 · Private by design"
             title="Local first. Enforced, not promised."
             accent="Enforced,"
-            lead="Your voice, notes and to-dos stay on your Mac in an encrypted database. Bring your own AI key, or run fully local with Ollama."
+            lead="Your voice, notes and to-dos stay on your Mac in an encrypted database. Bring your own AI key, or run fully local with Ollama. Turn on Sync and they're backed up end-to-end encrypted, with a key only you hold."
           />
           <div className="mt-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
             {[
               [KeyRound, "Keys in Keychain", "Your keys live in the macOS Keychain."],
               [WifiOff, "Fully offline", "Run everything with local models."],
-              [Lock, "We see nothing", "Never your dictation, notes or to-dos."],
+              [Lock, "We see nothing", "Even with Sync on: it's end-to-end encrypted."],
             ].map(([I, k, v], n) => {
               const Icon = I as typeof Lock;
               return (
@@ -132,7 +132,7 @@ const MORE: { cat: Cat; icon: typeof Lock; title: string; body: string }[] = [
   { cat: "Setup", icon: Database, title: "Encrypted on disk", body: "History, notes and to-dos live in an encrypted database. Its key and your API keys stay in the Keychain." },
   { cat: "Setup", icon: ShieldCheck, title: "Permissions, fixed for you", body: "Flo checks microphone, accessibility and screen access, and repairs them in one click." },
   { cat: "Setup", icon: LayoutGrid, title: "Mac, Windows and Linux", body: "Off the Mac, the island sits bottom-right. Hold Right Ctrl to dictate and Right Alt for the assistant." },
-  { cat: "Setup", icon: UserRound, title: "An account that holds nothing", body: "Sign in only to download. Your dictation, notes, to-dos and keys never touch our servers." },
+  { cat: "Setup", icon: UserRound, title: "An account that holds nothing", body: "Sign in to download. Your data stays on your Mac unless you turn on Sync, and then it's end-to-end encrypted: we can't read it." },
 ];
 const CATS: ("All" | Cat)[] = ["All", "Voice", "Assistant", "Work", "Setup"];
 
@@ -283,7 +283,8 @@ export function MakerSection() {
 
 const FAQ = [
   { q: "Does my voice leave my Mac?", a: "Not by default. Speech is transcribed on device with Whisper. If you choose a cloud speech or AI provider, Flo sends text straight to that provider with your own key. Every request appears in the network log." },
-  { q: "Why do I need an account?", a: "Only to download Flo and sign in on your devices. Your dictation, notes, to-dos and keys never touch our servers." },
+  { q: "Why do I need an account?", a: "To download Flo and sign in on your devices. Your dictation, notes and to-dos stay on your Mac unless you turn on Sync. Sync is end-to-end encrypted with a key only you hold, so our servers store data they can't read. Your API keys never leave your Mac." },
+  { q: "What does Sync do?", a: "It backs up your to-dos, notes and meetings, dictionary, skills, projects and history, and keeps your Macs in step. It's off until you turn it on, end-to-end encrypted, and you can delete your synced copy any time in Settings." },
   { q: "Which AI models can I use?", a: "Claude, OpenAI, Gemini, Groq, OpenRouter, MiniMax, Qwen and Ollama Cloud with your own key, or local models through Ollama and LM Studio." },
   { q: "Does it work on Windows and Linux?", a: "Yes. The island sits in the bottom-right corner. Hold Right Ctrl to dictate and Right Alt for the assistant." },
   { q: "How is this different from Wispr Flow or Lemon?", a: "Flo combines dictation, a screen-aware assistant, meeting notes, to-dos and an agent tray in one app, keeps everything on your device and lets you choose the AI you pay for." },

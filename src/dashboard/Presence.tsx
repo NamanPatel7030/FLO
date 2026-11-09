@@ -338,7 +338,7 @@ function PairDialog({ known, onClose }: { known: PhoneDevice[]; onClose: () => v
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 8, scale: 0.98 }}
         transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
-        className="relative w-full max-w-[400px] overflow-hidden rounded-[22px] border border-white/10 p-6 text-white shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)]"
+        className="hw relative w-full max-w-[400px] overflow-hidden rounded-[22px] border border-white/10 p-6 text-white shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)]"
         style={{ background: "linear-gradient(180deg, #0f1b27 0%, #0a121b 100%)" }}
       >
         <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-72 -translate-x-1/2 rounded-full bg-brand-400/20 blur-3xl" />

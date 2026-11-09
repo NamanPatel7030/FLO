@@ -20,6 +20,7 @@ import { WidgetPreview } from "../../island/Widgets";
 import { UpdateSettingsRow } from "../UpdateCard";
 import { AvatarEditor } from "../AvatarEditor";
 import { PresenceSettings } from "../Presence";
+import { SyncCard } from "../SyncCard";
 import { AutoContinueSettings } from "../AutoContinue";
 import { formatZoneTime, hourDiffLabel, loadZones, MAX_ZONES, onZonesChange, saveZones, searchCities, type ClockZone, type ZoneCity } from "../../lib/timezones";
 
@@ -1062,6 +1063,7 @@ function Privacy({ s, set }: P) {
           goes through one gate, see it below.
         </div>
       </Card>
+      <SyncCard />
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
         <Toggle label="Assistant may use your cloud AI (BYOK)" hint="On: your question, any selected text and screen text are sent to the cloud provider you chose (with your key). Off: the assistant uses a local model only and nothing leaves this Mac." checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
         <Toggle label="Assistant can see the active window" hint="On: when you ask, a screenshot of the front window is read for context (sent to the cloud only if the toggle above is on). Off: the assistant never looks at your screen." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />

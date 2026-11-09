@@ -27,7 +27,15 @@ export function DownloadLaunch() {
       timers.current.forEach(clearTimeout);
       const href = a.href;
       setState({ href, label: a.dataset.launch || "your Mac", phase: "go" });
-      const wait = reduce ? 150 : 1500;
+      // Phones (and reduced motion): start the download inside the tap itself. Mobile browsers,
+      // Android Chrome especially, may drop a file download that starts after a delay.
+      const phone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (phone || reduce) {
+        window.location.assign(href);
+        setState({ href, label: a.dataset.launch || "your Mac", phase: "done" });
+        return;
+      }
+      const wait = 1500;
       timers.current = [
         setTimeout(() => window.location.assign(href), wait),
         setTimeout(() => setState((s) => (s ? { ...s, phase: "done" } : s)), wait + 700),
@@ -113,12 +121,25 @@ export function DownloadLaunch() {
                       Your download has started
                     </p>
                     <ul className="mt-5 space-y-2.5 text-left text-[13.5px] text-[rgba(255,255,255,0.75)]">
-                      <li className="flex gap-2.5">
-                        <Download size={15} className="mt-0.5 shrink-0 text-[#8fd0ff]" /> Open the .dmg and drag Flo into Applications.
-                      </li>
-                      <li className="flex gap-2.5">
-                        <ShieldCheck size={15} className="mt-0.5 shrink-0 text-[#c9b8ff]" /> First launch: System Settings, Privacy &amp; Security, Open Anyway.
-                      </li>
+                      {state.label === "Android" ? (
+                        <>
+                          <li className="flex gap-2.5">
+                            <Download size={15} className="mt-0.5 shrink-0 text-[#8fd0ff]" /> If Chrome asks, tap Download anyway. The file is about 30 MB.
+                          </li>
+                          <li className="flex gap-2.5">
+                            <ShieldCheck size={15} className="mt-0.5 shrink-0 text-[#c9b8ff]" /> Open it from your notifications or Files, Downloads, then allow installs from your browser.
+                          </li>
+                        </>
+                      ) : (
+                        <>
+                          <li className="flex gap-2.5">
+                            <Download size={15} className="mt-0.5 shrink-0 text-[#8fd0ff]" /> Open the .dmg and drag Flo into Applications.
+                          </li>
+                          <li className="flex gap-2.5">
+                            <ShieldCheck size={15} className="mt-0.5 shrink-0 text-[#c9b8ff]" /> First launch: System Settings, Privacy &amp; Security, Open Anyway.
+                          </li>
+                        </>
+                      )}
                       <li className="flex gap-2.5">
                         <MousePointerClick size={15} className="mt-0.5 shrink-0 text-[#ff9ec4]" /> Sign in, hold control and talk.
                       </li>

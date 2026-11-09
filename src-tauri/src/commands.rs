@@ -22,6 +22,8 @@ pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
     // presence changes only through set_presence (push.rs); a stale settings copy must not undo it
     let mut settings = settings;
     settings.presence = st.settings().presence;
+    // sync changes only through the sync_* commands (sync.rs)
+    settings.sync = st.settings().sync;
     settings::save(&st.data_dir, &settings).map_err(e)?;
     if let Some(h) = url::Url::parse(&settings.account_url).ok().and_then(|u| u.host_str().map(String::from)) {
         st.egress.allow_account_host(&h);
@@ -480,6 +482,47 @@ pub async fn account_exchange(st: State<'_, Shared>, code: String, state: Option
 #[tauri::command]
 pub fn account_logout(st: State<Shared>) -> R<()> {
     crate::account::logout(st.inner()).map_err(e)
+}
+
+// ── sync your data (end-to-end encrypted, see sync.rs) ─────────────────────
+#[tauri::command]
+pub fn sync_status(st: State<Shared>) -> crate::sync::SyncStatus {
+    crate::sync::status(st.inner())
+}
+
+#[tauri::command]
+pub async fn sync_enable(st: State<'_, Shared>) -> R<crate::sync::EnableResult> {
+    crate::sync::enable(st.inner()).await.map_err(e)
+}
+
+#[tauri::command]
+pub async fn sync_join(st: State<'_, Shared>, recovery_key: String) -> R<()> {
+    crate::sync::join(st.inner(), &recovery_key).await.map_err(e)
+}
+
+#[tauri::command]
+pub fn sync_disable(st: State<Shared>) -> R<()> {
+    crate::sync::disable(st.inner()).map_err(e)
+}
+
+#[tauri::command]
+pub async fn sync_now(st: State<'_, Shared>) -> R<crate::sync::SyncReport> {
+    crate::sync::run(st.inner()).await.map_err(e)
+}
+
+#[tauri::command]
+pub fn sync_set_categories(st: State<Shared>, categories: Vec<String>) -> R<()> {
+    crate::sync::set_categories(st.inner(), categories).map_err(e)
+}
+
+#[tauri::command]
+pub fn sync_recovery_key() -> R<String> {
+    crate::sync::show_recovery_key().map_err(e)
+}
+
+#[tauri::command]
+pub async fn sync_delete_remote(st: State<'_, Shared>) -> R<()> {
+    crate::sync::delete_remote(st.inner()).await.map_err(e)
 }
 
 #[tauri::command]

@@ -196,3 +196,66 @@ export async function usageStats(): Promise<UsageStats> {
       (select min(created_at) from auth.users) as since`;
   return { signedUp: r.signed_up, usingFlo: r.using_flo, activeWeek: r.active_week, joinedToday: r.joined_today, since: (r.since ?? new Date()).toISOString() };
 }
+
+// ── encrypted sync (ciphertext only; see supabase/migrations/0004_sync.sql) ─
+
+import type { SyncItemIn } from "./sync-validate";
+
+/** Upsert items; an item only replaces the stored one when its rev is newer (last writer wins). */
+export async function syncPush(userId: string, items: SyncItemIn[]): Promise<{ accepted: number; cursor: number }> {
+  if (!items.length) return { accepted: 0, cursor: 0 };
+  const rows = JSON.stringify(items.map((i) => ({ kind: i.kind, item_id: i.id, rev: i.rev, ciphertext: i.ct, nonce: i.nonce, deleted: i.deleted })));
+  const res = await sql()<{ seq: string }[]>`
+    insert into app.sync_items (user_id, kind, item_id, rev, ciphertext, nonce, deleted)
+    select ${userId}::uuid, x.kind, x.item_id, x.rev, x.ciphertext, x.nonce, x.deleted
+      from jsonb_to_recordset(${rows}::jsonb) as x(kind text, item_id text, rev bigint, ciphertext text, nonce text, deleted boolean)
+    on conflict (user_id, kind, item_id) do update
+      set rev = excluded.rev, ciphertext = excluded.ciphertext, nonce = excluded.nonce,
+          deleted = excluded.deleted, updated_at = now(), seq = default
+      where app.sync_items.rev < excluded.rev
+    returning seq`;
+  const cursor = res.reduce((m: number, r: { seq: string }) => Math.max(m, Number(r.seq)), 0);
+  return { accepted: res.length, cursor };
+}
+
+export type SyncItemOut = { kind: string; id: string; rev: number; nonce: string; ct: string; deleted: boolean; seq: number };
+
+/** Items changed after `since` (seq), oldest first, one page. */
+export async function syncPull(userId: string, since: number, limit: number): Promise<{ items: SyncItemOut[]; cursor: number; more: boolean }> {
+  const rows = await sql()<{ kind: string; item_id: string; rev: string; nonce: string; ciphertext: string; deleted: boolean; seq: string }[]>`
+    select kind, item_id, rev, nonce, ciphertext, deleted, seq from app.sync_items
+     where user_id = ${userId} and seq > ${since}
+     order by seq asc limit ${limit + 1}`;
+  const more = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const items = page.map((r) => ({ kind: r.kind, id: r.item_id, rev: Number(r.rev), nonce: r.nonce, ct: r.ciphertext, deleted: r.deleted, seq: Number(r.seq) }));
+  return { items, cursor: items.length ? items[items.length - 1].seq : since, more };
+}
+
+/** Register the key check if this account has none; always returns the stored one (or null). */
+export async function syncKeyCheck(userId: string, check: string | null): Promise<{ check: string | null; created: boolean }> {
+  if (check) {
+    const ins = await sql()<{ wrapped_check: string }[]>`
+      insert into app.sync_keys (user_id, wrapped_check) values (${userId}, ${check})
+      on conflict (user_id) do nothing returning wrapped_check`;
+    if (ins.length) return { check: ins[0].wrapped_check, created: true };
+  }
+  const rows = await sql()<{ wrapped_check: string }[]>`select wrapped_check from app.sync_keys where user_id = ${userId}`;
+  return { check: rows[0]?.wrapped_check ?? null, created: false };
+}
+
+/** Delete everything this account has synced, and its key check. */
+export async function syncWipe(userId: string): Promise<number> {
+  const db = sql();
+  const r = await db`delete from app.sync_items where user_id = ${userId}`;
+  await db`delete from app.sync_keys where user_id = ${userId}`;
+  return r.count;
+}
+
+/** Totals for the settings card. */
+export async function syncSummary(userId: string): Promise<{ items: number; bytes: number }> {
+  const [r] = await sql()<{ items: number; bytes: number }[]>`
+    select count(*) filter (where not deleted)::int as items, coalesce(sum(length(ciphertext)), 0)::int as bytes
+      from app.sync_items where user_id = ${userId}`;
+  return r;
+}

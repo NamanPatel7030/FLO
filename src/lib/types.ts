@@ -120,6 +120,38 @@ export interface Settings {
   autoAwayMinutes?: number;
   /** Notchling, Flo's mascot in the notch (Settings → Appearance) */
   avatar?: AvatarSettings;
+  /** "Sync your data" (end-to-end encrypted). Change it with the sync_* commands, not save_settings. */
+  sync?: SyncSettings;
+}
+
+// ── sync your data (src-tauri/src/sync.rs, website/app/api/sync) ────────────
+export type SyncCategory = "todos" | "notes" | "settings" | "history";
+export interface SyncSettings {
+  enabled: boolean;
+  categories: SyncCategory[];
+}
+export interface SyncStatus {
+  enabled: boolean;
+  categories: SyncCategory[];
+  /** this Mac holds the sync key (Keychain) */
+  hasKey: boolean;
+  running: boolean;
+  lastSync?: string | null;
+  lastError?: string | null;
+  /** rows this Mac has in sync */
+  syncedItems: number;
+}
+export interface SyncEnableResult {
+  enabled: boolean;
+  /** shown once, the first time Sync is turned on */
+  recoveryKey?: string | null;
+  /** this account already syncs from another Mac: ask for its recovery key */
+  needsRecoveryKey: boolean;
+}
+export interface SyncReport {
+  pulled: number;
+  pushed: number;
+  skipped: number;
 }
 
 // ── presence + phone relay (src-tauri/src/push.rs, docs/mobile-api.md) ──────

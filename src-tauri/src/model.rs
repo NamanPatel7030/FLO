@@ -112,6 +112,24 @@ pub struct Settings {
     pub auto_away_minutes: u32,
     /// Notchling, Flo's mascot in the notch (Settings → Appearance → Your notch avatar)
     pub avatar: NotchAvatar,
+    /// "Sync your data" (end-to-end encrypted). Changed only through the sync_* commands
+    /// (see sync.rs); save_settings keeps the current value.
+    pub sync: SyncSettings,
+}
+
+/// End-to-end encrypted sync. Off by default; categories are what the user chose to sync.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SyncSettings {
+    pub enabled: bool,
+    /// any of "todos", "notes", "settings", "history"
+    pub categories: Vec<String>,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self { enabled: false, categories: vec!["todos".into(), "notes".into(), "settings".into(), "history".into()] }
+    }
 }
 
 /// How the Notchling looks. Defaults are "Classic · Lucid". Unknown values fall back on the UI side.
@@ -194,6 +212,7 @@ impl Default for Settings {
             auto_away: false,
             auto_away_minutes: 10,
             avatar: NotchAvatar::default(),
+            sync: SyncSettings::default(),
         }
     }
 }
