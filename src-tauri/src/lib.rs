@@ -475,6 +475,7 @@ pub fn run() {
             commands::list_models,
             commands::download_model,
             commands::delete_model,
+            commands::remove_unused_models,
             commands::attention_status,
             commands::set_attention_paused,
             commands::check_permissions,
@@ -573,7 +574,11 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let models_dir = data_dir.join("models");
-            let settings = settings::load(&data_dir);
+            let mut settings = settings::load(&data_dir);
+            if stt::prefer_quantized(&mut settings, &models_dir) {
+                let _ = settings::save(&data_dir, &settings);
+            }
+            stt::remove_redundant(&models_dir, &settings.stt_model);
             let db_path = data_dir.join("flo.db");
             let key = secrets::db_key(&data_dir, db_path.exists()).map_err(|e| anyhow::anyhow!("Keychain unavailable: {e}"))?;
             let db = db::Db::open(&db_path, Some(&key))?;

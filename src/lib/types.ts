@@ -16,7 +16,7 @@ export type Phase =
   | "done" // short success flash
   | "error";
 
-export type SttProvider = "local" | "openai" | "groq";
+export type SttProvider = "local" | "openai" | "groq" | "sarvam";
 export type LlmProvider =
   | "none"
   | "ollama"
@@ -32,7 +32,7 @@ export type LlmProvider =
   | "ollama_cloud";
 
 /** Providers whose API key lives in the OS keychain. */
-export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter" | "slack" | "minimax" | "qwen" | "ollama_cloud" | "hermes_slack_bot" | "hermes_slack_app";
+export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter" | "slack" | "minimax" | "qwen" | "ollama_cloud" | "hermes_slack_bot" | "hermes_slack_app" | "sarvam";
 
 /** Modifier combo for push-to-talk (macOS). Any other key pressed while holding cancels. */
 export type HotkeyCombo = "fn" | "ctrl" | "alt" | "fn+ctrl" | "ctrl+alt" | "cmd+alt" | "fn+shift";

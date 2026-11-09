@@ -124,6 +124,8 @@ export const api = {
   listModels: () => call<LocalModel[]>("list_models"),
   downloadModel: (id: string) => call<void>("download_model", { id }),
   deleteModel: (id: string) => call<void>("delete_model", { id }),
+  /** deletes every downloaded speech model except the one in use; returns MB freed */
+  removeUnusedModels: () => call<number>("remove_unused_models"),
 
   attentionStatus: () => call<AttentionStatus>("attention_status"),
   setAttentionPaused: (paused: boolean) => call<void>("set_attention_paused", { paused }),

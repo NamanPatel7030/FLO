@@ -35,6 +35,12 @@ pub(crate) fn store_settings(st: &Shared, settings: Settings) -> anyhow::Result<
     }
     platform::set_hotkeys(crate::hotkey::HotkeyConfig::from_strings(&settings.hotkey_dictation, &settings.hotkey_assistant));
     crate::stt::set_keep_warm_mins(settings.stt_keep_warm_mins);
+    {
+        let old = st.settings();
+        if old.stt_model != settings.stt_model || (old.stt_provider == "local" && settings.stt_provider != "local") {
+            st.whisper.unload(); // don't keep the previous model's RAM until the idle timer
+        }
+    }
     if !settings.reuse_answers {
         crate::cache::ANSWERS.lock().clear();
     }
@@ -441,10 +447,20 @@ pub async fn download_model(st: State<'_, Shared>, id: String) -> R<()> {
 
 #[tauri::command]
 pub fn delete_model(st: State<Shared>, id: String) -> R<()> {
+    let s = st.settings();
+    if s.stt_provider == "local" && s.stt_model == id {
+        return Err("This model is in use. Pick another one first.".into());
+    }
     if let Some(p) = stt::model_path(&st.models_dir, &id) {
         std::fs::remove_file(p).map_err(e)?;
     }
     Ok(())
+}
+
+/// Settings → Voice → "Free up space": every downloaded model except the one in use. MB freed.
+#[tauri::command]
+pub fn remove_unused_models(st: State<Shared>) -> u64 {
+    stt::remove_unused(&st.models_dir, &st.settings().stt_model)
 }
 
 // ── attention / permissions ─────────────────────────────────────────────────

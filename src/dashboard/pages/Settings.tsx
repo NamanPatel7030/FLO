@@ -5,6 +5,7 @@ import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldChec
 import { api, on } from "../../lib/api";
 import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
+import { unusedModelMb } from "../../lib/models";
 import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
@@ -797,6 +798,12 @@ function General({ s, set }: P) {
   );
 }
 
+const STT_PROVIDER_LABEL: Record<Exclude<SttProvider, "local">, string> = { groq: "Groq", openai: "OpenAI", sarvam: "Sarvam AI" };
+
+function defaultSttModel(p: SttProvider): string {
+  return p === "local" ? "large-v3-turbo-q5_0" : p === "groq" ? "whisper-large-v3-turbo" : p === "sarvam" ? "saaras:v3" : "gpt-4o-mini-transcribe";
+}
+
 function Voice({ s, set }: P) {
   const [models, setModels] = useState<LocalModel[] | null>(null);
   const [progress, setProgress] = useState<Record<string, ModelProgressEvent>>({});
@@ -823,8 +830,8 @@ function Voice({ s, set }: P) {
             <p className="text-[12px] leading-relaxed text-muted">Private and free, works offline. Your audio never leaves this Mac. Needs a one-time model download and can be a touch slower on older machines.</p>
           </div>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
-            <div className="mb-1 text-[12.5px] font-semibold">Cloud (OpenAI / Groq)</div>
-            <p className="text-[12px] leading-relaxed text-muted">Fast and very accurate, nothing to download. Your audio is sent to that provider under your own key.</p>
+            <div className="mb-1 text-[12.5px] font-semibold">Cloud (OpenAI / Groq / Sarvam)</div>
+            <p className="text-[12px] leading-relaxed text-muted">Fast and very accurate, nothing to download. Sarvam AI is the strongest for Hindi and Gujarati. Your audio is sent to that provider under your own key.</p>
           </div>
         </div>
       </Card>
@@ -832,11 +839,12 @@ function Voice({ s, set }: P) {
         <Row label="Speech-to-text engine" hint={s.sttProvider === "local" ? "On-device. Audio never leaves this computer." : "Uses your API key; audio is sent to the provider."}>
           <Select<SttProvider>
             value={s.sttProvider}
-            onChange={(v) => set({ sttProvider: v, sttModel: v === "local" ? "large-v3-turbo-q5_0" : v === "groq" ? "whisper-large-v3-turbo" : "gpt-4o-mini-transcribe" })}
+            onChange={(v) => set({ sttProvider: v, sttModel: defaultSttModel(v) })}
             options={[
               { value: "local", label: "On-device (private)" },
               { value: "groq", label: "Groq Whisper (BYOK)" },
               { value: "openai", label: "OpenAI (BYOK)" },
+              { value: "sarvam", label: "Sarvam AI, Indian languages (BYOK)" },
             ]}
           />
         </Row>
@@ -844,6 +852,12 @@ function Voice({ s, set }: P) {
           <Row label="Model">
             <Input className="w-64" value={s.sttModel} onChange={(e) => set({ sttModel: e.target.value })} />
           </Row>
+        )}
+        {s.sttProvider !== "local" && (
+          <div className="py-3">
+            <KeyRow key={s.sttProvider} provider={s.sttProvider} label={STT_PROVIDER_LABEL[s.sttProvider]} />
+            {s.sttProvider === "sarvam" && <FieldHelp>Get a key at dashboard.sarvam.ai. Hinglish is written in Roman letters; Hindi and Gujarati in their own scripts.</FieldHelp>}
+          </div>
         )}
         {s.sttProvider === "local" && (
           <Row label="Keep the speech model ready" hint="A loaded model types your first word in about 0.2 s instead of 3 s. Unloading frees its memory (about 0.6 to 1.6 GB).">
@@ -871,7 +885,7 @@ function Voice({ s, set }: P) {
             { value: "en", label: "English", native: "" },
             { value: "hi", label: "Hindi", native: "हिंदी" },
             { value: "gu", label: "Gujarati", native: "ગુજરાતી" },
-            { value: "hi-en", label: "Hinglish", native: "" },
+            { value: "hi-en", label: "Hinglish", native: "Roman" },
             { value: "es", label: "Spanish", native: "Español" },
             { value: "de", label: "German", native: "Deutsch" },
             { value: "fr", label: "French", native: "Français" },
@@ -897,6 +911,23 @@ function Voice({ s, set }: P) {
       {s.sttProvider === "local" && (
         <Card className="p-5">
           <CardTitle>On-device models</CardTitle>
+          {models && unusedModelMb(models, s.sttModel) > 0 && (
+            <div className="mb-2 flex items-center justify-between gap-3 rounded-xl bg-[var(--glass)] px-3 py-2 text-[12.5px]">
+              <span className="text-muted">Models you aren't using take {unusedModelMb(models, s.sttModel)} MB.</span>
+              <Button
+                size="sm"
+                icon={<Trash2 size={13} />}
+                onClick={() =>
+                  api.removeUnusedModels().then((freed) => {
+                    api.listModels().then(setModels);
+                    toast({ kind: "success", text: `Freed ${freed} MB` });
+                  })
+                }
+              >
+                Free up space
+              </Button>
+            </div>
+          )}
           <div className="flex flex-col gap-2">
             {!models && <Skeleton className="h-28" />}
             {models?.map((m) => {
@@ -926,7 +957,7 @@ function Voice({ s, set }: P) {
                           Use
                         </Button>
                       )}
-                      <Button size="sm" variant="ghost" icon={<Trash2 size={13} />} onClick={() => api.deleteModel(m.id).then(() => api.listModels().then(setModels))} />
+                      {!active && <Button size="sm" variant="ghost" icon={<Trash2 size={13} />} onClick={() => api.deleteModel(m.id).then(() => api.listModels().then(setModels))} />}
                     </div>
                   ) : (
                     <Button size="sm" variant="primary" disabled={!!downloading} icon={<Download size={13} />} onClick={() => api.downloadModel(m.id)}>

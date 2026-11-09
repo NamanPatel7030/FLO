@@ -75,6 +75,7 @@ const PROVIDER_HOSTS: &[&str] = &[
     "dashscope-intl.aliyuncs.com",
     "dashscope.aliyuncs.com",
     "ollama.com",
+    "api.sarvam.ai",
 ];
 
 pub fn classify_host(host: &str) -> HostClass {

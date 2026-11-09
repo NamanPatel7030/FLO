@@ -1168,6 +1168,16 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       if (m) m.installed = false;
       return null;
     }
+    case "remove_unused_models": {
+      let freed = 0;
+      for (const m of models) {
+        if (m.installed && m.id !== settings.sttModel) {
+          m.installed = false;
+          freed += m.sizeMb;
+        }
+      }
+      return freed;
+    }
     case "attention_status": {
       const s: AttentionStatus = { enabled: settings.attentionEnabled, paused: false, lastCaptureAt: iso(1), capturesToday: 312, lastApp: "Slack" };
       return s;
