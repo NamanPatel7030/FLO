@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { BellRing, Check, Moon, QrCode, RefreshCw, ShieldCheck, Smartphone, Trash2, X } from "lucide-react";
+import { BellRing, Check, Moon, QrCode, RefreshCw, ShieldCheck, Smartphone, Unlink, X } from "lucide-react";
 import { api } from "../lib/api";
 import { relativeTime } from "../lib/format";
 import { countdown, presenceHint, qrMatrix, qrPath, usePresence } from "../lib/presence";
@@ -156,6 +156,7 @@ function PhonesCard({ signedIn, away }: { signedIn: boolean; away: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [pairing, setPairing] = useState(false);
   const [test, setTest] = useState<{ busy?: boolean; text?: string; ok?: boolean }>({});
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const refresh = () =>
     api
@@ -233,21 +234,33 @@ function PhonesCard({ signedIn, away }: { signedIn: boolean; away: boolean }) {
                       {d.platform === "android" ? "Android" : d.platform} · last seen {relativeTime(d.lastSeen)}
                     </div>
                   </div>
-                  <button
-                    aria-label={`Remove ${d.name}`}
-                    title="Remove"
-                    className="rounded-lg p-1.5 text-faint transition hover:bg-red-500/10 hover:text-red-300"
-                    onClick={async () => {
-                      try {
-                        await api.removePhone(d.id);
-                        setDevices((cur) => cur?.filter((x) => x.id !== d.id) ?? null);
-                      } catch (e) {
-                        setError(errText(e));
-                      }
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {confirming === d.id ? (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                        Keep
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="!bg-red-500/15 !text-red-500 hover:!bg-red-500/25"
+                        onClick={async () => {
+                          try {
+                            await api.removePhone(d.id);
+                            setDevices((cur) => cur?.filter((x) => x.id !== d.id) ?? null);
+                          } catch (e) {
+                            setError(errText(e));
+                          } finally {
+                            setConfirming(null);
+                          }
+                        }}
+                      >
+                        Disconnect
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button size="sm" variant="ghost" icon={<Unlink size={13} />} aria-label={`Disconnect ${d.name}`} onClick={() => setConfirming(d.id)}>
+                      Disconnect
+                    </Button>
+                  )}
                 </div>
               ))
             )}
