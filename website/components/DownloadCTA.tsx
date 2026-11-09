@@ -81,7 +81,7 @@ export function DownloadCTA({
     if (!open || !wrap.current) return;
     const place = () => {
       const r = wrap.current!.getBoundingClientRect();
-      const left = Math.max(12, Math.min(r.right - 250, window.innerWidth - 262));
+      const left = Math.max(12, Math.min(r.right - 300, window.innerWidth - 312));
       setPos(menu === "up" ? { left, bottom: window.innerHeight - r.top + 10 } : { left, top: r.bottom + 10 });
     };
     place();
@@ -145,11 +145,11 @@ export function DownloadCTA({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: menu === "up" ? 6 : -6, scale: 0.98, transition: { duration: 0.12 } }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className={`download-menu fixed z-[200] w-[250px] rounded-2xl p-1.5 text-left ${menu === "up" ? "origin-bottom-right" : "origin-top-right"}`}
+            className={`download-menu fixed z-[200] w-[300px] rounded-[22px] p-2 text-left ${menu === "up" ? "origin-bottom-right" : "origin-top-right"}`}
             style={pos}
             data-testid={testId ? `${testId}-menu` : undefined}
           >
-            <p className="px-3 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-brand-200/80">{mobile ? "Flo runs on" : "All platforms"}</p>
+            <p className="px-3 pb-1.5 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#6b7486]">{mobile ? "Flo runs on" : "All platforms"}</p>
             {OS_ORDER.map((o) => {
               const current = !mobile && o === os;
               return (
@@ -159,17 +159,17 @@ export function DownloadCTA({
                   href={downloadHref(o)}
                   data-launch={OS_LABEL[o]}
                   onClick={() => setOpen(false)}
-                  className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] transition-colors hover:bg-white/10 ${current ? "text-ink" : "text-ink/85"}`}
+                  className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-[14.5px] font-semibold text-[#0b1220] transition-colors hover:bg-[rgba(20,30,60,0.05)] ${current ? "bg-[rgba(20,30,60,0.04)]" : ""}`}
                   data-os={o}
                 >
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.08] ring-1 ring-white/15">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#0b1220] text-[#fff]">
                     <OsIcon os={o} size={15} />
                   </span>
-                  <span className="flex-1">
+                  <span className="min-w-0 flex-1">
                     {OS_LABEL[o]}
-                    <span className="block text-[11.5px] text-muted">{o === "mac" ? "Apple silicon · macOS 13+" : o === "windows" ? "Windows 10 & 11 · beta" : ".deb & AppImage · beta"}</span>
+                    <span className="block whitespace-nowrap text-[12px] font-normal text-[#6b7486]">{o === "mac" ? "Apple silicon · macOS 13+" : o === "windows" ? "Windows 10 & 11 · beta" : ".deb & AppImage · beta"}</span>
                   </span>
-                  {current && <Check size={15} className="text-brand-300" aria-label="Your computer" />}
+                  {current && <Check size={16} className="shrink-0 text-[#2f8cff]" aria-label="Your computer" />}
                 </a>
               );
             })}
