@@ -12,10 +12,36 @@ pub fn load(data_dir: &Path) -> Settings {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    if migrate(&mut s) {
+    let changed = migrate(&mut s) | fix_account_url(&mut s);
+    if changed {
         let _ = save(data_dir, &s);
     }
     s
+}
+
+/// The live account server (sign-in and in-app updates). A build can point elsewhere with
+/// FLO_ACCOUNT_URL at compile time.
+pub const LIVE_ACCOUNT_URL: &str = match option_env!("FLO_ACCOUNT_URL") {
+    Some(u) => u,
+    None => "https://flo.hellonaman.com",
+};
+
+/// Release builds made before the site went live saved `http://localhost:3000` as the account
+/// server, which breaks sign-in and updates (the updater only accepts https). Point those at the
+/// live server. Dev builds keep whatever they have, and a custom https server is left alone.
+pub fn fix_account_url(s: &mut Settings) -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+    let local = url::Url::parse(&s.account_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"))
+        .unwrap_or(true);
+    if local && s.account_url != LIVE_ACCOUNT_URL {
+        s.account_url = LIVE_ACCOUNT_URL.into();
+        return true;
+    }
+    false
 }
 
 /// v2: choosing a cloud model + adding your own key is consent for the Assistant to use it.
@@ -121,5 +147,20 @@ mod tests {
         assert!(is_cloud_llm("anthropic"));
         assert!(is_cloud_llm("minimax") && is_cloud_llm("qwen") && is_cloud_llm("ollama_cloud"));
         assert!(!is_cloud_llm("ollama"));
+    }
+
+    #[test]
+    fn localhost_account_url_moves_to_the_live_server_in_release() {
+        let mut s = Settings { account_url: "http://localhost:3000".into(), ..Default::default() };
+        let changed = fix_account_url(&mut s);
+        if cfg!(debug_assertions) {
+            assert!(!changed);
+        } else {
+            assert!(changed);
+            assert_eq!(s.account_url, LIVE_ACCOUNT_URL);
+        }
+        let mut custom = Settings { account_url: "https://flo.example.com".into(), ..Default::default() };
+        assert!(!fix_account_url(&mut custom));
+        assert_eq!(custom.account_url, "https://flo.example.com");
     }
 }
