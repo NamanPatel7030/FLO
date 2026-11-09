@@ -73,6 +73,10 @@ pub type Shared = Arc<AppState>;
 
 impl AppState {
     pub fn emit<T: Serialize + Clone>(&self, event: &str, payload: T) {
+        // the paired phone shows the to-do list: republish it (phone_state.rs)
+        if event == ev::TODOS {
+            crate::phone_state::poke();
+        }
         let _ = self.app.emit(event, payload);
     }
 

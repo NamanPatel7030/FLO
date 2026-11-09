@@ -19,12 +19,17 @@ pub fn get_settings(st: State<Shared>) -> Settings {
 
 #[tauri::command]
 pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
+    store_settings(&st, settings).map_err(e)
+}
+
+/// Save + apply settings (the settings window, or an editable setting changed from the paired phone).
+pub(crate) fn store_settings(st: &Shared, settings: Settings) -> anyhow::Result<()> {
     // presence changes only through set_presence (push.rs); a stale settings copy must not undo it
     let mut settings = settings;
     settings.presence = st.settings().presence;
     // sync changes only through the sync_* commands (sync.rs)
     settings.sync = st.settings().sync;
-    settings::save(&st.data_dir, &settings).map_err(e)?;
+    settings::save(&st.data_dir, &settings)?;
     if let Some(h) = url::Url::parse(&settings.account_url).ok().and_then(|u| u.host_str().map(String::from)) {
         st.egress.allow_account_host(&h);
     }
@@ -37,8 +42,9 @@ pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
     *st.settings.write() = settings;
     // turning "Allow / Deny from the notch" on or off adds / removes the PermissionRequest hook
     if approvals_changed {
-        crate::claude::refresh_if_installed(&st);
+        crate::claude::refresh_if_installed(st);
     }
+    crate::phone_state::poke();
     Ok(())
 }
 

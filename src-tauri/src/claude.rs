@@ -272,13 +272,45 @@ pub fn permission_summary(tool: &str, input: &Value) -> String {
     crate::text::truncate_chars(&text, 200)
 }
 
-/// Questions waiting for Allow / Deny: id → where to send the decision.
-static PENDING_PERMISSIONS: parking_lot::Mutex<Option<std::collections::HashMap<String, std::sync::mpsc::Sender<String>>>> = parking_lot::Mutex::new(None);
+/// A permission question still waiting for Allow / Deny (shown on the paired phone too).
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingPermission {
+    pub id: String,
+    pub project: String,
+    pub summary: String,
+    pub tool: String,
+    pub at: String,
+    /// when Flo hands the question back to the terminal (PERMISSION_WAIT_SECS)
+    pub expires_at: String,
+}
 
-/// The notch answered a permission question ("allow" | "deny" | "terminal").
+struct Waiting {
+    tx: std::sync::mpsc::Sender<String>,
+    info: PendingPermission,
+}
+
+/// Questions waiting for Allow / Deny: id → where to send the decision (+ what was asked).
+static PENDING_PERMISSIONS: parking_lot::Mutex<Option<std::collections::HashMap<String, Waiting>>> = parking_lot::Mutex::new(None);
+
+/// The notch (or the paired phone) answered a permission question ("allow" | "deny" | "terminal").
 pub fn answer_permission(id: &str, decision: &str) -> bool {
-    let tx = PENDING_PERMISSIONS.lock().as_mut().and_then(|m| m.remove(id));
-    tx.map(|t| t.send(decision.to_string()).is_ok()).unwrap_or(false)
+    let w = PENDING_PERMISSIONS.lock().as_mut().and_then(|m| m.remove(id));
+    let ok = w.map(|w| w.tx.send(decision.to_string()).is_ok()).unwrap_or(false);
+    crate::phone_state::poke();
+    ok
+}
+
+/// Questions still waiting, oldest first.
+pub fn pending_permissions() -> Vec<PendingPermission> {
+    let mut v: Vec<PendingPermission> = PENDING_PERMISSIONS.lock().as_ref().map(|m| m.values().map(|w| w.info.clone()).collect()).unwrap_or_default();
+    v.sort_by(|a, b| a.at.cmp(&b.at).then(a.id.cmp(&b.id)));
+    v
+}
+
+fn add_pending(info: PendingPermission, tx: std::sync::mpsc::Sender<String>) {
+    PENDING_PERMISSIONS.lock().get_or_insert_with(Default::default).insert(info.id.clone(), Waiting { tx, info });
+    crate::phone_state::poke();
 }
 
 /// Hold the hook's HTTP request open on its own thread until the notch answers (or time runs out),
@@ -286,7 +318,6 @@ pub fn answer_permission(id: &str, decision: &str) -> bool {
 fn ask_permission(st: &Shared, req: tiny_http::Request, body: &Value) {
     let id = crate::db::new_id();
     let (tx, rx) = std::sync::mpsc::channel::<String>();
-    PENDING_PERMISSIONS.lock().get_or_insert_with(Default::default).insert(id.clone(), tx);
     let cwd = body["cwd"].as_str().unwrap_or("");
     let project = std::path::Path::new(cwd).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| "Claude Code".into());
     let tool = body["tool_name"].as_str().unwrap_or("a tool");
@@ -296,6 +327,18 @@ fn ask_permission(st: &Shared, req: tiny_http::Request, body: &Value) {
     let session_id = body["session_id"].as_str().unwrap_or("");
     let known = if session_id.is_empty() { None } else { st.db.get_claude_session(session_id).ok().flatten() };
     let app = known.as_ref().and_then(|s| s.terminal.clone().or_else(|| s.app_bundle.clone()));
+    let now = chrono::Local::now();
+    add_pending(
+        PendingPermission {
+            id: id.clone(),
+            project: project.clone(),
+            summary: summary.clone(),
+            tool: tool.to_string(),
+            at: now.to_rfc3339(),
+            expires_at: (now + chrono::Duration::seconds(PERMISSION_WAIT_SECS as i64)).to_rfc3339(),
+        },
+        tx,
+    );
     st.emit(
         "flo://confirm",
         json!({
@@ -309,6 +352,7 @@ fn ask_permission(st: &Shared, req: tiny_http::Request, body: &Value) {
     std::thread::spawn(move || {
         let decision = rx.recv_timeout(std::time::Duration::from_secs(PERMISSION_WAIT_SECS)).unwrap_or_else(|_| "terminal".into());
         PENDING_PERMISSIONS.lock().as_mut().map(|m| m.remove(&id));
+        crate::phone_state::poke();
         log::info!("claude permission answered: {decision}");
         // close the card wherever it is (answered elsewhere, or timed out)
         st2.emit("flo://confirm-done", json!({ "id": id }));
@@ -842,9 +886,11 @@ mod tests {
     #[test]
     fn an_answer_reaches_the_waiting_request() {
         let (tx, rx) = std::sync::mpsc::channel::<String>();
-        PENDING_PERMISSIONS.lock().get_or_insert_with(Default::default).insert("q1".into(), tx);
+        add_pending(PendingPermission { id: "q1".into(), project: "api".into(), summary: "Run: npm test".into(), tool: "Bash".into(), at: "2026-11-09T10:00:00+00:00".into(), expires_at: "2026-11-09T10:02:00+00:00".into() }, tx);
+        assert!(pending_permissions().iter().any(|p| p.id == "q1" && p.summary == "Run: npm test"));
         assert!(answer_permission("q1", "allow"));
         assert_eq!(rx.recv().unwrap(), "allow");
+        assert!(!pending_permissions().iter().any(|p| p.id == "q1"), "answered questions leave the list");
         assert!(!answer_permission("q1", "deny")); // already answered
     }
 

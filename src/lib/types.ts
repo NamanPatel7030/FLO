@@ -715,6 +715,8 @@ export const EV = {
   confirm: "flo://confirm",
   /** a confirm card was answered elsewhere or timed out → close it */
   confirmDone: "flo://confirm-done",
+  /** settings changed outside the settings window (the paired phone) → re-read them */
+  settingsChanged: "flo://settings-changed",
   /** payload: {signedIn, user?} — e.g. after Google sign-in completes via flo:// deep link */
   account: "flo://account",
   /** payload: SlackEvent — Slack connected (flo://slack deep link / token) or disconnected */

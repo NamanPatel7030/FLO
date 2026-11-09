@@ -315,6 +315,7 @@ export default function Island() {
   useEffect(() => {
     const offs = [
       onSettingsBroadcast(() => api.getSettings().then(setSettings).catch(() => {})),
+      on(EV.settingsChanged, () => api.getSettings().then(setSettings).catch(() => {})),
       onNotchPreview(() => {
         api.getSettings().then(setSettings).catch(() => {});
         setPreview(true);

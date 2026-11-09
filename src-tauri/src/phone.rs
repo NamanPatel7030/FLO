@@ -5,6 +5,9 @@
 //! them here and posts the answer back (`POST /api/app/requests/{id}`), which also lands in the
 //! phone's inbox. Asks run through the normal assistant, but nothing may act on the Mac's screen
 //! (see `assistant::run_for_phone`). All traffic is the account host only, through the egress guard.
+//! The same poll hands out phone actions (complete a to-do, Allow / Deny, change a setting), which
+//! `phone_state.rs` applies.
+use crate::phone_state::PhoneAction;
 use crate::state::Shared;
 use anyhow::Result;
 use serde::Deserialize;
@@ -37,7 +40,7 @@ pub fn plan(r: &PhoneRequest) -> Plan {
         "ask" => Plan::Ask(text),
         "todo" => Plan::Todo(first_line(&text, 200)),
         "note" => Plan::Note(text),
-        _ => Plan::Reject("Flo on your Mac doesn't know that kind of request yet."),
+        _ => Plan::Reject("Flo on your computer doesn't know that kind of request yet."),
     }
 }
 
@@ -107,9 +110,27 @@ fn save_note(st: &Shared, text: &str) -> Result<()> {
     Ok(())
 }
 
-async fn take(st: &Shared) -> Result<Vec<PhoneRequest>> {
-    let v = crate::push::ok_or_err(crate::push::call(st, "GET", "/api/app/requests", None).await?)?;
-    Ok(serde_json::from_value(v["requests"].clone()).unwrap_or_default())
+/// Pending requests and phone actions (to-dos, approvals, settings: phone_state.rs), in one poll.
+async fn take(st: &Shared) -> Result<(Vec<PhoneRequest>, Vec<PhoneAction>)> {
+    let v = crate::push::ok_or_err(crate::push::call(st, "GET", "/api/app/requests?actions=1", None).await?)?;
+    Ok(parse_take(&v))
+}
+
+pub fn parse_take(v: &serde_json::Value) -> (Vec<PhoneRequest>, Vec<PhoneAction>) {
+    let requests = serde_json::from_value(v["requests"].clone()).unwrap_or_default();
+    // one malformed action must not drop the others
+    let actions = v["actions"].as_array().map(|a| a.iter().filter_map(|x| serde_json::from_value(x.clone()).ok()).collect()).unwrap_or_default();
+    (requests, actions)
+}
+
+async fn finish_action(st: &Shared, id: u64, ok: bool, message: &str) -> Result<()> {
+    crate::push::ok_or_err(crate::push::call(st, "POST", &format!("/api/app/actions/{id}"), Some(json!({ "ok": ok, "message": message }))).await?)?;
+    Ok(())
+}
+
+/// Poll faster while a Claude Code question waits (it times out after two minutes).
+pub fn poll_every(questions_waiting: bool) -> Duration {
+    Duration::from_secs(if questions_waiting { 3 } else { 10 })
 }
 
 async fn finish(st: &Shared, id: u64, ok: bool, answer: &str) -> Result<()> {
@@ -125,8 +146,16 @@ pub fn spawn(st: Shared) {
         loop {
             if crate::push::has_session(&st) && crate::account::enforced(&st) {
                 match take(&st).await {
-                    Ok(list) => {
-                        wait = Duration::from_secs(10);
+                    Ok((list, actions)) => {
+                        for a in actions {
+                            log::info!("phone action {} ({})", a.id, a.kind);
+                            let (ok, message) = crate::phone_state::apply(&st, &a);
+                            if let Err(e) = finish_action(&st, a.id, ok, &message).await {
+                                log::warn!("phone action {}: couldn't report back: {e}", a.id);
+                            }
+                            crate::phone_state::poke();
+                        }
+                        wait = poll_every(!crate::claude::pending_permissions().is_empty());
                         for r in list {
                             log::info!("phone request {} ({})", r.id, r.mode);
                             let (ok, answer) = handle(&st, &r).await;
@@ -177,6 +206,27 @@ mod tests {
         assert_eq!(answer_text("Sure.", &["Added to-do: Call Priya".into()]), "Sure.\n\nAdded to-do: Call Priya");
         assert_eq!(answer_text("Added to-do: X", &["Added to-do: X".into()]), "Added to-do: X");
         assert_eq!(answer_text("", &[]), "Done.");
+    }
+
+    #[test]
+    fn one_poll_returns_requests_and_actions() {
+        let v = json!({
+            "requests": [{"id": 3, "mode": "todo", "text": "x", "status": "taken"}],
+            "actions": [{"id": 7, "kind": "approve", "target": "q1", "value": null}, {"id": "bad"}, {"id": 8, "kind": "setting", "target": "theme", "value": "dark"}]
+        });
+        let (r, a) = parse_take(&v);
+        assert_eq!(r.len(), 1);
+        assert_eq!(a.iter().map(|x| x.id).collect::<Vec<_>>(), [7, 8]);
+        assert_eq!(a[1].value, json!("dark"));
+        // an older server without actions
+        let (_, none) = parse_take(&json!({"requests": []}));
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn polls_faster_while_a_question_waits() {
+        assert!(poll_every(true) < poll_every(false));
+        assert_eq!(poll_every(false), Duration::from_secs(10));
     }
 
     #[test]

@@ -93,6 +93,7 @@ export function bootStore(): () => void {
     on(EV.claude, () => useStore.getState().refreshClaude()),
     on<ToastEvent>(EV.toast, (t) => useStore.getState().toast(t)),
     onSettingsBroadcast(() => api.getSettings().then((settings) => { useStore.setState({ settings }); applyTheme(settings); })),
+    on(EV.settingsChanged, () => api.getSettings().then((settings) => { useStore.setState({ settings }); applyTheme(settings); })),
     watchSystemTheme(() => { const st = useStore.getState().settings; if (st) applyTheme(st); }),
   ];
   const onHash = () => {
