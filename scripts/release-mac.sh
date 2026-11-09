@@ -32,6 +32,21 @@ CARGO_INCREMENTAL=0 npm run tauri build -- --bundles app
 APP="src-tauri/target/release/bundle/macos/Flo.app"
 bash scripts/sign-mac.sh "$APP"
 
+# Notarize with Apple when a notary profile is set up (one time:
+#   xcrun notarytool store-credentials flo-notary --apple-id <id> --team-id <TEAMID>
+# then export APPLE_SIGN_IDENTITY="Developer ID Application: ..." NOTARY_PROFILE=flo-notary).
+# Without it the app is still signed, but macOS asks the user to "Open Anyway" once.
+notarize() {
+  [ -n "${NOTARY_PROFILE:-}" ] || return 0
+  xcrun notarytool submit "$1" --keychain-profile "$NOTARY_PROFILE" --wait
+}
+if [ -n "${NOTARY_PROFILE:-}" ]; then
+  ditto -c -k --keepParent "$APP" "$APP.zip"
+  notarize "$APP.zip"
+  rm -f "$APP.zip"
+  xcrun stapler staple "$APP"
+fi
+
 case "$(uname -m)" in arm64) ARCH=aarch64 ;; *) ARCH=x86_64 ;; esac
 REPO="${RELEASE_REPO:-NamanPatel7030/FLO}"
 export RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://github.com/$REPO/releases/download/v$VERSION}"
@@ -49,6 +64,11 @@ DMG_ARCH=$([ "$ARCH" = aarch64 ] && echo arm64 || echo x86_64)
 DMG="$OUT/Flo-mac-$DMG_ARCH.dmg"
 if command -v "${DMGBUILD:-dmgbuild}" >/dev/null 2>&1; then
   bash scripts/make-dmg.sh "$APP" "$DMG"
+  if [ -n "${NOTARY_PROFILE:-}" ]; then
+    codesign --force --timestamp --sign "$APPLE_SIGN_IDENTITY" "$DMG"
+    notarize "$DMG"
+    xcrun stapler staple "$DMG"
+  fi
 else
   echo "dmgbuild not found (pip install dmgbuild); skipping the installer DMG"
   DMG=""

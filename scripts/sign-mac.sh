@@ -6,7 +6,13 @@
 set -euo pipefail
 APP="$1"
 KC="$HOME/.flo-signing/flo-signing.keychain-db"
-if [ -f "$KC" ]; then
+if [ -n "${APPLE_SIGN_IDENTITY:-}" ]; then
+  # Apple Developer ID (e.g. "Developer ID Application: Naman Patel (TEAMID)"): hardened runtime +
+  # secure timestamp, ready for notarization, so macOS opens Flo with no warning.
+  codesign --force --deep --options runtime --timestamp \
+    --entitlements "$(dirname "$0")/flo.entitlements" --sign "$APPLE_SIGN_IDENTITY" "$APP"
+  echo "Signed with Developer ID"
+elif [ -f "$KC" ]; then
   # codesign only searches keychains on the user search list → add ours just for signing,
   # then restore the original list (even on failure).
   ORIG=()
