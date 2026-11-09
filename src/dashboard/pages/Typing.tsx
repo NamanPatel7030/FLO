@@ -21,7 +21,7 @@ export default function Typing() {
         subtitle="Measure your real typing speed. Flo uses it to show how much time speaking saves you."
         actions={
           <div className="flex items-center gap-2">
-            <button onClick={() => setNonce((n) => n + 1)} className="btn-glass flex h-9 items-center gap-1.5 rounded-xl px-3 text-[13px] font-medium" title="New passage" aria-label="New passage">
+            <button onClick={() => setNonce((n) => n + 1)} className="btn-glass flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 text-[13px] font-medium" title="New passage" aria-label="New passage">
               <RotateCw size={14} /> New passage
             </button>
             <button
@@ -29,13 +29,13 @@ export default function Typing() {
                 setSoundOn(!sound);
                 setSound(!sound);
               }}
-              className="btn-glass flex h-9 w-9 items-center justify-center rounded-xl"
+              className="btn-glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
               title={sound ? "Mute key sounds" : "Unmute key sounds"}
               aria-label={sound ? "Mute key sounds" : "Unmute key sounds"}
             >
               {sound ? <Volume2 size={15} /> : <VolumeX size={15} />}
             </button>
-            <div className="glass inline-flex rounded-xl p-1">
+            <div className="glass inline-flex shrink-0 rounded-xl p-1">
               {DURATIONS.map((d) => (
                 <button
                   key={d}
@@ -43,7 +43,7 @@ export default function Typing() {
                     setMinutes(d);
                     setNonce((n) => n + 1);
                   }}
-                  className={clsx("relative h-8 rounded-lg px-3 text-[13px] font-medium transition", minutes === d ? "text-[var(--fg)]" : "text-muted hover:text-[var(--fg)]")}
+                  className={clsx("relative h-8 whitespace-nowrap rounded-lg px-3 text-[13px] font-medium transition", minutes === d ? "text-[var(--fg)]" : "text-muted hover:text-[var(--fg)]")}
                   aria-pressed={minutes === d}
                 >
                   {minutes === d && <motion.span layoutId="typing-dur" className="absolute inset-0 rounded-lg glass-strong" />}

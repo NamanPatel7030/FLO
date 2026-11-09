@@ -66,15 +66,15 @@ export function CardTitle({ icon, children, action }: { icon?: ReactNode; childr
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex items-end justify-between gap-4">
-      <div>
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+      <div className="min-w-[240px] flex-1">
         <h1 className="text-[28px] font-semibold tracking-[-0.03em]">
           {title}
           <span aria-hidden className="serif-accent ink-grad pl-0.5 text-[1.1em]">.</span>
         </h1>
         {subtitle && <p className="mt-1 text-[13.5px] text-muted">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2 whitespace-nowrap">{actions}</div>}
     </div>
   );
 }
