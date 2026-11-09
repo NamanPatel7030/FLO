@@ -10,14 +10,19 @@ export function usePresence() {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let live = true;
-    api
-      .getPresence()
-      .then((p) => live && setInfo(p))
-      .catch(() => live && setInfo({ status: "active", signedIn: false, auto: false }));
+    const load = () =>
+      api
+        .getPresence()
+        .then((p) => live && setInfo(p))
+        .catch(() => live && setInfo({ status: "active", signedIn: false, auto: false }));
+    load();
     const off = on<PresenceInfo>(EV.presence, (p) => setInfo(p));
+    // signing in or out after this window opened changes whether a phone can be paired
+    const offAccount = on(EV.account, () => load());
     return () => {
       live = false;
       off();
+      offAccount();
     };
   }, []);
   const set = useCallback(async (status: PresenceStatus) => {
