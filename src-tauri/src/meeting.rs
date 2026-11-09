@@ -19,7 +19,7 @@ use crate::sysaudio::SystemTap;
 use crate::{db, prompts, session, settings as cfg, stt, text};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,6 +33,9 @@ pub const CAPTURE_DUAL: &str = "mic+call";
 pub const CAPTURE_MIC: &str = "mic";
 /// 20 ms energy frames for echo detection
 const FRAME: usize = (audio::TARGET_RATE / 50) as usize;
+/// Call audio kept for later embedding while the voice model downloads: at most 10 min
+/// (≈ 38 MB of f32). Beyond that, clips inherit the previous speaker instead of growing memory.
+const MAX_KEPT_AUDIO_SECS: f32 = 600.0;
 
 static MODEL_DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
@@ -48,6 +51,10 @@ pub struct MeetingMeta {
     /// voice clusters of the call track (centroid embeddings stay on this Mac)
     #[serde(default)]
     pub speakers: Vec<Cluster>,
+    /// names the conversation reveals for generic labels ("Speaker 2" → "Riya": she introduced
+    /// herself / was addressed by name). Shown as a one-click suggestion, never applied silently.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub suggested: BTreeMap<String, String>,
 }
 
 /// What the Notes UI needs (no embeddings).
@@ -59,6 +66,10 @@ pub struct MeetingInfo {
     pub capture_note: Option<String>,
     /// speakers whose voice Flo can remember when renamed
     pub voiced: Vec<String>,
+    /// "Speaker 2" → "Riya" guesses from the conversation (confirm with one click)
+    pub suggestions: BTreeMap<String, String>,
+    /// names of every voice Flo remembers (rename autocomplete)
+    pub known_voices: Vec<String>,
 }
 
 fn load_meta(st: &Shared, note_id: &str) -> Option<MeetingMeta> {
@@ -72,10 +83,14 @@ fn save_meta(st: &Shared, note_id: &str, m: &MeetingMeta) {
 }
 
 pub fn info(st: &Shared, note_id: &str) -> Option<MeetingInfo> {
+    let mut known_voices: Vec<String> = st.db.list_voices().unwrap_or_default().into_iter().map(|v| v.0).collect();
+    known_voices.sort_by_key(|n| n.to_lowercase());
     load_meta(st, note_id).map(|m| MeetingInfo {
         capture: m.capture,
         capture_note: m.capture_note,
         voiced: m.speakers.into_iter().filter(|c| !c.centroid.is_empty()).map(|c| c.label).collect(),
+        suggestions: m.suggested,
+        known_voices,
     })
 }
 
@@ -118,12 +133,12 @@ pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> R
         Ok(t) => Some(t),
         Err(e) => {
             log::warn!("call audio unavailable, recording mic only: {e}");
-            save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_MIC.into(), capture_note: Some(e.to_string()), speakers: vec![] });
+            save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_MIC.into(), capture_note: Some(e.to_string()), ..Default::default() });
             None
         }
     };
     if tap.is_some() {
-        save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_DUAL.into(), capture_note: None, speakers: vec![] });
+        save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_DUAL.into(), ..Default::default() });
         ensure_speaker_model(&st);
     }
     let stop = Arc::new(AtomicBool::new(false));
@@ -266,6 +281,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
     let mut embedder: Option<Arc<Embedder>> = None;
     let mut next_embedder_try = Instant::now();
     let mut heard_call = false;
+    let mut kept_audio_secs = 0.0f32;
     // live previews only with on-device STT (cloud previews would cost per call)
     let local = st.settings().stt_provider == "local";
     loop {
@@ -331,14 +347,35 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
                     }
                 }
                 Action::Final => {
-                    let audio_secs = tr.pending.len() as f32 / audio::TARGET_RATE as f32;
-                    let samples = std::mem::take(&mut tr.pending);
-                    let (t0, t1) = (tr.seg_start, tr.seg_start + audio_secs as f64);
-                    if audio::voiced_ms(&samples) < 250 {
+                    let seg_secs = tr.pending.len() as f32 / audio::TARGET_RATE as f32;
+                    let seg_samples = std::mem::take(&mut tr.pending);
+                    let seg_t0 = tr.seg_start;
+                    if audio::voiced_ms(&seg_samples) < 250 {
                         continue; // no real speech in this stretch → don't invent text
                     }
-                    if tr.mic && dual && is_echo_by_energy(&samples, &call_env.window(t0, samples.len().div_ceil(FRAME))) {
-                        log::info!("meeting: dropped mic chunk at {t0:.1}s (echo of call audio)");
+                    if tr.mic && dual && is_echo_by_energy(&seg_samples, &call_env.window(seg_t0, seg_samples.len().div_ceil(FRAME))) {
+                        log::info!("meeting: dropped mic chunk at {seg_t0:.1}s (echo of call audio)");
+                        continue;
+                    }
+                    // a quick back-and-forth on the call (no 700 ms pause) is one VAD segment:
+                    // cut it where the voice changes so each turn is transcribed and labelled
+                    let pieces: Vec<(f64, Vec<f32>)> = match (&embedder, tr.mic) {
+                        (Some(e), false) if seg_secs >= speakers::MIN_SPLIT_SECS => {
+                            let (e, s) = (e.clone(), seg_samples.clone());
+                            let ranges = tokio::task::spawn_blocking(move || speakers::split_turns(&s, audio::TARGET_RATE, |w| e.embed(w))).await.unwrap_or_default();
+                            if ranges.len() > 1 {
+                                log::info!("meeting: split call segment at {seg_t0:.1}s into {} turns", ranges.len());
+                                ranges.into_iter().map(|r| (seg_t0 + r.start as f64 / audio::TARGET_RATE as f64, seg_samples[r].to_vec())).collect()
+                            } else {
+                                vec![(seg_t0, seg_samples)]
+                            }
+                        }
+                        _ => vec![(seg_t0, seg_samples)],
+                    };
+                    for (t0, samples) in pieces {
+                    let audio_secs = samples.len() as f32 / audio::TARGET_RATE as f32;
+                    let t1 = t0 + audio_secs as f64;
+                    if audio::voiced_ms(&samples) < 250 {
                         continue;
                     }
                     let res = session::transcribe_lang(&st, samples.clone(), &tr.last_text, tr.locked_lang.clone()).await;
@@ -375,7 +412,10 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
                             .and_then(|e| speakers::assign(&mut clusters, e, audio_secs, &voices))
                             .map(|i| clusters[i].label.clone())
                             .unwrap_or_else(|| prev_call_label(&st, &note_id).unwrap_or_else(|| OTHERS.into()));
-                        let keep_audio = emb.is_none() && speakers::supported();
+                        let keep_audio = emb.is_none() && speakers::supported() && kept_audio_secs + audio_secs <= MAX_KEPT_AUDIO_SECS;
+                        if keep_audio {
+                            kept_audio_secs += audio_secs;
+                        }
                         call_segs.push(CallSeg { t: t0, secs: audio_secs, emb, audio: keep_audio.then_some(samples) });
                         label
                     };
@@ -407,6 +447,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
                     }
                     segs_since_summary += 1;
                     st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: Some(segm), summary: None, elapsed_sec: elapsed, live: !stopping, partial: Some(String::new()) });
+                    }
                 }
                 Action::Discard => tr.pending.clear(),
                 _ => {}
@@ -552,6 +593,9 @@ pub fn rename_speaker(st: &Shared, note_id: &str, from: &str, to: &str) -> Resul
                 };
                 st.db.upsert_voice(&to, &speakers::embedding_to_blob(&emb), samples)?;
             }
+            meta.suggested.remove(from);
+            save_meta(st, note_id, &meta);
+        } else if meta.suggested.remove(from).is_some() {
             save_meta(st, note_id, &meta);
         }
     }
@@ -736,6 +780,56 @@ fn replace_word(s: &str, from: &str, to: &str) -> String {
     out
 }
 
+/// Extra system-prompt lines: who `You` is, and (final pass) ask for names the conversation
+/// reveals for `Speaker N` labels.
+pub fn speaker_prompt_extra(user_name: &str, final_pass: bool) -> String {
+    let mut out = String::new();
+    let name = user_name.trim();
+    if !name.is_empty() {
+        out.push_str(&format!("\n`You` is {}, the user. Keep the label `You` in action items.", text::truncate_chars(name, 40)));
+    }
+    if final_pass {
+        out.push_str(
+            "\nIf the conversation makes a `Speaker N`'s real name certain (they introduce themselves, or are addressed by name and answer), \
+add \"speakerNames\":{\"Speaker N\":\"Name\"} to the JSON. Only first names actually spoken in the transcript; omit anyone you are unsure about.",
+        );
+    }
+    out
+}
+
+/// Parse the model's `speakerNames` and keep only safe suggestions: the label is a generic one
+/// still present in the transcript, the name is short and name-like, and no two labels get the
+/// same name (or a name someone in the transcript already has).
+pub fn speaker_name_suggestions(raw: &str, transcript: &[MeetingSegment]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Some(j) = text::extract_json_object(raw) else { return out };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&j) else { return out };
+    let Some(map) = v.get("speakerNames").and_then(|m| m.as_object()) else { return out };
+    let present: Vec<&str> = transcript.iter().filter_map(|s| s.speaker.as_deref()).collect();
+    let mut used: Vec<String> = present.iter().filter(|l| !is_generic_label(l)).map(|l| l.to_lowercase()).collect();
+    for (label, name) in map {
+        let Some(name) = name.as_str().map(str::trim) else { continue };
+        let name_like = !name.is_empty()
+            && name.chars().count() <= 30
+            && name.split_whitespace().count() <= 3
+            && name.chars().next().is_some_and(|c| c.is_alphabetic())
+            && name.chars().all(|c| c.is_alphabetic() || c == ' ' || c == '.' || c == '-' || c == '\'')
+            && !is_generic_label(name)
+            && !name.eq_ignore_ascii_case(YOU);
+        if !name_like || !is_generic_label(label) || !present.contains(&label.as_str()) || used.contains(&name.to_lowercase()) {
+            continue;
+        }
+        used.push(name.to_lowercase());
+        out.insert(label.clone(), name.to_string());
+    }
+    out
+}
+
+/// "Speaker 3" / "Others": labels that are placeholders, not names.
+pub fn is_generic_label(l: &str) -> bool {
+    l == OTHERS || l.strip_prefix("Speaker ").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
 fn seg_line(s: &MeetingSegment) -> String {
     let ts = format!("[{:02}:{:02}]", (s.t as u64) / 60, (s.t as u64) % 60);
     match s.speaker.as_deref() {
@@ -757,11 +851,11 @@ async fn summarize_incremental(st: &Shared, note_id: &str, from: usize) -> Optio
     }
     let new_lines = n.transcript[from..].iter().map(seg_line).collect::<Vec<_>>().join("\n");
     let user = prompts::meeting_update_user(&n.summary, &new_lines);
-    let parsed = summarize_with(st, &user, false, 700).await?;
+    let (parsed, _) = summarize_with(st, &user, false, 700).await?;
     Some((parsed, n.transcript.len()))
 }
 
-async fn summarize(st: &Shared, note_id: &str, final_pass: bool) -> Option<prompts::ParsedSummary> {
+async fn summarize(st: &Shared, note_id: &str, final_pass: bool) -> Option<(prompts::ParsedSummary, String)> {
     let n = st.db.get_note(note_id).ok()??;
     if n.transcript.is_empty() {
         return None;
@@ -777,13 +871,15 @@ async fn summarize(st: &Shared, note_id: &str, final_pass: bool) -> Option<promp
     summarize_with(st, &user, final_pass, 1200).await
 }
 
-async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u32) -> Option<prompts::ParsedSummary> {
+/// Returns the parsed summary and the raw model output (final pass: also carries `speakerNames`).
+async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u32) -> Option<(prompts::ParsedSummary, String)> {
     let s = st.settings();
     let cfgl = LlmConfig::from_settings(&s);
     if !cfgl.is_configured() {
         return None;
     }
     let mut system = prompts::meeting_summary_system(final_pass);
+    system.push_str(&speaker_prompt_extra(&s.user_name, final_pass));
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\nUser's instructions: {}", text::truncate_chars(s.system_prompt.trim(), 1000)));
     }
@@ -802,7 +898,7 @@ async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u
             let mut p = prompts::parse_summary(&raw);
             p.summary = text::strip_ai_dashes(&p.summary);
             p.action_items = p.action_items.iter().map(|a| text::strip_ai_dashes(a)).collect();
-            Some(p)
+            Some((p, raw))
         }
         Err(e) => {
             log::warn!("meeting summary failed: {e}");
@@ -819,7 +915,14 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
     let Ok(Some(mut n)) = st.db.get_note(note_id) else { return };
     n.live = false;
     n.duration_sec = elapsed;
-    if let Some(s) = sum {
+    if let Some((s, raw)) = sum {
+        let names = speaker_name_suggestions(&raw, &n.transcript);
+        if !names.is_empty() {
+            if let Some(mut meta) = load_meta(st, note_id) {
+                meta.suggested = names;
+                save_meta(st, note_id, &meta);
+            }
+        }
         if !s.summary.is_empty() {
             n.summary = s.summary;
         }
@@ -1011,6 +1114,41 @@ mod tests {
         assert_eq!(replace_word("Speaker 2 owns it; Speaker 21 too", "Speaker 2", "Rahul"), "Rahul owns it; Speaker 21 too");
         assert_eq!(replace_word("Ask Speaker 2.", "Speaker 2", "Rahul"), "Ask Rahul.");
         assert_eq!(replace_word("nothing", "Speaker 2", "Rahul"), "nothing");
+    }
+
+    #[test]
+    fn speaker_name_suggestions_are_safe() {
+        let t = vec![seg(0.0, "Hi Riya", YOU), seg(1.0, "Hi!", "Speaker 1"), seg(2.0, "I'm Arjun", "Speaker 2"), seg(3.0, "ok", "Meera")];
+        let raw = r#"```json
+{"title":"x","summary":"- a","actionItems":[],"speakerNames":{"Speaker 1":"Riya","Speaker 2":"Arjun","Speaker 9":"Ghost","You":"Bob"}}
+```"#;
+        let s = speaker_name_suggestions(raw, &t);
+        assert_eq!(s.into_iter().collect::<Vec<_>>(), vec![("Speaker 1".into(), "Riya".into()), ("Speaker 2".into(), "Arjun".into())]);
+        // junk / duplicates / already-present names / non-generic labels are dropped
+        let raw = r#"{"speakerNames":{"Speaker 1":"Meera","Speaker 2":"Speaker 3","Meera":"Riya"}}"#;
+        assert!(speaker_name_suggestions(raw, &t).is_empty());
+        let raw = r#"{"speakerNames":{"Speaker 1":"Riya","Speaker 2":"riya"}}"#;
+        assert_eq!(speaker_name_suggestions(raw, &t).len(), 1);
+        let raw = r#"{"speakerNames":{"Speaker 1":"DROP TABLE; --","Speaker 2":42}}"#;
+        assert!(speaker_name_suggestions(raw, &t).is_empty());
+        assert!(speaker_name_suggestions("no json", &t).is_empty());
+        assert!(speaker_name_suggestions(r#"{"title":"x"}"#, &t).is_empty());
+    }
+
+    #[test]
+    fn generic_labels() {
+        assert!(is_generic_label("Speaker 2") && is_generic_label("Speaker 12") && is_generic_label(OTHERS));
+        assert!(!is_generic_label("Speaker") && !is_generic_label("Speaker X") && !is_generic_label("Riya") && !is_generic_label(YOU));
+    }
+
+    #[test]
+    fn prompt_names_the_user_and_asks_for_names_only_at_the_end() {
+        let p = speaker_prompt_extra("Parth", true);
+        assert!(p.contains("`You` is Parth") && p.contains("speakerNames"));
+        let live = speaker_prompt_extra("", false);
+        assert!(live.is_empty());
+        assert!(!speaker_prompt_extra("Parth", false).contains("speakerNames"));
+        assert!(!p.contains('\u{2014}'), "no em dashes");
     }
 
     #[test]

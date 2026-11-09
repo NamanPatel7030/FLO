@@ -202,44 +202,54 @@ pub fn next_speaker_label(taken: &[&str]) -> String {
     (1..).map(|n| format!("Speaker {n}")).find(|l| !taken.contains(&l.as_str())).unwrap_or_default()
 }
 
-/// Average-linkage agglomerative clustering over normalised embeddings: merge while the closest
-/// pair of clusters is at least `threshold` similar. Returns a cluster id per input, numbered by
+/// Average-linkage agglomerative clustering over normalised embeddings: merge while the two most
+/// similar clusters have a mean pairwise cosine of at least `threshold`. (True average linkage,
+/// not centroid cosine: re-normalised centroids of tight clusters look more alike than their
+/// members are, which merged two different voices.) Returns a cluster id per input, numbered by
 /// first appearance (0, 1, 2…). `weights` = seconds of speech per item (longer clips count more).
+/// O(n²) memory, O(n³) worst-case time: fine for the few hundred call segments of a meeting.
 pub fn agglomerate(embs: &[Vec<f32>], weights: &[f32], threshold: f32) -> Vec<usize> {
     let n = embs.len();
     if n == 0 {
         return vec![];
     }
-    // each cluster: member indices + weighted centroid
     let mut members: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
-    let mut cents: Vec<Vec<f32>> = embs.to_vec();
     let mut wts: Vec<f32> = (0..n).map(|i| weights.get(i).copied().unwrap_or(1.0).max(0.1)).collect();
+    // sim[i][j] = weighted mean pairwise cosine between clusters i and j (Lance-Williams update)
+    let mut sim: Vec<Vec<f32>> = (0..n).map(|i| (0..n).map(|j| cosine(&embs[i], &embs[j])).collect()).collect();
+    let mut alive = vec![true; n];
     loop {
         let mut best = (0usize, 0usize, f32::MIN);
-        for i in 0..cents.len() {
-            for j in (i + 1)..cents.len() {
-                let s = cosine(&cents[i], &cents[j]);
-                if s > best.2 {
-                    best = (i, j, s);
+        for i in 0..n {
+            if !alive[i] {
+                continue;
+            }
+            for j in (i + 1)..n {
+                if alive[j] && sim[i][j] > best.2 {
+                    best = (i, j, sim[i][j]);
                 }
             }
         }
-        if cents.len() < 2 || best.2 < threshold {
+        if best.2 < threshold {
             break;
         }
         let (i, j, _) = best;
         let (wi, wj) = (wts[i], wts[j]);
-        let merged: Vec<f32> = cents[i].iter().zip(&cents[j]).map(|(a, b)| (a * wi + b * wj) / (wi + wj)).collect();
-        cents[i] = normalize(merged);
+        for k in 0..n {
+            if alive[k] && k != i && k != j {
+                let s = (wi * sim[i][k] + wj * sim[j][k]) / (wi + wj);
+                sim[i][k] = s;
+                sim[k][i] = s;
+            }
+        }
         wts[i] = wi + wj;
-        let m = members.remove(j);
+        alive[j] = false;
+        let m = std::mem::take(&mut members[j]);
         members[i].extend(m);
-        cents.remove(j);
-        wts.remove(j);
     }
     let mut ids = vec![0usize; n];
     // number clusters by their earliest member
-    let mut order: Vec<usize> = (0..members.len()).collect();
+    let mut order: Vec<usize> = (0..n).filter(|c| alive[*c]).collect();
     order.sort_by_key(|c| members[*c].iter().min().copied().unwrap_or(usize::MAX));
     for (new_id, c) in order.into_iter().enumerate() {
         for m in &members[c] {
@@ -247,6 +257,122 @@ pub fn agglomerate(embs: &[Vec<f32>], weights: &[f32], threshold: f32) -> Vec<us
         }
     }
     ids
+}
+
+// ── turns inside one segment ───────────────────────────────────────────────
+//
+// The VAD segmenter only cuts on pauses ≥ 700 ms (or at 8 s), so a quick back-and-forth on the
+// call ("Can you send it?" / "Yes, tonight.") lands in ONE segment. Before transcribing a long
+// call segment we embed short overlapping windows, group them by voice and cut at the quietest
+// moment near each change, so each piece is transcribed and labelled on its own.
+
+/// Window / hop for change detection (seconds). 1.5 s is the shortest clip CAM++ embeds reliably.
+pub const WIN_SECS: f32 = 1.5;
+pub const HOP_SECS: f32 = 0.75;
+/// Only segments at least this long are checked for a speaker change (two pieces of ≥ MIN_PIECE).
+pub const MIN_SPLIT_SECS: f32 = 2.5;
+/// Never produce a piece shorter than this (too short to transcribe or embed well).
+pub const MIN_PIECE_SECS: f32 = 1.0;
+/// Short windows are noisier than whole turns → a looser "same voice" threshold.
+pub const WINDOW_SAME: f32 = 0.40;
+
+/// Start offsets (samples) of the analysis windows covering `n` samples at `rate`.
+pub fn window_starts(n: usize, rate: u32) -> Vec<usize> {
+    let (win, hop) = ((WIN_SECS * rate as f32) as usize, (HOP_SECS * rate as f32) as usize);
+    if n < win || hop == 0 {
+        return vec![];
+    }
+    let mut v: Vec<usize> = (0..).map(|k| k * hop).take_while(|s| s + win <= n).collect();
+    // cover the tail too
+    if v.last().is_some_and(|l| l + win < n) {
+        v.push(n - win);
+    }
+    v
+}
+
+/// Voice label per window (agglomerative over the windows), smoothed: a single window whose
+/// neighbours agree with each other is noise and takes their label; a single window between two
+/// different voices (it straddles the change) joins the neighbour it sounds more like.
+pub fn window_labels(embs: &[Vec<f32>], threshold: f32) -> Vec<usize> {
+    let mut l = agglomerate(embs, &vec![1.0; embs.len()], threshold);
+    for i in 1..l.len().saturating_sub(1) {
+        let (a, b) = (l[i - 1], l[i + 1]);
+        if l[i] != a && l[i] != b {
+            l[i] = if a == b || cosine(&embs[i], &embs[i - 1]) >= cosine(&embs[i], &embs[i + 1]) { a } else { b };
+        }
+    }
+    l
+}
+
+/// Index of the quietest 100 ms stretch within `radius` samples of `at` (the gap between turns).
+pub fn quietest_near(samples: &[f32], at: usize, radius: usize, rate: u32) -> usize {
+    let step = (rate / 100) as usize; // 10 ms grid
+    let span = (rate / 10) as usize; // 100 ms energy window
+    let lo = at.saturating_sub(radius);
+    let hi = (at + radius).min(samples.len().saturating_sub(span));
+    if lo >= hi {
+        return at.min(samples.len());
+    }
+    (lo..=hi)
+        .step_by(step.max(1))
+        .map(|i| (i, crate::audio::rms(&samples[i..(i + span).min(samples.len())])))
+        .min_by(|a, b| a.1.total_cmp(&b.1).then(((a.0 as i64 - at as i64).abs()).cmp(&(b.0 as i64 - at as i64).abs())))
+        .map(|(i, _)| i + span / 2)
+        .unwrap_or(at)
+}
+
+/// Split a segment where the voice changes. `embed` = the speaker embedder (any closure in tests).
+/// Returns sample ranges covering the whole segment (one range when nothing changes).
+pub fn split_turns(samples: &[f32], rate: u32, embed: impl Fn(&[f32]) -> Option<Vec<f32>>) -> Vec<std::ops::Range<usize>> {
+    let whole = vec![0..samples.len()];
+    if (samples.len() as f32) < MIN_SPLIT_SECS * rate as f32 {
+        return whole;
+    }
+    let win = (WIN_SECS * rate as f32) as usize;
+    let mut starts = vec![];
+    let mut embs = vec![];
+    for s in window_starts(samples.len(), rate) {
+        let w = &samples[s..s + win];
+        // skip windows that are mostly silence: their embedding is noise
+        let frames = w.chunks((rate / 50) as usize);
+        let n = frames.len().max(1);
+        if frames.filter(|f| crate::audio::rms(f) >= crate::livetx::SPEECH_RMS).count() * 10 < n * 3 {
+            continue;
+        }
+        if let Some(e) = embed(w) {
+            starts.push(s);
+            embs.push(e);
+        }
+    }
+    if embs.len() < 2 {
+        return whole;
+    }
+    let labels = window_labels(&embs, WINDOW_SAME);
+    let min_piece = (MIN_PIECE_SECS * rate as f32) as usize;
+    let mut cuts: Vec<usize> = vec![];
+    for i in 1..labels.len() {
+        if labels[i] == labels[i - 1] {
+            continue;
+        }
+        // the change lies where window i-1 ends and window i begins (their overlap's middle)
+        let guess = (starts[i] + starts[i - 1] + win) / 2;
+        let cut = quietest_near(samples, guess, rate as usize * 6 / 10, rate);
+        let prev = cuts.last().copied().unwrap_or(0);
+        if cut >= prev + min_piece && cut + min_piece <= samples.len() {
+            cuts.push(cut);
+        }
+    }
+    if cuts.is_empty() {
+        return whole;
+    }
+    let mut out = vec![];
+    let mut from = 0;
+    for c in cuts {
+        out.push(from..c);
+        from = c;
+    }
+    out.push(from..samples.len());
+    out
 }
 
 // ── known voices ───────────────────────────────────────────────────────────
@@ -451,6 +577,211 @@ mod tests {
                 assert_eq!(ids[i] == ids[j], truth[i] == truth[j], "{i} vs {j}");
             }
         }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    const SR: u32 = 16_000;
+
+    /// A "voice" = a tone at `hz` (fake embedder below tells voices apart by pitch).
+    fn voice(hz: f32, secs: f32) -> Vec<f32> {
+        (0..(secs * SR as f32) as usize).map(|i| (i as f32 * hz * std::f32::consts::TAU / SR as f32).sin() * 0.2).collect()
+    }
+
+    fn quiet(secs: f32) -> Vec<f32> {
+        vec![0.0; (secs * SR as f32) as usize]
+    }
+
+    /// Energy at 200 Hz vs 600 Hz → a 2-d "embedding".
+    fn fake_embed(s: &[f32]) -> Option<Vec<f32>> {
+        let band = |hz: f32| {
+            let (mut re, mut im) = (0.0f32, 0.0f32);
+            for (i, x) in s.iter().enumerate() {
+                let p = i as f32 * hz * std::f32::consts::TAU / SR as f32;
+                re += x * p.cos();
+                im += x * p.sin();
+            }
+            (re * re + im * im).sqrt()
+        };
+        Some(normalize(vec![band(200.0), band(600.0)]))
+    }
+
+    #[test]
+    fn windows_cover_the_segment() {
+        assert!(window_starts(SR as usize, SR).is_empty()); // 1 s < one window
+        let w = window_starts(SR as usize * 3, SR); // 3 s
+        assert_eq!(w[0], 0);
+        assert_eq!(w[1], 12_000);
+        assert_eq!(*w.last().unwrap() + 24_000, 48_000, "tail covered: {w:?}");
+    }
+
+    #[test]
+    fn window_labels_smooth_single_window_noise() {
+        let a = v(&[1.0, 0.0]);
+        let b = v(&[0.0, 1.0]);
+        // A A B A A → the lone B is noise
+        assert_eq!(window_labels(&[a.clone(), a.clone(), b.clone(), a.clone(), a.clone()], WINDOW_SAME), vec![0, 0, 0, 0, 0]);
+        // A A mixed B B → the straddling window joins its closer side, one change remains
+        let l = window_labels(&[a.clone(), a.clone(), v(&[1.0, 0.8]), b.clone(), b.clone()], WINDOW_SAME);
+        assert_eq!(l.windows(2).filter(|p| p[0] != p[1]).count(), 1, "{l:?}");
+    }
+
+    #[test]
+    fn quietest_point_is_the_gap() {
+        let mut s = voice(200.0, 1.0);
+        s.extend(quiet(0.2));
+        s.extend(voice(200.0, 1.0));
+        let at = quietest_near(&s, SR as usize, SR as usize / 2, SR);
+        let gap = (SR as usize)..(SR as usize * 12 / 10);
+        assert!(gap.contains(&at), "{at} not in {gap:?}");
+    }
+
+    #[test]
+    fn split_turns_cuts_at_each_voice_change() {
+        // A 2 s, 0.25 s gap, B 2 s, 0.25 s gap, A 2 s: one VAD segment, three turns
+        let mut s = voice(200.0, 2.0);
+        s.extend(quiet(0.25));
+        s.extend(voice(600.0, 2.0));
+        s.extend(quiet(0.25));
+        s.extend(voice(200.0, 2.0));
+        let parts = split_turns(&s, SR, fake_embed);
+        assert_eq!(parts.len(), 3, "{parts:?}");
+        assert_eq!(parts[0].start, 0);
+        assert_eq!(parts[2].end, s.len());
+        // cuts land in (or right next to) the gaps
+        let gap1 = 2.0..2.25;
+        let gap2 = 4.25..4.5;
+        let c1 = parts[1].start as f32 / SR as f32;
+        let c2 = parts[2].start as f32 / SR as f32;
+        assert!(c1 > gap1.start - 0.1 && c1 < gap1.end + 0.1, "cut 1 at {c1}");
+        assert!(c2 > gap2.start - 0.1 && c2 < gap2.end + 0.1, "cut 2 at {c2}");
+        // each piece is one voice
+        for (p, hz) in parts.iter().zip([200.0, 600.0, 200.0]) {
+            let e = fake_embed(&s[p.clone()]).unwrap();
+            assert!(if hz == 200.0 { e[0] > 0.9 } else { e[1] > 0.9 }, "{p:?}: {e:?}");
+        }
+    }
+
+    #[test]
+    fn split_turns_leaves_one_voice_and_short_clips_alone() {
+        let one = voice(200.0, 6.0);
+        assert_eq!(split_turns(&one, SR, fake_embed), vec![0..one.len()]);
+        let short = voice(200.0, 2.0);
+        assert_eq!(split_turns(&short, SR, fake_embed), vec![0..short.len()]);
+        // a 0.5 s interjection is below MIN_PIECE: not split off on its own
+        let mut s = voice(200.0, 3.0);
+        s.extend(voice(600.0, 0.4));
+        let parts = split_turns(&s, SR, fake_embed);
+        assert!(parts.iter().all(|p| p.len() >= (MIN_PIECE_SECS * SR as f32) as usize), "{parts:?}");
+        // no embedder → whole segment
+        assert_eq!(split_turns(&s, SR, |_| None), vec![0..s.len()]);
+    }
+
+    /// End to end on generated speech: two (or three) macOS `say` voices take turns, some with a
+    /// long pause (the VAD splits) and some quick (one VAD segment → `split_turns` must cut), in
+    /// English and Hindi. Runs the same steps as a meeting: 300 ms slices → Segmenter → split
+    /// turns → embed → cluster. Asserts every turn ends up with the right speaker.
+    /// Needs the real model: `FLO_SPEAKER_MODEL_DIR=/dir/with/model cargo test --lib turns_on_generated -- --ignored --nocapture`
+    #[cfg(all(target_os = "macos", feature = "diarize"))]
+    #[test]
+    #[ignore]
+    fn turns_on_generated_speech() {
+        use crate::livetx::{Action, Segmenter, SLICE_MS};
+        let dir = PathBuf::from(std::env::var("FLO_SPEAKER_MODEL_DIR").expect("FLO_SPEAKER_MODEL_DIR"));
+        let e = Embedder::load(&dir).expect("model loads");
+        let tmp = std::env::temp_dir().join(format!("flo-turns-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let clip = |voice: &str, text: &str, name: &str| -> Vec<f32> {
+            let aiff = tmp.join(format!("{name}.aiff"));
+            let wav = tmp.join(format!("{name}.wav"));
+            assert!(std::process::Command::new("say").args(["-v", voice, "-o"]).arg(&aiff).arg(text).status().unwrap().success());
+            assert!(std::process::Command::new("afconvert").args(["-f", "WAVE", "-d", "LEI16@16000", "-c", "1"]).arg(&aiff).arg(&wav).status().unwrap().success());
+            let s: Vec<f32> = hound::WavReader::open(&wav).unwrap().samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect();
+            crate::audio::trim_silence(&s)
+        };
+        // (voice, words, pause after in seconds): 0.3 s = quick reply inside one VAD segment
+        let script: [(&str, &str, f32); 8] = [
+            ("Rishi", "Good morning everyone, let's go through the launch checklist for the mobile app today.", 1.2),
+            ("Lekha", "नमस्ते, मैंने डिज़ाइन की सारी स्क्रीन कल रात पूरी कर दी हैं और टीम को भेज दी हैं।", 0.3),
+            ("Rishi", "That is great news, can you also share the final icons with the marketing team?", 0.3),
+            ("Lekha", "हाँ, मैं आज शाम तक सारे आइकन और रंग वाली फ़ाइल भेज दूँगी।", 1.2),
+            ("Samantha", "I will update the press release and schedule the social posts for Thursday morning.", 0.3),
+            ("Rishi", "Perfect, then we are on track for the launch next week.", 1.2),
+            ("Samantha", "One more thing, the pricing page still shows the old plans.", 0.3),
+            ("Lekha", "ठीक है, मैं वह भी आज ठीक कर दूँगी।", 1.0),
+        ];
+        let mut stream: Vec<f32> = vec![0.0; SR as usize / 2];
+        let mut truth: Vec<(usize, usize, usize)> = vec![]; // (start, end, speaker)
+        let names = ["Rishi", "Lekha", "Samantha"];
+        for (i, (v, t, pause)) in script.iter().enumerate() {
+            let c = clip(v, t, &format!("t{i}"));
+            let who = names.iter().position(|n| n == v).unwrap();
+            truth.push((stream.len(), stream.len() + c.len(), who));
+            stream.extend(c);
+            stream.extend(quiet(*pause));
+        }
+        // 1) VAD segments, exactly as the meeting loop slices them
+        let slice = (SR as u64 * SLICE_MS / 1000) as usize;
+        let mut seg = Segmenter::default();
+        let (mut segs, mut start) = (vec![], 0usize);
+        for (k, sl) in stream.chunks(slice).enumerate() {
+            let end = (k * slice + sl.len()).min(stream.len());
+            match seg.push(SLICE_MS, crate::audio::rms(sl)) {
+                Action::Final => {
+                    segs.push(start..end);
+                    start = end;
+                }
+                Action::Discard => start = end,
+                _ => {}
+            }
+        }
+        if seg.flush() == Action::Final {
+            segs.push(start..stream.len());
+        }
+        // 2) speaker turns inside each segment, 3) embed each piece, 4) cluster (post-call pass)
+        let mut pieces = vec![];
+        for s in &segs {
+            for p in split_turns(&stream[s.clone()], SR, |w| e.embed(w)) {
+                pieces.push((s.start + p.start)..(s.start + p.end));
+            }
+        }
+        let embs: Vec<Vec<f32>> = pieces.iter().map(|p| e.embed(&stream[p.clone()]).expect("embedding")).collect();
+        let secs: Vec<f32> = pieces.iter().map(|p| p.len() as f32 / SR as f32).collect();
+        let ids = agglomerate(&embs, &secs, SAME_SPEAKER);
+        for a in &embs {
+            println!("{}", embs.iter().map(|b| format!("{:+.2}", cosine(a, b))).collect::<Vec<_>>().join(" "));
+        }
+        for (a, b, w) in &truth {
+            println!("truth {:6.2}-{:6.2}s {}", *a as f32 / SR as f32, *b as f32 / SR as f32, names[*w]);
+        }
+        // majority true speaker of each piece
+        let truth_of = |p: &std::ops::Range<usize>| -> usize {
+            let mut ov = [0usize; 3];
+            for (a, b, w) in &truth {
+                ov[*w] += (*b).min(p.end).saturating_sub((*a).max(p.start));
+            }
+            (0..3).max_by_key(|w| ov[*w]).unwrap()
+        };
+        let mut correct = 0usize;
+        let mut total = 0usize;
+        for (p, id) in pieces.iter().zip(&ids) {
+            let t = truth_of(p);
+            println!("{:6.2}-{:6.2}s  cluster {id}  truth {}", p.start as f32 / SR as f32, p.end as f32 / SR as f32, names[t]);
+        }
+        // cluster ↔ speaker must be one-to-one
+        for i in 0..pieces.len() {
+            for j in 0..pieces.len() {
+                assert_eq!(ids[i] == ids[j], truth_of(&pieces[i]) == truth_of(&pieces[j]), "pieces {i} and {j}");
+            }
+        }
+        // every true turn is covered by a piece of its speaker for ≥ 85% of its length
+        for (a, b, w) in &truth {
+            let good: usize = pieces.iter().filter(|p| truth_of(p) == *w).map(|p| (*b).min(p.end).saturating_sub((*a).max(p.start))).sum();
+            correct += good;
+            total += b - a;
+            assert!(good as f32 >= 0.85 * (b - a) as f32, "turn {}..{} of {} only {:.0}% right", a, b, names[*w], 100.0 * good as f32 / (b - a) as f32);
+        }
+        println!("{} VAD segments → {} turns; {:.1}% of speech attributed correctly", segs.len(), pieces.len(), 100.0 * correct as f32 / total as f32);
+        assert!(segs.len() < script.len(), "the test must include quick replies that the VAD does not split");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
