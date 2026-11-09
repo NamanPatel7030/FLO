@@ -157,8 +157,11 @@ pub fn trim_silence(s: &[f32]) -> Vec<f32> {
     if s.len() < win * 4 {
         return s.to_vec();
     }
-    let loud = |c: &[f32]| rms(c) > 0.012;
     let chunks: Vec<&[f32]> = s.chunks(win).collect();
+    // same rule as `voiced_ms`: a fixed 0.012 cut softly spoken first/last words off
+    // (never stricter than the old 0.012, so loud speech without pauses keeps its soft onsets)
+    let thresh = speech_threshold(&chunks.iter().map(|c| rms(c)).collect::<Vec<_>>()).min(0.012);
+    let loud = |c: &[f32]| rms(c) > thresh;
     let first = chunks.iter().position(|c| loud(c));
     let last = chunks.iter().rposition(|c| loud(c));
     match (first, last) {
@@ -182,14 +185,31 @@ pub fn voiced_ms(s: &[f32]) -> u32 {
         return 0;
     }
     let energies: Vec<f32> = s.chunks(win).map(rms).collect();
-    // noise floor = 20th percentile of frame energy
-    let mut sorted = energies.clone();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let floor = sorted[sorted.len() / 5];
-    // voiced = clearly above the floor AND above an absolute speech threshold
-    let thresh = (floor * 3.0).max(0.015);
+    let thresh = speech_threshold(&energies);
     let voiced = energies.iter().filter(|e| **e > thresh).count();
     (voiced as u32) * 20
+}
+
+/// Frame level above which a 20 ms frame is speech: clearly above the noise floor (20th percentile
+/// of frame energy) AND above an absolute minimum. The minimum used to be 0.015 (-36 dBFS), which
+/// rejected normal speech on a quiet or distant mic (~-40 dBFS) as "I didn't hear anything"
+/// although Whisper transcribes it fine; steady noise is excluded by the floor-relative test.
+fn speech_threshold(energies: &[f32]) -> f32 {
+    if energies.is_empty() {
+        return MIN_SPEECH_RMS;
+    }
+    let mut sorted = energies.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    (sorted[sorted.len() / 5] * 3.0).max(MIN_SPEECH_RMS)
+}
+
+/// Quietest 20 ms frame level that can count as speech (-46 dBFS).
+pub const MIN_SPEECH_RMS: f32 = 0.005;
+
+/// The input delivered (near) zeros: a muted / disconnected mic or a device still starting up
+/// (e.g. AirPods switching to their microphone), as opposed to a room where nobody spoke.
+pub fn is_digital_silence(s: &[f32]) -> bool {
+    s.iter().all(|x| x.abs() < 0.0005)
 }
 
 pub fn rms(s: &[f32]) -> f32 {
@@ -244,6 +264,58 @@ mod tests {
         // add 0.5 s of loud speech-level tone → clearly voiced
         silence.extend((0..sr / 2).map(|i| (i as f32 / 8.0).sin() * 0.25));
         assert!(voiced_ms(&silence) >= 300, "speech voiced {}", voiced_ms(&silence));
+    }
+
+    /// speech-like: 180 ms syllables at `level` with 60 ms dips to a tenth of it (no real silence)
+    fn talking(secs: f32, level: f32) -> Vec<f32> {
+        let sr = TARGET_RATE as usize;
+        (0..(secs * sr as f32) as usize)
+            .map(|i| {
+                let in_dip = (i % (sr * 240 / 1000)) >= sr * 180 / 1000;
+                (i as f32 / 6.0).sin() * level * 1.414 * if in_dip { 0.1 } else { 1.0 }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn trimming_keeps_a_softly_spoken_last_word() {
+        let mut v = vec![0.0f32; 8_000];
+        v.extend(talking(1.0, 0.1)); // normal speech
+        v.extend(talking(0.4, 0.008)); // trailing word, much softer
+        v.extend(vec![0.0f32; 16_000]);
+        let t = trim_silence(&v);
+        // keeps the soft word (0.4 s) + padding, drops most of the 1 s of silence
+        assert!(t.len() >= 16_000 + 6_400, "len {}", t.len());
+        assert!(t.len() < v.len() - 8_000, "len {}", t.len());
+    }
+
+    #[test]
+    fn quiet_microphone_speech_still_counts_as_speech() {
+        // a laptop mic a little far away: speech around -40 dBFS (RMS ~0.01), the level at which
+        // users got "I didn't hear anything" although Whisper transcribes it fine
+        let quiet = talking(2.0, 0.01);
+        assert!(voiced_ms(&quiet) >= 1000, "quiet speech voiced {}", voiced_ms(&quiet));
+        // a tail that is all speech (no leading silence to learn the noise floor from)
+        let loud = talking(2.0, 0.15);
+        assert!(voiced_ms(&loud) >= 1000, "continuous speech voiced {}", voiced_ms(&loud));
+    }
+
+    #[test]
+    fn steady_background_noise_is_not_speech() {
+        // fan / room hum: constant level, even a fairly loud one
+        for level in [0.003f32, 0.006, 0.02] {
+            let hum: Vec<f32> = (0..TARGET_RATE as usize * 2).map(|i| (i as f32 * 0.37).sin() * level * 1.414).collect();
+            assert!(voiced_ms(&hum) < 100, "hum {level} voiced {}", voiced_ms(&hum));
+        }
+        assert_eq!(voiced_ms(&vec![0.0; 32_000]), 0);
+    }
+
+    #[test]
+    fn digital_silence_is_detected() {
+        assert!(is_digital_silence(&vec![0.0; 16_000]));
+        assert!(is_digital_silence(&vec![0.00002; 16_000]));
+        assert!(!is_digital_silence(&talking(1.0, 0.005)));
+        assert!(is_digital_silence(&[]));
     }
 
     #[test]

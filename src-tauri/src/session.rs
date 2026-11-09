@@ -178,8 +178,12 @@ async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<
             Action::Final => {
                 let audio_now = std::mem::take(&mut *buf.pending.lock());
                 let secs = audio_now.len() as f32 / audio::TARGET_RATE as f32;
-                // never transcribe a pause that had no real speech (prevents hallucinated text)
+                // never transcribe a pause that had no real speech (prevents hallucinated text) —
+                // but keep the audio: it used to be dropped here, losing softly spoken words
                 if audio::voiced_ms(&audio_now) < 200 {
+                    let mut p = buf.pending.lock();
+                    let newer = std::mem::replace(&mut *p, audio_now);
+                    p.extend(newer);
                     continue;
                 }
                 if let Ok(t) = transcribe_with_prompt(&st, audio_now, &context).await {
@@ -192,7 +196,7 @@ async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<
             Action::Discard => {
                 // only drop pure silence; a short word before a pause stays for the next sentence
                 let mut p = buf.pending.lock();
-                if audio::rms(&p) < 0.006 {
+                if audio::voiced_ms(&p) == 0 {
                     p.clear();
                 }
             }
@@ -220,7 +224,18 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     // require real speech; a silent hold must never paste a hallucinated sentence
     let tail_voiced = audio::voiced_ms(&samples);
     if committed.is_empty() && tail_voiced < 250 {
-        return Err(anyhow!("I didn't hear anything. Check the microphone in System Settings → Sound."));
+        match silent_hold(duration_ms, audio::is_digital_silence(&samples)) {
+            SilentHold::Ignore => {
+                // ctrl held a moment for a shortcut (or ctrl-click) and let go: not a dictation
+                log::info!("short silent hold ({duration_ms} ms): nothing to transcribe");
+                st.state(Phase::Idle, mode, None);
+                return Ok(());
+            }
+            SilentHold::MicSilent => {
+                return Err(anyhow!("The microphone sent only silence. Check the input device in System Settings → Sound."));
+            }
+            SilentHold::NoSpeech => return Err(anyhow!("I didn't hear anything. Check the microphone in System Settings → Sound.")),
+        }
     }
     st.state(Phase::Transcribing, mode, None);
     let t0 = Instant::now();
@@ -274,6 +289,28 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+enum SilentHold {
+    /// too short to have been a dictation: go back to idle quietly
+    Ignore,
+    /// the input device delivered zeros
+    MicSilent,
+    /// a real recording with sound but no speech
+    NoSpeech,
+}
+
+/// What a hold without any speech was. Holding ⌃ briefly for a shortcut, then letting go, used to
+/// end in an "I didn't hear anything" error every time.
+fn silent_hold(duration_ms: u64, digital_silence: bool) -> SilentHold {
+    if digital_silence && duration_ms >= 1_000 {
+        SilentHold::MicSilent
+    } else if duration_ms < 1_500 {
+        SilentHold::Ignore
+    } else {
+        SilentHold::NoSpeech
+    }
 }
 
 fn save(st: &Shared, mode: Mode, app: &str, raw: &str, final_text: &str, duration_ms: u64, latency_ms: u64) {
@@ -405,5 +442,19 @@ mod tests {
         assert!(super::SETUP_CAPTURE.load(Ordering::SeqCst));
         super::set_setup_capture(false);
         assert!(!super::SETUP_CAPTURE.load(Ordering::SeqCst));
+    }
+}
+
+#[cfg(test)]
+mod silent_hold_tests {
+    use super::*;
+
+    #[test]
+    fn short_silent_holds_are_ignored_not_errors() {
+        assert_eq!(silent_hold(400, false), SilentHold::Ignore);
+        assert_eq!(silent_hold(1_200, false), SilentHold::Ignore);
+        assert_eq!(silent_hold(600, true), SilentHold::Ignore);
+        assert_eq!(silent_hold(3_000, false), SilentHold::NoSpeech);
+        assert_eq!(silent_hold(1_200, true), SilentHold::MicSilent);
     }
 }
