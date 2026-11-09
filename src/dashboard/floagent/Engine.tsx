@@ -153,11 +153,15 @@ function HermesCard({ h, cfg, save }: { h: ReturnType<typeof useHermes>; cfg: Ag
               {st.version && <span className="rounded-full bg-white/[0.07] px-2 py-0.5 font-mono text-[10.5px] text-muted">v{st.version}</span>}
               <span className="flex items-center gap-1.5 text-[12px] text-muted" data-testid="hermes-state">
                 <Dot on={st.running && st.healthy} warn={st.running && !st.healthy} />
-                {!st.installed ? "Not installed" : st.running ? (st.healthy ? `Running on 127.0.0.1:${st.port}` : "Starting…") : "Stopped"}
+                {!st.installed ? (st.broken ? "Install incomplete" : "Not installed") : st.running ? (st.healthy ? `Running on 127.0.0.1:${st.port}` : "Starting…") : "Stopped"}
               </span>
             </div>
             <div className="mt-1 text-[12.5px] text-muted">
-              {st.installed ? "Your own Hermes, started by Flo with Flo's apps and skills. It uses your AI key and asks before risky commands." : "Not found on this Mac. Flo never installs software for you: copy the official command, run it in Terminal, then check again."}
+              {st.installed
+                ? "Your own Hermes, started by Flo with Flo's apps and skills. It uses your AI key and asks before risky commands."
+                : st.broken
+                  ? `Hermes isn't fully installed: ${st.path ?? "the hermes launcher"} is there but doesn't run (${st.broken}). Run the install command again in Terminal, then check again.`
+                  : "Not found on this Mac. Flo never installs software for you: copy the official command, run it in Terminal, then check again."}
             </div>
           </div>
           {st.installed && (

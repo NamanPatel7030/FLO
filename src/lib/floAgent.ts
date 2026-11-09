@@ -56,6 +56,8 @@ export interface ExportSummary {
 
 export interface HermesStatus {
   installed: boolean;
+  /** a hermes file exists but doesn't run (install didn't finish) */
+  broken?: string | null;
   path?: string | null;
   version?: string | null;
   outdated: boolean;

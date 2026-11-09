@@ -78,10 +78,21 @@ pub fn version_at_least(found: &str, min: &str) -> bool {
     true
 }
 
-async fn version_of(bin: &Path) -> Option<String> {
+/// Run `hermes --version`. `Err` = the file exists but doesn't run (a half-finished install: the
+/// `~/.local/bin/hermes` launcher points at a program that isn't there).
+async fn version_of(bin: &Path) -> Result<Option<String>, String> {
     let fut = tokio::process::Command::new(bin).arg("--version").env("PATH", crate::code::child_path()).stdin(Stdio::null()).kill_on_drop(true).output();
-    let out = tokio::time::timeout(Duration::from_secs(10), fut).await.ok()?.ok()?;
-    parse_version(&String::from_utf8_lossy(&out.stdout)).or_else(|| parse_version(&String::from_utf8_lossy(&out.stderr)))
+    let out = match tokio::time::timeout(Duration::from_secs(10), fut).await {
+        Err(_) => return Err("didn't answer within 10 s".into()),
+        Ok(Err(e)) => return Err(e.to_string()),
+        Ok(Ok(o)) => o,
+    };
+    let (so, se) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() {
+        let why = se.lines().chain(so.lines()).map(str::trim).find(|l| !l.is_empty()).unwrap_or("it exited with an error");
+        return Err(crate::text::truncate_chars(why, 220));
+    }
+    Ok(parse_version(&so).or_else(|| parse_version(&se)))
 }
 
 // ── config export (pure parts unit tested) ─────────────────────────────────
@@ -614,6 +625,8 @@ async fn ask_api(st: &Shared, port: u16, key: &str, prompt: &str, on_line: &mut 
 #[serde(rename_all = "camelCase")]
 pub struct HermesStatus {
     pub installed: bool,
+    /// a `hermes` file was found but it doesn't run (the install didn't finish)
+    pub broken: Option<String>,
     pub path: Option<String>,
     pub version: Option<String>,
     /// older than the version Flo was tested with
@@ -641,15 +654,19 @@ async fn healthy(st: &Shared, port: u16) -> bool {
 
 pub async fn status(st: &Shared) -> HermesStatus {
     let path = find_hermes();
-    let version = match &path {
-        Some(p) => version_of(p).await,
-        None => None,
+    let (version, broken) = match &path {
+        Some(p) => match version_of(p).await {
+            Ok(v) => (v, None),
+            Err(why) => (None, Some(why)),
+        },
+        None => (None, None),
     };
     let is_running = running();
     let (port, started_at, slack) = PROC.lock().as_ref().map(|p| (p.port, Some(p.started_at.clone()), p.slack)).unwrap_or((DEFAULT_PORT, None, false));
     let has = |k: &str| crate::secrets::get_api_key(k).is_some();
     HermesStatus {
-        installed: path.is_some(),
+        installed: path.is_some() && broken.is_none(),
+        broken,
         path: path.map(|p| p.display().to_string()),
         outdated: version.as_deref().map(|v| !version_at_least(v, TESTED_VERSION)).unwrap_or(false),
         version,
@@ -696,6 +713,32 @@ pub fn hermes_log() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_launcher_pointing_at_a_missing_program_is_reported_as_broken() {
+        // exactly what a half-finished install leaves: ~/.local/bin/hermes exec-ing a missing venv
+        let dir = std::env::temp_dir().join(format!("flo-hermes-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("hermes");
+        std::fs::write(&bin, "#!/usr/bin/env bash\nexec \"/nonexistent/flo-test/venv/bin/hermes\" \"$@\"\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let r = rt.block_on(super::version_of(&bin));
+        assert!(r.is_err(), "a launcher that can't run must not count as installed");
+        let ok = dir.join("hermes-ok");
+        std::fs::write(&ok, "#!/bin/sh\necho 'Hermes Agent 0.22.5'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert_eq!(rt.block_on(super::version_of(&ok)).unwrap().as_deref(), Some("0.22.5"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
     use std::collections::BTreeMap;
 
