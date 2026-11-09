@@ -102,7 +102,12 @@ test("pairing dialog: QR + 6-digit code + countdown; the phone shows up in the l
   expect(await page.evaluate(() => (window as any).__floPresenceMock.claim("Again"))).toBe(false);
 
   // remove a phone
-  await phones.getByRole("button", { name: "Remove Pixel 8" }).click();
+  await phones.getByRole("button", { name: "Disconnect Pixel 8" }).click();
+  // asks first: Keep leaves it, Disconnect removes it
+  await phones.getByRole("button", { name: "Keep" }).click();
+  await expect(phones.getByTestId("phone-row")).toHaveCount(2);
+  await phones.getByRole("button", { name: "Disconnect Pixel 8" }).click();
+  await phones.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(phones.getByTestId("phone-row")).toHaveCount(1);
   await expect(phones).not.toContainText("Pixel 8");
 });
