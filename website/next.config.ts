@@ -3,8 +3,6 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // libsql ships native bindings — keep it out of the server bundle
-  serverExternalPackages: ["@libsql/client", "libsql"],
   images: { unoptimized: true },
   async headers() {
     return [

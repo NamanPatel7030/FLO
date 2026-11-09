@@ -28,7 +28,7 @@ This file captures everything built and decided in the Claude Code build session
 | `src/lib/mock.ts` (+ `mock*.ts`) | Browser mock backend used by Playwright e2e and the `localhost:5190` dev preview |
 | `tests/e2e/` | Playwright specs (Chromium + WebKit) |
 | `tests/perf/` | Screenshot / hover / idle probes |
-| `website/` | Next.js 15 marketing site + account backend (NextAuth, libsql/Turso), update server, mobile/push API, Slack OAuth broker |
+| `website/` | Next.js 15 marketing site + account backend (Supabase Auth + Postgres, see `docs/supabase-setup.md`), update server, mobile/push API, Slack OAuth broker |
 | `mobile/` | Flo for Android (Expo SDK 58), companion app for push notifications |
 | `scripts/` | `install-mac.sh`, `sign-mac.sh`, `release-mac.sh`, `set-version.py`, `write-release-manifest.py`, `setup-signing.sh`, `mcp-test-server.py` |
 | `docs/` | `mobile-api.md`, `slack-setup.md`, `feature-audit.md` (partial), this file |
@@ -141,7 +141,7 @@ This file captures everything built and decided in the Claude Code build session
 - **Navigation:** a notch-twin "chin" dock with All features.
 - **Theme:** light theme with a System / Light / Dark switch.
 - **Downloads require an account:** `/api/download/<os>` sends visitors to sign-up first; file URLs come from server-only env vars.
-- **Backend routes:** account (NextAuth + Google), update server, mobile/presence/push API, Slack OAuth broker.
+- **Backend routes:** account (Supabase Auth, Google first), update server, mobile/presence/push API, Slack OAuth broker.
 - **Favicon:** set from `big-curl-wave-final.png`.
 
 ---

@@ -1,11 +1,34 @@
 // Presence + phone relay API (docs/mobile-api.md) against a running dev server.
-// Run: node --test tests/mobile-api.test.mjs   (BASE=http://localhost:3000 by default)
-import { test } from "node:test";
+// Run: FLO_TEST_DATABASE_URL=postgres://postgres@localhost:54329/flo_test node --test tests/mobile-api.test.mjs
+// The dev server must use the same database (DATABASE_URL) and AUTH_SECRET. Accounts live in Supabase
+// Auth, so test users are seeded into the local stand-in's auth.users and get an app token minted
+// with AUTH_SECRET, exactly what /api/app/login hands the desktop app. See tests/helpers.mjs.
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
+import { appToken, BASE, connect, loadEnv, seedUser, testDbUrl } from "./helpers.mjs";
 
-const BASE = process.env.BASE || "http://localhost:3000";
+const env = loadEnv();
+const dbUrl = testDbUrl();
+const skip = dbUrl && env.AUTH_SECRET ? false : "set FLO_TEST_DATABASE_URL (local Postgres the dev server uses) and AUTH_SECRET";
 // spread requests over fake client IPs so the per-IP limiters don't trip on reruns
 const ip = `10.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+let sql;
+const users = [];
+
+before(async () => {
+  if (skip) return;
+  sql = connect(dbUrl);
+  // the dev server must be reading the same database
+  const u = await newUser();
+  const me = await call("GET", "/api/app/me", { token: u.token });
+  assert.equal(me.status, 200, `dev server at ${BASE} can't see the test database (is its DATABASE_URL ${dbUrl}?): ${JSON.stringify(me.json)}`);
+  assert.deepEqual(Object.keys(me.json.user).sort(), ["email", "id", "image", "name"]);
+});
+after(async () => {
+  if (!sql) return;
+  if (users.length) await sql`delete from auth.users where id in ${sql(users)}`;
+  await sql.end();
+});
 
 async function call(method, path, { token, body } = {}) {
   const res = await fetch(BASE + path, {
@@ -22,13 +45,9 @@ async function call(method, path, { token, body } = {}) {
 }
 
 async function newUser() {
-  const email = `presence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
-  const password = "correct horse battery";
-  const s = await call("POST", "/api/signup", { body: { name: "Pres Tester", email, password } });
-  assert.equal(s.status, 200, JSON.stringify(s.json));
-  const l = await call("POST", "/api/app/login", { body: { email, password } });
-  assert.equal(l.status, 200, JSON.stringify(l.json));
-  return { token: l.json.token, email };
+  const u = await seedUser(sql, { name: "Pres Tester", email: `presence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com` });
+  users.push(u.id);
+  return { token: await appToken(env.AUTH_SECRET, u.id, "10m"), email: u.email, id: u.id };
 }
 
 async function pairPhone(token, pushToken = "fcm-test-token") {
@@ -41,7 +60,7 @@ async function pairPhone(token, pushToken = "fcm-test-token") {
   return { start: start.json, claim: claim.json };
 }
 
-test("everything needs auth", async () => {
+test("everything needs auth", { skip }, async () => {
   for (const [m, p] of [
     ["GET", "/api/presence"],
     ["POST", "/api/presence"],
@@ -57,7 +76,7 @@ test("everything needs auth", async () => {
   }
 });
 
-test("presence defaults to active and toggles; since is kept when unchanged", async () => {
+test("presence defaults to active and toggles; since is kept when unchanged", { skip }, async () => {
   const { token } = await newUser();
   const g = await call("GET", "/api/presence", { token });
   assert.equal(g.status, 200);
@@ -72,7 +91,7 @@ test("presence defaults to active and toggles; since is kept when unchanged", as
   assert.equal(bad.status, 400);
 });
 
-test("pairing: QR payload + code, single use, device token works for mobile routes only", async () => {
+test("pairing: QR payload + code, single use, device token works for mobile routes only", { skip }, async () => {
   const { token, email } = await newUser();
   const { start, claim } = await pairPhone(token);
   assert.match(start.code, /^\d{3} \d{3}$/);
@@ -106,21 +125,21 @@ test("pairing: QR payload + code, single use, device token works for mobile rout
   assert.equal((await call("GET", "/api/presence", { token: dev })).status, 401);
 });
 
-test("phone can sign itself out", async () => {
+test("phone can sign itself out", { skip }, async () => {
   const { token } = await newUser();
   const { claim } = await pairPhone(token);
   assert.equal((await call("DELETE", "/api/mobile/device", { token: claim.deviceToken })).status, 200);
   assert.equal((await call("GET", "/api/mobile/devices", { token })).json.length, 0);
 });
 
-test("bad codes are rejected", async () => {
+test("bad codes are rejected", { skip }, async () => {
   const r = await call("POST", "/api/mobile/pair/claim", { body: { code: "12", deviceName: "x", platform: "android" } });
   assert.equal(r.status, 400);
   const ios = await call("POST", "/api/mobile/pair/claim", { body: { code: "123 456", deviceName: "x", platform: "ios" } });
   assert.equal(ios.status, 400);
 });
 
-test("push: stored always, pushed only while away; inbox pages by id", async () => {
+test("push: stored always, pushed only while away; inbox pages by id", { skip }, async () => {
   const { token } = await newUser();
   const { claim } = await pairPhone(token);
   await call("POST", "/api/presence", { token, body: { status: "active" } });
@@ -154,9 +173,59 @@ test("push: stored always, pushed only while away; inbox pages by id", async () 
   assert.equal(badData.status, 400);
 });
 
-test("claim accepts the full QR payload (with ?scheme=)", async () => {
+test("claim accepts the full QR payload (with ?scheme=)", { skip }, async () => {
   const { token } = await newUser();
   const start = await call("POST", "/api/mobile/pair/start", { token });
   const claim = await call("POST", "/api/mobile/pair/claim", { body: { code: start.json.payload, deviceName: "Pixel 9", platform: "android" } });
   assert.equal(claim.status, 200, JSON.stringify(claim.json));
+});
+
+test("app tokens: unknown, deleted or pre-Supabase (non-uuid) subjects are signed out", { skip }, async () => {
+  const legacy = await appToken(env.AUTH_SECRET, "u_legacy_libsql_id");
+  assert.equal((await call("GET", "/api/app/me", { token: legacy })).status, 401);
+  assert.equal((await call("GET", "/api/presence", { token: legacy })).status, 401);
+  const ghost = await appToken(env.AUTH_SECRET, "00000000-0000-4000-8000-000000000000");
+  assert.equal((await call("GET", "/api/app/me", { token: ghost })).status, 401);
+  const { token, id } = await newUser();
+  assert.equal((await call("GET", "/api/app/me", { token })).status, 200);
+  await sql`delete from auth.users where id = ${id}`;
+  assert.equal((await call("GET", "/api/app/me", { token })).status, 401);
+  const forged = await new (await import("jose")).SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject(id).setExpirationTime("5m").sign(new TextEncoder().encode("not-the-secret"));
+  assert.equal((await call("GET", "/api/app/me", { token: forged })).status, 401);
+});
+
+test("desktop sign-in handoff: one-time code, state-bound, 5 minutes", { skip }, async () => {
+  const { id, email } = await newUser();
+  // /api/app/handoff needs the browser's Supabase cookie session; seed the row it would create
+  const code = `test-${Math.random().toString(36).slice(2)}`;
+  await sql`insert into app.handoffs (code, state, user_id, expires_at) values (${code}, 'st-1', ${id}, now() + interval '5 minutes')`;
+  assert.equal((await call("POST", "/api/app/exchange", { body: { code, state: "other" } })).status, 401, "wrong state");
+  const ok = await call("POST", "/api/app/exchange", { body: { code: `${code}-2`, state: "st-1" } });
+  assert.equal(ok.status, 401, "unknown code");
+  await sql`insert into app.handoffs (code, state, user_id, expires_at) values (${code + "-b"}, 'st-1', ${id}, now() + interval '5 minutes')`;
+  const good = await call("POST", "/api/app/exchange", { body: { code: code + "-b", state: "st-1" } });
+  assert.equal(good.status, 200, JSON.stringify(good.json));
+  assert.equal(good.json.user.email, email);
+  assert.equal(good.json.user.id, id);
+  assert.ok(good.json.token.split(".").length === 3);
+  assert.equal((await call("GET", "/api/app/me", { token: good.json.token })).status, 200);
+  assert.equal((await call("POST", "/api/app/exchange", { body: { code: code + "-b", state: "st-1" } })).status, 401, "single use");
+  await sql`insert into app.handoffs (code, state, user_id, expires_at) values (${code + "-old"}, 'st-1', ${id}, now() - interval '1 second')`;
+  assert.equal((await call("POST", "/api/app/exchange", { body: { code: code + "-old", state: "st-1" } })).status, 401, "expired");
+  assert.equal((await call("POST", "/api/app/handoff", { body: { state: "x" } })).status, 401, "handoff needs a website session");
+});
+
+test("inbox keeps the newest 100 per account", { skip }, async () => {
+  const { token } = await newUser();
+  const { claim } = await pairPhone(token);
+  await call("POST", "/api/presence", { token, body: { status: "active" } });
+  const uid = (await call("GET", "/api/app/me", { token })).json.user.id;
+  await sql`insert into app.notifications (user_id, kind, title) select ${uid}, 'reminder', 'n' || g from generate_series(1, 104) g`;
+  const p = await call("POST", "/api/push", { token, body: { kind: "reminder", title: "last one" } });
+  assert.equal(p.status, 200);
+  const [{ n }] = await sql`select count(*)::int as n from app.notifications where user_id = ${uid}`;
+  assert.equal(n, 100);
+  const first = await call("GET", "/api/mobile/inbox", { token: claim.deviceToken });
+  assert.equal(first.json.length, 100);
+  assert.equal(first.json.at(-1).title, "last one");
 });

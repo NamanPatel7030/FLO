@@ -4,29 +4,35 @@ Flo stays local-first: the account only gates sign-in and downloads. Dictation, 
 screen text and keys never leave the Mac. The app talks to exactly one account host (egress guard).
 
 ## Website (Next.js, `website/`)
-Env: `AUTH_SECRET` (random 32+ bytes), `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `DATABASE_URL`
-(`file:./flo.db` locally; `libsql://…` Turso in prod) + `DATABASE_AUTH_TOKEN`, `SITE_URL`,
-`NEXT_PUBLIC_DOWNLOAD_MAC`, `NEXT_PUBLIC_DOWNLOAD_WINDOWS`, `NEXT_PUBLIC_DOWNLOAD_LINUX` (URLs).
+Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `DATABASE_URL` (Supabase transaction
+pooler), `AUTH_SECRET` (random 32+ bytes; signs app tokens), `SITE_URL`, `DOWNLOAD_MAC/WINDOWS/LINUX`
+(server-only). Setup: `docs/supabase-setup.md`.
 
 Pages: `/` landing · `/signup` · `/login` · `/download` (requires session → else `/signup?next=/download`)
-· `/app/connect?state=…` (signs in if needed, then hands a code to the app) · `/privacy` · `/terms`.
+· `/app/connect?state=…` (signs in if needed, then hands a code to the app) · `/auth/callback` (Supabase
+email links + Google) · `/auth/forgot` · `/auth/reset` · `/privacy` · `/terms`.
 
-Auth: Auth.js v5 — Credentials (email + password, bcrypt) and Google. Same user table for both
-(Google sign-in with an email that already has a password links to it).
+Auth: Supabase Auth. Google is the primary sign-in; email + password (with email confirmation, resend
+and password reset) is the secondary path. Website sessions are Supabase cookies (`@supabase/ssr`,
+refreshed by `middleware.ts`). Account ids are Supabase user uuids; `public.profiles` holds
+name/avatar (`supabase/migrations/0001_init.sql`). `/api/app/login` checks the password with
+Supabase server-side and returns Flo's own app token, so the desktop contract below is unchanged.
+Supabase links Google and email sign-ins with the same verified email to one user.
 
 ### App API (JSON)
 | Method | Path | Body / headers | 200 response | Errors |
 |---|---|---|---|---|
-| POST | `/api/app/login` | `{email, password}` | `{token, user}` | 401 `{error}` |
+| POST | `/api/app/login` | `{email, password}` | `{token, user}` | 401 `{error}` (wrong password, or "Confirm your email first…"), 429, 503 |
 | GET | `/api/app/me` | `Authorization: Bearer <token>` | `{user}` | 401 |
 | POST | `/api/app/handoff` | `{state}` (needs website session) | `{code}` (one-time, 5 min) | 401 |
 | POST | `/api/app/exchange` | `{code, state}` | `{token, user}` | 400/401 |
 
-`user = {id, email, name, image?}`. `token` = JWT HS256 signed with `AUTH_SECRET`, claims
+`user = {id, email, name, image}` (`id` = Supabase user uuid, `image` may be null). `token` = JWT HS256 signed with `AUTH_SECRET`, claims
 `sub, email, name, iat, exp` (30 days).
 
-Google from the app: app opens `${SITE_URL}/app/connect?state=<random>` in the browser → website signs
-the user in (Google or password) → calls `/api/app/handoff` → redirects to
+Google from the app: app opens `${SITE_URL}/app/connect?state=<random>` in the browser → (signed out)
+`/login?next=/app/connect?state=…` → Continue with Google → Supabase → Google → `/auth/callback?next=…`
+(PKCE code exchange, cookie session) → back on `/app/connect` → calls `/api/app/handoff` → redirects to
 `flo://auth?code=<code>&state=<state>` and ALSO shows the code with a Copy button (manual fallback).
 App calls `/api/app/exchange`.
 

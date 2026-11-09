@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { AuthShell } from "@/components/AuthShell";
 import { ConnectHandoff } from "@/components/ConnectHandoff";
+import { getUser } from "@/lib/supabase/server";
 
 export const metadata = { title: "Connect Flo" };
 export const dynamic = "force-dynamic";
@@ -19,11 +19,11 @@ export default async function ConnectPage({ searchParams }: { searchParams: Prom
       </AuthShell>
     );
   }
-  const session = await auth();
-  if (!session?.user) redirect(`/login?next=${encodeURIComponent(`/app/connect?state=${encodeURIComponent(state)}`)}`);
+  const user = await getUser();
+  if (!user) redirect(`/login?next=${encodeURIComponent(`/app/connect?state=${encodeURIComponent(state)}`)}`);
   return (
     <AuthShell>
-      <ConnectHandoff state={state} email={session.user.email ?? ""} />
+      <ConnectHandoff state={state} email={user.email} />
     </AuthShell>
   );
 }

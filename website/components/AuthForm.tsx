@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
-import { signIn } from "next-auth/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { AlertCircle, ArrowRight, Check, Eye, EyeOff, Loader2, Lock } from "lucide-react";
+import { AlertCircle, ArrowRight, Check, ChevronDown, Eye, EyeOff, Loader2, Lock, Mail, RotateCw } from "lucide-react";
+import { authMessage, classifyAuthError, isExistingAccountSignup } from "@/lib/auth-messages";
+import { NOT_CONFIGURED } from "@/lib/supabase/env";
+import { callbackUrl, createClient, providerEnabled } from "@/lib/supabase/client";
 import { EMAIL_RE } from "@/lib/validate";
 
-const EASE = [0.2, 0.8, 0.2, 1] as const;
+export const EASE = [0.2, 0.8, 0.2, 1] as const;
 const REMEMBER_KEY = "flo.auth.email";
 const remembered = {
   get: () => {
@@ -28,7 +30,7 @@ const remembered = {
   },
 };
 
-function GoogleIcon({ size = 18 }: { size?: number }) {
+export function GoogleIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden>
       <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.2l7.9 6.2C12.5 13.6 17.8 9.5 24 9.5z" />
@@ -48,20 +50,20 @@ function checkName(n: string) {
   if (n.length > 80) return "That's a long one. Keep it under 80 characters.";
   return null;
 }
-function checkEmail(e: string) {
+export function checkEmail(e: string) {
   const v = e.trim();
   if (!v) return "Add your email so we can find your account.";
   if (!EMAIL_RE.test(v) || v.length > 254) return "That email looks incomplete. Try something like name@example.com.";
   return null;
 }
-function checkPassword(p: string, mode: "signup" | "login") {
+export function checkPassword(p: string, mode: "signup" | "login") {
   if (mode === "login") return p ? null : "Type your password to continue.";
   if (p.length < 8) return "Use at least 8 characters. A short phrase works well.";
   if (p.length > 200) return "That password is too long. Keep it under 200 characters.";
   return null;
 }
 
-function Field({ id, label, error, hint, aside, children }: { id: string; label: string; error?: string | null; hint?: React.ReactNode; aside?: React.ReactNode; children: React.ReactNode }) {
+export function Field({ id, label, error, hint, aside, children }: { id: string; label: string; error?: string | null; hint?: React.ReactNode; aside?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between">
@@ -90,10 +92,10 @@ function Field({ id, label, error, hint, aside, children }: { id: string; label:
   );
 }
 
-const fieldCls = (bad: boolean) =>
+export const fieldCls = (bad: boolean) =>
   `field !h-12 !rounded-[14px] !py-0 text-[15px] ${bad ? "!border-amber-300/60 focus:!shadow-[0_0_0_4px_rgb(252_211_77/0.12)]" : "!border-[rgb(150_215_255/0.2)]"}`;
 
-function Strength({ value }: { value: string }) {
+export function Strength({ value }: { value: string }) {
   const score = value.length === 0 ? 0 : value.length < 8 ? 1 : value.length < 12 || !/[^a-zA-Z]/.test(value) ? 2 : 3;
   const words = ["", "Keep going", "Good", "Strong"];
   return (
@@ -108,7 +110,9 @@ function Strength({ value }: { value: string }) {
   );
 }
 
-export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "login"; next: string; googleEnabled: boolean }) {
+type Resend = "idle" | "busy" | "sent" | "error";
+
+export function AuthForm({ mode, next, site, notice }: { mode: "signup" | "login"; next: string; site?: string; notice?: string | null }) {
   const router = useRouter();
   const reduce = !!useReducedMotion();
   const ids = useId().replace(/:/g, "");
@@ -118,9 +122,14 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
   const [show, setShow] = useState(false);
   const [caps, setCaps] = useState(false);
   const [remember, setRemember] = useState(true);
+  // Google leads; email + password is the secondary path, opened on demand (or for a returning email user)
+  const [emailOpen, setEmailOpen] = useState(false);
   const [busy, setBusy] = useState<null | "form" | "google">(null);
   const [done, setDone] = useState(false);
-  const [error, setError] = useState<React.ReactNode>(null);
+  const [error, setError] = useState<React.ReactNode>(notice ?? null);
+  const [sentTo, setSentTo] = useState<string | null>(null); // sign-up done, waiting for the confirmation email
+  const [unconfirmed, setUnconfirmed] = useState(false); // login blocked until the email is confirmed
+  const [resend, setResend] = useState<Resend>("idle");
   const [fieldErr, setFieldErr] = useState<Errs>({});
   const [hello, setHello] = useState<string | null>(null);
   const [returning, setReturning] = useState(false);
@@ -143,10 +152,40 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
       if (r) {
         setEmail(r);
         setReturning(true);
-        pwRef.current?.focus({ preventScroll: true });
+        setEmailOpen(true);
+        requestAnimationFrame(() => pwRef.current?.focus({ preventScroll: true }));
       }
     }
   }, [mode]);
+
+  useEffect(() => {
+    const reset = (e: PageTransitionEvent) => e.persisted && setBusy(null);
+    window.addEventListener("pageshow", reset);
+    return () => window.removeEventListener("pageshow", reset);
+  }, []);
+
+  const existing = (
+    <>
+      You already have a Flo account with this email.{" "}
+      <Link href={other.href} className="font-semibold text-brand-200 underline underline-offset-2">
+        Sign in instead
+      </Link>
+    </>
+  );
+
+  async function resendConfirmation(to: string) {
+    const supabase = createClient();
+    if (!supabase) return setError(NOT_CONFIGURED);
+    setResend("busy");
+    const { error: e } = await supabase.auth.resend({ type: "signup", email: to, options: { emailRedirectTo: callbackUrl(next, site) } });
+    if (e) {
+      setResend("error");
+      setError(authMessage(classifyAuthError(e), "signup"));
+    } else {
+      setResend("sent");
+      setError(null);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -160,43 +199,49 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
     if (errs.name) return nameRef.current?.focus();
     if (errs.email) return emailRef.current?.focus();
     if (errs.password) return pwRef.current?.focus();
+    const supabase = createClient();
+    if (!supabase) return setError(NOT_CONFIGURED);
     setBusy("form");
     setError(null);
+    setUnconfirmed(false);
+    setResend("idle");
+    const addr = email.trim();
     try {
       if (mode === "signup") {
-        let r: Response;
-        try {
-          r = await fetch("/api/signup", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ name: name.trim(), email: email.trim(), password }),
-          });
-        } catch {
-          throw new Error("Can't reach Flo right now. Check your connection and try again.");
+        const { data, error: e } = await supabase.auth.signUp({
+          email: addr,
+          password,
+          options: { data: { name: name.trim(), full_name: name.trim() }, emailRedirectTo: callbackUrl(next, site) },
+        });
+        if (e) {
+          const p = classifyAuthError(e);
+          if (p === "user_already_exists") {
+            setError(existing);
+            setBusy(null);
+            return;
+          }
+          throw new Error(authMessage(p, "signup"));
         }
-        const j = await r.json().catch(() => ({}));
-        if (r.status === 409) {
-          setError(
-            <>
-              You already have a Flo account with this email.{" "}
-              <Link href={other.href} className="font-semibold text-brand-200 underline underline-offset-2">
-                Sign in instead
-              </Link>
-            </>,
-          );
+        if (isExistingAccountSignup(data.user)) {
+          setError(existing);
           setBusy(null);
           return;
         }
-        if (!r.ok) throw new Error(j.error || "We couldn't create your account just now. Please try again.");
+        if (!data.session) {
+          // email confirmations on: Supabase sent a link to /auth/callback
+          setSentTo(addr);
+          setBusy(null);
+          return;
+        }
+      } else {
+        const { error: e } = await supabase.auth.signInWithPassword({ email: addr, password });
+        if (e) {
+          const p = classifyAuthError(e);
+          if (p === "email_not_confirmed") setUnconfirmed(true);
+          throw new Error(authMessage(p, "login"));
+        }
+        remembered.set(remember ? addr : null);
       }
-      const res = await signIn("credentials", { email: email.trim(), password, redirect: false });
-      if (!res || res.error)
-        throw new Error(
-          mode === "login"
-            ? "That email and password don't match. Check for typos, or use Continue with Google if that's how you joined."
-            : "Your account is ready, but we couldn't sign you in. Try signing in.",
-        );
-      if (mode === "login") remembered.set(remember ? email.trim() : null);
       setDone(true);
       setTimeout(
         () => {
@@ -206,15 +251,28 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
         reduce ? 150 : 700,
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? err.message : authMessage("network"));
       setBusy(null);
       if (mode === "login") pwRef.current?.select();
     }
   }
 
-  const google = () => {
+  const google = async () => {
+    const supabase = createClient();
+    if (!supabase) return setError(NOT_CONFIGURED);
     setBusy("google");
-    void signIn("google", { callbackUrl: next });
+    setError(null);
+    // a disabled provider would otherwise land on Supabase's raw JSON error page
+    if ((await providerEnabled("google")) === false) {
+      setError(authMessage("provider_disabled"));
+      setBusy(null);
+      return;
+    }
+    const { error: e } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: callbackUrl(next, site) } });
+    if (e) {
+      setError(authMessage(classifyAuthError(e), "google"));
+      setBusy(null);
+    }
   };
 
   const capsKey = (e: React.KeyboardEvent<HTMLInputElement>) => setCaps(e.getModifierState?.("CapsLock") ?? false);
@@ -232,6 +290,59 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
           : forConnect
             ? "Sign in to connect the Flo app on your Mac."
             : "Let's pick up where you left off.";
+
+  if (sentTo) {
+    return (
+      <motion.div initial={reduce ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: EASE }} className="w-full max-w-[420px]" data-testid="check-email">
+        <span className="grid h-14 w-14 place-items-center rounded-[18px] border border-white/10 bg-brand-400/15 text-brand-200" aria-hidden>
+          <Mail size={26} />
+        </span>
+        <h1 className="font-display mt-6 text-[28px] font-semibold leading-[1.12] tracking-tight text-balance sm:text-[32px]">Check your email to confirm</h1>
+        <p className="mt-3 text-[15px] leading-relaxed text-muted text-pretty">
+          We sent a link to <span className="font-semibold text-ink">{sentTo}</span>. Open it to finish creating your account
+          {forDownload ? " and your download starts right after." : "."}
+        </p>
+        <p className="mt-3 text-[13.5px] leading-relaxed text-faint">Nothing there? Check spam, or send it again.</p>
+        <AnimatePresence initial={false}>
+          {error && (
+            <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="alert" className="mt-5 flex items-start gap-2.5 rounded-[14px] border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-[13.5px] leading-snug text-amber-100">
+              <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-200" />
+              <span>{error}</span>
+            </motion.p>
+          )}
+        </AnimatePresence>
+        <div className="mt-7 flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => resendConfirmation(sentTo)}
+            disabled={resend === "busy" || resend === "sent"}
+            className="btn btn-primary h-12 w-full !rounded-[14px] text-[15px] disabled:cursor-default"
+            data-testid="resend"
+          >
+            {resend === "busy" ? <Loader2 size={17} className="animate-spin" /> : resend === "sent" ? <Check size={18} strokeWidth={2.8} /> : <RotateCw size={16} />}
+            {resend === "sent" ? "Sent again" : "Resend email"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSentTo(null);
+              setResend("idle");
+              setError(null);
+            }}
+            className="btn btn-glass h-12 w-full !rounded-[14px] text-[15px]"
+          >
+            Use a different email
+          </button>
+        </div>
+        <p className="mt-6 text-center text-[14px] text-muted">
+          Already confirmed?{" "}
+          <Link href={`/login?next=${encodeURIComponent(next)}`} className="font-semibold text-brand-300 underline-offset-4 hover:text-brand-200 hover:underline">
+            Sign in
+          </Link>
+        </p>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div initial={reduce ? false : { opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, ease: EASE }} className="w-full max-w-[420px]">
@@ -257,27 +368,68 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
         </ol>
       )}
 
-      {googleEnabled ? (
-        <button
-          type="button"
-          onClick={google}
-          disabled={!!busy || done}
-          className="mt-7 flex h-12 w-full items-center justify-center gap-3 rounded-[14px] border border-black/10 bg-white text-[15px] font-semibold text-[#1f1f1f] shadow-[inset_0_1px_0_rgb(255_255_255/0.6),0_12px_28px_-14px_rgb(0_0_0/0.7)] transition hover:bg-[#f3f7fb] active:scale-[0.99] disabled:opacity-70"
-          data-testid="google"
-        >
-          {busy === "google" ? <Loader2 size={18} className="animate-spin text-[#5f6368]" /> : <GoogleIcon />} Continue with Google
-        </button>
-      ) : (
-        <p className="mt-7 flex items-start gap-2.5 rounded-[14px] border border-white/10 bg-white/[0.03] px-4 py-3 text-[13px] leading-snug text-faint" data-testid="google-off">
-          <GoogleIcon size={16} /> Google sign-in isn&apos;t set up on this server yet, so use your email below.
-        </p>
+      <button
+        type="button"
+        onClick={google}
+        disabled={!!busy || done}
+        aria-busy={busy === "google"}
+        className="btn btn-primary group mt-7 h-[52px] w-full !gap-3 !rounded-[14px] text-[15.5px] font-semibold disabled:cursor-default"
+        data-testid="google"
+      >
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#fff] shadow-[0_1px_2px_rgb(0_0_0/0.18)]" aria-hidden>
+          {busy === "google" ? <Loader2 size={15} className="animate-spin text-[#5f6368]" /> : <GoogleIcon size={16} />}
+        </span>
+        {busy === "google" ? "Opening Google…" : mode === "signup" && forDownload ? "Continue with Google to download Flo" : "Continue with Google"}
+      </button>
+      <p className="mt-2.5 text-center text-[12.5px] text-faint">{mode === "signup" ? "One click. No new password to remember." : "The fastest way in."}</p>
+
+      {!emailOpen && (
+        <AnimatePresence initial={false}>
+          {error && (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              role="alert"
+              className="mt-5 flex items-start gap-2.5 rounded-[14px] border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-[13.5px] leading-snug text-amber-100"
+            >
+              <AlertCircle size={16} className="mt-0.5 shrink-0 text-amber-200" />
+              <span>{error}</span>
+            </motion.p>
+          )}
+        </AnimatePresence>
       )}
 
       <div className="my-6 flex items-center gap-3 text-[12.5px] text-faint">
-        <span className="h-px flex-1 bg-white/12" /> or use your email <span className="h-px flex-1 bg-white/12" />
+        <span className="h-px flex-1 bg-white/12" /> or use email <span className="h-px flex-1 bg-white/12" />
       </div>
 
-      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+      {!emailOpen ? (
+        <button
+          type="button"
+          onClick={() => {
+            setEmailOpen(true);
+            setError(null);
+            requestAnimationFrame(() => (mode === "signup" ? nameRef : emailRef).current?.focus());
+          }}
+          disabled={!!busy || done}
+          aria-expanded={false}
+          className="btn btn-glass h-12 w-full !rounded-[14px] text-[15px]"
+          data-testid="use-email"
+        >
+          <Mail size={16} aria-hidden /> {mode === "signup" ? "Sign up with email" : "Sign in with email"}
+          <ChevronDown size={16} className="opacity-60" aria-hidden />
+        </button>
+      ) : (
+      <motion.form
+        onSubmit={submit}
+        noValidate
+        className="flex flex-col gap-4"
+        initial={reduce ? false : { opacity: 0, y: -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: EASE }}
+        data-testid="email-form"
+      >
         {mode === "signup" && (
           <Field id={`${ids}-name`} label="Your name" error={fieldErr.name}>
             <input
@@ -316,7 +468,19 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
           label="Password"
           error={fieldErr.password}
           hint={caps ? <><AlertCircle size={13} className="shrink-0" /> Caps Lock is on</> : null}
-          aside={mode === "signup" ? <Strength value={password} /> : null}
+          aside={
+            mode === "signup" ? (
+              <Strength value={password} />
+            ) : (
+              <Link
+                href={`/auth/forgot?next=${encodeURIComponent(next)}`}
+                className="text-[12.5px] font-medium text-brand-300 underline-offset-4 hover:text-brand-200 hover:underline"
+                data-testid="forgot"
+              >
+                Forgot password?
+              </Link>
+            )
+          }
         >
           <span className="relative block">
             <input
@@ -371,6 +535,18 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
             </motion.p>
           )}
         </AnimatePresence>
+        {unconfirmed && (
+          <button
+            type="button"
+            onClick={() => resendConfirmation(email.trim())}
+            disabled={resend === "busy" || resend === "sent"}
+            className="btn btn-glass h-11 w-full !rounded-[14px] text-[14px]"
+            data-testid="resend"
+          >
+            {resend === "busy" ? <Loader2 size={16} className="animate-spin" /> : resend === "sent" ? <Check size={16} /> : <RotateCw size={15} />}
+            {resend === "sent" ? "Sent. Check your inbox" : "Resend confirmation email"}
+          </button>
+        )}
 
         <button type="submit" disabled={!!busy || done} aria-busy={busy === "form"} className="btn btn-primary group mt-1 h-12 w-full !rounded-[14px] text-[15px] disabled:cursor-default" data-testid="submit">
           <AnimatePresence mode="wait" initial={false}>
@@ -399,7 +575,8 @@ export function AuthForm({ mode, next, googleEnabled }: { mode: "signup" | "logi
             </motion.span>
           </AnimatePresence>
         </button>
-      </form>
+      </motion.form>
+      )}
 
       <p className="mt-6 text-center text-[14px] text-muted">
         {other.text}{" "}

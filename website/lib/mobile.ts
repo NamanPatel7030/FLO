@@ -1,6 +1,7 @@
 import "server-only";
-import { createHmac, randomBytes, randomInt, randomUUID } from "node:crypto";
-import { findUserById, readyDb, type User } from "./db";
+import { createHmac, randomBytes, randomInt } from "node:crypto";
+import type postgres from "postgres";
+import { findUserById, isUuid, sql, toIso, type User } from "./db";
 import { bearer, verifyAppToken } from "./tokens";
 
 /**
@@ -59,14 +60,14 @@ export async function desktopCaller(req: Request): Promise<Caller | null> {
 export async function mobileCaller(req: Request): Promise<Caller | null> {
   const t = bearer(req);
   if (!t || !t.startsWith(DEVICE_PREFIX) || t.length > 200) return null;
-  const db = await readyDb();
-  const rs = await db.execute({ sql: "SELECT id, user_id FROM mobile_devices WHERE token_hash = ?", args: [hashSecret("device", t)] });
-  const r = rs.rows[0] as unknown as { id: string; user_id: string } | undefined;
+  const rows = await sql()<{ id: string; user_id: string }[]>`
+    update app.mobile_devices set last_seen = now()
+     where token_hash = ${hashSecret("device", t)}
+    returning id, user_id`;
+  const r = rows[0];
   if (!r) return null;
-  const user = await findUserById(r.user_id);
-  if (!user) return null;
-  await db.execute({ sql: "UPDATE mobile_devices SET last_seen = ? WHERE id = ?", args: [new Date().toISOString(), r.id] });
-  return { user, deviceId: r.id };
+  const user = await findUserById(String(r.user_id));
+  return user ? { user, deviceId: String(r.id) } : null;
 }
 
 export async function anyCaller(req: Request): Promise<Caller | null> {
@@ -77,47 +78,39 @@ export const unauthorized = () => Response.json({ error: "Not signed in." }, { s
 
 // ── presence ─────────────────────────────────────────────────────────────────
 
+const toPresence = (r: { status: string; since: unknown }): Presence => ({ status: r.status === "away" ? "away" : "active", since: toIso(r.since) });
+
 export async function getPresence(userId: string): Promise<Presence> {
-  const db = await readyDb();
-  const rs = await db.execute({ sql: "SELECT status, since FROM presence WHERE user_id = ?", args: [userId] });
-  const r = rs.rows[0] as unknown as { status: string; since: string } | undefined;
-  if (r) return { status: r.status === "away" ? "away" : "active", since: String(r.since) };
-  return setPresence(userId, "active");
+  const rows = await sql()<{ status: string; since: Date }[]>`select status, since from app.presence where user_id = ${userId}`;
+  return rows[0] ? toPresence(rows[0]) : setPresence(userId, "active");
 }
 
 export async function setPresence(userId: string, status: "active" | "away"): Promise<Presence> {
-  const db = await readyDb();
-  const now = new Date().toISOString();
   // keep `since` when the status doesn't actually change
-  await db.execute({
-    sql: `INSERT INTO presence (user_id, status, since) VALUES (?, ?, ?)
-          ON CONFLICT(user_id) DO UPDATE SET since = CASE WHEN presence.status = excluded.status THEN presence.since ELSE excluded.since END,
-          status = excluded.status`,
-    args: [userId, status, now],
-  });
-  const rs = await db.execute({ sql: "SELECT status, since FROM presence WHERE user_id = ?", args: [userId] });
-  const r = rs.rows[0] as unknown as { status: string; since: string };
-  return { status: r.status === "away" ? "away" : "active", since: String(r.since) };
+  const rows = await sql()<{ status: string; since: Date }[]>`
+    insert into app.presence as p (user_id, status, since) values (${userId}, ${status}, now())
+    on conflict (user_id) do update
+       set since = case when p.status = excluded.status then p.since else excluded.since end,
+           status = excluded.status
+    returning status, since`;
+  return toPresence(rows[0]);
 }
 
 // ── pairing ──────────────────────────────────────────────────────────────────
 
 /** New 6-digit single-use code (5 min). Returns the digits ("483920"). */
 export async function startPairing(userId: string): Promise<{ digits: string; expiresAt: string }> {
-  const db = await readyDb();
-  const now = Date.now();
-  await db.execute({ sql: "DELETE FROM pair_codes WHERE expires_at < ? OR used = 1 OR user_id = ?", args: [now, userId] });
+  const db = sql();
+  await db`delete from app.pair_codes where expires_at < now() or used or user_id = ${userId}`;
   for (let i = 0; i < 8; i++) {
     const digits = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    try {
-      await db.execute({
-        sql: "INSERT INTO pair_codes (code_hash, user_id, expires_at) VALUES (?, ?, ?)",
-        args: [hashSecret("pair", digits), userId, now + PAIR_TTL_MS],
-      });
-      return { digits, expiresAt: new Date(now + PAIR_TTL_MS).toISOString() };
-    } catch (e) {
-      if (!String(e).includes("UNIQUE")) throw e; // an active code collided: draw again
-    }
+    const rows = await db<{ expires_at: Date }[]>`
+      insert into app.pair_codes (code_hash, user_id, expires_at)
+      values (${hashSecret("pair", digits)}, ${userId}, now() + make_interval(secs => ${PAIR_TTL_MS / 1000}))
+      on conflict (code_hash) do nothing
+      returning expires_at`;
+    if (rows[0]) return { digits, expiresAt: toIso(rows[0].expires_at) };
+    // an active code collided: draw again
   }
   throw new Error("Couldn't create a pairing code. Try again.");
 }
@@ -140,21 +133,22 @@ export async function claimPairing(
   platform: string,
   pushToken: string | null,
 ): Promise<{ deviceToken: string; user: User } | null> {
-  const db = await readyDb();
-  const rs = await db.execute({
-    sql: "UPDATE pair_codes SET used = 1 WHERE code_hash = ? AND used = 0 AND expires_at > ? RETURNING user_id",
-    args: [hashSecret("pair", digits), Date.now()],
-  });
-  const r = rs.rows[0] as unknown as { user_id: string } | undefined;
+  const db = sql();
+  const rows = await db<{ user_id: string }[]>`
+    update app.pair_codes set used = true
+     where code_hash = ${hashSecret("pair", digits)} and not used and expires_at > now()
+    returning user_id`;
+  const r = rows[0];
   if (!r) return null;
-  const user = await findUserById(r.user_id);
+  const user = await findUserById(String(r.user_id));
   if (!user) return null;
   const deviceToken = DEVICE_PREFIX + randomBytes(32).toString("base64url");
-  const now = new Date().toISOString();
-  if (pushToken) await db.execute({ sql: "UPDATE mobile_devices SET push_token = NULL WHERE push_token = ?", args: [pushToken] });
-  await db.execute({
-    sql: "INSERT INTO mobile_devices (id, user_id, name, platform, token_hash, push_token, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    args: [randomUUID(), user.id, deviceName, platform, hashSecret("device", deviceToken), pushToken, now, now],
+  await db.begin(async (tx) => {
+    // an FCM token belongs to one device: move it if another (re-installed) device had it
+    if (pushToken) await tx`update app.mobile_devices set push_token = null where push_token = ${pushToken}`;
+    await tx`
+      insert into app.mobile_devices (user_id, name, platform, token_hash, push_token)
+      values (${user.id}, ${deviceName}, ${platform}, ${hashSecret("device", deviceToken)}, ${pushToken})`;
   });
   return { deviceToken, user };
 }
@@ -162,78 +156,70 @@ export async function claimPairing(
 // ── devices ──────────────────────────────────────────────────────────────────
 
 export async function listDevices(userId: string): Promise<Device[]> {
-  const db = await readyDb();
-  const rs = await db.execute({
-    sql: "SELECT id, name, platform, last_seen FROM mobile_devices WHERE user_id = ? ORDER BY created_at DESC",
-    args: [userId],
-  });
-  return rs.rows.map((r) => ({ id: String(r.id), name: String(r.name), platform: String(r.platform), lastSeen: String(r.last_seen) }));
+  const rows = await sql()<{ id: string; name: string; platform: string; last_seen: Date }[]>`
+    select id, name, platform, last_seen from app.mobile_devices where user_id = ${userId} order by created_at desc`;
+  return rows.map((r) => ({ id: String(r.id), name: String(r.name), platform: String(r.platform), lastSeen: toIso(r.last_seen) }));
 }
 
 export async function removeDevice(userId: string, id: string): Promise<boolean> {
-  const db = await readyDb();
-  const rs = await db.execute({ sql: "DELETE FROM mobile_devices WHERE id = ? AND user_id = ?", args: [id, userId] });
-  return rs.rowsAffected > 0;
+  if (!isUuid(id)) return false;
+  const rows = await sql()`delete from app.mobile_devices where id = ${id} and user_id = ${userId} returning id`;
+  return rows.length > 0;
 }
 
 export async function setPushToken(deviceId: string, pushToken: string | null): Promise<void> {
-  const db = await readyDb();
-  if (pushToken) await db.execute({ sql: "UPDATE mobile_devices SET push_token = NULL WHERE push_token = ? AND id <> ?", args: [pushToken, deviceId] });
-  await db.execute({ sql: "UPDATE mobile_devices SET push_token = ? WHERE id = ?", args: [pushToken, deviceId] });
+  await sql().begin(async (tx) => {
+    if (pushToken) await tx`update app.mobile_devices set push_token = null where push_token = ${pushToken} and id <> ${deviceId}`;
+    await tx`update app.mobile_devices set push_token = ${pushToken} where id = ${deviceId}`;
+  });
 }
 
 export async function pushTargets(userId: string): Promise<{ id: string; pushToken: string }[]> {
-  const db = await readyDb();
-  const rs = await db.execute({ sql: "SELECT id, push_token FROM mobile_devices WHERE user_id = ? AND push_token IS NOT NULL", args: [userId] });
-  return rs.rows.map((r) => ({ id: String(r.id), pushToken: String(r.push_token) }));
+  const rows = await sql()<{ id: string; push_token: string }[]>`
+    select id, push_token from app.mobile_devices where user_id = ${userId} and push_token is not null`;
+  return rows.map((r) => ({ id: String(r.id), pushToken: String(r.push_token) }));
 }
 
 /** FCM said this token is gone: forget it (the device stays paired and can re-register). */
 export async function dropPushToken(pushToken: string): Promise<void> {
-  const db = await readyDb();
-  await db.execute({ sql: "UPDATE mobile_devices SET push_token = NULL WHERE push_token = ?", args: [pushToken] });
+  await sql()`update app.mobile_devices set push_token = null where push_token = ${pushToken}`;
 }
 
 export async function deviceCount(userId: string): Promise<number> {
-  const db = await readyDb();
-  const rs = await db.execute({ sql: "SELECT COUNT(*) AS n FROM mobile_devices WHERE user_id = ?", args: [userId] });
-  return Number((rs.rows[0] as unknown as { n: number }).n);
+  const rows = await sql()<{ n: number }[]>`select count(*)::int as n from app.mobile_devices where user_id = ${userId}`;
+  return Number(rows[0]?.n ?? 0);
 }
 
 // ── inbox ────────────────────────────────────────────────────────────────────
 
 export async function storeNotification(userId: string, kind: string, title: string, body: string, data: unknown): Promise<InboxItem> {
-  const db = await readyDb();
-  const createdAt = new Date().toISOString();
-  const json = data === undefined || data === null ? null : JSON.stringify(data);
-  const rs = await db.execute({
-    sql: "INSERT INTO notifications (user_id, kind, title, body, data, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-    args: [userId, kind, title, body, json, createdAt],
-  });
-  const id = Number((rs.rows[0] as unknown as { id: number }).id);
-  await db.execute({
-    sql: `DELETE FROM notifications WHERE user_id = ? AND id NOT IN
-            (SELECT id FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ${INBOX_KEEP})`,
-    args: [userId, userId],
-  });
-  return { id, kind, title, body, data: data ?? null, createdAt };
+  const db = sql();
+  const json = data === undefined || data === null ? null : db.json(data as postgres.JSONValue);
+  const rows = await db<{ id: string; created_at: Date }[]>`
+    insert into app.notifications (user_id, kind, title, body, data)
+    values (${userId}, ${kind}, ${title}, ${body}, ${json})
+    returning id, created_at`;
+  // keep the newest INBOX_KEEP per account
+  await db`
+    delete from app.notifications
+     where user_id = ${userId}
+       and id < (select min(id) from (select id from app.notifications where user_id = ${userId} order by id desc limit ${INBOX_KEEP}) newest)`;
+  return { id: Number(rows[0].id), kind, title, body, data: data ?? null, createdAt: toIso(rows[0].created_at) };
 }
 
 export async function inbox(userId: string, after: number): Promise<InboxItem[]> {
-  const db = await readyDb();
-  const rs = await db.execute({
-    sql: `SELECT id, kind, title, body, data, created_at FROM notifications WHERE user_id = ? AND id > ? ORDER BY id ASC LIMIT ${INBOX_KEEP}`,
-    args: [userId, after],
-  });
-  return rs.rows.map((r) => {
-    let data: unknown = null;
-    try {
-      data = r.data ? JSON.parse(String(r.data)) : null;
-    } catch {
-      data = null;
-    }
-    return { id: Number(r.id), kind: String(r.kind), title: String(r.title), body: String(r.body), data, createdAt: String(r.created_at) };
-  });
+  const rows = await sql()<{ id: string; kind: string; title: string; body: string; data: unknown; created_at: Date }[]>`
+    select id, kind, title, body, data, created_at from app.notifications
+     where user_id = ${userId} and id > ${Math.max(0, Math.floor(after) || 0)}
+     order by id asc limit ${INBOX_KEEP}`;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    kind: String(r.kind),
+    title: String(r.title),
+    body: String(r.body),
+    data: r.data ?? null,
+    createdAt: toIso(r.created_at),
+  }));
 }
 
 // ── validation ───────────────────────────────────────────────────────────────

@@ -1,28 +1,23 @@
 // Connect Slack routes against the running dev server (no real Slack calls, no real tokens).
-//   cd website && node tests/slack-routes.mjs        (needs `npm run dev` on :3000; never `next build`)
+//   cd website && FLO_TEST_DATABASE_URL=postgres://postgres@localhost:54329/flo_test node tests/slack-routes.mjs
+// (needs `npm run dev` on :3000 using that same DATABASE_URL; never `next build` while it runs)
 // Covers: setup page when SLACK_CLIENT_ID/SECRET are missing, start/state validation (CSRF cookie,
 // single use, cancel), claim single-use + verifier + account binding + expiry + rate limit.
-// Handoff rows are seeded straight into the DB, sealed exactly like lib/slack.ts does.
-import { createClient } from "@libsql/client";
-import { SignJWT } from "jose";
+// Handoff rows are seeded straight into app.slack_handoffs, sealed exactly like lib/slack.ts does.
 import { createCipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { appToken, BASE, connect, loadEnv, seedUser, testDbUrl } from "./helpers.mjs";
 
-const BASE = process.env.FLO_SITE ?? "http://localhost:3000";
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const env = Object.fromEntries(
-  readFileSync(resolve(root, ".env.local"), "utf8")
-    .split("\n")
-    .map((l) => /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(l))
-    .filter(Boolean)
-    .map((m) => [m[1], m[2].replace(/^["']|["']$/g, "")]),
-);
+const env = loadEnv();
 const SECRET = env.AUTH_SECRET;
 if (!SECRET) throw new Error("website/.env.local has no AUTH_SECRET");
-const dbUrl = (env.DATABASE_URL || "file:./flo.db").replace(/^file:\.\//, `file:${root}/`);
-const db = createClient({ url: dbUrl, authToken: env.DATABASE_AUTH_TOKEN || undefined });
+const dbUrl = testDbUrl();
+if (!dbUrl) {
+  console.log("SKIP  set FLO_TEST_DATABASE_URL to the local Postgres the dev server uses");
+  process.exit(0);
+}
+const db = connect(dbUrl);
+const owner = await seedUser(db, { name: "Slack Owner" });
+const stranger = await seedUser(db, { name: "Someone Else" });
 
 // a fresh fake client IP per run so the per-IP limiter doesn't carry over between runs
 const ip = `10.${rnd(255)}.${rnd(255)}.${rnd(255)}`;
@@ -55,13 +50,12 @@ const post = (path, body, headers = {}) =>
 const loc = (r) => r.headers.get("location") ?? "";
 
 async function seed({ code = b64u(randomBytes(24)), verifier = b64u(randomBytes(32)), userId = null, ttl = 5 * 60_000, token = "xoxp-test-not-a-real-token" } = {}) {
-  await db.execute({
-    sql: "INSERT INTO slack_handoffs (code, sealed, challenge, user_id, team, slack_user, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    args: [code, seal(token, code), challengeOf(verifier), userId, "Northwind", "U123", Date.now() + ttl],
-  });
+  await db`
+    insert into app.slack_handoffs (code, sealed, challenge, user_id, team, slack_user, expires_at)
+    values (${code}, ${seal(token, code)}, ${challengeOf(verifier)}, ${userId}, 'Northwind', 'U123', now() + make_interval(secs => ${ttl / 1000}))`;
   return { code, verifier, token };
 }
-const rows = async (code) => (await db.execute({ sql: "SELECT 1 FROM slack_handoffs WHERE code = ?", args: [code] })).rows.length;
+const rows = async (code) => (await db`select 1 from app.slack_handoffs where code = ${code}`).length;
 
 // ── 1. developer setup page when Slack isn't configured ──────────────────────
 const configured = !!(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET);
@@ -103,7 +97,7 @@ const configured = !!(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET);
   check("install with a used state never reaches Slack", replay.status === 302 && !loc(replay).includes("slack.com"), loc(replay));
 
   // an expired state
-  await db.execute({ sql: "INSERT INTO slack_states (state, challenge, user_id, expires_at) VALUES (?, ?, NULL, ?)", args: ["old-state-" + ip, challengeOf("x"), Date.now() - 1000] });
+  await db`insert into app.slack_states (state, challenge, user_id, expires_at) values (${"old-state-" + ip}, ${challengeOf("x")}, null, now() - interval '1 second')`;
   const old = await get(`/api/slack/callback?state=old-state-${ip}&code=fake`, { cookie: `flo_slack_state=old-state-${ip}` });
   check("expired state → error=expired", loc(old).includes("error=expired"), loc(old));
 
@@ -136,17 +130,19 @@ const configured = !!(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET);
   const expired = await post("/api/slack/claim", { code: ex.code, verifier: ex.verifier });
   check("expired handoff → 401", expired.status === 401, String(expired.status));
 
-  const sealedRow = (await db.execute({ sql: "SELECT sealed FROM slack_handoffs WHERE code = ?", args: [ex.code] })).rows[0];
+  const [sealedRow] = await db`select sealed from app.slack_handoffs where code = ${ex.code}`;
   check("token is stored encrypted, not in plain text", !!sealedRow && !String(sealedRow.sealed).includes("xoxp-"));
 
-  const bound = await seed({ userId: "u_slack_test" });
+  const bound = await seed({ userId: owner.id });
   const anon = await post("/api/slack/claim", { code: bound.code, verifier: bound.verifier });
   check("account-bound handoff without the app session → 401", anon.status === 401, String(anon.status));
-  const key = new TextEncoder().encode(SECRET);
-  const other = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject("u_someone_else").setIssuedAt().setExpirationTime("5m").sign(key);
+  const other = await appToken(SECRET, stranger.id);
   const mismatch = await post("/api/slack/claim", { code: bound.code, verifier: bound.verifier }, { authorization: `Bearer ${other}` });
   check("…with another account's session → 401", mismatch.status === 401, String(mismatch.status));
-  const mine = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject("u_slack_test").setIssuedAt().setExpirationTime("5m").sign(key);
+  const legacy = await appToken(SECRET, "u_slack_test"); // pre-Supabase token: not a uuid
+  const old = await post("/api/slack/claim", { code: bound.code, verifier: bound.verifier }, { authorization: `Bearer ${legacy}` });
+  check("…with a pre-Supabase (non-uuid) session → 401, no crash", old.status === 401, String(old.status));
+  const mine = await appToken(SECRET, owner.id);
   const right = await post("/api/slack/claim", { code: bound.code, verifier: bound.verifier }, { authorization: `Bearer ${mine}` });
   check("…with the same account's session → 200", right.status === 200, String(right.status));
 
@@ -154,8 +150,28 @@ const configured = !!(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET);
   let limited = false;
   for (let i = 0; i < 35 && !limited; i++) limited = (await post("/api/slack/claim", { code: "x" + i, verifier: b64u(randomBytes(32)) })).status === 429;
   check("claim is rate-limited per IP", limited);
-  await db.execute({ sql: "DELETE FROM slack_handoffs WHERE code = ?", args: [ex.code] });
+  await db`delete from app.slack_handoffs where code = ${ex.code}`;
 }
+
+// ── 4. start binds the flow to the signed-in account (and only a real one) ───
+{
+  const st = async (token) => {
+    const r = await post("/api/slack/start", { challenge: challengeOf(b64u(randomBytes(32))) }, token ? { authorization: `Bearer ${token}` } : {});
+    const j = await r.json();
+    const state = new URL(j.url ?? "http://x/").searchParams.get("state") ?? "";
+    const [row] = await db`select user_id from app.slack_states where state = ${state}`;
+    return { status: r.status, row };
+  };
+  const signed = await st(await appToken(SECRET, owner.id));
+  check("start with an app session stores the account on the state", signed.status === 200 && signed.row?.user_id === owner.id, JSON.stringify(signed));
+  const legacy = await st(await appToken(SECRET, "u_not_a_uuid"));
+  check("start with a non-uuid session → unbound state, no crash", legacy.status === 200 && legacy.row && legacy.row.user_id === null, JSON.stringify(legacy));
+  const ghost = await st(await appToken(SECRET, "00000000-0000-4000-8000-000000000000"));
+  check("start with a deleted account's session → unbound state, no FK error", ghost.status === 200 && ghost.row && ghost.row.user_id === null, JSON.stringify(ghost));
+}
+
+await db`delete from auth.users where id in (${owner.id}, ${stranger.id})`;
+await db.end();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

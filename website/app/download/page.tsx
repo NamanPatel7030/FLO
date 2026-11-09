@@ -1,10 +1,10 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Apple, Download, KeyRound, LogIn, MonitorDown, Terminal } from "lucide-react";
-import { auth } from "@/auth";
 import { AuthShell } from "@/components/AuthShell";
 import { SignOutButton } from "@/components/SignOutButton";
 import { downloadUrl, gatedHref } from "@/lib/downloads";
+import { getUser } from "@/lib/supabase/server";
 
 export const metadata = { title: "Download" };
 export const dynamic = "force-dynamic";
@@ -25,11 +25,11 @@ const BUILDS: { os: OS; label: string; sub: string; icon: typeof Apple }[] = [
 ];
 
 export default async function DownloadPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/signup?next=/download");
+  const user = await getUser();
+  if (!user) redirect("/signup?next=/download");
   const os = detect((await headers()).get("user-agent") ?? "");
   const builds = [...BUILDS].sort((a, b) => (a.os === os ? -1 : b.os === os ? 1 : 0));
-  const first = session.user.name?.split(" ")[0];
+  const first = user.name.split(" ")[0];
 
   return (
     <AuthShell>
@@ -37,7 +37,7 @@ export default async function DownloadPage() {
         <div className="text-center">
           <p className="eyebrow">You&apos;re in{first ? `, ${first}` : ""}</p>
           <h1 className="mt-3 text-[34px] font-semibold tracking-tight sm:text-[44px]">Download Flo</h1>
-          <p className="mt-3 text-muted">Signed in as {session.user.email}</p>
+          <p className="mt-3 text-muted">Signed in as {user.email}</p>
         </div>
 
         <div className="mt-10 flex flex-col gap-3" data-testid="downloads">

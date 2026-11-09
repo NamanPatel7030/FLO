@@ -3,16 +3,15 @@
 // never in the page or the JS bundle, so a link can't be shared around the sign-up. Signed-out
 // visitors are sent to sign up and come straight back to the download.
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import { downloadUrl, isOS } from "@/lib/downloads";
+import { getUser } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request, ctx: { params: Promise<{ os: string }> }) {
   const { os } = await ctx.params;
   if (!isOS(os)) return NextResponse.json({ error: "Unknown platform" }, { status: 404 });
-  const session = await auth();
-  if (!session?.user) {
+  if (!(await getUser())) {
     const next = encodeURIComponent(`/download?os=${os}`);
     return NextResponse.redirect(new URL(`/signup?next=${next}`, req.url), 302);
   }

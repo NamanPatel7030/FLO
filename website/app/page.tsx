@@ -1,11 +1,10 @@
-import { auth } from "@/auth";
 import { Aurora } from "@/components/Aurora";
 import { Footer } from "@/components/Footer";
 import { Landing } from "@/components/Landing";
+import { getUser } from "@/lib/supabase/server";
 
 export default async function Home() {
-  const session = await auth();
-  const signedIn = !!session?.user;
+  const signedIn = !!(await getUser());
   return (
     <>
       <Aurora />
