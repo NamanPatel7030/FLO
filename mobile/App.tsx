@@ -9,7 +9,7 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, BackHandler, Easing, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { mockStartScreen } from './src/api/mock';
+import { mockStartScreen, mockStartTab } from './src/api/mock';
 import { parsePairPayload, type PairTarget } from './src/lib/pairing';
 import { EnterCodeScreen } from './src/screens/EnterCodeScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -18,6 +18,11 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { CustomizeScreen } from './src/screens/CustomizeScreen';
 import { OnboardingScreen } from './src/screens/OnboardingScreen';
 import { VoiceScreen } from './src/screens/VoiceScreen';
+import { TodosScreen } from './src/screens/TodosScreen';
+import { NeedsYouScreen } from './src/screens/NeedsYouScreen';
+import { ComputerSettingsScreen } from './src/screens/ComputerSettingsScreen';
+import { ComputerProvider, useComputer } from './src/state/Computer';
+import { TabBar, type Tab } from './src/ui/TabBar';
 import { PrefsProvider, usePrefs } from './src/state/Prefs';
 import { UpdatesProvider } from './src/state/Updates';
 import { hideQuickActions, onQuickAction, showQuickActions } from './src/notifications/push';
@@ -28,7 +33,9 @@ import { InAppBanner } from './src/ui/Banner';
 import { Icon } from './src/ui/Icons';
 import { colors, fonts, themed } from './src/ui/theme';
 
-type Route = 'welcome' | 'scan' | 'code' | 'home' | 'settings' | 'customize' | 'voice';
+type Route = 'welcome' | 'scan' | 'code' | Tab | 'computer' | 'customize' | 'voice';
+const TABS: readonly Route[] = ['home', 'todos', 'needs', 'settings'];
+const isTab = (r: Route): r is Tab => TABS.includes(r);
 const native = Platform.OS !== 'web';
 
 /** Fades + slides the new screen in whenever the route changes. */
@@ -54,7 +61,7 @@ function Transition({ routeKey, children }: { routeKey: string; children: React.
   );
 }
 
-function Toast({ text }: { text: string | null }) {
+function Toast({ text, raised }: { text: string | null; raised?: boolean }) {
   const insets = useSafeAreaInsets();
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -67,7 +74,7 @@ function Toast({ text }: { text: string | null }) {
       style={[
         styles.toast,
         {
-          bottom: insets.bottom + 24,
+          bottom: insets.bottom + (raised ? 104 : 24),
           opacity: v,
           transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }],
         },
@@ -81,8 +88,17 @@ function Toast({ text }: { text: string | null }) {
 
 function Root() {
   const flo = useFlo();
+  const computer = useComputer();
   const { prefs, themeKey } = usePrefs();
-  const [route, setRoute] = useState<Route>('welcome');
+  const [route, setRouteState] = useState<Route>('welcome');
+  // the tab Voice / sub-screens go back to
+  const lastTab = useRef<Tab>('home');
+  const setRoute = (r: Route | ((cur: Route) => Route)) =>
+    setRouteState((cur) => {
+      const next = typeof r === 'function' ? r(cur) : r;
+      if (isTab(next)) lastTab.current = next;
+      return next;
+    });
   const [prefill, setPrefill] = useState<Partial<PairTarget>>({});
   const [voice, setVoice] = useState<{ mode: AskMode; auto: boolean }>({ mode: 'ask', auto: false });
   const openVoice = (mode: AskMode, auto = false) => {
@@ -103,7 +119,16 @@ function Root() {
     if (flo.booting) return;
     if (flo.session) {
       const m = flo.mock ? mockStartScreen() : null;
-      setRoute((r) => (r === 'settings' || r === 'voice' || r === 'customize' ? r : m === 'settings' || m === 'customize' || m === 'voice' ? m : 'home'));
+      const t = flo.mock ? mockStartTab() : null;
+      setRoute((r) =>
+        r !== 'welcome' && r !== 'scan' && r !== 'code'
+          ? r
+          : t === 'todos' || t === 'needs' || t === 'settings' || t === 'computer'
+            ? t
+            : m === 'settings' || m === 'customize' || m === 'voice'
+              ? m
+              : 'home',
+      );
     } else {
       const s = flo.mock ? mockStartScreen() : null;
       setRoute(s === 'scan' || s === 'code' || s === 'customize' || s === 'voice' ? s : 'welcome');
@@ -128,8 +153,9 @@ function Root() {
   // Android back button.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (route === 'customize') return setRoute(flo.session ? 'settings' : 'welcome'), true;
-      if (route === 'settings' || route === 'voice') return setRoute(flo.session ? 'home' : 'welcome'), true;
+      if (route === 'customize' || route === 'computer') return setRoute(flo.session ? 'settings' : 'welcome'), true;
+      if (route === 'voice') return setRoute(flo.session ? lastTab.current : 'welcome'), true;
+      if (route === 'settings' || route === 'todos' || route === 'needs') return setRoute(flo.session ? 'home' : 'welcome'), true;
       if (route === 'scan' || route === 'code') return setRoute('welcome'), true;
       return false;
     });
@@ -167,28 +193,47 @@ function Root() {
       );
       break;
     case 'home':
-      screen = <HomeScreen onSettings={() => setRoute('settings')} onVoice={(m) => openVoice(m)} />;
+      screen = (
+        <HomeScreen
+          onSettings={() => setRoute('settings')}
+          onVoice={(m) => openVoice(m)}
+          onNeedsYou={() => setRoute('needs')}
+          onTodos={() => setRoute('todos')}
+        />
+      );
+      break;
+    case 'todos':
+      screen = <TodosScreen onAdd={() => openVoice('todo')} />;
+      break;
+    case 'needs':
+      screen = <NeedsYouScreen />;
       break;
     case 'settings':
-      screen = <SettingsScreen onBack={() => setRoute('home')} onCustomize={() => setRoute('customize')} />;
+      screen = <SettingsScreen onCustomize={() => setRoute('customize')} onComputer={() => setRoute('computer')} />;
+      break;
+    case 'computer':
+      screen = <ComputerSettingsScreen onBack={() => setRoute('settings')} />;
       break;
     case 'customize':
       screen = <CustomizeScreen onBack={() => setRoute(flo.session ? 'settings' : 'welcome')} />;
       break;
     case 'voice':
-      screen = <VoiceScreen initialMode={voice.mode} autoStart={voice.auto} onClose={() => setRoute(flo.session ? 'home' : 'welcome')} />;
+      screen = <VoiceScreen initialMode={voice.mode} autoStart={voice.auto} onClose={() => setRoute(flo.session ? lastTab.current : 'welcome')} />;
       break;
     default:
       screen = <OnboardingScreen error={flo.error} onScan={() => setRoute('scan')} onEnterCode={() => setRoute('code')} />;
   }
 
   return (
-    <Backdrop intensity={route === 'home' || route === 'settings' ? 0.8 : 1}>
+    <Backdrop intensity={isTab(route) || route === 'computer' ? 0.8 : 1}>
       <Transition key={themeKey} routeKey={route}>
         {screen}
       </Transition>
+      {flo.session && isTab(route) && (
+        <TabBar tab={route} onTab={setRoute} onAsk={() => openVoice('ask')} badges={{ needs: computer.needsYouCount }} />
+      )}
       <InAppBanner banner={flo.banner} onDismiss={flo.dismissBanner} />
-      <Toast text={flo.pairedNotice} />
+      <Toast text={flo.pairedNotice} raised={!!flo.session && isTab(route)} />
     </Backdrop>
   );
 }
@@ -221,9 +266,11 @@ function Themed() {
     <UpdatesProvider disabled={Platform.OS === 'web'}>
       <StatusBar style={dark ? 'light' : 'dark'} />
       <FloProvider>
-        <View style={[styles.app, { backgroundColor: colors.bg }]}>
-          <Root />
-        </View>
+        <ComputerProvider>
+          <View style={[styles.app, { backgroundColor: colors.bg }]}>
+            <Root />
+          </View>
+        </ComputerProvider>
       </FloProvider>
     </UpdatesProvider>
   );

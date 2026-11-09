@@ -15,6 +15,12 @@ import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
 import { KindIcon } from '../ui/KindIcon';
 import { Toggle } from '../ui/Toggle';
+import { BubbleCard } from '../ui/BubbleCard';
+import { bubble } from '../lib/bubble';
+import { TAB_BAR_SPACE } from '../ui/TabBar';
+import { useComputer } from '../state/Computer';
+import { computerName, freshness } from '../lib/computer';
+import { relativeTime } from '../lib/time';
 import { colors, fonts, type, themed } from '../ui/theme';
 
 const SAMPLE_KIND: Record<(typeof MUTABLE_GROUPS)[number], string> = {
@@ -41,9 +47,12 @@ function confirm(title: string, message: string, cta: string): Promise<boolean> 
   );
 }
 
-export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; onCustomize: () => void }) {
+export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: () => void; onCustomize: () => void; onComputer: () => void }) {
   const insets = useSafeAreaInsets();
   const flo = useFlo();
+  const computer = useComputer();
+  const pc = computer.state;
+  const pcFresh = freshness(computer.updatedAt);
   const [unpairing, setUnpairing] = useState(false);
   const user = flo.session?.user ?? { name: '', email: '' };
   const perm = flo.permission;
@@ -64,15 +73,19 @@ export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; on
   return (
     <ScrollView
       testID="settings"
-      contentContainerStyle={{ paddingTop: insets.top + 10, paddingBottom: insets.bottom + 40, paddingHorizontal: 18 }}
+      contentContainerStyle={{ paddingTop: insets.top + 10, paddingBottom: insets.bottom + (onBack ? 40 : TAB_BAR_SPACE), paddingHorizontal: 18 }}
     >
-      <View style={styles.header}>
-        <IconButton testID="settings-back" label="Back" onPress={onBack}>
-          <Icon name="back" color={colors.ink} />
-        </IconButton>
-        <Text style={styles.headerTitle}>Settings</Text>
-        <View style={{ width: 44 }} />
-      </View>
+      {onBack ? (
+        <View style={styles.header}>
+          <IconButton testID="settings-back" label="Back" onPress={onBack}>
+            <Icon name="back" color={colors.ink} />
+          </IconButton>
+          <Text style={styles.headerTitle}>Settings</Text>
+          <View style={{ width: 44 }} />
+        </View>
+      ) : (
+        <Text style={styles.tabTitle}>Settings</Text>
+      )}
 
       {/* Account */}
       <GlassCard style={styles.account} radius={26}>
@@ -92,6 +105,29 @@ export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; on
           <Text style={styles.pairedText}>Paired</Text>
         </View>
       </GlassCard>
+
+      <Text style={styles.section}>Your computer</Text>
+      <Pressable testID="open-computer-settings" accessibilityRole="button" onPress={onComputer}>
+        <GlassCard style={styles.rowCard}>
+          <View style={styles.rowIcon}>
+            <Icon name="laptop" size={19} color={colors.sky} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Flo on your computer</Text>
+            <Text style={type.small} numberOfLines={2}>
+              {!pc
+                ? computer.loaded
+                  ? 'Waiting for your computer to check in'
+                  : 'Looking for your computer'
+                : `${computerName(pc.computer.platform)}${pc.computer.appVersion ? ` · Flo ${pc.computer.appVersion}` : ''} · ${
+                    pcFresh.offline ? 'looks offline' : `updated ${computer.updatedAt ? relativeTime(computer.updatedAt) : ''}`
+                  }`}
+            </Text>
+            {!!pc && <Text style={[type.small, { color: colors.sky, marginTop: 2 }]}>See and change its settings</Text>}
+          </View>
+          <Icon name="chevron" size={18} color={colors.inkMuted} />
+        </GlassCard>
+      </Pressable>
 
       <Text style={styles.section}>Look</Text>
       <Pressable testID="open-customize" accessibilityRole="button" onPress={onCustomize}>
@@ -118,6 +154,9 @@ export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; on
         </View>
         <Toggle value={prefs.quickActions} label="Ask Flo shortcut" onChange={(v) => update({ quickActions: v })} />
       </GlassCard>
+
+      {bubble.state() !== 'unavailable' && <Text style={styles.section}>Voice bubble</Text>}
+      <BubbleCard />
 
       <Text style={styles.section}>App updates</Text>
       <GlassCard style={styles.rowCard}>
@@ -246,6 +285,7 @@ export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; on
 const styles = themed(() => StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
   headerTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.ink },
+  tabTitle: { fontFamily: fonts.bold, fontSize: 28, lineHeight: 34, letterSpacing: -0.8, color: colors.ink, marginTop: 4, marginBottom: 18, marginLeft: 4 },
   account: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18 },
   avatar: { width: 54, height: 54, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontFamily: fonts.bold, fontSize: 19, color: '#0b1220' },

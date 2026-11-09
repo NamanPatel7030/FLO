@@ -3,6 +3,8 @@ import { FlatList, LayoutAnimation, RefreshControl, StyleSheet, Text, View } fro
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isMuted } from '../lib/kinds';
 import { useFlo } from '../state/FloContext';
+import { useComputer } from '../state/Computer';
+import { TAB_BAR_SPACE } from '../ui/TabBar';
 import { IconButton } from '../ui/Buttons';
 import { EmptyInbox } from '../ui/EmptyInbox';
 import { Icon } from '../ui/Icons';
@@ -24,9 +26,11 @@ function greeting(d = new Date()): string {
   return 'Good evening';
 }
 
-export function HomeScreen({ onSettings, onVoice }: { onSettings: () => void; onVoice: (mode: 'ask' | 'todo' | 'note') => void }) {
+export function HomeScreen({ onSettings, onVoice, onNeedsYou, onTodos }: { onSettings: () => void; onVoice: (mode: 'ask' | 'todo' | 'note') => void; onNeedsYou?: () => void; onTodos?: () => void }) {
   const insets = useSafeAreaInsets();
   const flo = useFlo();
+  const computer = useComputer();
+  const openTodos = computer.state?.todos.open.length ?? 0;
   const [expanded, setExpanded] = useState<string | null>(null);
   const { prefs } = usePrefs();
   // excited for a few seconds when something new lands
@@ -64,7 +68,7 @@ export function HomeScreen({ onSettings, onVoice }: { onSettings: () => void; on
       testID="home"
       data={visible}
       keyExtractor={(i) => i.id}
-      contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 32, paddingHorizontal: 18 }}
+      contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + TAB_BAR_SPACE, paddingHorizontal: 18 }}
       ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
       refreshControl={
         <RefreshControl
@@ -137,7 +141,41 @@ export function HomeScreen({ onSettings, onVoice }: { onSettings: () => void; on
             </Pressable>
           </View>
 
+          {computer.needsYouCount > 0 && onNeedsYou && (
+            <Pressable testID="home-needs-you" accessibilityRole="button" onPress={onNeedsYou} style={{ marginBottom: 14 }}>
+              <GlassCard radius={22} tint={colors.amber} strong style={styles.needs}>
+                <View style={styles.needsIcon}>
+                  <Icon name="hand" size={20} color={colors.amber} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.needsTitle}>Claude needs you</Text>
+                  <Text style={type.small}>
+                    {computer.needsYouCount === 1 ? '1 question' : `${computer.needsYouCount} questions`} waiting on your computer. Tap to answer.
+                  </Text>
+                </View>
+                <Icon name="chevron" size={18} color={colors.inkMuted} />
+              </GlassCard>
+            </Pressable>
+          )}
+
           <PresenceCard presence={flo.presence} busy={flo.presenceBusy} onChange={(s) => void flo.setPresence(s)} />
+
+          {openTodos > 0 && onTodos && (
+            <Pressable testID="home-todos" accessibilityRole="button" onPress={onTodos} style={{ marginTop: 10 }}>
+              <GlassCard radius={22} style={styles.needs}>
+                <View style={[styles.needsIcon, { backgroundColor: colors.dark ? 'rgba(102,206,255,0.1)' : 'rgba(47,140,255,0.08)' }]}>
+                  <Icon name="todos" size={20} color={colors.sky} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.needsTitle}>{openTodos === 1 ? '1 to-do' : `${openTodos} to-dos`}</Text>
+                  <Text style={type.small} numberOfLines={1}>
+                    {computer.state?.todos.open[0]?.title}
+                  </Text>
+                </View>
+                <Icon name="chevron" size={18} color={colors.inkMuted} />
+              </GlassCard>
+            </Pressable>
+          )}
 
           <View style={styles.sectionRow}>
             <Text style={styles.section}>Inbox</Text>
@@ -185,6 +223,16 @@ const styles = themed(() => StyleSheet.create({
   },
   askTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.onPrimary },
   askSub: { fontFamily: fonts.medium, fontSize: 12.5, color: colors.onPrimary, opacity: 0.7 },
+  needs: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
+  needsIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.dark ? 'rgba(245,181,68,0.14)' : 'rgba(196,122,0,0.1)',
+  },
+  needsTitle: { fontFamily: fonts.semibold, fontSize: 15.5, color: colors.ink, letterSpacing: -0.2 },
   dictBtn: { height: 74, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 },
   dictTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.ink },
   name: { fontFamily: fonts.semibold, fontSize: 21, color: colors.ink, letterSpacing: -0.4 },

@@ -2,7 +2,8 @@
 // or EXPO_PUBLIC_FLO_MOCK=1. Never used in a normal build.
 import { Platform } from 'react-native';
 import type { FloApi } from './client';
-import type { AskRequest, InboxItem, PairClaimResponse, Presence, Session } from './types';
+import { parseComputer } from '../lib/computer';
+import type { AskRequest, ComputerSnapshot, InboxItem, PairClaimResponse, PhoneAction, Presence, Session } from './types';
 
 function query(): URLSearchParams | null {
   if (Platform.OS !== 'web') return null;
@@ -20,6 +21,11 @@ export function isMockMode(): boolean {
 /** `?mock&screen=home|settings|welcome|code|scan` — jump straight to a screen for screenshots. */
 export function mockStartScreen(): string | null {
   return query()?.get('screen') ?? null;
+}
+
+/** `?mock&tab=todos|needs|settings|computer`: open a tab (or the computer settings) for screenshots. */
+export function mockStartTab(): string | null {
+  return query()?.get('tab') ?? null;
 }
 
 export function mockEmptyInbox(): boolean {
@@ -95,11 +101,98 @@ export function mockInbox(): InboxItem[] {
   ];
 }
 
+const ahead = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
+
+/** What a computer would publish (same shape as the server's GET /api/mobile/state). */
+export function mockComputer(): ComputerSnapshot {
+  // `?mock&nocomputer`: the computer hasn't published anything yet
+  if (query()?.has('nocomputer')) return { state: null, updatedAt: null, actions: [] };
+  const at = (h: number, m = 0) => {
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d.toISOString();
+  };
+  const opts = (...o: [string, string][]) => o.map(([value, label]) => ({ value, label }));
+  return parseComputer({
+    state: {
+      v: 1,
+      computer: { platform: 'macos', appVersion: '0.9.1' },
+      todos: {
+        open: [
+          { id: 't1', title: 'Review PR #214 for the upload limits', due: at(16, 30), source: 'voice', createdAt: ago(90) },
+          { id: 't2', title: 'Send invoice to Acme', due: ago(60 * 26), source: 'meeting', person: 'Riya', createdAt: ago(60 * 30) },
+          { id: 't3', title: 'Book flights to Goa', source: 'phone', createdAt: ago(240) },
+          { id: 't4', title: 'Renew the flo.app domain', source: 'slack', createdAt: ago(60 * 20) },
+          { id: 't5', title: 'Reply to Alex about the design sync', source: 'slack', person: 'Alex', createdAt: ago(60 * 5) },
+        ],
+        done: [
+          { id: 't0', title: 'Pay the electricity bill', completedAt: ago(35) },
+          { id: 't9', title: 'Call Mom back', completedAt: ago(60 * 22) },
+        ],
+      },
+      approvals: [
+        { id: 'q1', project: 'website', summary: 'Run: npm run migrate', tool: 'Bash', at: ago(0.3), expiresAt: ahead(1.7) },
+        { id: 'q2', project: 'api', summary: 'Edit rate_limit.rs', tool: 'Edit', at: ago(0.1), expiresAt: ahead(1.9) },
+      ],
+      waiting: [{ id: 's1', project: 'mobile', message: 'Claude is waiting for your input', status: 'waiting_reply', at: ago(6) }],
+      settings: [
+        { key: 'theme', label: 'Theme', section: 'Appearance', kind: 'select', value: 'light', editable: true, options: opts(['light', 'Light'], ['dark', 'Dark'], ['system', 'System']) },
+        { key: 'notchStyle', label: 'Notch animation', section: 'Appearance', kind: 'select', value: 'ribbon', editable: true, options: opts(['ribbon', 'Ribbon'], ['wave', 'Wave'], ['bars', 'Bars'], ['pulse', 'Pulse'], ['orb', 'Orb'], ['aurora', 'Aurora']) },
+        { key: 'avatar.enabled', label: 'Notchling in the notch', section: 'Appearance', kind: 'toggle', value: true, editable: true },
+        { key: 'accent', label: 'Accent colour', section: 'Appearance', kind: 'text', value: '#3dbbff', editable: false, hint: 'Change this on your computer.' },
+        { key: 'playSounds', label: 'Play sounds', section: 'Sounds and alerts', kind: 'toggle', value: true, editable: true },
+        { key: 'soundPack', label: 'Sound style', section: 'Sounds and alerts', kind: 'select', value: 'chime', editable: true, options: opts(['chime', 'Chime'], ['glass', 'Glass'], ['soft', 'Soft'], ['pop', 'Pop']) },
+        { key: 'soundVolume', label: 'Volume', section: 'Sounds and alerts', kind: 'number', value: 70, editable: true, min: 0, max: 100 },
+        { key: 'systemNotifications', label: 'System notifications', section: 'Sounds and alerts', kind: 'toggle', value: true, editable: true },
+        { key: 'hotkeyDictation', label: 'Dictation key', section: 'Dictation', kind: 'text', value: 'ctrl', editable: false, hint: 'Change this on your computer.' },
+        { key: 'cleanupEnabled', label: 'Clean up what you say', section: 'Dictation', kind: 'toggle', value: true, editable: true },
+        { key: 'autoLanguages', label: 'Languages to listen for', section: 'Dictation', kind: 'list', value: ['en', 'hi', 'gu'], editable: false, hint: 'Change this on your computer.' },
+        { key: 'llmModel', label: 'Assistant model', section: 'Assistant', kind: 'text', value: 'qwen3:8b', editable: false, hint: 'Change this on your computer.' },
+        { key: 'assistantCloudAllowed', label: 'Allow cloud models', section: 'Assistant', kind: 'toggle', value: true, editable: false, hint: 'A privacy setting. Change it on your computer.' },
+        { key: 'claudeApprovals', label: 'Allow or deny from Flo', section: 'Claude Code', kind: 'toggle', value: true, editable: true },
+        { key: 'claudeAutoContinue', label: 'Continue after usage limits reset', section: 'Claude Code', kind: 'toggle', value: false, editable: true },
+        { key: 'meetingDetection', label: 'Notice meetings', section: 'Meetings and to-dos', kind: 'toggle', value: true, editable: true },
+        { key: 'autoAwayMinutes', label: 'Away after (minutes idle)', section: 'Away mode', kind: 'number', value: 10, editable: true, min: 1, max: 240 },
+        { key: 'attentionEnabled', label: 'Screen awareness', section: 'Privacy', kind: 'toggle', value: false, editable: false, hint: 'A privacy setting. Change it on your computer.' },
+      ],
+    },
+    updatedAt: ago(0.5),
+    actions: [],
+  });
+}
+
 export function createMockApi(): FloApi & { claim(): Promise<PairClaimResponse> } {
   let presence: Presence = { status: 'away', since: ago(42) };
   const inbox = mockEmptyInbox() ? [] : mockInbox();
   const wait = (ms = 350) => new Promise((r) => setTimeout(r, ms));
   const asks = new Map<string, AskRequest>();
+  const computer = mockComputer();
+  const actions: PhoneAction[] = [];
+  /** what the desktop does with an action a moment later */
+  const applyLater = (a: PhoneAction) =>
+    setTimeout(() => {
+      const st = computer.state;
+      if (!st) return;
+      if (a.kind === 'todo_done') {
+        const t = st.todos.open.find((x) => x.id === a.target);
+        if (t) {
+          st.todos.open = st.todos.open.filter((x) => x.id !== t.id);
+          st.todos.done = [{ id: t.id, title: t.title, completedAt: new Date().toISOString() }, ...st.todos.done];
+        }
+      } else if (a.kind === 'todo_reopen') {
+        const t = st.todos.done.find((x) => x.id === a.target);
+        if (t) {
+          st.todos.done = st.todos.done.filter((x) => x.id !== t.id);
+          st.todos.open = [{ id: t.id, title: t.title, createdAt: new Date().toISOString() }, ...st.todos.open];
+        }
+      } else if (a.kind === 'approve' || a.kind === 'reject') {
+        st.approvals = st.approvals.filter((x) => x.id !== a.target);
+      } else if (a.kind === 'setting') {
+        st.settings = st.settings.map((x) => (x.key === a.target && a.value !== null ? { ...x, value: a.value } : x));
+      }
+      a.status = 'done';
+      computer.updatedAt = new Date().toISOString();
+    }, 1500);
   return {
     async claim() {
       await wait(700);
@@ -133,6 +226,17 @@ export function createMockApi(): FloApi & { claim(): Promise<PairClaimResponse> 
         mode === 'todo' ? `Added to your to-dos: ${text}` : mode === 'note' ? 'Saved to your notes.' : 'You have 3 meetings today. The first is the Acme sync at 11:00.';
       asks.set(id, { id, mode, text, status: 'done', answer, createdAt: new Date().toISOString() });
       return { id, mode, text, status: 'pending', answer: null, createdAt: new Date().toISOString() };
+    },
+    async getComputer() {
+      await wait(250);
+      return JSON.parse(JSON.stringify({ ...computer, actions })) as ComputerSnapshot;
+    },
+    async sendAction(kind, target, value) {
+      await wait(300);
+      const a: PhoneAction = { id: String(Date.now()), kind, target, value: value ?? null, status: 'pending', message: null, createdAt: new Date().toISOString() };
+      actions.unshift(a);
+      applyLater(a);
+      return { ...a };
     },
     async getAsk(id) {
       await wait(900);

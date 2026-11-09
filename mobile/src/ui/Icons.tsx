@@ -29,7 +29,14 @@ export type IconName =
   | 'share'
   | 'note'
   | 'copy'
-  | 'refresh';
+  | 'refresh'
+  | 'home'
+  | 'hand'
+  | 'circle'
+  | 'lock'
+  | 'plus'
+  | 'minus'
+  | 'terminal';
 
 const P: Record<IconName, string[]> = {
   qr: [
@@ -77,6 +84,17 @@ const P: Record<IconName, string[]> = {
   copy: ['M8.5 8.5h11v11h-11z', 'M15.5 8.5V4.5h-11v11h4'],
   refresh: ['M19.5 12a7.5 7.5 0 1 1-2.2-5.3', 'M19.5 4.5v4h-4'],
   close: ['M6 6l12 12M18 6L6 18'],
+  home: ['M4 10.5L12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19z'],
+  hand: [
+    'M8 12.5V6.2a1.5 1.5 0 0 1 3 0v5.3',
+    'M11 11.5V4.7a1.5 1.5 0 0 1 3 0v6.8',
+    'M14 11.5V6.2a1.5 1.5 0 0 1 3 0V14a6.5 6.5 0 0 1-6.5 6.5h-.2a6 6 0 0 1-4.9-2.6l-2.6-3.8a1.5 1.5 0 0 1 2.4-1.8L8 14',
+  ],
+  circle: ['M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17Z'],
+  lock: ['M6.5 10.5h11v9.5h-11z', 'M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5'],
+  plus: ['M12 5v14M5 12h14'],
+  minus: ['M5 12h14'],
+  terminal: ['M4 5.5h16v13H4z', 'M7.5 10l2.5 2-2.5 2M12.5 14.5h4'],
 };
 
 export function Icon({

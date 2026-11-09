@@ -75,3 +75,76 @@ export interface AskRequest {
   answer: string | null;
   createdAt: string;
 }
+
+/** Your computer, as the paired desktop app last published it (GET /api/mobile/state). */
+export type ComputerPlatform = 'macos' | 'windows' | 'linux' | 'other';
+export interface TodoOpen {
+  id: string;
+  title: string;
+  due?: string;
+  source?: string;
+  person?: string;
+  createdAt: string;
+}
+export interface TodoDone {
+  id: string;
+  title: string;
+  completedAt: string;
+}
+/** A Claude Code permission prompt waiting for Allow / Deny on the computer. */
+export interface Approval {
+  id: string;
+  project: string;
+  summary: string;
+  tool: string;
+  at: string;
+  expiresAt: string;
+  /** set on the phone while its answer is on the way */
+  sending?: 'approve' | 'reject';
+}
+/** A session waiting for a typed reply (answer it on the computer). */
+export interface WaitingSession {
+  id: string;
+  project: string;
+  message: string;
+  status: 'waiting_reply' | 'needs_approval';
+  at: string;
+}
+export type SettingKind = 'toggle' | 'select' | 'number' | 'text' | 'list';
+export type SettingValue = boolean | number | string | string[];
+export interface ComputerSetting {
+  key: string;
+  label: string;
+  section: string;
+  kind: SettingKind;
+  value: SettingValue;
+  editable: boolean;
+  options?: { value: string; label: string }[];
+  min?: number;
+  max?: number;
+  hint?: string;
+  /** set on the phone while a change is on the way */
+  sending?: boolean;
+}
+export interface ComputerState {
+  computer: { platform: ComputerPlatform; appVersion: string };
+  todos: { open: TodoOpen[]; done: TodoDone[] };
+  approvals: Approval[];
+  waiting: WaitingSession[];
+  settings: ComputerSetting[];
+}
+export type ActionKind = 'todo_done' | 'todo_reopen' | 'approve' | 'reject' | 'setting';
+export interface PhoneAction {
+  id: string;
+  kind: ActionKind;
+  target: string;
+  value: boolean | number | string | null;
+  status: AskStatus;
+  message: string | null;
+  createdAt: string;
+}
+export interface ComputerSnapshot {
+  state: ComputerState | null;
+  updatedAt: string | null;
+  actions: PhoneAction[];
+}

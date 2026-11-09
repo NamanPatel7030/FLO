@@ -1,5 +1,6 @@
 // HTTP client for the Flo mobile API (docs/mobile-api.md).
-import type { AskMode, AskRequest, AskStatus, InboxItem, PairClaimRequest, PairClaimResponse, Presence, PresenceStatus } from './types';
+import type { ActionKind, AskMode, AskRequest, AskStatus, ComputerSnapshot, InboxItem, PairClaimRequest, PairClaimResponse, PhoneAction, Presence, PresenceStatus } from './types';
+import { parseAction, parseComputer } from '../lib/computer';
 import { normalizeItem } from '../lib/inbox';
 import { normalizeServerUrl } from '../lib/pairing';
 
@@ -27,6 +28,10 @@ export interface FloApi {
   /** Queue a spoken request for the Mac (Ask Flo / Dictate). */
   ask(mode: AskMode, text: string): Promise<AskRequest>;
   getAsk(id: string): Promise<AskRequest>;
+  /** What the computer last published: to-dos, Claude Code questions, settings. */
+  getComputer(): Promise<ComputerSnapshot>;
+  /** Ask the computer to do something with it (it applies it on its next poll). */
+  sendAction(kind: ActionKind, target: string, value?: boolean | number | string): Promise<PhoneAction>;
 }
 
 const ASK_STATUSES: readonly AskStatus[] = ['pending', 'taken', 'done', 'failed'];
@@ -194,6 +199,13 @@ export function createHttpApi(server: string, deviceToken: string, fetchImpl: Fe
     },
     async getAsk(id) {
       return parseAsk(await call(`/api/mobile/ask/${encodeURIComponent(id)}`));
+    },
+    async getComputer() {
+      return parseComputer(await call('/api/mobile/state'));
+    },
+    async sendAction(kind, target, value) {
+      const body = value === undefined ? { kind, target } : { kind, target, value };
+      return parseAction(await call('/api/mobile/actions', { method: 'POST', body: JSON.stringify(body) }));
     },
   };
 }
