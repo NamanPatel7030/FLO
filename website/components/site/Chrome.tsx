@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useReducedMotion, useScroll, useSpring, useTransform, type MotionValue } from "motion/react";
 import { Bot, Briefcase, CircleHelp, LayoutGrid, LogIn, Mic, ShieldCheck } from "lucide-react";
 import { Logo } from "../Logo";
-import { EASE, Wave } from "./ui";
+import { EASE } from "./ui";
+import { NotchEyes } from "./Mascot";
 
 /** Every section on the page, in order, with the name the notch shows for it. */
 const SECTIONS: [id: string, label: string, group: string][] = [
+  ["notchling", "Meet Notchling", "voice"],
   ["dictation", "Dictation", "voice"],
   ["languages", "Hindi, Gujarati & English", "voice"],
   ["assistant", "Assistant", "assistant"],
@@ -86,7 +88,7 @@ export function TopNotch() {
           <AnimatePresence mode="wait">
             {label ? (
               <motion.span key={label} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }} className="flex items-center gap-2.5 whitespace-nowrap">
-                <Wave bars={5} color="#8fd0ff" className="scale-110" />
+                <NotchEyes />
                 <span className="text-[15px] font-semibold tracking-[-0.01em] text-[#fff]">{label}</span>
                 <span className="rounded-full bg-[rgba(255,255,255,0.12)] px-2 py-0.5 font-mono text-[11.5px] font-semibold text-[rgba(255,255,255,0.75)]">
                   {String(idx + 1).padStart(2, "0")}/{SECTIONS.length}
@@ -94,8 +96,7 @@ export function TopNotch() {
               </motion.span>
             ) : (
               <motion.span key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#5fd3b0] shadow-[0_0_8px_#5fd3b0]" />
-                <span className="text-[14px] font-semibold text-[rgba(255,255,255,0.8)]">Flo</span>
+                <NotchEyes />
               </motion.span>
             )}
           </AnimatePresence>

@@ -4,6 +4,7 @@ import { PastelBackdrop } from "@/components/site/Backdrop";
 import { Dock, TopNotch } from "@/components/site/Chrome";
 import { CompareSection, FaqSection, FinalCTA, MakerSection, MoreSection, PrivacySection, SiteFooter } from "@/components/site/Closing";
 import { AppsMarquee, Hero } from "@/components/site/Hero";
+import { MeetNotchling } from "@/components/site/MeetNotchling";
 import { CustomSection, WidgetsSection } from "@/components/site/Notch";
 import { Dictation, LanguagesSection, LearnsWords } from "@/components/site/Voice";
 import { ClaudeSection, MeetingsSection, ProjectsSection, TodosSection } from "@/components/site/Work";
@@ -20,6 +21,7 @@ export default async function Home() {
       <main>
         <Hero />
         <AppsMarquee />
+        <MeetNotchling />
         <Dictation />
         <LanguagesSection />
         <AssistantSection />

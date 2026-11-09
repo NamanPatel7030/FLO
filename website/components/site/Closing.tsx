@@ -32,6 +32,7 @@ import { DownloadCTA } from "../DownloadCTA";
 import { Logo } from "../Logo";
 import { NamanAvatar } from "../NamanAvatar";
 import { EASE, Heading, Reveal, Section, useLoop } from "./ui";
+import { NotchEyes } from "./Mascot";
 
 /* ── 14 Privacy: a live network log next to three promises ─────────────────────────────── */
 
@@ -335,7 +336,7 @@ export function FinalCTA() {
       <Reveal className="g relative overflow-hidden rounded-[44px] px-6 py-20 text-center sm:px-12 md:py-28">
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(50%_70%_at_20%_100%,rgba(169,220,255,0.8),transparent_70%),radial-gradient(50%_70%_at_80%_0%,rgba(216,204,255,0.85),transparent_70%),radial-gradient(40%_50%_at_90%_100%,rgba(255,214,196,0.7),transparent_70%)]" />
         <div className="hw-notch mx-auto flex h-10 w-48 items-center justify-center gap-2 rounded-b-[18px] rounded-t-md text-[12px] font-semibold">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-[#5fd3b0]" /> Flo is listening
+          <NotchEyes /> <span className="text-[rgba(255,255,255,0.85)]">Flo is listening</span>
         </div>
         <h2 className="mx-auto mt-10 max-w-3xl text-[clamp(44px,7vw,96px)] font-semibold leading-[0.95] tracking-[-0.05em] ink">
           Stop typing.

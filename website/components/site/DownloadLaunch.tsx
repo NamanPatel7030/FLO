@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Check, Download, MousePointerClick, ShieldCheck, X } from "lucide-react";
-import { Logo } from "../Logo";
+import { Mascot } from "./Mascot";
 import { EASE, Wave } from "./ui";
 
 /**
@@ -100,7 +100,7 @@ export function DownloadLaunch() {
                   transition={{ duration: 2.4, repeat: Infinity, ease: "linear" }}
                 />
                 <span className="relative block">
-                  <Logo size={58} />
+                  <Mascot mood={done ? "celebrate" : "excited"} size={64} />
                 </span>
               </div>
               <AnimatePresence mode="wait">

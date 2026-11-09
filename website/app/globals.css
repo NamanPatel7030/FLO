@@ -2098,3 +2098,34 @@ h2 {
 @media (prefers-reduced-motion: reduce) {
   .blob, .marquee2, .float-y, .vwave[data-on] i, .caret-v2 { animation: none !important; }
 }
+
+/* Notchling mascot (components/site/Mascot.tsx) */
+.nl-blink { transform-box: fill-box; transform-origin: center; animation: nl-blink 4.4s infinite; }
+@keyframes nl-blink { 0%, 44%, 50%, 100% { transform: scaleY(1); } 47% { transform: scaleY(0.1); } }
+.nl-talk { transform-box: fill-box; transform-origin: center; animation: nl-talk 2.4s ease-in-out infinite; }
+@keyframes nl-talk { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(0.45); } }
+.nl-bounce { animation: nl-bounce 0.9s ease-in-out infinite; }
+@keyframes nl-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(5px); } }
+.nl-jump { animation: nl-jump 1.4s ease-in-out infinite; }
+@keyframes nl-jump { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(7px); } }
+.nl-droop { transform-origin: 50px 0px; animation: nl-droop 3.6s ease-in-out infinite; }
+@keyframes nl-droop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
+.nl-sway { transform-origin: 50px 0px; animation: nl-sway 4.2s ease-in-out infinite; }
+@keyframes nl-sway { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+.nl-tilt { transform-origin: 50px 0px; animation: nl-tilt 3s ease-in-out infinite; }
+@keyframes nl-tilt { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(-1deg); } }
+.nl-twinkle { transform-box: fill-box; transform-origin: center; animation: nl-twinkle 1.8s ease-in-out infinite; }
+@keyframes nl-twinkle { 0%, 100% { transform: scale(0.65); opacity: 0.55; } 50% { transform: scale(1.12); opacity: 1; } }
+.nl-rise { animation: nl-rise 2.6s ease-in-out infinite; }
+@keyframes nl-rise { 0% { transform: translateY(4px); opacity: 0; } 25%, 70% { opacity: 1; } 100% { transform: translateY(-8px); opacity: 0; } }
+.nl-fall { animation: nl-fall 1.8s ease-in infinite; }
+@keyframes nl-fall { 0% { transform: translateY(-2px); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(16px); opacity: 0; } }
+.nl-confetti { animation: nl-confetti 2.2s linear infinite; }
+@keyframes nl-confetti { 0% { transform: translateY(-6px) rotate(0deg); opacity: 0; } 15% { opacity: 1; } 100% { transform: translateY(26px) rotate(220deg); opacity: 0; } }
+.nl-flame { transform-box: fill-box; transform-origin: 50% 100%; animation: nl-flame 0.7s ease-in-out infinite alternate; }
+@keyframes nl-flame { 0% { transform: scaleY(0.85); } 100% { transform: scaleY(1.12); } }
+.nl-ring { transform-box: fill-box; transform-origin: center; animation: nl-ring 1.6s ease-out infinite; }
+@keyframes nl-ring { 0% { transform: scale(0.85); opacity: 0.9; } 100% { transform: scale(1.15); opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) {
+  [class*="nl-"] { animation: none !important; }
+}
