@@ -137,7 +137,49 @@ pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &Fr
     run_mode(st, query, selection, front, screen, "quick").await
 }
 
+/// How long the assistant may wait on the AI for one answer (it includes a pending Keychain
+/// prompt and the provider's own retries). Past this the request fails with a clear message
+/// instead of leaving the notch on "thinking".
+pub fn llm_timeout(mode: &str) -> std::time::Duration {
+    std::time::Duration::from_secs(match mode {
+        "deep" | "web" => 150,
+        _ => 60,
+    })
+}
+
+/// Skills that call MCP tools get longer: each tool is a round trip to another service.
+pub const TOOLS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// The human message for an AI call that ran past its time limit.
+pub fn too_slow(limit: std::time::Duration) -> anyhow::Error {
+    anyhow!("The AI didn't answer within {} seconds. Check your connection and try again.", limit.as_secs())
+}
+
+/// Did this answer hand work to the screen agent (an Automate action that didn't fail)?
+pub fn handed_to_screen(resp: &AssistantResponse) -> bool {
+    resp.actions
+        .iter()
+        .zip(resp.results.iter().map(Some).chain(std::iter::repeat(None)))
+        .any(|(a, r)| matches!(a, AssistantAction::Automate { .. }) && r.map(|r| !r.starts_with("⚠️")).unwrap_or(false))
+}
+
 pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>, mode: &str) -> Result<AssistantResponse> {
+    let t0 = std::time::Instant::now();
+    let r = run_mode_inner(st, query, selection, front, screen, mode).await;
+    // log the outcome (never the words) so a request is never silent in the log
+    match &r {
+        Ok(resp) => log::info!(
+            "assistant ({mode}): answered in {} ms, {} action(s){}",
+            t0.elapsed().as_millis(),
+            resp.actions.len(),
+            if handed_to_screen(resp) { ", screen control started" } else { "" }
+        ),
+        Err(e) => log::warn!("assistant ({mode}): failed after {} ms: {e:#}", t0.elapsed().as_millis()),
+    }
+    r
+}
+
+async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>, mode: &str) -> Result<AssistantResponse> {
     let ctx = Ctx { query: query.to_string(), selection: selection.clone(), front: front.clone(), screen: screen.clone() };
     // 1) instant local commands ("open Slack", "google …", "play … on youtube") — no AI needed
     if selection.is_none() && mode == "quick" {
@@ -177,7 +219,9 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
             .filter(|c| c.kind == "mcp" && c.enabled && k.connections.contains(&c.id))
             .collect();
         if !servers.is_empty() {
-            return run_skill_with_tools(st, query, k, &servers, front, screen.as_deref(), mode).await;
+            return tokio::time::timeout(TOOLS_TIMEOUT, run_skill_with_tools(st, query, k, &servers, front, screen.as_deref(), mode))
+                .await
+                .map_err(|_| too_slow(TOOLS_TIMEOUT))?;
         }
         if k.mode == "do" {
             // operate the screen: hand the request + the skill's steps to the computer-control agent
@@ -229,7 +273,13 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     // a screenshot for deep answers, and for drafts so the model reads the conversation it replies to
     let wants_image = mode == "deep" || (drafting && llm::supports_vision(&s.llm_provider));
     let image = if wants_image && s.assistant_screen_context && crate::platform::permissions().screen {
-        tokio::task::spawn_blocking(|| crate::attention::capture_focused_jpeg(1280)).await.ok().flatten().map(|(_, b)| b)
+        // a screenshot that hangs must not hold the answer: go on without it
+        tokio::time::timeout(std::time::Duration::from_secs(8), tokio::task::spawn_blocking(|| crate::attention::capture_focused_jpeg(1280)))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten()
+            .map(|(_, b)| b)
     } else {
         None
     };
@@ -255,9 +305,10 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     if reused.is_some() {
         log::info!("assistant: reused a cached answer");
     }
+    let limit = llm_timeout(mode);
     let (raw, sources) = match reused {
         Some(hit) => hit,
-        None => llm::chat_ex(
+        None => tokio::time::timeout(limit, llm::chat_ex(
         &st.egress,
         &cfgl,
         ChatRequest {
@@ -274,8 +325,9 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
             },
         },
         llm::Extras { web: s_web, deep: mode == "deep" },
-    )
+    ))
     .await
+    .map_err(|_| too_slow(limit))?
     .map_err(|e| {
         if cfg::is_cloud_llm(&s.llm_provider) && !s.assistant_cloud_allowed {
             anyhow!("Assistant is set to on-device only. Allow cloud AI in Settings → Privacy, or choose a local model.")
@@ -484,15 +536,19 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
         }
         AssistantAction::SlackSend { to, text: body } => crate::slack::propose_send(st, to, body).await,
         AssistantAction::Automate { goal } => {
+            // one screen agent at a time: a second one would fight the first for the mouse
+            if crate::agent::is_running() {
+                return Err(anyhow!(crate::agent::BUSY));
+            }
             let st2 = st.clone();
             let g = goal.clone();
             tauri::async_runtime::spawn(async move {
+                // the agent reports its own end (done / stopped / error) to the island and the log
                 if let Err(e) = crate::agent::run(&st2, &g).await {
-                    st2.emit(crate::model::ev::AGENT, serde_json::json!({ "kind": "error", "text": e.to_string() }));
                     st2.toast("error", format!("Screen control: {e}"));
                 }
             });
-            Ok(format!("On it — {goal}"))
+            Ok(format!("On it: {goal}"))
         }
         AssistantAction::ConnectMcp { name, url } => {
             let want = name.to_lowercase();
@@ -550,5 +606,41 @@ mod cache_tests {
         assert_eq!(a, b);
         assert!(a.contains("Today: 2026-11-09 (Monday)"));
         assert_ne!(a, super::without_clock("ctx\nToday: 2026-11-10 14:05 (Tuesday)\nTo-dos: x"));
+    }
+
+    use crate::model::{AssistantAction, AssistantResponse};
+
+    fn resp(actions: Vec<AssistantAction>, results: Vec<&str>) -> AssistantResponse {
+        AssistantResponse {
+            id: "1".into(),
+            query: "q".into(),
+            reply: "r".into(),
+            actions,
+            results: results.into_iter().map(String::from).collect(),
+            created_at: String::new(),
+            mode: "quick".into(),
+            sources: vec![],
+        }
+    }
+
+    #[test]
+    fn only_a_started_screen_run_counts_as_handed_off() {
+        let auto = || AssistantAction::Automate { goal: "open chrome".into() };
+        assert!(super::handed_to_screen(&resp(vec![auto()], vec!["On it: open chrome"])));
+        // refused ("already busy") or failed: nothing will report back, so the caller must not wait
+        assert!(!super::handed_to_screen(&resp(vec![auto()], vec!["⚠️ Screen control is already working on something."])));
+        // the local-command path returns no result when it failed
+        assert!(!super::handed_to_screen(&resp(vec![auto()], vec![])));
+        assert!(!super::handed_to_screen(&resp(vec![AssistantAction::OpenApp { name: "Slack".into() }], vec!["Opened Slack"])));
+        // the result lines follow the actions in order
+        assert!(super::handed_to_screen(&resp(vec![AssistantAction::OpenApp { name: "Slack".into() }, auto()], vec!["Opened Slack", "On it: x"])));
+    }
+
+    #[test]
+    fn ai_calls_are_bounded() {
+        assert_eq!(super::llm_timeout("quick").as_secs(), 60);
+        assert_eq!(super::llm_timeout("deep").as_secs(), 150);
+        assert!(super::TOOLS_TIMEOUT > super::llm_timeout("web"));
+        assert!(!super::too_slow(super::llm_timeout("quick")).to_string().contains('—'));
     }
 }

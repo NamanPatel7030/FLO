@@ -243,12 +243,14 @@ pub fn click_at(x: f64, y: f64, double: bool) -> Result<()> {
     let mv = CGEvent::new_mouse_event(src.clone(), CGEventType::MouseMoved, pt, CGMouseButton::Left).map_err(|_| anyhow!("mouse"))?;
     mv.post(CGEventTapLocation::HID);
     std::thread::sleep(std::time::Duration::from_millis(20));
-    let mut do_click = |n: i64| -> Result<()> {
+    let do_click = |n: i64| -> Result<()> {
         let down = CGEvent::new_mouse_event(src.clone(), CGEventType::LeftMouseDown, pt, CGMouseButton::Left).map_err(|_| anyhow!("mouse"))?;
         let up = CGEvent::new_mouse_event(src.clone(), CGEventType::LeftMouseUp, pt, CGMouseButton::Left).map_err(|_| anyhow!("mouse"))?;
         down.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, n);
         up.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, n);
         down.post(CGEventTapLocation::HID);
+        // a press with zero duration is dropped by some apps (web views, Electron)
+        std::thread::sleep(std::time::Duration::from_millis(25));
         up.post(CGEventTapLocation::HID);
         Ok(())
     };
@@ -258,6 +260,85 @@ pub fn click_at(x: f64, y: f64, double: bool) -> Result<()> {
         do_click(2)?;
     }
     Ok(())
+}
+
+/// May Flo post synthetic mouse / keyboard events? Without this (Accessibility, or the narrower
+/// "post events" grant) macOS drops every CGEvent Flo posts, silently: clicks and typing do nothing.
+/// An ad-hoc signed update can leave Flo listed as allowed while the grant no longer matches the
+/// new build, so this is checked at runtime rather than trusted from the Settings toggle.
+pub fn can_post_events() -> bool {
+    unsafe { AXIsProcessTrusted() || CGPreflightPostEventAccess() }
+}
+
+/// Accessibility roles that `AXPress` activates exactly like a click.
+pub fn pressable_role(role: &str) -> bool {
+    matches!(
+        role,
+        "AXButton" | "AXLink" | "AXMenuItem" | "AXMenuBarItem" | "AXCheckBox" | "AXRadioButton" | "AXPopUpButton" | "AXMenuButton" | "AXDisclosureTriangle"
+    )
+}
+
+extern "C" {
+    fn AXUIElementCopyElementAtPosition(app: AXRef, x: f32, y: f32, out: *mut AXRef) -> i32;
+    fn AXUIElementPerformAction(el: AXRef, action: core_foundation::string::CFStringRef) -> i32;
+    fn AXUIElementGetPid(el: AXRef, pid: *mut i32) -> i32;
+}
+
+/// Press the control at a screen point (points, top-left origin) through Accessibility, when the
+/// element there (or its parent, e.g. the label inside a button) is a button / link / menu item of
+/// another app. Returns the pressed element's role and owning pid, or None when the caller should
+/// fall back to a real mouse click (text fields, web content without an accessibility tree, Flo's
+/// own windows, or a failed press).
+pub fn press_at(x: f64, y: f64) -> Option<(String, i32)> {
+    unsafe {
+        let sys = AXUIElementCreateSystemWide();
+        if sys.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(sys, 0.5);
+        let mut hit: AXRef = std::ptr::null();
+        let ok = AXUIElementCopyElementAtPosition(sys, x as f32, y as f32, &mut hit) == 0 && !hit.is_null();
+        CFRelease(sys);
+        if !ok {
+            return None;
+        }
+        let mut pid = 0i32;
+        AXUIElementGetPid(hit, &mut pid);
+        if pid <= 0 || pid as u32 == std::process::id() {
+            CFRelease(hit);
+            return None;
+        }
+        // the element itself, then up to two parents
+        let mut el = hit;
+        let mut result = None;
+        for _ in 0..3 {
+            let role = ax_copy(el, "AXRole").and_then(|v| cf_to_string(v)).unwrap_or_default();
+            if pressable_role(&role) {
+                use core_foundation::base::TCFType;
+                let press = core_foundation::string::CFString::new("AXPress");
+                if AXUIElementPerformAction(el, press.as_concrete_TypeRef()) == 0 {
+                    result = Some((role, pid));
+                }
+                break;
+            }
+            let Some(parent) = ax_copy(el, "AXParent") else { break };
+            CFRelease(el);
+            el = parent as AXRef;
+        }
+        CFRelease(el);
+        result
+    }
+}
+
+/// Let mouse events pass through a window (or not). Main thread only.
+pub fn set_window_ignores_mouse(ns_window: *mut std::ffi::c_void, ignore: bool) {
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let win = ns_window as *mut AnyObject;
+        let _: () = msg_send![win, setIgnoresMouseEvents: ignore];
+    }
 }
 
 /// Type a unicode string wherever the cursor is.
@@ -338,6 +419,11 @@ pub fn keycode_for(name: &str) -> Option<u16> {
         "end" => 119,
         "pageup" => 116,
         "pagedown" => 121,
+        // letters / digits (US layout virtual keys), for shortcuts like cmd+L, cmd+T, cmd+F
+        "a" => 0, "s" => 1, "d" => 2, "f" => 3, "h" => 4, "g" => 5, "z" => 6, "x" => 7, "c" => 8, "v" => 9,
+        "b" => 11, "q" => 12, "w" => 13, "e" => 14, "r" => 15, "y" => 16, "t" => 17,
+        "1" => 18, "2" => 19, "3" => 20, "4" => 21, "6" => 22, "5" => 23, "9" => 25, "7" => 26, "8" => 28, "0" => 29,
+        "o" => 31, "u" => 32, "i" => 34, "p" => 35, "l" => 37, "j" => 38, "k" => 40, "n" => 45, "m" => 46,
         _ => return None,
     })
 }

@@ -471,42 +471,77 @@ fn handle(st: &Shared, phase: Phase, t: &str, voiced: u32) {
         }
         Intent::Request(r) => {
             set_heard(&r);
-            BUSY.fetch_add(1, Ordering::SeqCst);
+            let busy = Busy::hold();
             emit(st, None);
-            tauri::async_runtime::spawn(run_requests(st.clone(), r));
+            tauri::async_runtime::spawn(run_requests(st.clone(), r, busy));
         }
     }
 }
 
+/// Holds one count of BUSY ("thinking") and gives it back however the request ends, even if
+/// the task panics, so the pill can't get stuck on "working".
+struct Busy;
+impl Busy {
+    fn hold() -> Self {
+        BUSY.fetch_add(1, Ordering::SeqCst);
+        Busy
+    }
+}
+impl Drop for Busy {
+    fn drop(&mut self) {
+        // every Busy added exactly one in hold(), so this never underflows
+        BUSY.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Upper bound for one request in agent mode (the assistant has its own, shorter, AI time limit;
+/// this also covers everything around it).
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+/// How long to wait for a screen run the assistant just started to show up.
+const AGENT_START_WAIT: Duration = Duration::from_secs(3);
+
 /// Run a request end to end (assistant → maybe the screen agent, waiting for all its steps), then
-/// whatever was queued meanwhile.
-async fn run_requests(st: Shared, first: String) {
+/// whatever was queued meanwhile. Always ends with a visible result or error and a log line.
+async fn run_requests(st: Shared, first: String, busy: Busy) {
+    let mut busy = Some(busy);
     let mut next = Some(first);
     while let Some(req) = next.take() {
+        if busy.is_none() {
+            busy = Some(Busy::hold());
+            emit(&st, None);
+        }
         let before = agent::runs_started();
         let front = st.target_app();
-        match assistant::run(&st, &req, None, &front, None).await {
-            Ok(resp) => {
-                let automate = resp.actions.iter().any(|a| matches!(a, crate::model::AssistantAction::Automate { .. }));
+        let t0 = Instant::now();
+        let outcome = tokio::time::timeout(REQUEST_TIMEOUT, assistant::run(&st, &req, None, &front, None)).await;
+        match outcome {
+            Ok(Ok(resp)) => {
+                let automate = assistant::handed_to_screen(&resp);
+                log::info!("agent mode request: answered in {} ms{}", t0.elapsed().as_millis(), if automate { ", screen control" } else { "" });
                 let _ = st.db.insert_assistant(&resp);
                 st.emit(ev::ASSISTANT, resp);
                 if automate {
                     // the agent is spawned in the background: wait for it to start, then to finish
-                    let t0 = Instant::now();
-                    while agent::runs_started() == before && t0.elapsed() < Duration::from_secs(3) {
+                    let t1 = Instant::now();
+                    while agent::runs_started() == before && t1.elapsed() < AGENT_START_WAIT {
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
-                    BUSY.fetch_sub(1, Ordering::SeqCst);
+                    busy = None; // "acting" now, not "thinking"
                     emit(&st, None);
-                    while agent::is_running() {
+                    // the agent stops itself at its deadline; this bound is only a safety net
+                    let t2 = Instant::now();
+                    while agent::is_running() && t2.elapsed() < agent::RUN_DEADLINE + Duration::from_secs(30) {
                         tokio::time::sleep(Duration::from_millis(250)).await;
                     }
-                    BUSY.fetch_add(1, Ordering::SeqCst);
                 }
             }
-            Err(e) => {
-                log::warn!("agent mode request failed: {e:#}");
+            Ok(Err(e)) => {
+                log::warn!("agent mode request failed after {} ms: {e:#}", t0.elapsed().as_millis());
                 st.emit(ev::AGENT, json!({ "kind": "error", "text": e.to_string() }));
+            }
+            Err(_) => {
+                log::warn!("agent mode request timed out after {} s", REQUEST_TIMEOUT.as_secs());
+                st.emit(ev::AGENT, json!({ "kind": "error", "text": "That took too long, so I stopped. Try again." }));
             }
         }
         if is_active() {
@@ -516,7 +551,7 @@ async fn run_requests(st: Shared, first: String) {
             }
         }
     }
-    BUSY.fetch_sub(1, Ordering::SeqCst);
+    drop(busy);
     if is_active() {
         emit(&st, None);
     }
@@ -626,6 +661,24 @@ mod tests {
         // lyrics / a long conversation is not a request
         let long = "la ".repeat(50);
         assert_eq!(classify(Phase::Listening, &long, 9000), Intent::Ignore);
+    }
+
+    #[test]
+    fn busy_is_released_however_a_request_ends() {
+        let base = BUSY.load(Ordering::SeqCst);
+        {
+            let _a = Busy::hold();
+            let _b = Busy::hold();
+            assert_eq!(BUSY.load(Ordering::SeqCst), base + 2);
+        }
+        assert_eq!(BUSY.load(Ordering::SeqCst), base);
+        // a panicking request still gives its count back
+        let r = std::panic::catch_unwind(|| {
+            let _c = Busy::hold();
+            panic!("boom");
+        });
+        assert!(r.is_err());
+        assert_eq!(BUSY.load(Ordering::SeqCst), base);
     }
 
     #[test]

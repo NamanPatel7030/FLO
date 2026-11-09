@@ -503,7 +503,9 @@ async fn answer(st: &Shared, id: &str, goal: &str, front: &FrontApp) -> Result<O
     for r in &resp.results {
         update(st, id, |run| run.push("step", r));
     }
-    let handed_off = resp.actions.iter().any(|a| matches!(a, crate::model::AssistantAction::Automate { .. }));
+    // only when the screen agent really started: a refused hand-off ("already busy") would
+    // otherwise leave this run open forever, waiting for events that never come
+    let handed_off = crate::assistant::handed_to_screen(&resp);
     if handed_off {
         update(st, id, |run| {
             run.route = "screen".into();
