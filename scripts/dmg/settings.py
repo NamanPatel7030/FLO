@@ -9,10 +9,11 @@ format = "UDZO"
 filesystem = "HFS+"
 files = [app]
 symlinks = {"Applications": "/Applications"}
-icon_locations = {appname: (210, 244), "Applications": (550, 244)}
+icon_locations = {appname: (210, 240), "Applications": (550, 240)}
 background = defines.get("background", "scripts/dmg/background.tiff")  # noqa: F821
 
-window_rect = ((200, 140), (760, 480))
+# the height includes the title bar, so add it to the 480 px background
+window_rect = ((200, 120), (760, 513))
 default_view = "icon-view"
 show_status_bar = False
 show_tab_view = False
