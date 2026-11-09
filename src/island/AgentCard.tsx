@@ -2,17 +2,9 @@ import { motion } from "motion/react";
 import { Square, Loader2, Check, AlertCircle, MousePointer2, Mic, X } from "lucide-react";
 import type { HandsfreeEvent, IslandGeometry } from "../lib/types";
 
-export type AgentStatus = "running" | "confirm" | "done" | "error" | "aborted";
+import type { AgentState } from "./agentState";
 
-export interface AgentState {
-  goal: string;
-  steps: string[];
-  status: AgentStatus;
-  /** latest confirm question / done summary / error text */
-  text?: string;
-  /** the confirm question is answered by voice (agent mode) */
-  voice?: boolean;
-}
+export type { AgentState, AgentStatus } from "./agentState";
 
 /** Pulsing accent ring around a mic: "Flo is listening" (agent mode). */
 function ListeningDot({ size = 26, busy = false }: { size?: number; busy?: boolean }) {

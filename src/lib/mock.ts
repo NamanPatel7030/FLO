@@ -1328,9 +1328,9 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "agent_confirm":
       // like the backend: yes → the agent carries on and finishes; no → it stops
       if (args.yes) {
-        mockEmit(EV.agent, { kind: "step", text: "Confirmed — continuing" });
+        mockEmit(EV.agent, { kind: "step", text: "Confirmed, continuing" });
         setTimeout(() => mockEmit(EV.agent, { kind: "done", text: "Sent." }), 700);
-      } else mockEmit(EV.agent, { kind: "aborted", text: "Cancelled — you said no." });
+      } else mockEmit(EV.agent, { kind: "aborted", text: "Cancelled, you said no." });
       if (mockAgentMode) mockEmit(EV.handsfree, { active: true, phase: args.yes ? "acting" : "listening" });
       return true;
     case "claude_hook_status":

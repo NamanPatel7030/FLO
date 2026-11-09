@@ -455,6 +455,26 @@ test("agent overlay: streams steps with a Stop button, then shows the result", a
   await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
 });
 
+test("agent overlay: Stop clears the spinner at once, and a failed run shows its error instead of loading", async ({ page }) => {
+  await openIsland(page);
+  await emit(page, "flo://agent", { kind: "start", text: "Open Slack and find the design channel" });
+  await emit(page, "flo://agent", { kind: "step", text: "Opening Slack" });
+  const stop = page.getByRole("button", { name: "Stop" });
+  await expect(stop).toBeVisible();
+  await stop.click();
+  // no waiting on the backend: the card says stopped right away, and a late step can't revive it
+  await expect(page.getByText("Stopped.")).toBeVisible();
+  await expect(stop).toHaveCount(0);
+  await emit(page, "flo://agent", { kind: "step", text: "Clicking Search" });
+  await expect(page.getByText("Clicking Search")).toHaveCount(0);
+
+  // a run that can't click (no Accessibility) ends in a readable error, not an endless spinner
+  await emit(page, "flo://agent", { kind: "start", text: "Click the first video" });
+  await emit(page, "flo://agent", { kind: "error", text: "Flo can't click or type for you yet. Turn on Flo in System Settings." });
+  await expect(page.getByText(/can't click or type/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
+});
+
 test("reminder: card offers Done and Snooze, and each answers the to-do", async ({ page }) => {
   await page.goto("/?nh=38&nw=200&demo=reminder#/island");
   await page.waitForFunction(() => !!(window as any).__floMock);
@@ -669,7 +689,7 @@ test("agent mode: hands-free pill, a heard request, live steps, and a spoken yes
   await emit(page, "flo://agent", { kind: "start", text: "Delete the draft" });
   await emit(page, "flo://agent", { kind: "confirm", text: "Delete the draft?", voice: true });
   await page.getByTestId("agent-confirm").getByRole("button", { name: "No" }).click();
-  await expect(page.getByText("Cancelled — you said no.")).toBeVisible();
+  await expect(page.getByText("Cancelled, you said no.")).toBeVisible();
 
   // exit: the pill's X (same as double-tap fn / saying "stop"); the card waits while hovered
   await page.mouse.move(5, 800);

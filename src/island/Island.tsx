@@ -54,7 +54,8 @@ import { NotchViz } from "./Ribbon";
 import { WidgetGrid } from "./Widgets";
 import { MusicWings } from "./NowPlaying";
 import { useMediaActivity } from "../lib/nowPlaying";
-import { AgentCard, AgentModePill, type AgentState } from "./AgentCard";
+import { AgentCard, AgentModePill } from "./AgentCard";
+import { expireAgent, expireHandsfree, isActive as isAgentActive, reduceAgent, stopLocally, type AgentEvent, type AgentState } from "./agentState";
 import { loadWidgets, onWidgetsChange, widgetsBodyHeight, type WidgetId } from "../lib/widgets";
 import { applyTheme, onNotchPreview, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
@@ -154,6 +155,7 @@ export default function Island() {
   const [agent, setAgent] = useState<AgentState | null>(null);
   /** hands-free agent mode (double-tap fn): null when off */
   const [handsfree, setHandsfree] = useState<HandsfreeEvent | null>(null);
+  const handsfreeAt = useRef(Date.now());
   // hover: backend cursor tracking (non-activating panel) + DOM fallback.
   // Raw positions live in refs; React state only changes when the hovered item/tile changes.
   const [hover, setHover] = useState(false);
@@ -411,29 +413,10 @@ export default function Island() {
       }),
       on<HandsfreeEvent>(EV.handsfree, (e) => {
         if (!e || typeof e !== "object") return;
+        handsfreeAt.current = Date.now();
         setHandsfree(e.active ? e : null);
       }),
-      on<{ kind: string; text: string; voice?: boolean }>(EV.agent, (e) => {
-        if (!e || !e.kind) return;
-        setAgent((prev) => {
-          if (e.kind === "start") return { goal: e.text ?? "", steps: [], status: "running" };
-          const base: AgentState = prev ?? { goal: "", steps: [], status: "running" };
-          switch (e.kind) {
-            case "step":
-              return { ...base, status: "running", steps: [...base.steps, e.text].slice(-6) };
-            case "confirm":
-              return { ...base, status: "confirm", text: e.text, voice: !!e.voice };
-            case "done":
-              return { ...base, status: "done", text: e.text };
-            case "aborted":
-              return { ...base, status: "aborted", text: e.text };
-            case "error":
-              return { ...base, status: "error", text: e.text };
-            default:
-              return base;
-          }
-        });
-      }),
+      on<AgentEvent>(EV.agent, (e) => setAgent((prev) => reduceAgent(prev, e))),
     ];
     return () => offs.forEach((f) => f());
   }, []);
@@ -447,6 +430,21 @@ export default function Island() {
     const t = setTimeout(() => setAgent(null), 4500);
     return () => clearTimeout(t);
   }, [agent, hover]);
+
+  // never spin forever: a run (or agent mode's "working") that has gone silent is closed locally
+  useEffect(() => {
+    if (!isAgentActive(agent) && handsfree?.phase !== "thinking") return;
+    const t = setInterval(() => {
+      setAgent((a) => expireAgent(a));
+      setHandsfree((h) => expireHandsfree(h, handsfreeAt.current));
+    }, 5000);
+    return () => clearInterval(t);
+  }, [agent, handsfree?.phase]);
+
+  const stopAgent = useCallback(() => {
+    api.stopAgent();
+    setAgent((a) => stopLocally(a));
+  }, []);
 
   const handleHoverRef = useRef(handleHover);
   handleHoverRef.current = handleHover;
@@ -730,7 +728,7 @@ export default function Island() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (widgetsOpen) setWidgetsOpen(false);
-      else if (agent && (agent.status === "running" || agent.status === "confirm")) api.stopAgent();
+      else if (agent && (agent.status === "running" || agent.status === "confirm")) stopAgent();
       else if (agent) setAgent(null);
       else if (handsfree) api.toggleAgentMode().catch(() => {});
       else if (phase === "listening" && mode !== "meeting") api.cancelSession();
@@ -1038,7 +1036,7 @@ export default function Island() {
                   agent={agent}
                   notch={notch}
                   geo={geo}
-                  onStop={() => api.stopAgent()}
+                  onStop={stopAgent}
                   onDismiss={() => setAgent(null)}
                   onAnswer={(yes) => api.agentConfirm(yes)}
                   handsfree={!!handsfree}
