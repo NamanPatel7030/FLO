@@ -1,0 +1,83 @@
+name: desktop
+
+# Builds the Windows and Linux installers and, on a version tag, attaches them to that GitHub
+# Release under stable names (the website's Download menu links to releases/latest/download/...).
+# The macOS app is built and signed on a Mac by scripts/release-mac.sh.
+#
+# Updater: these builds produce plain installers only (no signed updater bundles; the update key
+# never leaves the release Mac), so Windows and Linux users update by downloading a new installer.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: desktop-${{ matrix.os }}
+
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libasound2-dev libssl-dev libdbus-1-dev libxtst-dev libx11-dev libxi-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev libxcb1-dev libxrandr-dev \
+            cmake clang libclang-dev pkg-config patchelf file
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Build installers
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Collect installers under stable names
+        shell: bash
+        run: |
+          mkdir -p dist-installers
+          B=src-tauri/target/release/bundle
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp "$(ls $B/nsis/*-setup.exe | head -1)" dist-installers/Flo-windows-x64-setup.exe
+            cp "$(ls $B/msi/*.msi | head -1)" dist-installers/Flo-windows-x64.msi
+          else
+            cp "$(ls $B/appimage/*.AppImage | head -1)" dist-installers/Flo-linux-x86_64.AppImage
+            cp "$(ls $B/deb/*.deb | head -1)" dist-installers/Flo-linux-amd64.deb
+          fi
+          ls -la dist-installers
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flo-${{ runner.os }}
+          path: dist-installers/*
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist-installers/* --clobber -R "${GITHUB_REPOSITORY}"

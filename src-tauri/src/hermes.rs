@@ -713,6 +713,8 @@ pub fn hermes_log() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    // shell-script launchers: Unix only (Windows runs Hermes through its own launcher)
+    #[cfg(unix)]
     #[test]
     fn a_launcher_pointing_at_a_missing_program_is_reported_as_broken() {
         // exactly what a half-finished install leaves: ~/.local/bin/hermes exec-ing a missing venv

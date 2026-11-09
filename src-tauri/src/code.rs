@@ -1053,6 +1053,7 @@ mod tests {
     ];
 
     /// The shell layer: what `sh -c` sees as each argument is exactly the original text.
+    #[cfg(unix)]
     #[test]
     fn sh_quote_roundtrips_through_a_real_shell() {
         for s in NASTY {
