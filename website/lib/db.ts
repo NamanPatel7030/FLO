@@ -168,3 +168,31 @@ export async function claimSlackHandoff(
 }
 
 export { iso as toIso };
+
+// ── usage counter (public totals only) ──────────────────────────────────────
+
+/** Stamp that this account's desktop app is in use (sign-in or launch). Never fails the request. */
+export async function touchAppUsage(userId: string): Promise<void> {
+  if (!isUuid(userId) || !dbConfigured()) return;
+  try {
+    await sql()`
+      insert into app.app_usage (user_id) values (${userId})
+      on conflict (user_id) do update set last_seen = now()`;
+  } catch {
+    /* counting must never break sign-in */
+  }
+}
+
+export type UsageStats = { signedUp: number; usingFlo: number; activeWeek: number; joinedToday: number; since: string };
+
+/** Totals for the public counter. `signedUp` counts confirmed accounts only (Google, or email confirmed). */
+export async function usageStats(): Promise<UsageStats> {
+  const [r] = await sql()<{ signed_up: number; joined_today: number; using_flo: number; active_week: number; since: Date | null }[]>`
+    select
+      (select count(*)::int from auth.users where email_confirmed_at is not null and deleted_at is null) as signed_up,
+      (select count(*)::int from auth.users where email_confirmed_at is not null and deleted_at is null and created_at >= date_trunc('day', now())) as joined_today,
+      (select count(*)::int from app.app_usage) as using_flo,
+      (select count(*)::int from app.app_usage where last_seen > now() - interval '7 days') as active_week,
+      (select min(created_at) from auth.users) as since`;
+  return { signedUp: r.signed_up, usingFlo: r.using_flo, activeWeek: r.active_week, joinedToday: r.joined_today, since: (r.since ?? new Date()).toISOString() };
+}

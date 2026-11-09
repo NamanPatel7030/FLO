@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowDown, BellRing, Check, Cpu, Languages, ListTodo, ShieldCheck } from "lucide-react";
 import { DownloadCTA } from "../DownloadCTA";
+import { LiveCount } from "./LiveCount";
 import { EASE, Wave, useLoop, useTyped } from "./ui";
 
 const SAID = "Hey team, I pushed the new onboarding flow. Can you review it before Friday?";
@@ -147,6 +148,9 @@ export function Hero() {
           <span className="tag-dot" />
           Flo for macOS · lives in your notch
         </motion.span>
+        <div className="mt-3 flex justify-center">
+          <LiveCount compact />
+        </div>
         <motion.h1
           id="hero-title"
           initial={{ opacity: 0, y: 20 }}

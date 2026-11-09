@@ -1,4 +1,4 @@
-import { findUserById } from "@/lib/db";
+import { findUserById, touchAppUsage } from "@/lib/db";
 import { bearer, verifyAppToken } from "@/lib/tokens";
 
 export const runtime = "nodejs";
@@ -9,5 +9,6 @@ export async function GET(req: Request) {
   const claims = t ? await verifyAppToken(t) : null;
   const user = claims ? await findUserById(claims.sub) : null;
   if (!user) return Response.json({ error: "Not signed in." }, { status: 401 });
+  await touchAppUsage(user.id);
   return Response.json({ user });
 }

@@ -33,6 +33,7 @@ import { Logo } from "../Logo";
 import { NamanAvatar } from "../NamanAvatar";
 import { EASE, Heading, Reveal, Section, useLoop } from "./ui";
 import { NotchEyes } from "./Mascot";
+import { LiveCount } from "./LiveCount";
 
 /* ── 14 Privacy: a live network log next to three promises ─────────────────────────────── */
 
@@ -344,6 +345,7 @@ export function FinalCTA() {
           <span className="serif-i grad-text pr-2 text-[1.08em] tracking-[-0.02em]">Start talking.</span>
         </h2>
         <p className="v2-lead mx-auto mt-6 max-w-lg">Free to download. Private by default. Ready in about a minute.</p>
+        <LiveCount />
         <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <DownloadCTA size="lg" testId="final-get-flo" menu="up" />
           <Link href="/login" className="btn btn-glass h-14 px-7 text-[15px] ink">
