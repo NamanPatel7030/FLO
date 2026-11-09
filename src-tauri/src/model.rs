@@ -123,7 +123,7 @@ impl Default for Settings {
             system_prompt: String::new(),
             slack_sync: true,
             onboarded: false,
-            account_url: option_env!("FLO_ACCOUNT_URL").unwrap_or("http://localhost:3000").to_string(),
+            account_url: option_env!("FLO_ACCOUNT_URL").unwrap_or("https://flo.hellonaman.com").to_string(),
             account_user: None,
             stt_provider: "local".into(),
             stt_model: "large-v3-turbo-q5_0".into(),

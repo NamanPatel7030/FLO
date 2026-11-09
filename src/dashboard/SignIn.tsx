@@ -100,7 +100,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
   const [google, setGoogle] = useState<{ state: string } | null>(null);
   const [code, setCode] = useState("");
   const [done, setDone] = useState<AccountUser | null>(null);
-  const site = status.accountUrl || "http://localhost:3000";
+  const site = status.accountUrl || "https://flo.hellonaman.com";
   const ids = useId().replace(/:/g, "");
   const emailRef = useRef<HTMLInputElement>(null);
   const pwRef = useRef<HTMLInputElement>(null);
