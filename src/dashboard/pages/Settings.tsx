@@ -845,6 +845,21 @@ function Voice({ s, set }: P) {
             <Input className="w-64" value={s.sttModel} onChange={(e) => set({ sttModel: e.target.value })} />
           </Row>
         )}
+        {s.sttProvider === "local" && (
+          <Row label="Keep the speech model ready" hint="A loaded model types your first word in about 0.2 s instead of 3 s. Unloading frees its memory (about 0.6 to 1.6 GB).">
+            <Select
+              value={String(s.sttKeepWarmMins ?? 10)}
+              onChange={(v) => set({ sttKeepWarmMins: Number(v) })}
+              options={[
+                { value: "0", label: "Unload right away" },
+                { value: "3", label: "3 minutes" },
+                { value: "10", label: "10 minutes" },
+                { value: "30", label: "30 minutes" },
+                { value: "60", label: "1 hour" },
+              ]}
+            />
+          </Row>
+        )}
       </Card>
 
       <Card className="p-4">
@@ -1045,6 +1060,26 @@ function KeyRow({ provider, label }: { provider: KeyProvider; label: string }) {
   );
 }
 
+function ClearCacheRow() {
+  const [done, setDone] = useState(false);
+  return (
+    <Row label="Cached answers" hint="Kept in memory only, never on disk. Cleared when you sign out.">
+      <Button
+        size="sm"
+        icon={done ? <Check size={14} /> : <Trash2 size={14} />}
+        onClick={() =>
+          api.clearCaches().then(() => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1800);
+          })
+        }
+      >
+        {done ? "Cleared" : "Clear"}
+      </Button>
+    </Row>
+  );
+}
+
 function Privacy({ s, set }: P) {
   const [log, setLog] = useState<NetworkLogEntry[] | null>(null);
   const [deny, setDeny] = useState("");
@@ -1067,6 +1102,13 @@ function Privacy({ s, set }: P) {
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
         <Toggle label="Assistant may use your cloud AI (BYOK)" hint="On: your question, any selected text and screen text are sent to the cloud provider you chose (with your key). Off: the assistant uses a local model only and nothing leaves this Mac." checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
         <Toggle label="Assistant can see the active window" hint="On: when you ask, a screenshot of the front window is read for context (sent to the cloud only if the toggle above is on). Off: the assistant never looks at your screen." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />
+        <Toggle
+          label="Reuse recent answers"
+          hint="Ask the same thing again within 10 minutes and Flo answers instantly from memory, without another AI call. Never for web searches or questions about today."
+          checked={s.reuseAnswers ?? true}
+          onChange={(v) => set({ reuseAnswers: v })}
+        />
+        <ClearCacheRow />
         <Toggle label="Attention" hint="On: Flo quietly reads what is on screen to spot things you should do, and turns them into to-dos. Off: it never watches your screen." checked={s.attentionEnabled} onChange={(v) => set({ attentionEnabled: v })} />
         {s.attentionEnabled && (
           <>

@@ -239,8 +239,13 @@ pub fn is_hallucination(text: &str, seconds: f32) -> bool {
     t.is_empty() || (seconds < 3.0 && H.contains(&t.as_str())) || t == "[blank_audio]"
 }
 
-/// Free the model's RAM (~0.6–1.6 GB) after this long without dictation.
-const IDLE_UNLOAD_SECS: u64 = 180;
+/// Free the model's RAM (~0.6–1.6 GB) after this long without dictation (Settings → Voice,
+/// "Keep the speech model ready"; default 10 minutes).
+pub static IDLE_UNLOAD_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(600);
+
+pub fn set_keep_warm_mins(mins: u32) {
+    IDLE_UNLOAD_SECS.store(u64::from(mins) * 60, std::sync::atomic::Ordering::Relaxed);
+}
 
 pub fn spawn_idle_unloader(w: Arc<LocalWhisper>) {
     tauri::async_runtime::spawn(async move {
@@ -277,7 +282,8 @@ pub struct LocalWhisper {
 
 impl LocalWhisper {
     pub fn unload_if_idle(&self) {
-        let idle = self.last_used.lock().map(|t| t.elapsed().as_secs() >= IDLE_UNLOAD_SECS).unwrap_or(false);
+        let keep = IDLE_UNLOAD_SECS.load(std::sync::atomic::Ordering::Relaxed);
+        let idle = self.last_used.lock().map(|t| t.elapsed().as_secs() >= keep).unwrap_or(false);
         if idle {
             #[cfg(feature = "local-stt")]
             {
@@ -315,9 +321,16 @@ impl LocalWhisper {
     #[cfg(feature = "local-stt")]
     pub fn warm(&self, model_file: &Path) {
         let t = std::time::Instant::now();
+        let was_loaded = self.is_loaded();
         if self.context(model_file).is_ok() {
-            log::debug!("speech model ready in {} ms", t.elapsed().as_millis());
+            log::info!("speech model ready in {} ms ({})", t.elapsed().as_millis(), if was_loaded { "warm" } else { "cold load" });
         }
+    }
+
+    /// The model is in memory (the next dictation skips loading it).
+    #[cfg(feature = "local-stt")]
+    pub fn is_loaded(&self) -> bool {
+        self.ctx.lock().is_some()
     }
 
     #[cfg(not(feature = "local-stt"))]
@@ -508,6 +521,30 @@ pub async fn transcribe_cloud(egress: &Egress, provider: &str, model: &str, key:
         bail!("{provider} STT error {status}: {}", v["error"]["message"].as_str().unwrap_or("unknown"));
     }
     Ok(v["text"].as_str().unwrap_or_default().trim().to_string())
+}
+
+
+/// First-word latency with a cold vs a warm model: `cargo test --release --lib warm_model_latency -- --ignored --nocapture`.
+#[cfg(all(test, feature = "local-stt"))]
+mod latency {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn warm_model_latency() {
+        let dir = dirs::data_dir().unwrap().join("com.flo.flow/models");
+        let model = ["ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo.bin", "ggml-base.en.bin"].iter().map(|f| dir.join(f)).find(|p| p.exists());
+        let Some(model) = model else { return };
+        let w = LocalWhisper::default();
+        let clip = vec![0.0f32; 16_000 * 2];
+        let t = std::time::Instant::now();
+        let _ = w.transcribe(&model, &clip, "en", "");
+        let cold = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let _ = w.transcribe(&model, &clip, "en", "");
+        let warm = t.elapsed().as_millis();
+        println!("model {}: first transcription cold {cold} ms, warm {warm} ms", model.file_name().unwrap().to_string_lossy());
+        assert!(w.is_loaded());
+    }
 }
 
 #[cfg(test)]

@@ -74,6 +74,18 @@ struct Ctx {
 }
 static RECENT: parking_lot::Mutex<Vec<(String, Ctx)>> = parking_lot::Mutex::new(Vec::new());
 
+/// The prompt without the minute it was built (so the same question a minute later is the same
+/// request); the date stays.
+fn without_clock(system: &str) -> String {
+    match system.find("Today: ") {
+        Some(i) if system.len() >= i + 7 + 16 => {
+            let (head, tail) = system.split_at(i + 7 + 10);
+            format!("{head}{}", &tail[6..])
+        }
+        _ => system.to_string(),
+    }
+}
+
 /// A pending "Add MCP server" form for the dashboard (set by a voice request, taken once).
 pub static MCP_PREFILL: parking_lot::Mutex<Option<serde_json::Value>> = parking_lot::Mutex::new(None);
 
@@ -204,7 +216,18 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));
     }
-    let (raw, sources) = llm::chat_ex(
+    // reuse an identical request's answer for 10 minutes (same model, prompt, context, screen and
+    // screenshot); never for web searches or anything that depends on the moment it's asked
+    let cache_key = (s.reuse_answers && !s_web && !crate::cache::time_sensitive(query)).then(|| {
+        crate::cache::hash_parts(&[&cfgl.provider, &cfgl.model, &cfgl.local_url, mode, &without_clock(&system), query, image.as_deref().unwrap_or("")])
+    });
+    let reused = cache_key.as_ref().and_then(|k| crate::cache::ANSWERS.lock().get(k));
+    if reused.is_some() {
+        log::info!("assistant: reused a cached answer");
+    }
+    let (raw, sources) = match reused {
+        Some(hit) => hit,
+        None => llm::chat_ex(
         &st.egress,
         &cfgl,
         ChatRequest {
@@ -229,8 +252,15 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
         } else {
             e
         }
-    })?;
+    })?,
+    };
     let mut parsed = prompts::parse_assistant(&raw);
+    // only answers and drafts are reused: anything that changes data (a to-do, a message) runs fresh
+    if let Some(k) = cache_key {
+        if parsed.actions.iter().all(|a| matches!(a, AssistantAction::InsertText { .. })) {
+            crate::cache::ANSWERS.lock().insert(k, (raw.clone(), sources.clone()));
+        }
+    }
     parsed.reply = text::strip_ai_dashes(&parsed.reply);
     let mut results = vec![];
     for a in &parsed.actions {
@@ -472,5 +502,17 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
             .await??;
             Ok(if had_selection { "Replaced your selection".into() } else { format!("Typed into {}", front.name) })
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    #[test]
+    fn the_clock_is_dropped_but_the_date_kept() {
+        let a = super::without_clock("ctx\nToday: 2026-11-09 14:05 (Monday)\nTo-dos: x");
+        let b = super::without_clock("ctx\nToday: 2026-11-09 14:31 (Monday)\nTo-dos: x");
+        assert_eq!(a, b);
+        assert!(a.contains("Today: 2026-11-09 (Monday)"));
+        assert_ne!(a, super::without_clock("ctx\nToday: 2026-11-10 14:05 (Tuesday)\nTo-dos: x"));
     }
 }

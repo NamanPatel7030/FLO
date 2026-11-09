@@ -110,9 +110,16 @@ pub async fn status(st: &Shared) -> AccountStatus {
         st.signed_in.store(false, Ordering::SeqCst);
         return AccountStatus { signed_in: false, user: None, account_url, offline: false };
     };
+    // the same signed-in answer is reused for 5 minutes (the app asks on launch and when screens open)
+    let token_key = crate::cache::hash_parts(&[&account_url, &token]);
+    if let Some(user) = crate::cache::ACCOUNT.lock().get(&token_key) {
+        st.signed_in.store(user.is_some(), Ordering::SeqCst);
+        return AccountStatus { signed_in: user.is_some(), user, account_url, offline: false };
+    }
     match call(st, "GET", "/api/app/me", None, Some(&token)).await {
         Ok((200, v)) => {
             let user = parse_user(&v["user"]).or(cached);
+            crate::cache::ACCOUNT.lock().insert(token_key, user.clone());
             st.signed_in.store(user.is_some(), Ordering::SeqCst);
             AccountStatus { signed_in: user.is_some(), user, account_url, offline: false }
         }
@@ -168,6 +175,7 @@ pub async fn exchange(st: &Shared, code: &str, state: Option<&str>) -> Result<Ac
 
 pub fn logout(st: &Shared) -> Result<()> {
     let _ = secrets::delete_secret(TOKEN);
+    crate::cache::clear_personal();
     let mut s = st.settings();
     s.account_user = None;
     settings::save(&st.data_dir, &s)?;

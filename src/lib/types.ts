@@ -122,6 +122,10 @@ export interface Settings {
   avatar?: AvatarSettings;
   /** "Sync your data" (end-to-end encrypted). Change it with the sync_* commands, not save_settings. */
   sync?: SyncSettings;
+  /** minutes the on-device speech model stays loaded after the last dictation (0 = unload) */
+  sttKeepWarmMins?: number;
+  /** answer an identical question from a 10-minute cache */
+  reuseAnswers?: boolean;
 }
 
 // ── sync your data (src-tauri/src/sync.rs, website/app/api/sync) ────────────

@@ -153,6 +153,8 @@ export const api = {
   listSkills: () => call<Skill[]>("list_skills"),
   listConnections: () => call<Connection[]>("list_connections"),
   /** a pending Add MCP server form from a voice request ("connect to Mobbin MCP"), taken once */
+  /** forget reused answers and cached account / MCP lookups */
+  clearCaches: () => call<void>("clear_caches"),
   takeMcpPrefill: () => call<{ name?: string; url?: string; id?: string } | null>("take_mcp_prefill"),
   saveConnection: (connection: Connection) => call<Connection>("save_connection", { connection }),
   deleteConnection: (id: string) => call<void>("delete_connection", { id }),

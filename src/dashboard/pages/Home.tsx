@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSwr, onStatsChange } from "../../lib/swr";
 import { motion } from "motion/react";
 import { ArrowRight, Check, CheckCircle2, Lock, Clock, Flame, FolderKanban, Keyboard, Mic, Radio, Sparkles, StickyNote, Type, Eye } from "lucide-react";
 import { api } from "../../lib/api";
@@ -14,12 +14,9 @@ import { Ocean } from "../../island/Ocean";
 
 export default function Home() {
   const { settings, todos, projects, notes, geo, go } = useStore();
-  const [a, setA] = useState<Analytics | null>(null);
-  const [att, setAtt] = useState<AttentionStatus | null>(null);
-  useEffect(() => {
-    api.getAnalytics(30).then(setA);
-    api.attentionStatus().then(setAtt);
-  }, []);
+  // shown instantly from the page cache, refreshed in the background
+  const a = useSwr<Analytics>("analytics:30", () => api.getAnalytics(30), { subscribe: onStatsChange });
+  const att = useSwr<AttentionStatus>("attention", () => api.attentionStatus());
   const today = a?.daily[a.daily.length - 1];
   const groups = todos ? groupTodos(todos) : null;
   const todayTodos = groups ? [...groups.today, ...groups.screen].slice(0, 6) : null;

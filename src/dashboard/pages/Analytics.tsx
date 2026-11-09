@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useSwr, onStatsChange } from "../../lib/swr";
 import clsx from "clsx";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { CheckCircle2, Clock, Flame, Gauge, Mic, Type } from "lucide-react";
@@ -19,11 +20,7 @@ export default function Analytics() {
   const go = useStore((s) => s.go);
   const settings = useStore((s) => s.settings);
   const [days, setDays] = useState<(typeof RANGES)[number]>(30);
-  const [a, setA] = useState<A | null>(null);
-  useEffect(() => {
-    setA(null);
-    api.getAnalytics(days).then(setA);
-  }, [days]);
+  const a = useSwr<A>(`analytics:${days}`, () => api.getAnalytics(days), { subscribe: onStatsChange });
 
   const daily = a?.daily.map((d) => ({ ...d, label: new Date(d.day + "T00:00").toLocaleDateString([], { month: "short", day: "numeric" }) })) ?? [];
   const hourly = a?.hourly.map((w, h) => ({ h, label: h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`, words: w })) ?? [];

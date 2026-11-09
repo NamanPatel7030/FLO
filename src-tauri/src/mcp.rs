@@ -272,28 +272,46 @@ pub async fn run_with_tools(
     cloud_allowed: bool,
 ) -> Result<(String, Vec<String>)> {
     const MAX_TOOL_ROUNDS: usize = 8;
-    let mut sessions = vec![];
+    // Tool lists are cached per server (10 min), so a run only connects to a server when the
+    // model actually calls one of its tools; uncached servers are connected and listed up front.
+    let mut sessions: Vec<Option<Session>> = vec![];
+    let mut conns: Vec<&Connection> = vec![];
     let mut specs = vec![];
     let mut route: std::collections::HashMap<String, (usize, String)> = Default::default();
     for c in servers {
-        match Session::connect(st, c).await {
-            Ok(mut s) => match s.list_tools().await {
-                Ok(tools) => {
-                    let idx = sessions.len();
-                    for t in tools {
-                        let name = exposed_name(&c.name, &t.name);
-                        route.insert(name.clone(), (idx, t.name.clone()));
-                        specs.push(crate::llm::ToolSpec { name, description: format!("[{}] {}", c.name, t.description), schema: t.input_schema });
+        let key = crate::cache::mcp_key(c);
+        let cached = crate::cache::MCP_TOOLS.lock().get(&key);
+        let (tools, session) = match cached {
+            Some(t) => (t, None),
+            None => match Session::connect(st, c).await {
+                Ok(mut s) => match s.list_tools().await {
+                    Ok(t) => {
+                        crate::cache::MCP_TOOLS.lock().insert(key, t.clone());
+                        (t, Some(s))
                     }
-                    sessions.push(s);
+                    Err(e) => {
+                        log::warn!("mcp {}: list tools failed: {e:#}", c.name);
+                        s.close().await;
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    log::warn!("mcp {}: connect failed: {e:#}", c.name);
+                    continue;
                 }
-                Err(e) => log::warn!("mcp {}: list tools failed: {e:#}", c.name),
             },
-            Err(e) => log::warn!("mcp {}: connect failed: {e:#}", c.name),
+        };
+        let idx = sessions.len();
+        for t in tools {
+            let name = exposed_name(&c.name, &t.name);
+            route.insert(name.clone(), (idx, t.name.clone()));
+            specs.push(crate::llm::ToolSpec { name, description: format!("[{}] {}", c.name, t.description), schema: t.input_schema });
         }
+        sessions.push(session);
+        conns.push(c);
     }
     if specs.is_empty() {
-        for s in sessions {
+        for s in sessions.into_iter().flatten() {
             s.close().await;
         }
         bail!("Couldn't reach the skill's MCP servers. Check them in Skills → Connections (Test).");
@@ -311,10 +329,25 @@ pub async fn run_with_tools(
                 let mut results = vec![];
                 for call in calls {
                     let (text, err) = match route.get(&call.name) {
-                        Some((idx, tool)) => match sessions[*idx].call_tool(tool, call.input.clone()).await {
-                            Ok((t, e)) => (t, e),
-                            Err(e) => (format!("Tool failed: {e:#}"), true),
-                        },
+                        Some((idx, tool)) => {
+                            if sessions[*idx].is_none() {
+                                match Session::connect(st, conns[*idx]).await {
+                                    Ok(sess) => sessions[*idx] = Some(sess),
+                                    Err(e) => {
+                                        // the server changed or went away: forget its cached tools
+                                        crate::cache::MCP_TOOLS.lock().remove(&crate::cache::mcp_key(conns[*idx]));
+                                        log::warn!("mcp {}: connect failed: {e:#}", conns[*idx].name);
+                                    }
+                                }
+                            }
+                            match sessions[*idx].as_mut() {
+                                Some(sess) => match sess.call_tool(tool, call.input.clone()).await {
+                                    Ok((t, e)) => (t, e),
+                                    Err(e) => (format!("Tool failed: {e:#}"), true),
+                                },
+                                None => (format!("Couldn't reach {}", conns[*idx].name), true),
+                            }
+                        }
                         None => (format!("No tool named {}", call.name), true),
                     };
                     log::info!("mcp tool {} → {} chars{}", call.name, text.len(), if err { " (error)" } else { "" });
@@ -329,7 +362,7 @@ pub async fn run_with_tools(
             }
         }
     }
-    for s in sessions {
+    for s in sessions.into_iter().flatten() {
         s.close().await;
     }
     outcome.map(|t| (t, used))
@@ -354,6 +387,10 @@ pub async fn probe(st: &Shared, c: &Connection) -> Result<Vec<McpTool>> {
     let mut s = Session::connect(st, c).await?;
     let tools = s.list_tools().await;
     s.close().await;
+    // a fresh listing (Test / reconnect) replaces the cached one
+    if let Ok(t) = &tools {
+        crate::cache::MCP_TOOLS.lock().insert(crate::cache::mcp_key(c), t.clone());
+    }
     tools
 }
 

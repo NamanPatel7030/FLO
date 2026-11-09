@@ -17,6 +17,7 @@ mod floagent;
 mod hermes;
 mod handsfree;
 mod hotkey;
+mod cache;
 mod intents;
 mod livetx;
 mod llm;
@@ -429,6 +430,7 @@ pub fn run() {
             commands::island_resize,
             commands::open_dashboard,
             commands::take_mcp_prefill,
+            commands::clear_caches,
             commands::start_session,
             commands::stop_session,
             commands::cancel_session,
@@ -646,6 +648,7 @@ pub fn run() {
             updater::spawn_auto_check(handle.clone());
             media::init(handle.clone());
             spawn_hover_tracker(handle.clone(), st.clone());
+            stt::set_keep_warm_mins(st.settings().stt_keep_warm_mins);
             stt::spawn_idle_unloader(st.whisper.clone());
             Ok(())
         })

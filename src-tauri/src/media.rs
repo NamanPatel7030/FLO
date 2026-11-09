@@ -365,7 +365,26 @@ return out"#
 
 /// Download a small image through the egress allow-list and return it as a data: URL.
 #[cfg(target_os = "macos")]
+/// Recently shown thumbnails, so switching back to a track (or re-opening the notch) needs no fetch.
+static ART_MEM: std::sync::LazyLock<parking_lot::Mutex<crate::cache::TtlCache<String, String>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(crate::cache::TtlCache::new(std::time::Duration::from_secs(24 * 60 * 60), 24)));
+
+/// A track's thumbnail: memory, then the on-disk cache, then the network (through the allow-list).
 async fn fetch_image(st: &crate::state::Shared, url: &str) -> Option<String> {
+    if let Some(d) = ART_MEM.lock().get(&url.to_string()) {
+        return Some(d);
+    }
+    if let Some(d) = crate::cache::artwork_get(&st.data_dir, url) {
+        ART_MEM.lock().insert(url.to_string(), d.clone());
+        return Some(d);
+    }
+    let d = fetch_image_net(st, url).await?;
+    ART_MEM.lock().insert(url.to_string(), d.clone());
+    crate::cache::artwork_put(&st.data_dir, url, &d);
+    Some(d)
+}
+
+async fn fetch_image_net(st: &crate::state::Shared, url: &str) -> Option<String> {
     use base64::Engine;
     use crate::egress::Purpose;
     st.egress.check(url, Purpose::Artwork, true).ok()?;

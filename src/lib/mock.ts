@@ -118,6 +118,8 @@ const settings: Settings = {
   autoAwayMinutes: 10,
   avatar: { ...DEFAULT_AVATAR },
   sync: { enabled: false, categories: ["todos", "notes", "settings", "history"] },
+  sttKeepWarmMins: 10,
+  reuseAnswers: true,
 };
 
 // ── sync your data (mock): ?syncjoin=1 pretends another Mac already set Sync up ──
@@ -945,6 +947,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return buildAnalytics(args.days ?? 30);
     case "list_connections":
       return connections.map((c) => ({ ...c }));
+    case "clear_caches":
+      return null;
     case "take_mcp_prefill": {
       const p = mcpPrefill;
       mcpPrefill = null;

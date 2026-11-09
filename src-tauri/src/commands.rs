@@ -29,12 +29,24 @@ pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
         st.egress.allow_account_host(&h);
     }
     platform::set_hotkeys(crate::hotkey::HotkeyConfig::from_strings(&settings.hotkey_dictation, &settings.hotkey_assistant));
+    crate::stt::set_keep_warm_mins(settings.stt_keep_warm_mins);
+    if !settings.reuse_answers {
+        crate::cache::ANSWERS.lock().clear();
+    }
     let approvals_changed = st.settings().claude_approvals != settings.claude_approvals;
     *st.settings.write() = settings;
     // turning "Allow / Deny from the notch" on or off adds / removes the PermissionRequest hook
     if approvals_changed {
         crate::claude::refresh_if_installed(&st);
     }
+    Ok(())
+}
+
+/// Settings → Privacy → "Clear cached answers": forget reused answers and the account check.
+#[tauri::command]
+pub fn clear_caches() -> R<()> {
+    crate::cache::clear_personal();
+    crate::cache::MCP_TOOLS.lock().clear();
     Ok(())
 }
 
@@ -229,6 +241,7 @@ pub fn list_connections(st: State<Shared>) -> R<Vec<crate::model::Connection>> {
 
 #[tauri::command]
 pub fn save_connection(st: State<Shared>, connection: crate::model::Connection) -> R<crate::model::Connection> {
+    crate::cache::MCP_TOOLS.lock().clear(); // an edited server lists its tools again
     if connection.name.trim().is_empty() {
         return Err("Give the connection a name".into());
     }
@@ -239,6 +252,7 @@ pub fn save_connection(st: State<Shared>, connection: crate::model::Connection) 
 
 #[tauri::command]
 pub fn delete_connection(st: State<Shared>, id: String) -> R<()> {
+    crate::cache::MCP_TOOLS.lock().clear();
     st.db.delete_connection(&id).map_err(e)?;
     crate::mcp::refresh_hosts(&st, None);
     Ok(())

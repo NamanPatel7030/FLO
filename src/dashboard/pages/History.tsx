@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import clsx from "clsx";
 import { Check, Copy, History as HistoryIcon, Mic, Search, Sparkles } from "lucide-react";
-import { api, on } from "../../lib/api";
+import { api } from "../../lib/api";
+import { onNewDictation, useSwr } from "../../lib/swr";
 import { copyText } from "../../lib/clipboard";
 import { groupByDay } from "../../lib/format";
-import { EV, type Dictation } from "../../lib/types";
+import { type Dictation } from "../../lib/types";
 import { useStore } from "../store";
 import { Card, Empty, Input, PageHeader, Skeleton } from "../ui";
 
@@ -12,17 +13,11 @@ type Filter = "all" | "dictation" | "assistant";
 
 export default function History() {
   const toast = useStore((s) => s.toast);
-  const [items, setItems] = useState<Dictation[] | null>(null);
+  const items = useSwr<Dictation[]>("history:500", () => api.listHistory(500), { subscribe: onNewDictation });
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [copied, setCopied] = useState<string | null>(null);
 
-  useEffect(() => {
-    const load = () => api.listHistory(500).then(setItems);
-    load();
-    // refresh after each new dictation
-    return on(EV.transcript, (t: { final: boolean }) => t.final && setTimeout(load, 600));
-  }, []);
 
   const groups = useMemo(() => {
     if (!items) return null;

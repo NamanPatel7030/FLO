@@ -115,6 +115,11 @@ pub struct Settings {
     /// "Sync your data" (end-to-end encrypted). Changed only through the sync_* commands
     /// (see sync.rs); save_settings keeps the current value.
     pub sync: SyncSettings,
+    /// keep the on-device speech model loaded this many minutes after the last dictation
+    /// (instant first word); then free its RAM. 0 = unload right away.
+    pub stt_keep_warm_mins: u32,
+    /// answer an identical question (same model, context and screen) from a 10-minute cache
+    pub reuse_answers: bool,
 }
 
 /// End-to-end encrypted sync. Off by default; categories are what the user chose to sync.
@@ -213,6 +218,8 @@ impl Default for Settings {
             auto_away_minutes: 10,
             avatar: NotchAvatar::default(),
             sync: SyncSettings::default(),
+            stt_keep_warm_mins: 10,
+            reuse_answers: true,
         }
     }
 }
