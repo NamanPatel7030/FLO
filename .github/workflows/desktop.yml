@@ -24,7 +24,7 @@ jobs:
         include:
           - os: windows-latest
             bundles: nsis,msi
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             bundles: deb,appimage
     runs-on: ${{ matrix.os }}
     steps:
@@ -42,6 +42,8 @@ jobs:
           workspaces: src-tauri
           key: desktop-${{ matrix.os }}
 
+      # 24.04: xcap's PipeWire capture needs libspa >= 1.0 (22.04 ships 0.3.48). The packages
+      # therefore need glibc 2.39 / Ubuntu 24.04-era distros.
       - name: Linux system dependencies
         if: runner.os == 'Linux'
         run: |
