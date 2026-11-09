@@ -1,0 +1,16 @@
+# Never upload local-only files to Vercel
+flo.db
+*.db
+*.db-journal
+.env
+.env.local
+node_modules
+.next
+tsconfig.tsbuildinfo
+# local test update builds (real releases are published separately)
+releases
+public/releases
+# dev-only scripts and tests
+tests
+check-console.cjs
+shot-*.cjs

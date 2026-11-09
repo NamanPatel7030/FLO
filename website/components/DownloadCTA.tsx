@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronDown, Download } from "lucide-react";
 import { OS_LABEL, OS_ORDER, downloadHref, useOS, type OS } from "@/lib/os";
@@ -72,12 +73,32 @@ export function DownloadCTA({
   const os: OS | null = detected === null ? null : mobile ? "mac" : (detected as OS);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const menuEl = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  // The menu is drawn in a portal on <body> (fixed, measured from the button), so no section
+  // further down the page can paint over it.
+  const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open || !wrap.current) return;
+    const place = () => {
+      const r = wrap.current!.getBoundingClientRect();
+      const left = Math.max(12, Math.min(r.right - 250, window.innerWidth - 262));
+      setPos(menu === "up" ? { left, bottom: window.innerHeight - r.top + 10 } : { left, top: r.bottom + 10 });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, { passive: true });
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place);
+    };
+  }, [open, menu]);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!wrap.current?.contains(t) && !menuEl.current?.contains(t)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("pointerdown", onDown);
@@ -113,16 +134,20 @@ export function DownloadCTA({
           </motion.span>
         </button>
       </div>
+      {typeof document !== "undefined" &&
+        createPortal(
       <AnimatePresence>
-        {open && (
+        {open && pos && (
           <motion.div
+            ref={menuEl}
             id={menuId}
             role="menu"
             initial={{ opacity: 0, y: menu === "up" ? 8 : -8, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: menu === "up" ? 6 : -6, scale: 0.98, transition: { duration: 0.12 } }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className={`glass-strong absolute right-0 z-[80] w-[250px] rounded-2xl p-1.5 text-left ${menu === "up" ? "bottom-[calc(100%+10px)] origin-bottom-right" : "top-[calc(100%+10px)] origin-top-right"}`}
+            className={`download-menu fixed z-[200] w-[250px] rounded-2xl p-1.5 text-left ${menu === "up" ? "origin-bottom-right" : "origin-top-right"}`}
+            style={pos}
             data-testid={testId ? `${testId}-menu` : undefined}
           >
             <p className="px-3 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.16em] text-brand-200/80">{mobile ? "Flo runs on" : "All platforms"}</p>
@@ -150,7 +175,9 @@ export function DownloadCTA({
             })}
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { ArrowDown, Check, Cpu, Languages, ShieldCheck } from "lucide-react";
 import { CHAPTERS, type Chapter } from "./chapters";
 import { DownloadCTA } from "../DownloadCTA";
 import { Words } from "../motion/Words";
-import { HeroCards, HeroCardsMobile, Menubar } from "./HeroArt";
+import { HeroCards, HeroCardsMobile } from "./HeroArt";
 import { NotchContent, NotchShell, chapterIdAt, maxNotchH, notchSize } from "./Notch";
 import { Stage } from "./stages";
 import { usePhase, useStory } from "./StoryContext";
@@ -140,7 +140,6 @@ function Hero() {
     <article data-chapter={0} data-active={active === 0} className="chapter hero px-4 pb-20 pt-28 md:px-0 md:pb-0 md:pt-0">
       <InlineNotch i={0} />
       <div aria-hidden className="hero-grid pointer-events-none absolute inset-0 hidden md:block" />
-      <Menubar />
       <HeroCards />
       <div className="relative mx-auto flex max-w-4xl flex-col items-center text-center md:h-full md:justify-center md:pt-12">
         <p className="hero-in eyebrow eyebrow-line eyebrow-c" style={{ animationDelay: "80ms" }}>

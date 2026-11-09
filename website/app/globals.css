@@ -1871,3 +1871,22 @@ h2 {
 @media (prefers-reduced-motion: reduce) {
   .avatar-fade { animation: none; }
 }
+
+/* platform dropdown: a solid surface, so nothing behind it shows through */
+.download-menu {
+  background: linear-gradient(180deg, #102336, #0a1724);
+  border: 1px solid rgb(150 215 255 / 0.18);
+  box-shadow: 0 24px 60px -18px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(0 0 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+:root[data-theme="light"] .download-menu {
+  background: #ffffff;
+  border-color: rgb(15 40 70 / 0.12);
+  box-shadow: 0 24px 60px -20px rgb(15 40 70 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.9);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .download-menu {
+    background: #ffffff;
+    border-color: rgb(15 40 70 / 0.12);
+    box-shadow: 0 24px 60px -20px rgb(15 40 70 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.9);
+  }
+}
