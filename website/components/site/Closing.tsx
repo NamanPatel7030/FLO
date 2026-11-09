@@ -356,7 +356,7 @@ export function FinalCTA() {
 
 export function SiteFooter() {
   return (
-    <footer className="px-4 pb-10 sm:px-6">
+    <footer className="px-4 pb-28 sm:px-6">
       <div className="g-2 mx-auto max-w-6xl rounded-[32px] p-8 sm:p-10">
         <div className="flex flex-col gap-10 sm:flex-row sm:justify-between">
           <div className="max-w-xs">

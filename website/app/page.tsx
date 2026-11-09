@@ -1,10 +1,10 @@
 import { MotionConfig } from "motion/react";
 import { AgentSection, AssistantSection, SkillsSection } from "@/components/site/Assistant";
 import { PastelBackdrop } from "@/components/site/Backdrop";
+import { Dock, TopNotch } from "@/components/site/Chrome";
 import { CompareSection, FaqSection, FinalCTA, MakerSection, MoreSection, PrivacySection, SiteFooter } from "@/components/site/Closing";
 import { AppsMarquee, Hero } from "@/components/site/Hero";
 import { CustomSection, WidgetsSection } from "@/components/site/Notch";
-import { SiteNav } from "@/components/site/SiteNav";
 import { Dictation, LanguagesSection, LearnsWords } from "@/components/site/Voice";
 import { ClaudeSection, MeetingsSection, ProjectsSection, TodosSection } from "@/components/site/Work";
 import { getUser } from "@/lib/supabase/server";
@@ -15,7 +15,8 @@ export default async function Home() {
     <MotionConfig reducedMotion="user">
       <div className="v2">
       <PastelBackdrop />
-      <SiteNav signedIn={signedIn} />
+      <TopNotch />
+      <Dock signedIn={signedIn} />
       <main>
         <Hero />
         <AppsMarquee />
