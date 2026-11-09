@@ -25,8 +25,8 @@ function TodoList() {
         const Icon = x.icon;
         return (
           <li key={x.t}>
-            <button type="button" onClick={() => toggle(k)} aria-pressed={on} className="g-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition hover:bg-white/90">
-              <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full transition-all ${on ? "bg-[#3fbf98] text-white" : "ring-[1.5px] ring-black/15"}`}>{on && <Check size={13} strokeWidth={3.5} />}</span>
+            <button type="button" onClick={() => toggle(k)} aria-pressed={on} className="g-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition hover:bg-[rgba(255,255,255,0.9)]">
+              <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full transition-all ${on ? "bg-[#3fbf98] text-[#fff]" : "ring-[1.5px] ring-black/15"}`}>{on && <Check size={13} strokeWidth={3.5} />}</span>
               <span className="min-w-0 flex-1">
                 <span className={`block text-[14.5px] font-medium transition ${on ? "fnt line-through" : "ink"}`}>{x.t}</span>
                 <span className="mt-0.5 flex items-center gap-1.5 text-[12px] fnt">
@@ -56,7 +56,7 @@ export function TodosSection() {
         <Reveal className="g rounded-[32px] p-6 sm:p-7 md:col-span-3 md:row-span-2">
           <div className="flex items-center justify-between">
             <p className="text-[18px] font-semibold tracking-tight ink">Today</p>
-            <span className="rounded-full bg-white/80 px-2.5 py-1 text-[12px] font-semibold mut">Tap to tick</span>
+            <span className="rounded-full bg-[rgba(255,255,255,0.8)] px-2.5 py-1 text-[12px] font-semibold mut">Tap to tick</span>
           </div>
           <TodoList />
         </Reveal>
@@ -71,7 +71,7 @@ export function TodosSection() {
             </AnimatePresence>
             <ArrowRight size={20} className="fnt" />
             <AnimatePresence mode="wait">
-              <motion.span key={d.due} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.35, delay: 0.15 }} className="rounded-2xl bg-[#0b1220] px-4 py-2 text-[16px] font-semibold text-white">
+              <motion.span key={d.due} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.35, delay: 0.15 }} className="rounded-2xl bg-[#0b1220] px-4 py-2 text-[16px] font-semibold text-[#fff]">
                 {d.due}
               </motion.span>
             </AnimatePresence>
@@ -85,8 +85,8 @@ export function TodosSection() {
             </p>
             <p className="mt-1.5 text-[15px] font-semibold">Send the demo to the client</p>
             <div className="mt-3 flex gap-2">
-              <span className="rounded-full bg-white/12 px-3 py-1 text-[12px] font-semibold">Snooze 10m</span>
-              <span className="rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-black">Done</span>
+              <span className="rounded-full bg-[rgba(255,255,255,0.12)] px-3 py-1 text-[12px] font-semibold">Snooze 10m</span>
+              <span className="rounded-full bg-[#fff] px-3 py-1 text-[12px] font-semibold text-black">Done</span>
             </div>
           </div>
           <p className="mt-4 text-[13.5px] mut">Right in the notch, wherever you are.</p>
@@ -128,7 +128,7 @@ export function ProjectsSection() {
                 transition={{ duration: 0.4, ease: EASE }}
                 className="hw-notch flex items-center gap-2.5 rounded-full px-4 py-2 text-[13.5px]"
               >
-                <span className="text-white/55">{incoming.from}</span>
+                <span className="text-[rgba(255,255,255,0.55)]">{incoming.from}</span>
                 <span className="font-semibold">{incoming.text}</span>
               </motion.div>
             )}
@@ -213,14 +213,14 @@ export function MeetingsSection() {
             <div className="g-inset space-y-3 rounded-[22px] p-4">
               {LINES.map((l, k) => (
                 <motion.div key={k} initial={false} animate={{ opacity: i > k ? 1 : 0.25 }} transition={{ duration: 0.5 }} className="flex gap-3">
-                  <span className="mt-0.5 h-6 shrink-0 rounded-full px-2.5 text-[11.5px] font-bold leading-6 text-white" style={{ background: l.c }}>
+                  <span className="mt-0.5 h-6 shrink-0 rounded-full px-2.5 text-[11.5px] font-bold leading-6 text-[#fff]" style={{ background: l.c }}>
                     {l.who}
                   </span>
                   <p className="text-[14.5px] ink">{l.t}</p>
                 </motion.div>
               ))}
             </div>
-            <div className={`rounded-[22px] p-4 transition-all duration-700 ${i >= 4 ? "bg-[#0b1220] text-white" : "g-inset"}`}>
+            <div className={`rounded-[22px] p-4 transition-all duration-700 ${i >= 4 ? "bg-[#0b1220] text-[#fff]" : "g-inset"}`}>
               <p className={`flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider ${i >= 4 ? "text-[#c9b8ff]" : "fnt"}`}>
                 <FileText size={14} /> {i >= 4 ? "Summary · ready" : "Summary after the call"}
               </p>
@@ -232,7 +232,7 @@ export function MeetingsSection() {
                   <li className="flex items-start gap-2">
                     <Check size={15} className="mt-0.5 text-[#5fd3b0]" /> <span><b>Note:</b> Nimbus wants dark mode in v1</span>
                   </li>
-                  <li className="mt-3 text-[12.5px] text-white/60">Action items saved to your to-dos.</li>
+                  <li className="mt-3 text-[12.5px] text-[rgba(255,255,255,0.6)]">Action items saved to your to-dos.</li>
                 </ul>
               ) : (
                 <div className="mt-4 space-y-2">
@@ -309,26 +309,26 @@ export function ClaudeSection() {
                 </span>
                 <div className="min-w-0">
                   <p className="text-[14.5px] font-semibold">Claude wants to run a command</p>
-                  <p className="truncate text-[12px] text-white/55">flo-website · Bash · waiting 12s</p>
+                  <p className="truncate text-[12px] text-[rgba(255,255,255,0.55)]">flo-website · Bash · waiting 12s</p>
                 </div>
               </div>
-              <pre className="mt-4 overflow-x-auto rounded-xl bg-white/[0.07] px-3.5 py-2.5 font-mono text-[12.5px] text-white/85">npm run test -- --watch=false</pre>
+              <pre className="mt-4 overflow-x-auto rounded-xl bg-[rgba(255,255,255,0.07)] px-3.5 py-2.5 font-mono text-[12.5px] text-[rgba(255,255,255,0.85)]">npm run test -- --watch=false</pre>
               <div className="mt-4 flex gap-2">
                 <AnimatePresence mode="wait">
                   {answer ? (
                     <motion.p key="a" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-[13.5px] font-semibold">
                       <Check size={16} className={answer === "allow" ? "text-[#5fd3b0]" : "text-[#ff8fa3]"} />
                       {answer === "allow" ? "Allowed. Claude carries on." : "Denied. Claude will try another way."}
-                      <button type="button" className="ml-2 text-[12px] font-medium text-white/50 underline" onClick={() => setAnswer(null)}>
+                      <button type="button" className="ml-2 text-[12px] font-medium text-[rgba(255,255,255,0.5)] underline" onClick={() => setAnswer(null)}>
                         Reset
                       </button>
                     </motion.p>
                   ) : (
                     <motion.div key="b" className="flex gap-2" exit={{ opacity: 0 }}>
-                      <button type="button" onClick={() => setAnswer("allow")} className="rounded-full bg-white px-5 py-2 text-[13.5px] font-semibold text-black transition hover:bg-white/90" data-testid="allow">
+                      <button type="button" onClick={() => setAnswer("allow")} className="rounded-full bg-[#fff] px-5 py-2 text-[13.5px] font-semibold text-black transition hover:bg-[rgba(255,255,255,0.9)]" data-testid="allow">
                         Allow
                       </button>
-                      <button type="button" onClick={() => setAnswer("deny")} className="rounded-full bg-white/10 px-5 py-2 text-[13.5px] font-semibold text-white transition hover:bg-white/15">
+                      <button type="button" onClick={() => setAnswer("deny")} className="rounded-full bg-[rgba(255,255,255,0.1)] px-5 py-2 text-[13.5px] font-semibold text-[#fff] transition hover:bg-[rgba(255,255,255,0.15)]">
                         Deny
                       </button>
                     </motion.div>

@@ -63,23 +63,23 @@ export default async function DownloadPage() {
             return (
               <div key={b.os} className={`g relative flex flex-col overflow-hidden rounded-[30px] p-6 ${primary ? "sm:col-span-2 sm:flex-row sm:items-center sm:gap-6 sm:p-8" : ""}`} data-os={b.os}>
                 <div className={`absolute inset-0 -z-10 bg-gradient-to-br opacity-50 ${b.tint}`} />
-                <span className={`grid shrink-0 place-items-center rounded-2xl bg-white/80 text-[var(--v2-ink)] shadow-sm ${primary ? "h-16 w-16" : "h-12 w-12"}`}>
+                <span className={`grid shrink-0 place-items-center rounded-2xl bg-[rgba(255,255,255,0.8)] text-[var(--v2-ink)] shadow-sm ${primary ? "h-16 w-16" : "h-12 w-12"}`}>
                   <b.icon size={primary ? 28 : 22} />
                 </span>
                 <div className="mt-4 flex-1 sm:mt-0">
                   <p className={`font-semibold tracking-tight ink ${primary ? "text-[26px]" : "text-[18px]"} ${primary ? "" : "mt-0"}`}>
                     {b.label}
-                    {primary && <span className="ml-2 rounded-full bg-white/80 px-2.5 py-1 align-middle text-[11.5px] font-semibold ink-2">your device</span>}
+                    {primary && <span className="ml-2 rounded-full bg-[rgba(255,255,255,0.8)] px-2.5 py-1 align-middle text-[11.5px] font-semibold ink-2">your device</span>}
                   </p>
                   <p className="mt-1 text-[14px] mut">{b.sub}</p>
                 </div>
                 <div className="mt-5 sm:mt-0">
                   {ready ? (
-                    <a href={gatedHref(b.os)} className={`btn ${primary ? "btn-primary h-14 px-7 text-[15px]" : "btn-glass h-11 px-5 text-[14px] ink"}`} data-testid={`download-${b.os}`}>
+                    <a href={gatedHref(b.os)} data-launch={b.label} className={`btn ${primary ? "btn-primary h-14 px-7 text-[15px]" : "btn-glass h-11 px-5 text-[14px] ink"}`} data-testid={`download-${b.os}`}>
                       <Download size={17} /> Download{primary ? ` for ${b.label}` : ""}
                     </a>
                   ) : (
-                    <span className="inline-flex h-11 items-center rounded-full bg-white/60 px-5 text-[13.5px] font-medium fnt" data-testid={`download-${b.os}`}>
+                    <span className="inline-flex h-11 items-center rounded-full bg-[rgba(255,255,255,0.6)] px-5 text-[13.5px] font-medium fnt" data-testid={`download-${b.os}`}>
                       Coming soon
                     </span>
                   )}
@@ -107,7 +107,7 @@ export default async function DownloadPage() {
               const Icon = I as typeof Download;
               return (
                 <li key={t as string} className="g-2 flex gap-4 rounded-2xl p-4">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#0b1220] text-white">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#0b1220] text-[#fff]">
                     <Icon size={18} />
                   </span>
                   <span>

@@ -41,8 +41,8 @@ function HeroStage() {
         </div>
         <p className="mt-1.5 text-[13.5px] font-medium ink">Review onboarding by Friday</p>
         <div className="mt-2 flex gap-1.5">
-          <span className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-semibold ink-2">Snooze</span>
-          <span className="rounded-full bg-[#0b1220] px-2.5 py-1 text-[11px] font-semibold text-white">Done</span>
+          <span className="rounded-full bg-[rgba(255,255,255,0.8)] px-2.5 py-1 text-[11px] font-semibold ink-2">Snooze</span>
+          <span className="rounded-full bg-[#0b1220] px-2.5 py-1 text-[11px] font-semibold text-[#fff]">Done</span>
         </div>
       </motion.div>
       <motion.div
@@ -64,7 +64,7 @@ function HeroStage() {
         transition={{ delay: 0.5, duration: 1, ease: EASE }}
         className="g g-rim overflow-hidden rounded-[30px] p-2"
       >
-        <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-b from-white/70 to-white/30">
+        <div className="relative overflow-hidden rounded-[24px] bg-gradient-to-b from-[rgba(255,255,255,0.7)] to-[rgba(255,255,255,0.3)]">
           {/* menu bar + notch */}
           <div className="relative flex h-9 items-center justify-between px-4 text-[12px] font-semibold ink-2">
             <span className="flex items-center gap-4">
@@ -82,12 +82,12 @@ function HeroStage() {
                   {listening && (
                     <motion.div key="l" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex w-full items-center gap-3 px-4 pt-2">
                       <Wave color="#8fd0ff" bars={6} />
-                      <span className="min-w-0 flex-1 truncate text-left text-[12px] font-medium text-white/85">{live || "Listening…"}</span>
-                      <span className="rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold text-white/70">⌃ held</span>
+                      <span className="min-w-0 flex-1 truncate text-left text-[12px] font-medium text-[rgba(255,255,255,0.85)]">{live || "Listening…"}</span>
+                      <span className="rounded-md bg-[rgba(255,255,255,0.1)] px-1.5 py-0.5 text-[10px] font-semibold text-[rgba(255,255,255,0.7)]">⌃ held</span>
                     </motion.div>
                   )}
                   {i >= 2 && (
-                    <motion.div key="t" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2 text-[11.5px] font-semibold text-white/85">
+                    <motion.div key="t" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2 text-[11.5px] font-semibold text-[rgba(255,255,255,0.85)]">
                       <span className="grid h-4 w-4 place-items-center rounded-full bg-[#5fd3b0] text-[#05221a]">
                         <Check size={10} strokeWidth={3.5} />
                       </span>
@@ -100,17 +100,17 @@ function HeroStage() {
           </div>
           {/* app body */}
           <div className="grid min-h-[300px] grid-cols-[150px_1fr] gap-0 sm:min-h-[340px] sm:grid-cols-[190px_1fr]">
-            <div className="border-r border-white/70 px-3 py-5 text-[13px]">
+            <div className="border-r border-[rgba(255,255,255,0.7)] px-3 py-5 text-[13px]">
               <p className="px-2 text-[11px] font-semibold uppercase tracking-wider fnt">Channels</p>
               {["general", "launch", "design"].map((c) => (
-                <p key={c} className={`mt-1 rounded-lg px-2 py-1.5 ${c === "launch" ? "bg-white/80 font-semibold ink shadow-sm" : "mut"}`}>
+                <p key={c} className={`mt-1 rounded-lg px-2 py-1.5 ${c === "launch" ? "bg-[rgba(255,255,255,0.8)] font-semibold ink shadow-sm" : "mut"}`}>
                   # {c}
                 </p>
               ))}
             </div>
             <div className="flex flex-col justify-end gap-4 p-4 sm:p-6">
               <div className="flex items-start gap-3">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#ffb38a] to-[#ff7eb0] text-[13px] font-bold text-white">P</span>
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-[#ffb38a] to-[#ff7eb0] text-[13px] font-bold text-[#fff]">P</span>
                 <div className="text-left">
                   <p className="text-[13px] font-semibold ink">
                     Priya <span className="font-normal fnt">9:38</span>

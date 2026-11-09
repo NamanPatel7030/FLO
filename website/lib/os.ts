@@ -53,4 +53,5 @@ export function useOS(): Detected | null {
   return os;
 }
 
-export const downloadHref = (os: OS) => `/download?os=${os}`;
+// Through the signed-in check: signed in starts the file, signed out goes to sign-up and back.
+export const downloadHref = (os: OS) => `/api/download/${os}`;

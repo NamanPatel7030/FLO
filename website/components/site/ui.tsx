@@ -124,7 +124,7 @@ export function Wave({ on = true, color = "#fff", bars = 7, className = "" }: { 
 export function GlassWindow({ title, children, className = "", right }: { title?: string; children: React.ReactNode; className?: string; right?: React.ReactNode }) {
   return (
     <div className={`g overflow-hidden rounded-[26px] ${className}`}>
-      <div className="flex items-center gap-2 border-b border-white/70 px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-[rgba(255,255,255,0.7)] px-4 py-3">
         <span className="h-3 w-3 rounded-full bg-[#ff6b6b]/80" />
         <span className="h-3 w-3 rounded-full bg-[#ffc94d]/80" />
         <span className="h-3 w-3 rounded-full bg-[#4fd27a]/80" />

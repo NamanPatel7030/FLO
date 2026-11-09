@@ -69,7 +69,7 @@ function HoldDemo() {
           onKeyDown={(e) => onKey(e, true)}
           onKeyUp={(e) => onKey(e, false)}
           aria-pressed={held}
-          className="relative grid h-20 w-20 shrink-0 select-none place-items-center rounded-full text-white transition-transform active:scale-95"
+          className="relative grid h-20 w-20 shrink-0 select-none place-items-center rounded-full text-[#fff] transition-transform active:scale-95"
           style={{ background: held ? "linear-gradient(135deg,#2f8cff,#7a6cff)" : "linear-gradient(180deg,#1f2940,#0b1220)", boxShadow: held ? "0 0 0 10px rgb(122 108 255 / 0.15), 0 16px 40px -12px rgb(80 90 255 / 0.7)" : "0 14px 30px -12px rgb(11 18 32 / 0.6)" }}
           data-testid="hold-button"
         >
@@ -91,7 +91,7 @@ function HoldDemo() {
           </p>
         </div>
         {done && (
-          <button type="button" onClick={() => setDone(false)} className="ml-auto grid h-10 w-10 place-items-center rounded-full bg-white/70 mut hover:text-[var(--v2-ink)]" aria-label="Reset demo">
+          <button type="button" onClick={() => setDone(false)} className="ml-auto grid h-10 w-10 place-items-center rounded-full bg-[rgba(255,255,255,0.7)] mut hover:text-[var(--v2-ink)]" aria-label="Reset demo">
             <RotateCcw size={16} />
           </button>
         )}
@@ -175,7 +175,7 @@ export function LanguagesSection() {
                 <div className="flex items-center justify-between">
                   <span className="text-[13px] font-semibold uppercase tracking-wider ink-2">{l.en}</span>
                   {open && (
-                    <span className="flex items-center gap-1.5 rounded-full bg-white/75 px-2.5 py-1 text-[11.5px] font-semibold ink-2">
+                    <span className="flex items-center gap-1.5 rounded-full bg-[rgba(255,255,255,0.75)] px-2.5 py-1 text-[11.5px] font-semibold ink-2">
                       <Sparkles size={12} className="text-[#7a6cff]" /> Auto-detected
                     </span>
                   )}
@@ -259,7 +259,7 @@ export function LearnsWords() {
                   <Check size={14} strokeWidth={3} />
                 </span>
                 Sorry, my mistake. Updating <b>Tory</b> to <b>Tauri</b>.
-                <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-semibold">Undo</span>
+                <span className="rounded-full bg-[rgba(255,255,255,0.15)] px-2.5 py-0.5 text-[12px] font-semibold">Undo</span>
               </motion.div>
             )}
           </AnimatePresence>

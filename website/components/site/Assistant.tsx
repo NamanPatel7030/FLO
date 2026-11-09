@@ -61,7 +61,7 @@ export function AssistantSection() {
             <div className="space-y-4 p-5 sm:p-7">
               {THREAD.map((m, k) => (
                 <div key={k} className={`flex items-start gap-3 transition-all duration-500 ${stage === "read" ? "rounded-2xl bg-[#2f8cff]/[0.06] ring-1 ring-[#2f8cff]/20" : ""} p-2`}>
-                  <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-[13px] font-bold text-white ${m.c}`}>{m.who[0]}</span>
+                  <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-[13px] font-bold text-[#fff] ${m.c}`}>{m.who[0]}</span>
                   <div>
                     <p className="text-[13px] font-semibold ink">{m.who}</p>
                     <p className="text-[14.5px] ink-2">{m.t}</p>
@@ -140,7 +140,7 @@ export function SkillsSection() {
                 role="tab"
                 aria-selected={k === s}
                 onClick={() => setS(k)}
-                className={`flex items-center justify-between rounded-2xl px-4 py-3.5 text-left transition-all ${k === s ? "g" : "hover:bg-white/50"}`}
+                className={`flex items-center justify-between rounded-2xl px-4 py-3.5 text-left transition-all ${k === s ? "g" : "hover:bg-[rgba(255,255,255,0.5)]"}`}
               >
                 <span>
                   <span className="block text-[15px] font-semibold ink">{x.name}</span>
@@ -167,12 +167,12 @@ export function SkillsSection() {
                     return (
                       <div key={st} className="flex w-full flex-col items-center">
                         <div className={`g-2 flex w-full items-center gap-3 rounded-2xl px-4 py-3 transition-all duration-500 ${lit ? "ring-2 ring-[#7a6cff]/40" : ""}`}>
-                          <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-bold transition-colors duration-500 ${lit ? "bg-[#7a6cff] text-white" : "bg-white text-[var(--v2-muted)] ring-1 ring-black/5"}`}>
+                          <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-bold transition-colors duration-500 ${lit ? "bg-[#7a6cff] text-[#fff]" : "bg-[#fff] text-[var(--v2-muted)] ring-1 ring-black/5"}`}>
                             {lit ? <Check size={14} strokeWidth={3} /> : k + 1}
                           </span>
                           <span className="text-[14.5px] font-medium ink">{st}</span>
                           {k < sk.attach.length && (
-                            <span className="ml-auto hidden items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[11.5px] font-semibold mut sm:flex">
+                            <span className="ml-auto hidden items-center gap-1.5 rounded-full bg-[rgba(255,255,255,0.8)] px-2.5 py-1 text-[11.5px] font-semibold mut sm:flex">
                               {(() => {
                                 const I = ATTACH_ICON[sk.attach[k][0] as keyof typeof ATTACH_ICON];
                                 return <I size={12} />;
@@ -187,7 +187,7 @@ export function SkillsSection() {
                   })}
                 </div>
                 <span className="h-7 w-px bg-[#7a6cff]/30" />
-                <div className={`rounded-2xl px-5 py-3 text-[14px] font-semibold transition-all duration-500 ${i >= 4 ? "bg-[#0b1220] text-white shadow-lg" : "g-2 mut"}`}>
+                <div className={`rounded-2xl px-5 py-3 text-[14px] font-semibold transition-all duration-500 ${i >= 4 ? "bg-[#0b1220] text-[#fff] shadow-lg" : "g-2 mut"}`}>
                   {i >= 4 ? (
                     <span className="flex items-center gap-2">
                       <Check size={15} className="text-[#5fd3b0]" strokeWidth={3} /> {sk.result}
@@ -234,7 +234,7 @@ export function AgentSection() {
             <motion.span className="absolute left-[11px] top-3 w-px origin-top bg-gradient-to-b from-[#2f8cff] to-[#7a6cff]" animate={{ height: `${(shown / AGENT.steps.length) * 88}%` }} transition={{ duration: 0.6, ease: EASE }} />
             {AGENT.steps.map((s, k) => (
               <li key={s} className="relative">
-                <span className={`absolute -left-8 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full transition-all duration-500 ${k < shown ? "bg-[#2f8cff] text-white" : "bg-white ring-1 ring-black/10"}`}>
+                <span className={`absolute -left-8 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full transition-all duration-500 ${k < shown ? "bg-[#2f8cff] text-[#fff]" : "bg-[#fff] ring-1 ring-black/10"}`}>
                   {k < shown && <Check size={12} strokeWidth={3.5} />}
                 </span>
                 <div className={`g-2 rounded-2xl px-4 py-3 text-[14.5px] font-medium transition-all duration-500 ${k < shown ? "ink" : "opacity-50 fnt"}`}>{s}</div>

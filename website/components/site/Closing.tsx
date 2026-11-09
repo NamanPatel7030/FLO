@@ -93,7 +93,7 @@ export function PrivacySection() {
                     transition={{ duration: 0.35, ease: EASE }}
                     className={`flex items-center gap-3 rounded-xl px-3.5 py-2.5 ${r.ok ? "g-2" : "bg-[#ff5d6c]/[0.07] ring-1 ring-[#ff5d6c]/20"}`}
                   >
-                    <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${r.ok ? "bg-[#3fbf98] text-white" : "bg-[#ff5d6c] text-white"}`}>
+                    <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${r.ok ? "bg-[#3fbf98] text-[#fff]" : "bg-[#ff5d6c] text-[#fff]"}`}>
                       {r.ok ? <Check size={11} strokeWidth={3.5} /> : <X size={11} strokeWidth={3.5} />}
                     </span>
                     <span className={`min-w-0 flex-1 truncate ${r.ok ? "ink" : "text-[#c0364a] line-through"}`}>{r.host}</span>
@@ -162,7 +162,7 @@ export function MoreSection() {
                 transition={{ duration: 0.35, ease: EASE }}
                 className="g group rounded-[26px] p-6 transition-transform duration-300 hover:-translate-y-1"
               >
-                <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/80 text-[#7a6cff] shadow-sm transition group-hover:bg-[#0b1220] group-hover:text-white">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-[rgba(255,255,255,0.8)] text-[#7a6cff] shadow-sm transition group-hover:bg-[#0b1220] group-hover:text-[#fff]">
                   <Icon size={18} />
                 </span>
                 <h3 className="mt-4 text-[16px] font-semibold tracking-tight ink">{m.title}</h3>
@@ -196,7 +196,7 @@ const COMPARE: { row: string; flo: Cell; wispr: Cell; lemon: Cell }[] = [
 function Mark({ v }: { v: Cell }) {
   if (v === "yes")
     return (
-      <span className="inline-grid h-6 w-6 place-items-center rounded-full bg-[#3fbf98] text-white" aria-label="Yes">
+      <span className="inline-grid h-6 w-6 place-items-center rounded-full bg-[#3fbf98] text-[#fff]" aria-label="Yes">
         <Check size={13} strokeWidth={3.5} />
       </span>
     );
@@ -223,11 +223,11 @@ export function CompareSection() {
       <Reveal className="g mx-auto mt-12 max-w-4xl overflow-x-auto rounded-[30px]">
         <table className="w-full min-w-[560px] text-left text-[14px]" data-testid="compare-table">
           <thead>
-            <tr className="border-b border-white/80">
+            <tr className="border-b border-[rgba(255,255,255,0.8)]">
               <th className="px-5 py-4" scope="col">
                 <span className="sr-only">Feature</span>
               </th>
-              <th className="bg-white/50 px-5 py-4" scope="col">
+              <th className="bg-[rgba(255,255,255,0.5)] px-5 py-4" scope="col">
                 <span className="inline-flex items-center gap-2 font-semibold ink">
                   <Logo size={20} /> Flo
                 </span>
@@ -238,9 +238,9 @@ export function CompareSection() {
           </thead>
           <tbody>
             {COMPARE.map((r) => (
-              <tr key={r.row} className="border-b border-white/60 last:border-0">
+              <tr key={r.row} className="border-b border-[rgba(255,255,255,0.6)] last:border-0">
                 <th scope="row" className="px-5 py-3.5 font-medium ink-2">{r.row}</th>
-                <td className="bg-white/50 px-5 py-3.5"><Mark v={r.flo} /></td>
+                <td className="bg-[rgba(255,255,255,0.5)] px-5 py-3.5"><Mark v={r.flo} /></td>
                 <td className="px-5 py-3.5"><Mark v={r.wispr} /></td>
                 <td className="px-5 py-3.5"><Mark v={r.lemon} /></td>
               </tr>
@@ -261,7 +261,7 @@ export function MakerSection() {
       <Reveal className="g mx-auto flex max-w-4xl flex-col items-center gap-8 rounded-[36px] p-8 sm:flex-row sm:p-10">
         <div className="relative shrink-0">
           <div className="absolute -inset-1.5 rounded-full bg-[conic-gradient(from_0deg,#2f8cff,#7a6cff,#ff7eb0,#ffb38a,#2f8cff)] opacity-80" />
-          <NamanAvatar size={128} screen="maker" cycle className="relative ring-4 ring-white" />
+          <NamanAvatar size={128} screen="maker" cycle className="relative ring-4 ring-[#fff]" />
         </div>
         <div className="text-center sm:text-left">
           <p className="text-[12px] font-semibold uppercase tracking-[0.2em] fnt">Made by</p>
@@ -295,7 +295,7 @@ function FaqItem({ q, a }: { q: string; a: string }) {
     <div className={`overflow-hidden rounded-[22px] transition-colors ${open ? "g" : "g-2"}`}>
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left text-[16px] font-semibold ink" aria-expanded={open}>
         {q}
-        <motion.span animate={{ rotate: open ? 45 : 0 }} transition={{ duration: 0.2 }} className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/80">
+        <motion.span animate={{ rotate: open ? 45 : 0 }} transition={{ duration: 0.2 }} className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[rgba(255,255,255,0.8)]">
           <Plus size={16} />
         </motion.span>
       </button>
@@ -386,7 +386,7 @@ export function SiteFooter() {
             </div>
           </div>
         </div>
-        <div className="mt-10 flex flex-col justify-between gap-2 border-t border-white/80 pt-6 text-[12.5px] fnt sm:flex-row">
+        <div className="mt-10 flex flex-col justify-between gap-2 border-t border-[rgba(255,255,255,0.8)] pt-6 text-[12.5px] fnt sm:flex-row">
           <span>© {new Date().getFullYear()} Flo. Built by Naman Gundaniya.</span>
           <span className="serif-i text-[15px]">Speak. Flo writes, answers and remembers.</span>
         </div>

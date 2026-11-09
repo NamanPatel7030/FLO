@@ -39,7 +39,7 @@ export function WidgetsSection() {
         <Reveal className="g col-span-2 row-span-2 flex flex-col overflow-hidden rounded-[30px] p-5">
           <div className="relative flex-1 overflow-hidden rounded-[22px] bg-gradient-to-br from-[#ffb38a] via-[#ff7eb0] to-[#7a6cff]">
             <div className="absolute inset-0 bg-[radial-gradient(60%_60%_at_30%_30%,rgba(255,255,255,0.5),transparent_70%)]" />
-            <span className="absolute bottom-4 left-4 text-[13px] font-semibold text-white/90">Now Playing</span>
+            <span className="absolute bottom-4 left-4 text-[13px] font-semibold text-[rgba(255,255,255,0.9)]">Now Playing</span>
             {playing && (
               <span className="absolute right-4 top-4">
                 <Wave bars={5} />
@@ -51,7 +51,7 @@ export function WidgetsSection() {
               <p className="truncate text-[16px] font-semibold ink">lofi beats to code to</p>
               <p className="text-[13px] mut">YouTube · works with any app</p>
             </div>
-            <button type="button" onClick={() => setPlaying((v) => !v)} className="grid h-11 w-11 place-items-center rounded-full bg-[#0b1220] text-white" aria-label={playing ? "Pause" : "Play"}>
+            <button type="button" onClick={() => setPlaying((v) => !v)} className="grid h-11 w-11 place-items-center rounded-full bg-[#0b1220] text-[#fff]" aria-label={playing ? "Pause" : "Play"}>
               {playing ? <Pause size={18} /> : <Play size={18} />}
             </button>
           </div>

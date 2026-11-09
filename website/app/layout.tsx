@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { THEME_SCRIPT } from "@/lib/theme";
+import { DownloadLaunch } from "@/components/site/DownloadLaunch";
 
 // Self-hosted (no build-time fetch from Google Fonts). Inter for UI and headlines, Instrument Serif for accents.
 const sans = localFont({ src: "./fonts/Inter-normal.woff2", weight: "400 700", variable: "--font-sans-loaded", display: "swap" });
@@ -50,7 +51,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* resolve the theme before first paint: no flash of the wrong one */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
-      <body className="min-h-dvh overflow-x-hidden">{children}</body>
+      <body className="min-h-dvh overflow-x-hidden">
+        {children}
+        <DownloadLaunch />
+      </body>
     </html>
   );
 }

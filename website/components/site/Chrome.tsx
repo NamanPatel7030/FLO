@@ -69,33 +69,33 @@ export function TopNotch() {
   const idx = SECTIONS.findIndex(([id]) => id === active);
   const label = idx >= 0 ? SECTIONS[idx][1] : null;
   const open = hover;
-  const w = open ? 380 : label ? 290 : 200;
-  const h = open ? 92 : 34;
+  const w = open ? 460 : label ? 380 : 240;
+  const h = open ? 118 : 46;
   return (
     <div className="pointer-events-none fixed inset-x-0 top-0 z-[60] flex justify-center" role="region" aria-label="Flo notch">
       <motion.div
         className="hw-notch pointer-events-auto relative overflow-hidden rounded-b-[20px]"
         onHoverStart={() => setHover(true)}
         onHoverEnd={() => setHover(false)}
-        animate={{ width: w, height: h, borderBottomLeftRadius: open ? 26 : 18, borderBottomRightRadius: open ? 26 : 18 }}
+        animate={{ width: w, height: h, borderBottomLeftRadius: open ? 30 : 22, borderBottomRightRadius: open ? 30 : 22 }}
         transition={{ duration: 0.45, ease: EASE }}
         data-testid="top-notch"
       >
         {/* collapsed: current section, like Flo reporting what it's doing */}
-        <div className="flex h-[34px] items-center justify-center gap-2.5 px-4">
+        <div className="flex h-[46px] items-center justify-center gap-3 px-5">
           <AnimatePresence mode="wait">
             {label ? (
               <motion.span key={label} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }} className="flex items-center gap-2.5 whitespace-nowrap">
-                <Wave bars={4} color="#8fd0ff" />
-                <span className="text-[12px] font-semibold text-white/90">{label}</span>
-                <span className="font-mono text-[10.5px] text-white/40">
+                <Wave bars={5} color="#8fd0ff" className="scale-110" />
+                <span className="text-[15px] font-semibold tracking-[-0.01em] text-[#fff]">{label}</span>
+                <span className="rounded-full bg-[rgba(255,255,255,0.12)] px-2 py-0.5 font-mono text-[11.5px] font-semibold text-[rgba(255,255,255,0.75)]">
                   {String(idx + 1).padStart(2, "0")}/{SECTIONS.length}
                 </span>
               </motion.span>
             ) : (
               <motion.span key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-[#5fd3b0] shadow-[0_0_8px_#5fd3b0]" />
-                <span className="text-[11.5px] font-medium text-white/60">Flo</span>
+                <span className="text-[14px] font-semibold text-[rgba(255,255,255,0.8)]">Flo</span>
               </motion.span>
             )}
           </AnimatePresence>
@@ -103,9 +103,9 @@ export function TopNotch() {
         {/* open: a short line and the page progress */}
         <AnimatePresence>
           {open && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, delay: 0.1 }} className="px-5 pb-4">
-              <p className="text-[12.5px] text-white/60">{label ? "Hold control and talk. This page is the tour." : "Scroll. The notch follows along."}</p>
-              <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/10">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, delay: 0.1 }} className="px-6 pb-5">
+              <p className="text-[14px] text-[rgba(255,255,255,0.65)]">{label ? "Hold control and talk. This page is the tour." : "Scroll. The notch follows along."}</p>
+              <div className="mt-3 h-1 overflow-hidden rounded-full bg-[rgba(255,255,255,0.1)]">
                 <motion.div className="h-full origin-left rounded-full bg-gradient-to-r from-[#8fd0ff] via-[#b9a8ff] to-[#ff9ec4]" style={{ scaleX: progress }} />
               </div>
             </motion.div>
@@ -135,11 +135,11 @@ function DockIcon({ mouseX, item, on }: { mouseX: MotionValue<number>; item: (ty
       aria-label={item.label}
       aria-current={on ? "true" : undefined}
       style={reduce ? { width: 44, height: 44 } : { width: size, height: size }}
-      className={`group relative grid shrink-0 place-items-center rounded-[14px] transition-colors ${on ? "bg-[#0b1220] text-white shadow-[0_8px_20px_-8px_rgba(11,18,32,0.6)]" : "bg-white/70 text-[var(--v2-ink-2)] hover:bg-white"}`}
+      className={`group relative grid shrink-0 place-items-center rounded-[14px] transition-colors ${on ? "bg-[#0b1220] text-[#fff] shadow-[0_8px_20px_-8px_rgba(11,18,32,0.6)]" : "bg-[rgba(255,255,255,0.7)] text-[var(--v2-ink-2)] hover:bg-[#fff]"}`}
     >
       <Icon size={19} />
       {/* label pops above on hover */}
-      <span className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-[#0b1220] px-2.5 py-1 text-[11.5px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+      <span className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-[#0b1220] px-2.5 py-1 text-[11.5px] font-semibold text-[#fff] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
         {item.label}
       </span>
       {/* the light under the section you're in */}
@@ -182,7 +182,7 @@ export function Dock({ signedIn = false }: { signedIn?: boolean }) {
         </div>
         <span aria-hidden className="mx-0.5 mb-1.5 hidden h-8 w-px self-end bg-black/10 sm:block" />
         {!signedIn && (
-          <Link href="/login" className="grid h-11 shrink-0 place-items-center rounded-[14px] bg-white/70 px-3.5 text-[13.5px] font-semibold text-[var(--v2-ink-2)] transition hover:bg-white" aria-label="Sign in">
+          <Link href="/login" className="grid h-11 shrink-0 place-items-center rounded-[14px] bg-[rgba(255,255,255,0.7)] px-3.5 text-[13.5px] font-semibold text-[var(--v2-ink-2)] transition hover:bg-[#fff]" aria-label="Sign in">
             <span className="hidden md:inline">Sign in</span>
             <LogIn size={18} className="md:hidden" />
           </Link>

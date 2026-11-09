@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
@@ -115,10 +114,10 @@ export function DownloadCTA({
   return (
     <div ref={wrap} className={`relative inline-flex ${className}`} data-os={detected ?? "unknown"}>
       <div className="btn-primary btn inline-flex items-stretch overflow-hidden p-0">
-        <Link href={downloadHref(os ?? "mac")} className={`inline-flex items-center gap-2 ${PAD[size]}`} data-testid={testId}>
+        <a href={downloadHref(os ?? "mac")} className={`inline-flex items-center gap-2 ${PAD[size]}`} data-testid={testId} data-launch={OS_LABEL[os ?? "mac"]}>
           <OsIcon os={os} size={size === "lg" ? 19 : size === "md" ? 17 : 15} />
           <span suppressHydrationWarning>{label}</span>
-        </Link>
+        </a>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -154,10 +153,11 @@ export function DownloadCTA({
             {OS_ORDER.map((o) => {
               const current = !mobile && o === os;
               return (
-                <Link
+                <a
                   key={o}
                   role="menuitem"
                   href={downloadHref(o)}
+                  data-launch={OS_LABEL[o]}
                   onClick={() => setOpen(false)}
                   className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] transition-colors hover:bg-white/10 ${current ? "text-ink" : "text-ink/85"}`}
                   data-os={o}
@@ -167,10 +167,10 @@ export function DownloadCTA({
                   </span>
                   <span className="flex-1">
                     {OS_LABEL[o]}
-                    <span className="block text-[11.5px] text-muted">{o === "mac" ? "Apple silicon & Intel" : o === "windows" ? "Windows 10 & 11 · beta" : ".deb & AppImage · beta"}</span>
+                    <span className="block text-[11.5px] text-muted">{o === "mac" ? "Apple silicon · macOS 13+" : o === "windows" ? "Windows 10 & 11 · beta" : ".deb & AppImage · beta"}</span>
                   </span>
                   {current && <Check size={15} className="text-brand-300" aria-label="Your computer" />}
-                </Link>
+                </a>
               );
             })}
           </motion.div>

@@ -32,10 +32,10 @@ export function AuthShowcase({ title, sub }: { title: string; sub: string }) {
             {listening ? (
               <motion.div key="l" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex w-full items-center gap-3 pt-2">
                 <Wave color="#8fd0ff" bars={6} />
-                <span className="min-w-0 flex-1 truncate text-[13px] text-white/85">{said || "Listening…"}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-[rgba(255,255,255,0.85)]">{said || "Listening…"}</span>
               </motion.div>
             ) : (
-              <motion.div key="d" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex w-full items-center justify-center gap-2 text-[12.5px] font-semibold text-white/85">
+              <motion.div key="d" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex w-full items-center justify-center gap-2 text-[12.5px] font-semibold text-[rgba(255,255,255,0.85)]">
                 <span className="grid h-4 w-4 place-items-center rounded-full bg-[#5fd3b0] text-[#05221a]">
                   <Check size={10} strokeWidth={3.5} />
                 </span>
