@@ -5,12 +5,17 @@ import { Alert, Linking, Platform, ScrollView, StyleSheet, Text, View } from 're
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GROUPS, MUTABLE_GROUPS } from '../lib/kinds';
 import { useFlo } from '../state/FloContext';
+import { usePrefs } from '../state/Prefs';
+import { useUpdates } from '../state/Updates';
+import { installedBuild, installedVersion } from '../lib/updates';
+import { Pressable } from 'react-native';
+import { Notchling } from '../ui/Notchling';
 import { GlassButton, IconButton } from '../ui/Buttons';
 import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
 import { KindIcon } from '../ui/KindIcon';
 import { Toggle } from '../ui/Toggle';
-import { colors, fonts, type } from '../ui/theme';
+import { colors, fonts, type, themed } from '../ui/theme';
 
 const SAMPLE_KIND: Record<(typeof MUTABLE_GROUPS)[number], string> = {
   claude: 'claude_done',
@@ -36,12 +41,14 @@ function confirm(title: string, message: string, cta: string): Promise<boolean> 
   );
 }
 
-export function SettingsScreen({ onBack }: { onBack: () => void }) {
+export function SettingsScreen({ onBack, onCustomize }: { onBack: () => void; onCustomize: () => void }) {
   const insets = useSafeAreaInsets();
   const flo = useFlo();
   const [unpairing, setUnpairing] = useState(false);
   const user = flo.session?.user ?? { name: '', email: '' };
   const perm = flo.permission;
+  const { prefs, update } = usePrefs();
+  const upd = useUpdates();
 
   const permCopy =
     perm.state === 'granted'
@@ -69,7 +76,7 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
 
       {/* Account */}
       <GlassCard style={styles.account} radius={26}>
-        <LinearGradient colors={[colors.sky, colors.ocean, '#0b4f7a']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.avatar}>
+        <LinearGradient colors={['#a9dcff', '#c7b6ff', '#ffc2d6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.avatar}>
           <Text style={styles.avatarText}>{initials(user.name, user.email)}</Text>
         </LinearGradient>
         <View style={{ flex: 1 }}>
@@ -84,6 +91,62 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
           <View style={styles.pairedDot} />
           <Text style={styles.pairedText}>Paired</Text>
         </View>
+      </GlassCard>
+
+      <Text style={styles.section}>Look</Text>
+      <Pressable testID="open-customize" accessibilityRole="button" onPress={onCustomize}>
+        <GlassCard style={styles.rowCard}>
+          <Notchling size={40} avatar={prefs.avatar} accent={colors.sky} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Make it yours</Text>
+            <Text style={type.small}>
+              {prefs.theme === 'system' ? 'System' : prefs.theme === 'dark' ? 'Dark' : 'Light'} theme, accent and your Notchling
+            </Text>
+          </View>
+          <Icon name="chevron" size={18} color={colors.inkMuted} />
+        </GlassCard>
+      </Pressable>
+
+      <Text style={styles.section}>Ask Flo shortcut</Text>
+      <GlassCard style={styles.rowCard}>
+        <View style={styles.rowIcon}>
+          <Icon name="mic" size={19} color={colors.sky} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>Keep it in the notification shade</Text>
+          <Text style={type.small}>Ask Flo or Dictate from anywhere with one tap.</Text>
+        </View>
+        <Toggle value={prefs.quickActions} label="Ask Flo shortcut" onChange={(v) => update({ quickActions: v })} />
+      </GlassCard>
+
+      <Text style={styles.section}>App updates</Text>
+      <GlassCard style={styles.rowCard}>
+        <View style={styles.rowIcon}>
+          <Icon name="download" size={19} color={colors.sky} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle} testID="app-version">
+            Flo {installedVersion()}
+            {installedBuild() ? ` (${installedBuild()})` : ''}
+          </Text>
+          <Text style={type.small}>
+            {upd.checking
+              ? 'Checking…'
+              : upd.native
+                ? `Flo ${upd.native.versionName} is available`
+                : upd.otaReady
+                  ? 'An update is ready. Restart to use it.'
+                  : upd.lastChecked
+                    ? "You're up to date"
+                    : 'Updates install by themselves'}
+          </Text>
+        </View>
+        <GlassButton
+          compact
+          testID="check-updates"
+          label={upd.native ? 'Install' : upd.otaReady ? 'Restart' : 'Check'}
+          onPress={() => void (upd.native ? upd.install() : upd.otaReady ? upd.restart() : upd.check())}
+        />
       </GlassCard>
 
       <Text style={styles.section}>Server</Text>
@@ -180,12 +243,12 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
   headerTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.ink },
   account: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18 },
   avatar: { width: 54, height: 54, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontFamily: fonts.bold, fontSize: 19, color: '#03263d' },
+  avatarText: { fontFamily: fonts.bold, fontSize: 19, color: '#0b1220' },
   accName: { fontFamily: fonts.semibold, fontSize: 17.5, color: colors.ink, letterSpacing: -0.3 },
   pairedPill: {
     flexDirection: 'row',
@@ -215,4 +278,4 @@ const styles = StyleSheet.create({
   divider: { borderTopWidth: 1, borderTopColor: colors.hairline },
   footnote: { ...type.small, marginTop: 12, marginHorizontal: 6, color: colors.inkFaint },
   version: { ...type.small, textAlign: 'center', marginTop: 28, color: colors.inkFaint },
-});
+}));

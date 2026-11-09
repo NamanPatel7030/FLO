@@ -164,7 +164,7 @@ pub fn is_away(s: &Settings) -> bool {
 
 /// Signed in to a Flo account (cached user; no Keychain read, so it never blocks the caller).
 /// The token itself is read only inside the background send.
-fn has_session(st: &Shared) -> bool {
+pub(crate) fn has_session(st: &Shared) -> bool {
     st.settings().account_user.is_some()
 }
 
@@ -212,7 +212,7 @@ pub fn notify_claude(st: &Shared, ev: &ClaudeEvent) {
 
 // ── account server calls ─────────────────────────────────────────────────────
 
-async fn call(st: &Shared, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value)> {
+pub(crate) async fn call(st: &Shared, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value)> {
     let token = crate::account::session_token().ok_or_else(|| anyhow!("Sign in to your Flo account to use your phone."))?;
     crate::account::allow_host(st);
     let url = format!("{}{path}", crate::account::base(st));
@@ -240,7 +240,7 @@ async fn call(st: &Shared, method: &str, path: &str, body: Option<Value>) -> Res
     Ok((code, v))
 }
 
-fn ok_or_err((code, v): (u16, Value)) -> Result<Value> {
+pub(crate) fn ok_or_err((code, v): (u16, Value)) -> Result<Value> {
     if (200..300).contains(&code) {
         return Ok(v);
     }

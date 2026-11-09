@@ -3,6 +3,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { metaForKind } from '../lib/kinds';
 import { Icon } from './Icons';
+import { themed } from './theme';
 
 export function KindIcon({ kind, size = 40 }: { kind: string; size?: number }) {
   const m = metaForKind(kind);
@@ -24,6 +25,6 @@ export function KindIcon({ kind, size = 40 }: { kind: string; size?: number }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   wrap: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, overflow: 'hidden' },
-});
+}));

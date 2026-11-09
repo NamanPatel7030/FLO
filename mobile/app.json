@@ -3,11 +3,11 @@
     "name": "Flo",
     "slug": "flo-companion",
     "scheme": "flo-pair",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#05070b",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#f4f5fb",
     "platforms": [
       "android",
       "web"
@@ -15,11 +15,11 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#05070b"
+      "backgroundColor": "#f4f5fb"
     },
     "android": {
       "package": "com.flo.companion",
-      "versionCode": 1,
+      "versionCode": 2,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -27,10 +27,11 @@
       },
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
       "blockedPermissions": [
-        "android.permission.RECORD_AUDIO",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.SYSTEM_ALERT_WINDOW"
@@ -46,7 +47,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#1a9be0",
+          "color": "#7a6cff",
           "defaultChannel": "default"
         }
       ],
@@ -69,6 +70,17 @@
             ]
           }
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Flo uses the microphone only while you use Ask Flo or Dictate.",
+          "speechRecognitionPermission": "Flo turns your speech into text for Ask Flo and Dictate.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.as"
+          ]
+        }
       ]
     ],
     "extra": {
@@ -76,6 +88,14 @@
         "projectId": "8ad3011a-ee66-44a2-a199-6ed4c4e1c7db"
       }
     },
-    "owner": "naman3636"
+    "owner": "naman3636",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/8ad3011a-ee66-44a2-a199-6ed4c4e1c7db",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    }
   }
 }

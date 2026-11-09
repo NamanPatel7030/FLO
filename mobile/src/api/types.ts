@@ -63,3 +63,15 @@ export interface Session {
   deviceToken: string;
   user: PairUser;
 }
+
+/** Ask Flo / Dictate: a request the phone queues for the paired Mac. */
+export type AskMode = 'ask' | 'todo' | 'note';
+export type AskStatus = 'pending' | 'taken' | 'done' | 'failed';
+export interface AskRequest {
+  id: string;
+  mode: AskMode;
+  text: string;
+  status: AskStatus;
+  answer: string | null;
+  createdAt: string;
+}

@@ -89,6 +89,36 @@ fn without_clock(system: &str) -> String {
 /// A pending "Add MCP server" form for the dashboard (set by a voice request, taken once).
 pub static MCP_PREFILL: parking_lot::Mutex<Option<serde_json::Value>> = parking_lot::Mutex::new(None);
 
+tokio::task_local! {
+    /// Set while answering a request that came from the paired phone (phone.rs): the user isn't at
+    /// the Mac, so nothing may type into, open or take over the Mac's screen.
+    static FROM_PHONE: bool;
+}
+
+/// Run the assistant for a request from the phone. Data actions (to-dos, projects, meetings,
+/// media) work as usual; anything that would act on the Mac's screen is skipped.
+pub async fn run_for_phone(st: &Shared, query: &str) -> Result<AssistantResponse> {
+    let front = FrontApp { name: "your phone".into(), pid: 0 };
+    FROM_PHONE.scope(true, run_mode(st, query, None, &front, None, "quick")).await
+}
+
+fn from_phone() -> bool {
+    FROM_PHONE.try_with(|v| *v).unwrap_or(false)
+}
+
+/// Actions that act on the Mac's screen: never run for a phone request.
+pub fn screen_action(a: &AssistantAction) -> bool {
+    matches!(
+        a,
+        AssistantAction::InsertText { .. }
+            | AssistantAction::OpenUrl { .. }
+            | AssistantAction::OpenApp { .. }
+            | AssistantAction::Automate { .. }
+            | AssistantAction::SlackSend { .. }
+            | AssistantAction::ConnectMcp { .. }
+    )
+}
+
 fn remember(id: &str, c: Ctx) {
     let mut r = RECENT.lock();
     r.push((id.to_string(), c));
@@ -362,6 +392,12 @@ fn project_id_for(st: &Shared, name: Option<&str>, create: bool) -> Result<Optio
 }
 
 pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_selection: bool) -> Result<String> {
+    if from_phone() && screen_action(a) {
+        return Ok(match a {
+            AssistantAction::InsertText { text } => text.clone(),
+            _ => "That needs your Mac's screen, so I'll leave it until you're back.".into(),
+        });
+    }
     match a {
         AssistantAction::AddTodo { title, project, due } => {
             let pid = project_id_for(st, project.as_deref(), true)?;

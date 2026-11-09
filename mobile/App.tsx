@@ -15,14 +15,20 @@ import { EnterCodeScreen } from './src/screens/EnterCodeScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ScanScreen } from './src/screens/ScanScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
-import { WelcomeScreen } from './src/screens/WelcomeScreen';
+import { CustomizeScreen } from './src/screens/CustomizeScreen';
+import { OnboardingScreen } from './src/screens/OnboardingScreen';
+import { VoiceScreen } from './src/screens/VoiceScreen';
+import { PrefsProvider, usePrefs } from './src/state/Prefs';
+import { UpdatesProvider } from './src/state/Updates';
+import { hideQuickActions, onQuickAction, showQuickActions } from './src/notifications/push';
+import type { AskMode } from './src/api/types';
 import { FloProvider, useFlo } from './src/state/FloContext';
 import { Backdrop } from './src/ui/Backdrop';
 import { InAppBanner } from './src/ui/Banner';
 import { Icon } from './src/ui/Icons';
-import { colors, fonts } from './src/ui/theme';
+import { colors, fonts, themed } from './src/ui/theme';
 
-type Route = 'welcome' | 'scan' | 'code' | 'home' | 'settings';
+type Route = 'welcome' | 'scan' | 'code' | 'home' | 'settings' | 'customize' | 'voice';
 const native = Platform.OS !== 'web';
 
 /** Fades + slides the new screen in whenever the route changes. */
@@ -75,17 +81,32 @@ function Toast({ text }: { text: string | null }) {
 
 function Root() {
   const flo = useFlo();
+  const { prefs, themeKey } = usePrefs();
   const [route, setRoute] = useState<Route>('welcome');
   const [prefill, setPrefill] = useState<Partial<PairTarget>>({});
+  const [voice, setVoice] = useState<{ mode: AskMode; auto: boolean }>({ mode: 'ask', auto: false });
+  const openVoice = (mode: AskMode, auto = false) => {
+    setVoice({ mode, auto });
+    setRoute('voice');
+  };
+
+  // The Ask / Dictate shortcut in the notification shade.
+  useEffect(() => {
+    if (flo.mock || Platform.OS !== 'android') return;
+    if (flo.session && prefs.quickActions && flo.permission.state === 'granted') void showQuickActions().catch(() => undefined);
+    else void hideQuickActions();
+  }, [flo.session, flo.mock, prefs.quickActions, flo.permission.state]);
+  useEffect(() => onQuickAction((a) => openVoice(a === 'dictate' ? 'todo' : 'ask', true)), []);
 
   // Initial route (and mock deep-links for screenshots).
   useEffect(() => {
     if (flo.booting) return;
     if (flo.session) {
-      setRoute((r) => (r === 'settings' ? r : flo.mock && mockStartScreen() === 'settings' ? 'settings' : 'home'));
+      const m = flo.mock ? mockStartScreen() : null;
+      setRoute((r) => (r === 'settings' || r === 'voice' || r === 'customize' ? r : m === 'settings' || m === 'customize' || m === 'voice' ? m : 'home'));
     } else {
       const s = flo.mock ? mockStartScreen() : null;
-      setRoute(s === 'scan' || s === 'code' ? s : 'welcome');
+      setRoute(s === 'scan' || s === 'code' || s === 'customize' || s === 'voice' ? s : 'welcome');
     }
   }, [flo.booting, flo.session, flo.mock]);
 
@@ -107,7 +128,8 @@ function Root() {
   // Android back button.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (route === 'settings') return setRoute('home'), true;
+      if (route === 'customize') return setRoute(flo.session ? 'settings' : 'welcome'), true;
+      if (route === 'settings' || route === 'voice') return setRoute(flo.session ? 'home' : 'welcome'), true;
       if (route === 'scan' || route === 'code') return setRoute('welcome'), true;
       return false;
     });
@@ -139,26 +161,32 @@ function Root() {
         <EnterCodeScreen
           onBack={() => setRoute('welcome')}
           onPair={pair}
-          initialServer={prefill.server ?? (flo.mock ? 'flo.app' : '')}
+          initialServer={prefill.server ?? ''}
           initialCode={prefill.code ?? (flo.mock ? '483920' : '')}
         />
       );
       break;
     case 'home':
-      screen = <HomeScreen onSettings={() => setRoute('settings')} />;
+      screen = <HomeScreen onSettings={() => setRoute('settings')} onVoice={(m) => openVoice(m)} />;
       break;
     case 'settings':
-      screen = <SettingsScreen onBack={() => setRoute('home')} />;
+      screen = <SettingsScreen onBack={() => setRoute('home')} onCustomize={() => setRoute('customize')} />;
+      break;
+    case 'customize':
+      screen = <CustomizeScreen onBack={() => setRoute(flo.session ? 'settings' : 'welcome')} />;
+      break;
+    case 'voice':
+      screen = <VoiceScreen initialMode={voice.mode} autoStart={voice.auto} onClose={() => setRoute(flo.session ? 'home' : 'welcome')} />;
       break;
     default:
-      screen = (
-        <WelcomeScreen error={flo.error} onScan={() => setRoute('scan')} onEnterCode={() => setRoute('code')} />
-      );
+      screen = <OnboardingScreen error={flo.error} onScan={() => setRoute('scan')} onEnterCode={() => setRoute('code')} />;
   }
 
   return (
     <Backdrop intensity={route === 'home' || route === 'settings' ? 0.8 : 1}>
-      <Transition routeKey={route}>{screen}</Transition>
+      <Transition key={themeKey} routeKey={route}>
+        {screen}
+      </Transition>
       <InAppBanner banner={flo.banner} onDismiss={flo.dismissBanner} />
       <Toast text={flo.pairedNotice} />
     </Backdrop>
@@ -166,16 +194,20 @@ function Root() {
 }
 
 export default function App() {
-  const [loaded, fontError] = useFonts({ Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold });
+  const [loaded, fontError] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    InstrumentSerif_400Regular_Italic: require('./assets/fonts/InstrumentSerif-Italic.ttf'),
+  });
   return (
-    <SafeAreaProvider style={{ backgroundColor: colors.bg }}>
-      <StatusBar style="light" />
+    <SafeAreaProvider>
       {loaded || fontError ? (
-        <FloProvider>
-          <View style={styles.app}>
-            <Root />
-          </View>
-        </FloProvider>
+        <PrefsProvider>
+          <Themed />
+        </PrefsProvider>
       ) : (
         <View style={styles.center} />
       )}
@@ -183,7 +215,21 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+function Themed() {
+  const { dark } = usePrefs();
+  return (
+    <UpdatesProvider disabled={Platform.OS === 'web'}>
+      <StatusBar style={dark ? 'light' : 'dark'} />
+      <FloProvider>
+        <View style={[styles.app, { backgroundColor: colors.bg }]}>
+          <Root />
+        </View>
+      </FloProvider>
+    </UpdatesProvider>
+  );
+}
+
+const styles = themed(() => StyleSheet.create({
   app: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
   toast: {
@@ -195,9 +241,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 12,
     borderRadius: 999,
-    backgroundColor: 'rgba(16,24,34,0.95)',
+    backgroundColor: colors.dark ? 'rgba(16,24,34,0.95)' : 'rgba(255,255,255,0.97)',
     borderWidth: 1,
-    borderColor: 'rgba(74,222,128,0.3)',
+    borderColor: colors.dark ? 'rgba(74,222,128,0.3)' : 'rgba(31,157,107,0.3)',
+    shadowColor: '#2b2370',
+    shadowOpacity: 0.15,
+    shadowRadius: 18,
+    elevation: 8,
   },
   toastText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.ink },
-});
+}));

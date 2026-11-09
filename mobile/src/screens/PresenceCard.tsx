@@ -6,7 +6,9 @@ import type { Presence, PresenceStatus } from '../api/types';
 import { sinceLabel } from '../lib/time';
 import { tap } from '../ui/Buttons';
 import { Icon } from '../ui/Icons';
-import { colors, fonts, radius, type } from '../ui/theme';
+import { Notchling } from '../ui/Notchling';
+import { usePrefs } from '../state/Prefs';
+import { colors, fonts, radius, type, themed } from '../ui/theme';
 
 const native = Platform.OS !== 'web';
 
@@ -35,7 +37,7 @@ function Segmented({
       {w > 0 && (
         <Animated.View style={[styles.segThumb, { width: half, transform: [{ translateX: tx }] }]}>
           <LinearGradient
-            colors={value === 'away' ? ['#8fdcff', colors.sky, colors.ocean] : ['#ffffff', '#dfe9f2']}
+            colors={colors.dark ? (value === 'away' ? ['#8fdcff', colors.sky, colors.ocean] : ['#ffffff', '#dfe9f2']) : ['#2a3550', colors.primary]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.segThumbFill}
@@ -57,8 +59,8 @@ function Segmented({
             }}
             style={styles.segBtn}
           >
-            <Icon name={o.icon} size={17} color={on ? '#03263d' : colors.inkSoft} strokeWidth={2} />
-            <Text style={[styles.segText, on && { color: '#03263d' }]}>{o.label}</Text>
+            <Icon name={o.icon} size={17} color={on ? (colors.dark ? '#03263d' : '#ffffff') : colors.inkSoft} strokeWidth={2} />
+            <Text style={[styles.segText, on && { color: colors.dark ? '#03263d' : '#ffffff' }]}>{o.label}</Text>
           </Pressable>
         );
       })}
@@ -76,6 +78,9 @@ export function PresenceCard({
   onChange: (s: PresenceStatus) => void;
 }) {
   const away = presence?.status === 'away';
+  const { prefs } = usePrefs();
+  const onAway = colors.dark ? colors.ice : colors.ink;
+  const onAwaySoft = colors.dark ? 'rgba(227,246,255,0.8)' : colors.inkSoft;
   const fade = useRef(new Animated.Value(away ? 1 : 0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
   const [, force] = useState(0);
@@ -110,7 +115,7 @@ export function PresenceCard({
       {/* Away background crossfades in */}
       <Animated.View style={[StyleSheet.absoluteFill, { opacity: fade }]}>
         <LinearGradient
-          colors={['#11679c', '#0b3b5e', '#06172a']}
+          colors={colors.dark ? ['#11679c', '#0b3b5e', '#06172a'] : ['#cfe6ff', '#ddd2ff', '#ffd9e6']}
           locations={[0, 0.5, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0.9, y: 1 }}
@@ -142,30 +147,28 @@ export function PresenceCard({
             />
             <View style={[styles.dot, { backgroundColor: accent }]} />
           </View>
-          <Text style={[type.micro, { color: away ? colors.ice : colors.inkMuted }]}>
+          <Text style={[type.micro, { color: away ? onAway : colors.inkMuted }]}>
             {presence ? (away ? 'Away from your Mac' : 'At your Mac') : 'Checking…'}
           </Text>
         </View>
-        <View style={[styles.badge, { backgroundColor: away ? 'rgba(227,246,255,0.14)' : colors.glass }]}>
-          {busy ? (
-            <ActivityIndicator size="small" color={colors.ice} />
-          ) : (
-            <Icon name={away ? 'moon' : 'laptop'} size={22} color={away ? colors.ice : colors.inkSoft} />
-          )}
-        </View>
+        {busy ? (
+          <ActivityIndicator size="small" color={onAway} />
+        ) : (
+          <Notchling mood={away ? 'sleepy' : 'happy'} size={58} plate={false} avatar={prefs.avatar} accent={colors.sky} testID="presence-mascot" />
+        )}
       </View>
 
       <Text style={styles.big} testID="presence-status">
         {presence ? (away ? 'Away' : 'Active') : '—'}
       </Text>
-      <Text style={[styles.since, away && { color: 'rgba(227,246,255,0.75)' }]}>
+      <Text style={[styles.since, away && { color: onAwaySoft }]}>
         {presence ? sinceLabel(presence.since) : ' '}
       </Text>
 
-      <Text style={[type.body, styles.explain, away && { color: 'rgba(227,246,255,0.86)' }]}>
+      <Text style={[type.body, styles.explain, away && { color: onAwaySoft }]}>
         {away
           ? "While you're Away, Flo sends your Mac's updates here."
-          : "You're at your Mac, so updates stay there. Switch to Away when you step out — your Mac does this automatically when you go idle."}
+          : "You're at your Mac, so updates stay there. Switch to Away when you step out. Your Mac does it by itself when you go idle."}
       </Text>
 
       <Segmented value={presence?.status ?? 'active'} onChange={onChange} disabled={!presence || busy} />
@@ -173,15 +176,15 @@ export function PresenceCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   card: {
     borderRadius: radius.xl,
     padding: 22,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: colors.glassBorder,
   },
-  activeBg: { backgroundColor: 'rgba(255,255,255,0.05)' },
+  activeBg: { backgroundColor: colors.glass },
   specular: { position: 'absolute', top: 0, left: 28, right: 28, height: 1 },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -196,12 +199,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 4,
     borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.28)',
+    backgroundColor: colors.dark ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.55)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: colors.dark ? 'rgba(255,255,255,0.08)' : 'rgba(20,30,60,0.06)',
   },
   segThumb: { position: 'absolute', top: 4, left: 4, bottom: 4, borderRadius: 14, overflow: 'hidden' },
   segThumbFill: { flex: 1 },
   segBtn: { flex: 1, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   segText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.inkSoft },
-});
+}));

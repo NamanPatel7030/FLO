@@ -5,8 +5,14 @@ import { isMuted } from '../lib/kinds';
 import { useFlo } from '../state/FloContext';
 import { IconButton } from '../ui/Buttons';
 import { EmptyInbox } from '../ui/EmptyInbox';
-import { FloMark, Icon } from '../ui/Icons';
-import { colors, fonts, type } from '../ui/theme';
+import { Icon } from '../ui/Icons';
+import { Notchling, type Mood } from '../ui/Notchling';
+import { UpdateCard } from '../ui/UpdateCard';
+import { GlassCard } from '../ui/Glass';
+import { usePrefs } from '../state/Prefs';
+import { Pressable } from 'react-native';
+import { tap } from '../ui/Buttons';
+import { colors, fonts, type, themed } from '../ui/theme';
 import { InboxRow } from './InboxRow';
 import { PresenceCard } from './PresenceCard';
 
@@ -18,10 +24,23 @@ function greeting(d = new Date()): string {
   return 'Good evening';
 }
 
-export function HomeScreen({ onSettings }: { onSettings: () => void }) {
+export function HomeScreen({ onSettings, onVoice }: { onSettings: () => void; onVoice: (mode: 'ask' | 'todo' | 'note') => void }) {
   const insets = useSafeAreaInsets();
   const flo = useFlo();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const { prefs } = usePrefs();
+  // excited for a few seconds when something new lands
+  const [fresh, setFresh] = useState(false);
+  const newest = flo.inbox[0]?.id;
+  const seen = React.useRef(newest);
+  useEffect(() => {
+    if (!newest || newest === seen.current) return;
+    seen.current = newest;
+    setFresh(true);
+    const t = setTimeout(() => setFresh(false), 4500);
+    return () => clearTimeout(t);
+  }, [newest]);
+  const mood: Mood = fresh ? 'excited' : flo.presence?.status === 'away' ? 'happy' : 'happy';
 
   const visible = useMemo(() => flo.inbox.filter((i) => !isMuted(i.kind, flo.mutes)), [flo.inbox, flo.mutes]);
   const hidden = flo.inbox.length - visible.length;
@@ -53,16 +72,14 @@ export function HomeScreen({ onSettings }: { onSettings: () => void }) {
           onRefresh={() => void flo.refresh()}
           tintColor={colors.sky}
           colors={[colors.sky, colors.ocean]}
-          progressBackgroundColor="#0d1620"
+          progressBackgroundColor={colors.bgElevated}
         />
       }
       ListHeaderComponent={
         <View>
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-              <View style={styles.logo}>
-                <FloMark size={26} glow={false} />
-              </View>
+              <Notchling mood={mood} size={48} avatar={prefs.avatar} accent={colors.sky} testID="home-mascot" />
               <View style={{ flex: 1 }}>
                 <Text style={type.small}>{greeting()}</Text>
                 <Text style={styles.name} numberOfLines={1}>
@@ -80,6 +97,45 @@ export function HomeScreen({ onSettings }: { onSettings: () => void }) {
               <Text style={styles.errorText}>{flo.error}</Text>
             </View>
           )}
+
+          <UpdateCard />
+
+          <View style={styles.actions}>
+            <Pressable
+              testID="ask-flo"
+              accessibilityRole="button"
+              onPress={() => {
+                tap();
+                onVoice('ask');
+              }}
+              style={{ flex: 1.3 }}
+            >
+              <View style={styles.askBtn}>
+                <Icon name="sparkle" size={20} color={colors.onPrimary} />
+                <View>
+                  <Text style={styles.askTitle}>Ask Flo</Text>
+                  <Text style={styles.askSub}>Your Mac answers</Text>
+                </View>
+              </View>
+            </Pressable>
+            <Pressable
+              testID="dictate"
+              accessibilityRole="button"
+              onPress={() => {
+                tap();
+                onVoice('todo');
+              }}
+              style={{ flex: 1 }}
+            >
+              <GlassCard radius={22} style={styles.dictBtn}>
+                <Icon name="mic" size={20} color={colors.sky} />
+                <View>
+                  <Text style={styles.dictTitle}>Dictate</Text>
+                  <Text style={type.small}>To-do or note</Text>
+                </View>
+              </GlassCard>
+            </Pressable>
+          </View>
 
           <PresenceCard presence={flo.presence} busy={flo.presenceBusy} onChange={(s) => void flo.setPresence(s)} />
 
@@ -110,18 +166,27 @@ export function HomeScreen({ onSettings }: { onSettings: () => void }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 18, paddingHorizontal: 2 },
-  logo: {
-    width: 44,
-    height: 44,
-    borderRadius: 15,
-    backgroundColor: '#071521',
-    borderWidth: 1,
-    borderColor: 'rgba(102,206,255,0.25)',
+  actions: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  askBtn: {
+    height: 74,
+    borderRadius: 22,
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 18,
+    shadowColor: '#2b2370',
+    shadowOpacity: 0.25,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
   },
+  askTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.onPrimary },
+  askSub: { fontFamily: fonts.medium, fontSize: 12.5, color: colors.onPrimary, opacity: 0.7 },
+  dictBtn: { height: 74, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 },
+  dictTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.ink },
   name: { fontFamily: fonts.semibold, fontSize: 21, color: colors.ink, letterSpacing: -0.4 },
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 28, marginBottom: 12, paddingHorizontal: 4 },
   section: { fontFamily: fonts.semibold, fontSize: 19, color: colors.ink, letterSpacing: -0.3 },
@@ -130,7 +195,7 @@ const styles = StyleSheet.create({
     height: 22,
     paddingHorizontal: 7,
     borderRadius: 11,
-    backgroundColor: 'rgba(102,206,255,0.14)',
+    backgroundColor: colors.dark ? 'rgba(102,206,255,0.14)' : 'rgba(47,140,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -140,9 +205,9 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,107,107,0.08)',
+    backgroundColor: colors.errorBg,
     borderWidth: 1,
-    borderColor: 'rgba(255,107,107,0.25)',
+    borderColor: colors.errorBorder,
   },
-  errorText: { ...type.small, color: '#ffb4b4' },
-});
+  errorText: { ...type.small, color: colors.errorText },
+}));

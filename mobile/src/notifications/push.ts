@@ -107,12 +107,11 @@ function toIncoming(n: Notifications.Notification): IncomingPush {
 export function installForegroundHandler(): void {
   if (Platform.OS === 'web') return;
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: false,
-      shouldShowList: false,
-      shouldPlaySound: false,
-      shouldSetBadge: false,
-    }),
+    handleNotification: async (n) => {
+      // the Ask / Dictate shortcut lives in the shade even while the app is open
+      const quick = (n.request.content.data as { kind?: unknown } | undefined)?.kind === QUICK_KIND;
+      return { shouldShowBanner: false, shouldShowList: quick, shouldPlaySound: false, shouldSetBadge: false };
+    },
   });
 }
 
@@ -125,7 +124,10 @@ export function onForegroundPush(cb: (p: IncomingPush) => void): () => void {
 /** User tapped a notification in the tray. */
 export function onPushTapped(cb: (p: IncomingPush) => void): () => void {
   if (Platform.OS === 'web') return () => undefined;
-  const sub = Notifications.addNotificationResponseReceivedListener((r) => cb(toIncoming(r.notification)));
+  const sub = Notifications.addNotificationResponseReceivedListener((r) => {
+    if ((r.notification.request.content.data as { kind?: unknown } | undefined)?.kind === QUICK_KIND) return;
+    cb(toIncoming(r.notification));
+  });
   return () => sub.remove();
 }
 
@@ -138,4 +140,69 @@ export function deviceName(): string {
     return model && maker && model.toLowerCase().startsWith(maker.toLowerCase()) ? model : parts.join(' ');
   }
   return 'Android phone';
+}
+
+// ── Ask Flo / Dictate shortcut ───────────────────────────────────────────────
+// A quiet, ongoing notification with two buttons. Tapping one opens Flo straight into the voice
+// sheet, ready to listen. (Android only lets the microphone run while Flo is on screen or in a
+// foreground service, so listening starts once the sheet is open.)
+
+export const QUICK_KIND = 'flo_quick';
+const QUICK_ID = 'flo-quick-actions';
+const QUICK_CHANNEL = 'flo-quick';
+const QUICK_CATEGORY = 'flo-quick';
+export type QuickAction = 'ask' | 'dictate';
+
+export async function showQuickActions(): Promise<void> {
+  if (!isNativeAndroid) return;
+  await Notifications.setNotificationChannelAsync(QUICK_CHANNEL, {
+    name: 'Ask Flo shortcut',
+    description: 'A quiet shortcut in your notification shade to ask Flo or dictate.',
+    importance: Notifications.AndroidImportance.LOW,
+    showBadge: false,
+    enableVibrate: false,
+    sound: null,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+  });
+  await Notifications.setNotificationCategoryAsync(QUICK_CATEGORY, [
+    { identifier: 'ask', buttonTitle: 'Ask Flo', options: { opensAppToForeground: true } },
+    { identifier: 'dictate', buttonTitle: 'Dictate', options: { opensAppToForeground: true } },
+  ]);
+  await Notifications.scheduleNotificationAsync({
+    identifier: QUICK_ID,
+    content: {
+      title: 'Flo is ready',
+      body: 'Ask your Mac anything, or dictate a note or to-do.',
+      categoryIdentifier: QUICK_CATEGORY,
+      data: { kind: QUICK_KIND },
+      sticky: true,
+      autoDismiss: false,
+      priority: Notifications.AndroidNotificationPriority.LOW,
+    },
+    trigger: { channelId: QUICK_CHANNEL },
+  });
+}
+
+export async function hideQuickActions(): Promise<void> {
+  if (!isNativeAndroid) return;
+  await Notifications.dismissNotificationAsync(QUICK_ID).catch(() => undefined);
+  await Notifications.cancelScheduledNotificationAsync(QUICK_ID).catch(() => undefined);
+}
+
+/** Which shortcut the user tapped (null for any other notification). */
+export function quickActionOf(r: Notifications.NotificationResponse): QuickAction | null {
+  const data = (r.notification.request.content.data ?? {}) as { kind?: unknown };
+  if (data.kind !== QUICK_KIND) return null;
+  return r.actionIdentifier === 'dictate' ? 'dictate' : 'ask';
+}
+
+export function onQuickAction(cb: (a: QuickAction) => void): () => void {
+  if (!isNativeAndroid) return () => undefined;
+  const handle = (r: Notifications.NotificationResponse | null) => {
+    const a = r ? quickActionOf(r) : null;
+    if (a) cb(a);
+  };
+  void Notifications.getLastNotificationResponseAsync().then(handle).catch(() => undefined);
+  const sub = Notifications.addNotificationResponseReceivedListener(handle);
+  return () => sub.remove();
 }

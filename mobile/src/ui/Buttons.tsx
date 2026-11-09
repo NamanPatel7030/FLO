@@ -12,7 +12,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { colors, fonts, radius } from './theme';
+import { colors, fonts, radius, themed } from './theme';
 
 export function tap(style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) {
   if (Platform.OS !== 'web') void Haptics.impactAsync(style).catch(() => undefined);
@@ -54,21 +54,21 @@ export function PrimaryButton({ label, onPress, icon, loading, disabled, style, 
         style={[styles.primaryShadow, off && { opacity: 0.55 }]}
       >
         <LinearGradient
-          colors={['#8fdcff', colors.sky, colors.ocean]}
-          locations={[0, 0.35, 1]}
+          colors={colors.dark ? ['#8fdcff', colors.sky, colors.ocean] : ['#2a3550', colors.primary, '#05080f']}
+          locations={[0, 0.45, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.primary}
         >
           <LinearGradient
             pointerEvents="none"
-            colors={['rgba(255,255,255,0.45)', 'rgba(255,255,255,0)']}
+            colors={[colors.dark ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.18)', 'rgba(255,255,255,0)']}
             start={{ x: 0.5, y: 0 }}
             end={{ x: 0.5, y: 0.6 }}
             style={[StyleSheet.absoluteFill, { borderRadius: radius.md }]}
           />
           {loading ? (
-            <ActivityIndicator color="#03263d" />
+            <ActivityIndicator color={colors.dark ? "#03263d" : "#ffffff"} />
           ) : (
             <View style={styles.row}>
               {icon}
@@ -109,7 +109,7 @@ export function GlassButton({
           styles.glass,
           compact && styles.compact,
           danger && styles.danger,
-          pressed && { backgroundColor: 'rgba(255,255,255,0.09)' },
+          pressed && { backgroundColor: colors.glassStrong },
           disabled && { opacity: 0.5 },
         ]}
       >
@@ -157,12 +157,12 @@ export function IconButton({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
   primaryShadow: {
     borderRadius: radius.md,
-    shadowColor: colors.sky,
-    shadowOpacity: 0.45,
+    shadowColor: colors.dark ? colors.sky : '#2b2370',
+    shadowOpacity: colors.dark ? 0.45 : 0.28,
     shadowRadius: 22,
     shadowOffset: { width: 0, height: 8 },
     elevation: 10,
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     overflow: 'hidden',
   },
-  primaryLabel: { fontFamily: fonts.semibold, fontSize: 16.5, color: '#03263d', letterSpacing: -0.2 },
+  primaryLabel: { fontFamily: fonts.semibold, fontSize: 16.5, color: colors.dark ? '#03263d' : '#ffffff', letterSpacing: -0.2 },
   glass: {
     height: 56,
     borderRadius: radius.md,
@@ -187,7 +187,7 @@ const styles = StyleSheet.create({
     borderColor: colors.glassBorder,
   },
   compact: { height: 40, borderRadius: radius.sm, paddingHorizontal: 14 },
-  danger: { borderColor: 'rgba(255,107,107,0.28)', backgroundColor: 'rgba(255,107,107,0.07)' },
+  danger: { borderColor: colors.errorBorder, backgroundColor: colors.errorBg },
   glassLabel: { fontFamily: fonts.semibold, fontSize: 16, color: colors.ink, letterSpacing: -0.2 },
   icon: {
     width: 44,
@@ -199,4 +199,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.glassBorder,
   },
-});
+}));

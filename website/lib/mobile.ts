@@ -246,3 +246,58 @@ export function cleanData(v: unknown): Record<string, string> | null | "invalid"
   }
   return out;
 }
+
+// ── phone → Mac requests (Ask Flo / Dictate) ─────────────────────────────────
+
+export type RequestMode = "ask" | "todo" | "note";
+export const REQUEST_MODES: readonly RequestMode[] = ["ask", "todo", "note"];
+export type MobileRequest = { id: number; mode: RequestMode; text: string; status: string; answer: string | null; createdAt: string };
+
+const toRequest = (r: { id: string | number; mode: RequestMode; text: string; status: string; answer: string | null; created_at: Date }): MobileRequest => ({
+  id: Number(r.id),
+  mode: r.mode,
+  text: r.text,
+  status: r.status,
+  answer: r.answer,
+  createdAt: new Date(r.created_at).toISOString(),
+});
+
+/** Phone: queue a request for the Mac. Old requests (7 days) are cleaned up on the way. */
+export async function queueRequest(userId: string, deviceId: string | null, mode: RequestMode, text: string): Promise<MobileRequest> {
+  const db = sql();
+  await db`delete from app.mobile_requests where user_id = ${userId} and created_at < now() - interval '7 days'`;
+  const [r] = await db`
+    insert into app.mobile_requests (user_id, device_id, mode, text) values (${userId}, ${deviceId}, ${mode}, ${text})
+    returning id, mode, text, status, answer, created_at`;
+  return toRequest(r as never);
+}
+
+/** Phone: one of its own requests. */
+export async function getRequest(userId: string, id: number): Promise<MobileRequest | null> {
+  const rows = await sql()`select id, mode, text, status, answer, created_at from app.mobile_requests where user_id = ${userId} and id = ${id}`;
+  return rows[0] ? toRequest(rows[0] as never) : null;
+}
+
+/** Mac: take up to `limit` pending requests (each is handed out once; stale 'taken' ones retry after 2 minutes). */
+export async function takeRequests(userId: string, limit = 5): Promise<MobileRequest[]> {
+  const rows = await sql()`
+    update app.mobile_requests set status = 'taken', taken_at = now()
+     where id in (
+       select id from app.mobile_requests
+        where user_id = ${userId}
+          and (status = 'pending' or (status = 'taken' and taken_at < now() - interval '2 minutes'))
+          and created_at > now() - interval '1 hour'
+        order by id limit ${limit}
+        for update skip locked)
+    returning id, mode, text, status, answer, created_at`;
+  return rows.map((r) => toRequest(r as never)).sort((a, b) => a.id - b.id);
+}
+
+/** Mac: finish a request with its answer. Returns false if it isn't this user's. */
+export async function finishRequest(userId: string, id: number, ok: boolean, answer: string): Promise<MobileRequest | null> {
+  const rows = await sql()`
+    update app.mobile_requests set status = ${ok ? "done" : "failed"}, answer = ${answer}, done_at = now()
+     where user_id = ${userId} and id = ${id}
+    returning id, mode, text, status, answer, created_at`;
+  return rows[0] ? toRequest(rows[0] as never) : null;
+}

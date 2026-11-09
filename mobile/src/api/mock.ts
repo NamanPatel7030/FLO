@@ -2,7 +2,7 @@
 // or EXPO_PUBLIC_FLO_MOCK=1. Never used in a normal build.
 import { Platform } from 'react-native';
 import type { FloApi } from './client';
-import type { InboxItem, PairClaimResponse, Presence, Session } from './types';
+import type { AskRequest, InboxItem, PairClaimResponse, Presence, Session } from './types';
 
 function query(): URLSearchParams | null {
   if (Platform.OS !== 'web') return null;
@@ -27,7 +27,7 @@ export function mockEmptyInbox(): boolean {
 }
 
 export const MOCK_SESSION: Session = {
-  server: 'https://flo.app',
+  server: 'https://flo.hellonaman.com',
   deviceToken: 'mock-device-token',
   user: { name: 'Parth Gundaniya', email: 'parth@flo.app' },
 };
@@ -99,6 +99,7 @@ export function createMockApi(): FloApi & { claim(): Promise<PairClaimResponse> 
   let presence: Presence = { status: 'away', since: ago(42) };
   const inbox = mockEmptyInbox() ? [] : mockInbox();
   const wait = (ms = 350) => new Promise((r) => setTimeout(r, ms));
+  const asks = new Map<string, AskRequest>();
   return {
     async claim() {
       await wait(700);
@@ -124,6 +125,20 @@ export function createMockApi(): FloApi & { claim(): Promise<PairClaimResponse> 
     },
     async unpair() {
       await wait();
+    },
+    async ask(mode, text) {
+      await wait(400);
+      const id = String(Date.now());
+      const answer =
+        mode === 'todo' ? `Added to your to-dos: ${text}` : mode === 'note' ? 'Saved to your notes.' : 'You have 3 meetings today. The first is the Acme sync at 11:00.';
+      asks.set(id, { id, mode, text, status: 'done', answer, createdAt: new Date().toISOString() });
+      return { id, mode, text, status: 'pending', answer: null, createdAt: new Date().toISOString() };
+    },
+    async getAsk(id) {
+      await wait(900);
+      const r = asks.get(id);
+      if (!r) throw new Error('Not found.');
+      return r;
     },
   };
 }

@@ -38,3 +38,12 @@ describe('notification kind mapping', () => {
     expect(isMuted('mystery', { claude: true, todos: true })).toBe(false);
   });
 });
+
+describe('flo_answer', () => {
+  it('is a general (never muted) kind with its own label', () => {
+    const { groupForKind, isMuted, kindLabel } = require('../src/lib/kinds');
+    expect(groupForKind('flo_answer')).toBe('general');
+    expect(isMuted('flo_answer', { claude: true, todos: true })).toBe(false);
+    expect(kindLabel('flo_answer')).toBe('Flo · Your Mac answered');
+  });
+});

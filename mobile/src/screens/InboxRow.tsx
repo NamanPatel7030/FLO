@@ -7,7 +7,7 @@ import { tap } from '../ui/Buttons';
 import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
 import { KindIcon } from '../ui/KindIcon';
-import { colors, fonts, type } from '../ui/theme';
+import { colors, fonts, type, themed } from '../ui/theme';
 
 const native = Platform.OS !== 'web';
 
@@ -118,7 +118,7 @@ export function InboxRow({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   card: { padding: 14, paddingRight: 12 },
   row: { flexDirection: 'row', gap: 13, alignItems: 'flex-start' },
   meta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
@@ -134,9 +134,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 10,
     borderWidth: 1,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: colors.dark ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.5)',
   },
   detailKey: { ...type.small, fontSize: 12, color: colors.inkFaint },
   detailVal: { ...type.small, fontSize: 12, color: colors.inkSoft, maxWidth: 160 },
   stamp: { ...type.small, fontSize: 12, marginTop: 10, color: colors.inkFaint },
-});
+}));

@@ -7,7 +7,7 @@ import { parsePairPayload, type PairTarget } from '../lib/pairing';
 import { GlassButton, IconButton, PrimaryButton } from '../ui/Buttons';
 import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
-import { absFill, colors, fonts, type } from '../ui/theme';
+import { absFill, colors, fonts, type, themed } from '../ui/theme';
 
 const FRAME = 248;
 const native = Platform.OS !== 'web';
@@ -164,7 +164,7 @@ export function ScanScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
   dim: { ...absFill, backgroundColor: 'rgba(2,4,7,0.45)' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
@@ -200,5 +200,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,107,107,0.28)',
   },
-  errorText: { ...type.small, color: '#ffb4b4', textAlign: 'center' },
-});
+  errorText: { ...type.small, color: colors.errorText, textAlign: 'center' },
+}));

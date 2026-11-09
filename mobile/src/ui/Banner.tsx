@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { kindLabel, metaForKind } from '../lib/kinds';
 import { GlassCard } from './Glass';
 import { KindIcon } from './KindIcon';
-import { colors, fonts, type } from './theme';
+import { colors, fonts, type, themed } from './theme';
 
 const native = Platform.OS !== 'web';
 
@@ -59,17 +59,17 @@ export function InAppBanner({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   wrap: { position: 'absolute', left: 12, right: 12, zIndex: 50 },
-  backing: { borderRadius: 24, backgroundColor: '#0e1620' },
+  backing: { borderRadius: 24, backgroundColor: colors.bgElevated },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 14,
-    backgroundColor: 'rgba(16, 24, 34, 0.94)',
-    shadowColor: '#000',
-    shadowOpacity: 0.5,
+    backgroundColor: colors.dark ? 'rgba(16, 24, 34, 0.94)' : 'rgba(255, 255, 255, 0.96)',
+    shadowColor: colors.dark ? '#000' : '#2b2370',
+    shadowOpacity: colors.dark ? 0.5 : 0.18,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 10 },
     elevation: 16,
@@ -77,4 +77,4 @@ const styles = StyleSheet.create({
   accent: { position: 'absolute', left: 0, top: 18, bottom: 18, width: 3, borderRadius: 2 },
   title: { fontFamily: fonts.semibold, fontSize: 15, color: colors.ink, marginTop: 2 },
   body: { fontFamily: fonts.regular, fontSize: 13.5, lineHeight: 19, color: colors.inkSoft, marginTop: 1 },
-});
+}));

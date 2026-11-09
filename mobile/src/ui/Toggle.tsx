@@ -2,7 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useRef } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { tap } from './Buttons';
-import { colors } from './theme';
+import { colors, themed } from './theme';
 
 export function Toggle({
   value,
@@ -41,12 +41,12 @@ export function Toggle({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   track: {
     width: 50,
     height: 30,
     borderRadius: 15,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: colors.dark ? 'rgba(255,255,255,0.1)' : 'rgba(20,30,60,0.12)',
     borderWidth: 1,
     borderColor: colors.glassBorder,
     justifyContent: 'center',
@@ -65,4 +65,4 @@ const styles = StyleSheet.create({
     elevation: 3,
     ...(Platform.OS === 'web' ? {} : {}),
   },
-});
+}));

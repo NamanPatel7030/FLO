@@ -2,7 +2,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { colors, radius } from './theme';
+import { colors, radius, themed } from './theme';
 
 export function GlassCard({
   children,
@@ -45,11 +45,11 @@ export function GlassCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   card: {
     borderWidth: StyleSheet.hairlineWidth * 2,
     borderColor: colors.glassBorder,
     overflow: 'hidden',
   },
   specular: { position: 'absolute', top: 0, height: 1 },
-});
+}));

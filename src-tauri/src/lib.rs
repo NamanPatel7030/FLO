@@ -32,6 +32,7 @@ mod meeting_detect;
 mod model;
 mod platform;
 mod prompts;
+mod phone;
 mod push;
 mod autocontinue;
 mod secrets;
@@ -630,6 +631,7 @@ pub fn run() {
             scheduler::spawn(st.clone());
             floagent::spawn(st.clone());
             push::spawn(st.clone());
+            phone::spawn(st.clone());
             sync::spawn(st.clone());
             autocontinue::spawn(st.clone());
             attention::spawn(st.clone());

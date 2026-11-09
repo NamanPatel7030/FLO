@@ -31,6 +31,8 @@ export interface Banner {
 
 interface FloState {
   booting: boolean;
+  /** the signed-in API client (null until paired) */
+  api: FloApi | null;
   mock: boolean;
   session: Session | null;
   presence: Presence | null;
@@ -325,6 +327,7 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
 
   const value = {
     booting,
+    api,
     mock,
     session,
     presence,

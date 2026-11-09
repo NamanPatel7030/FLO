@@ -1,5 +1,5 @@
 // HTTP client for the Flo mobile API (docs/mobile-api.md).
-import type { InboxItem, PairClaimRequest, PairClaimResponse, Presence, PresenceStatus } from './types';
+import type { AskMode, AskRequest, AskStatus, InboxItem, PairClaimRequest, PairClaimResponse, Presence, PresenceStatus } from './types';
 import { normalizeItem } from '../lib/inbox';
 import { normalizeServerUrl } from '../lib/pairing';
 
@@ -24,6 +24,36 @@ export interface FloApi {
   updatePushToken(pushToken: string): Promise<void>;
   inbox(after?: string): Promise<InboxItem[]>;
   unpair(): Promise<void>;
+  /** Queue a spoken request for the Mac (Ask Flo / Dictate). */
+  ask(mode: AskMode, text: string): Promise<AskRequest>;
+  getAsk(id: string): Promise<AskRequest>;
+}
+
+const ASK_STATUSES: readonly AskStatus[] = ['pending', 'taken', 'done', 'failed'];
+
+/** `{request: {...}}` from /api/mobile/ask → AskRequest (unit-tested). */
+export function parseAsk(json: unknown): AskRequest {
+  const r = (json && typeof json === 'object' ? (json as { request?: unknown }).request : null) as Record<string, unknown> | null;
+  if (!r || (typeof r.id !== 'number' && typeof r.id !== 'string')) throw new ApiError('The server sent an unexpected reply.', 0);
+  const mode = r.mode === 'todo' || r.mode === 'note' ? r.mode : 'ask';
+  const status = ASK_STATUSES.includes(r.status as AskStatus) ? (r.status as AskStatus) : 'pending';
+  return {
+    id: String(r.id),
+    mode,
+    text: typeof r.text === 'string' ? r.text : '',
+    status,
+    answer: typeof r.answer === 'string' ? r.answer : null,
+    createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
+  };
+}
+
+/** Reached the network but the server isn't Flo / is down, versus no network at all. */
+export function describeError(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.status === 0) return "Couldn't reach Flo. Check your internet connection and try again.";
+    return e.message;
+  }
+  return e instanceof Error ? e.message : String(e);
 }
 
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -158,6 +188,12 @@ export function createHttpApi(server: string, deviceToken: string, fetchImpl: Fe
     },
     async unpair() {
       await call('/api/mobile/device', { method: 'DELETE' });
+    },
+    async ask(mode, text) {
+      return parseAsk(await call('/api/mobile/ask', { method: 'POST', body: JSON.stringify({ mode, text }) }));
+    },
+    async getAsk(id) {
+      return parseAsk(await call(`/api/mobile/ask/${encodeURIComponent(id)}`));
     },
   };
 }

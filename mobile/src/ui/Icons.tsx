@@ -21,7 +21,15 @@ export type IconName =
   | 'server'
   | 'unlink'
   | 'check'
-  | 'close';
+  | 'close'
+  | 'mic'
+  | 'sparkle'
+  | 'palette'
+  | 'download'
+  | 'share'
+  | 'note'
+  | 'copy'
+  | 'refresh';
 
 const P: Record<IconName, string[]> = {
   qr: [
@@ -60,6 +68,14 @@ const P: Record<IconName, string[]> = {
     'M4 4l2 2M18 18l2 2',
   ],
   check: ['M5 12.5l4.5 4.5L19 7.5'],
+  mic: ['M12 3.5a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0v-5a3 3 0 0 0-3-3Z', 'M6 11a6 6 0 0 0 12 0', 'M12 17v3.5'],
+  sparkle: ['M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z'],
+  palette: ['M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.9 1.4-1.9-.5-1.1.2-2.1 1.4-2.1H17a3.5 3.5 0 0 0 3.5-3.5C20.5 7.4 16.7 3.5 12 3.5Z', 'M7.5 12h.01M9.5 8h.01M14.5 8h.01'],
+  download: ['M12 4v11', 'M7.5 10.5L12 15l4.5-4.5', 'M5 19.5h14'],
+  share: ['M12 15V4', 'M8 7.5L12 3.5l4 4', 'M6 11.5v7h12v-7'],
+  note: ['M6 3.5h9l3.5 3.5v13.5H6z', 'M9.5 11h6M9.5 14.5h6'],
+  copy: ['M8.5 8.5h11v11h-11z', 'M15.5 8.5V4.5h-11v11h4'],
+  refresh: ['M19.5 12a7.5 7.5 0 1 1-2.2-5.3', 'M19.5 4.5v4h-4'],
   close: ['M6 6l12 12M18 6L6 18'],
 };
 

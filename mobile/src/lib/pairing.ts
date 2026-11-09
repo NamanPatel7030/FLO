@@ -1,3 +1,6 @@
+/** The live Flo server. Pairing by code uses it unless "Advanced: custom server" says otherwise. */
+export const DEFAULT_SERVER = 'https://flo.hellonaman.com';
+
 // Pairing payload parsing: `flo-pair://<host>/<code>` and manual code entry.
 
 export interface PairTarget {

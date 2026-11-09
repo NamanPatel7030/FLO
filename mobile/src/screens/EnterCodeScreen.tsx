@@ -10,11 +10,12 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isValidCode, normalizeCode, normalizeServerUrl, type PairTarget } from '../lib/pairing';
+import { ApiError } from '../api/client';
+import { DEFAULT_SERVER, isValidCode, normalizeCode, normalizeServerUrl, type PairTarget } from '../lib/pairing';
 import { IconButton, PrimaryButton } from '../ui/Buttons';
 import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
-import { absFill, colors, fonts, radius, type } from '../ui/theme';
+import { absFill, colors, fonts, radius, type, themed } from '../ui/theme';
 
 export function EnterCodeScreen({
   onBack,
@@ -28,7 +29,8 @@ export function EnterCodeScreen({
   initialCode?: string;
 }) {
   const insets = useSafeAreaInsets();
-  const [server, setServer] = useState(initialServer ?? '');
+  const [server, setServer] = useState(initialServer || DEFAULT_SERVER);
+  const [advanced, setAdvanced] = useState(!!initialServer && normalizeServerUrl(initialServer) !== DEFAULT_SERVER);
   const [code, setCode] = useState(normalizeCode(initialCode ?? '').slice(0, 6));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,14 +41,24 @@ export function EnterCodeScreen({
   const canSubmit = !!serverUrl && isValidCode(code) && !busy;
 
   async function submit() {
-    if (!serverUrl) return setError('Enter the address of your Flo server, e.g. flo.app');
-    if (!isValidCode(code)) return setError('The code is 6 digits — it’s shown under the QR on your Mac.');
+    if (!serverUrl) return setError('That server address looks wrong. Leave it as flo.hellonaman.com unless you run your own.');
+    if (!isValidCode(code)) return setError('The code is 6 digits. It is shown under the QR code on your Mac.');
     setBusy(true);
     setError(null);
     try {
       await onPair({ server: serverUrl, code: normalizeCode(code) });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Pairing failed.');
+      if (e instanceof ApiError && e.status === 0) {
+        setError(
+          serverUrl === DEFAULT_SERVER
+            ? "Couldn't reach Flo. Check your internet connection and try again."
+            : `Couldn't reach ${serverUrl}. Check the address under Advanced, or switch back to flo.hellonaman.com.`,
+        );
+      } else if (e instanceof ApiError && (e.status === 400 || e.status === 401 || e.status === 404)) {
+        setError('That code is wrong or has expired. Make a new one on your Mac (codes last 5 minutes).');
+      } else {
+        setError(e instanceof Error ? e.message : 'Pairing failed.');
+      }
     } finally {
       setBusy(false);
     }
@@ -72,26 +84,6 @@ export function EnterCodeScreen({
         <Text style={[type.body, { marginTop: 10 }]}>
           Find the 6-digit code under the QR on your Mac. It expires after 5 minutes.
         </Text>
-
-        <Text style={styles.label}>Server</Text>
-        <GlassCard radius={radius.md} style={styles.inputCard}>
-          <Icon name="server" size={18} color={colors.inkMuted} />
-          <TextInput
-            testID="server-input"
-            value={server}
-            onChangeText={setServer}
-            placeholder="flo.app or 192.168.1.20:3000"
-            placeholderTextColor={colors.inkFaint}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            returnKeyType="next"
-            onSubmitEditing={() => codeRef.current?.focus()}
-            style={styles.input}
-          />
-          {!!serverUrl && <Icon name="check" size={18} color={colors.green} />}
-        </GlassCard>
-        {!!server && !!serverUrl && <Text style={styles.resolved}>Will connect to {serverUrl}</Text>}
 
         <Text style={styles.label}>Pairing code</Text>
         <Pressable onPress={() => codeRef.current?.focus()} style={styles.codeRow}>
@@ -122,6 +114,39 @@ export function EnterCodeScreen({
           />
         </Pressable>
 
+
+        <Pressable
+          testID="advanced"
+          accessibilityRole="button"
+          accessibilityState={{ expanded: advanced }}
+          onPress={() => setAdvanced((v) => !v)}
+          style={styles.advanced}
+        >
+          <Icon name="server" size={15} color={colors.inkMuted} />
+          <Text style={type.small}>Advanced: custom server</Text>
+          <Icon name={advanced ? 'close' : 'chevron'} size={14} color={colors.inkMuted} />
+        </Pressable>
+        {advanced && (
+          <>
+            <GlassCard radius={radius.md} style={styles.inputCard}>
+              <Icon name="server" size={18} color={colors.inkMuted} />
+              <TextInput
+                testID="server-input"
+                value={server}
+                onChangeText={setServer}
+                placeholder="flo.hellonaman.com"
+                placeholderTextColor={colors.inkFaint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                style={styles.input}
+              />
+              {!!serverUrl && <Icon name="check" size={18} color={colors.green} />}
+            </GlassCard>
+            {!!serverUrl && <Text style={styles.resolved}>Will connect to {serverUrl}</Text>}
+          </>
+        )}
+
         {!!error && (
           <View style={styles.error}>
             <Text style={styles.errorText}>{error}</Text>
@@ -135,7 +160,7 @@ export function EnterCodeScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() => StyleSheet.create({
   root: { flexGrow: 1, paddingHorizontal: 24 },
   header: { flexDirection: 'row' },
   label: { ...type.micro, marginTop: 28, marginBottom: 10 },
@@ -149,6 +174,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : {}),
   },
   resolved: { ...type.small, marginTop: 8, color: colors.inkFaint },
+  advanced: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 22, marginBottom: 10, alignSelf: 'flex-start' },
   codeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cell: {
     flex: 1,
@@ -160,7 +186,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cellFilled: { backgroundColor: 'rgba(102,206,255,0.08)', borderColor: 'rgba(102,206,255,0.3)' },
+  cellFilled: { backgroundColor: colors.glassStrong, borderColor: colors.sky },
   cellActive: { borderColor: colors.sky, borderWidth: 1.5 },
   cellText: { fontFamily: fonts.semibold, fontSize: 26, color: colors.ink },
   dash: { width: 10, height: 2, borderRadius: 1, backgroundColor: colors.inkFaint },
@@ -169,9 +195,9 @@ const styles = StyleSheet.create({
     marginTop: 18,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,107,107,0.08)',
+    backgroundColor: colors.errorBg,
     borderWidth: 1,
-    borderColor: 'rgba(255,107,107,0.25)',
+    borderColor: colors.errorBorder,
   },
-  errorText: { ...type.small, color: '#ffb4b4' },
-});
+  errorText: { ...type.small, color: colors.errorText },
+}));
