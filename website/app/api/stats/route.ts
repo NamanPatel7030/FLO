@@ -9,7 +9,8 @@ export async function GET() {
   try {
     const stats = await usageStats();
     return Response.json(stats, { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" } });
-  } catch {
+  } catch (e) {
+    console.error("stats failed:", e instanceof Error ? e.message : e);
     return Response.json({ error: "unavailable" }, { status: 503 });
   }
 }
