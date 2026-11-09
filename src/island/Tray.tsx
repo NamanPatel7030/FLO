@@ -392,7 +392,7 @@ export function TrayTooltip({
         <>
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500 shadow-[0_0_10px_#ef4444]" />
-            <span className="text-[13px] font-semibold">{item.app} call detected</span>
+            <span className="text-[13px] font-semibold">{callTitle(item.app)}</span>
           </div>
           <p className="mt-1 text-[12px] text-white/65">Take notes? Flo will transcribe and summarize it on this Mac.</p>
           <div className="mt-auto flex justify-end gap-1">
@@ -743,6 +743,12 @@ export function CorrectionCard({
   );
 }
 
+/** "Zoom call detected" when we know the app, plain "Call detected" when we don't. */
+export function callTitle(app?: string | null): string {
+  const a = (app ?? "").trim();
+  return !a || /^a call$/i.test(a) || /^call$/i.test(a) ? "Call detected" : `${a} call detected`;
+}
+
 /** "Zoom call detected — Take notes?" card below the notch. */
 export function MeetingPromptCard({
   app,
@@ -779,7 +785,7 @@ export function MeetingPromptCard({
         </>
       }
     >
-      <div className="truncate text-[13px] font-semibold">{app} call detected</div>
+      <div className="truncate text-[13px] font-semibold">{callTitle(app)}</div>
       <p className="truncate text-[12px] text-white/60">Take notes on this Mac?</p>
     </CardRow>
   );

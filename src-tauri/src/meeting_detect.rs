@@ -14,7 +14,9 @@ pub fn spawn(st: Shared) {
             if !st.settings().meeting_detection {
                 continue;
             }
-            let ours = st.session.lock().is_some() || st.meeting.lock().is_some();
+            // Flo's own microphone use is never a call: dictation, meetings, and the hands-free
+            // agent (which listens continuously) all count as ours
+            let ours = st.session.lock().is_some() || st.meeting.lock().is_some() || crate::handsfree::is_active() || crate::agent::is_running();
             let mic = tokio::task::spawn_blocking(platform::mic_in_use).await.unwrap_or(false);
             match (&active, mic && !ours) {
                 (None, true) => {
