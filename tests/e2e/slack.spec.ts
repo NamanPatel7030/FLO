@@ -82,6 +82,7 @@ test("Disconnect asks first, revokes by default, and can skip the revoke", async
   await expect(confirm).toBeVisible();
   await confirm.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByTestId("slack-connected")).toBeVisible();
+  await expect(confirm).toHaveCount(0); // the question has finished fading out
 
   await page.getByTestId("slack-connected").getByRole("button", { name: "Disconnect" }).click();
   await expect(confirm.getByRole("checkbox", { name: /revoke/ })).toBeChecked();

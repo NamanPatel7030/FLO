@@ -29,6 +29,7 @@ import { codeMock, UNHANDLED } from "./mockCode";
 import { mediaControl, mediaSample, mediaSet } from "./mockMedia";
 import { presenceMock } from "./mockPresence";
 import { autoContinueMock } from "./mockAutoContinue";
+import { floAgentMock, UNHANDLED as AGENT_UNHANDLED } from "./mockFloAgent";
 
 // ── event bus ───────────────────────────────────────────────────────────────
 type Cb = (payload: any) => void;
@@ -1266,6 +1267,9 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       // auto-continue after a Claude usage limit lives in lib/mockAutoContinue.ts
       const ac = await autoContinueMock(cmd, args, { settings, emit: mockEmit });
       if (ac !== UNHANDLED) return ac;
+      // Flo Agent + Hermes live in lib/mockFloAgent.ts
+      const fa = await floAgentMock(cmd, args, { emit: mockEmit, listen: mockListen, skills: () => skills, connections: () => connections, secrets: () => keys });
+      if (fa !== AGENT_UNHANDLED) return fa;
       console.warn("[mock] unknown command", cmd, args);
       return null;
     }

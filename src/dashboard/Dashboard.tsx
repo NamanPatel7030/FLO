@@ -3,7 +3,7 @@ import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import clsx from "clsx";
 import { api, on } from "../lib/api";
 import { EV, type ClaudeSession } from "../lib/types";
-import { BarChart3, CheckCircle2, FolderKanban, History, Home as HomeIcon, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info, Zap } from "lucide-react";
+import { BarChart3, Bot, CheckCircle2, FolderKanban, History, Home as HomeIcon, Settings as SettingsIcon, Sparkles, StickyNote, CircleAlert, CircleCheck, Info, Zap } from "lucide-react";
 import { bootStore, hotkeyLabel, useStore, type Page } from "./store";
 import Home from "./pages/Home";
 import Assistant from "./pages/Assistant";
@@ -14,6 +14,7 @@ import Analytics from "./pages/Analytics";
 import HistoryPage from "./pages/History";
 import Settings from "./pages/Settings";
 import SkillsPage from "./pages/Skills";
+import FloAgentPage from "./pages/FloAgent";
 import Typing from "./pages/Typing";
 import { Signature } from "./Signature";
 import { Ocean } from "../island/Ocean";
@@ -28,6 +29,7 @@ import { SignIn } from "./SignIn";
 import { useAccount } from "../lib/account";
 
 const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
+  { id: "agent", label: "Flo Agent", icon: <Bot size={16} /> },
   { id: "home", label: "Home", icon: <HomeIcon size={16} /> },
   { id: "assistant", label: "Assistant", icon: <Sparkles size={16} /> },
   { id: "skills", label: "Skills", icon: <Zap size={16} /> },
@@ -40,6 +42,7 @@ const NAV: { id: Page; label: string; icon: React.ReactNode }[] = [
 ];
 
 const PAGES: Record<Page, () => React.ReactElement> = {
+  agent: FloAgentPage,
   home: Home,
   assistant: Assistant,
   skills: SkillsPage,

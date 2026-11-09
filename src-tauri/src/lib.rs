@@ -13,6 +13,8 @@ mod contract_tests;
 mod corrections;
 mod db;
 mod egress;
+mod floagent;
+mod hermes;
 mod handsfree;
 mod hotkey;
 mod intents;
@@ -526,6 +528,18 @@ pub fn run() {
             code::stop_code_run,
             skillgen::generate_skill_graph,
             scheduler::run_skill_now,
+            floagent::flo_agent_config,
+            floagent::flo_agent_save_config,
+            floagent::flo_agent_runs,
+            floagent::flo_agent_plan,
+            floagent::flo_agent_run,
+            floagent::flo_agent_stop,
+            floagent::flo_agent_clear_runs,
+            hermes::hermes_status,
+            hermes::hermes_export,
+            hermes::hermes_start,
+            hermes::hermes_stop,
+            hermes::hermes_log,
             push::get_presence,
             push::set_presence,
             push::pair_phone_start,
@@ -602,6 +616,7 @@ pub fn run() {
             mcp::refresh_hosts(&st, None);
             reminders::spawn(st.clone());
             scheduler::spawn(st.clone());
+            floagent::spawn(st.clone());
             push::spawn(st.clone());
             autocontinue::spawn(st.clone());
             attention::spawn(st.clone());
@@ -643,6 +658,10 @@ pub fn run() {
                 if code.is_none() {
                     api.prevent_exit();
                 }
+            }
+            // a Hermes gateway Flo started never outlives Flo
+            if let tauri::RunEvent::Exit = event {
+                hermes::shutdown();
             }
             let _ = (app, &event);
         });

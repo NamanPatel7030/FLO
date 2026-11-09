@@ -177,7 +177,8 @@ export function SlackCard() {
               onChange={(v) => setSettings({ ...settings, slackSync: v })}
             />
           )}
-          <AnimatePresence initial={false} mode="wait">
+          {/* no mode="wait": a quick Cancel → Disconnect must show the question again at once */}
+          <AnimatePresence initial={false}>
             {confirmOff ? (
               <motion.div
                 key="confirm"

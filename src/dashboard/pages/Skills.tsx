@@ -84,7 +84,7 @@ export default function SkillsPage() {
   );
 }
 
-function SkillsList() {
+export function SkillsList() {
   const [skills, setSkills] = useState<Skill[] | null>(null);
   const [editing, setEditing] = useState<Skill | null>(null);
   const load = () => api.listSkills().then(setSkills).catch(() => setSkills([]));
@@ -249,7 +249,7 @@ function SkillCard({ k, onEdit, onRan }: { k: Skill; onEdit: () => void; onRan: 
 const EMPTY_CONN: Connection = { id: "", name: "", kind: "mcp", transport: "stdio", command: "", args: [], url: "", env: {}, description: "", enabled: true, createdAt: "" };
 
 /** Custom platforms and MCP servers that skills can use. */
-function ConnectionsPanel() {
+export function ConnectionsPanel() {
   const [list, setList] = useState<Connection[] | null>(null);
   const [editing, setEditing] = useState<Connection | null>(null);
   const load = () => api.listConnections().then(setList).catch(() => setList([]));
