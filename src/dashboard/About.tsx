@@ -439,8 +439,21 @@ function Numbers({ reduce }: { reduce: boolean }) {
 }
 
 // ── page ──────────────────────────────────────────────────────────────────────────────────────
+/** The running app's version (from the bundle), so About always matches what's installed. */
+function useAppVersion(): string | null {
+  const [v, setV] = useState<string | null>(null);
+  useEffect(() => {
+    import("@tauri-apps/api/app")
+      .then((m) => m.getVersion())
+      .then(setV)
+      .catch(() => setV(null));
+  }, []);
+  return v;
+}
+
 export function About() {
   const reduce = !!useReducedMotion();
+  const version = useAppVersion();
   return (
     <div className="flex flex-col" style={{ gap: F[4] }} data-testid="about">
       {/* hero: a golden rectangle split 1.618 : 1 — words left, orb right */}
@@ -477,7 +490,7 @@ export function About() {
             className="mt-[21px] flex flex-wrap items-center"
             style={{ gap: F[2] }}
           >
-            <span className="rounded-full border border-[var(--border-strong)] bg-[var(--glass)] px-[13px] py-[5px] text-[12px] tabular-nums text-muted">Version 0.1.0</span>
+            {version && <span className="rounded-full border border-[var(--border-strong)] bg-[var(--glass)] px-[13px] py-[5px] text-[12px] tabular-nums text-muted" data-testid="about-version">Version {version}</span>}
             <span className="inline-flex items-center gap-1.5 rounded-full px-[13px] py-[5px] text-[12px] text-muted" style={{ background: "rgb(var(--accent-rgb) / 0.10)" }}>
               <ShieldCheck size={13} className="text-brand-300" /> Local-first. Your data stays on your Mac.
             </span>
