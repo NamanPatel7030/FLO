@@ -32,9 +32,9 @@ export interface PermissionItem {
 }
 
 export const PERMISSION_ITEMS: PermissionItem[] = [
-  { key: "microphone", kind: "microphone", label: "Microphone", why: "To hear you while you hold fn or record a meeting.", required: true },
+  { key: "microphone", kind: "microphone", label: "Microphone", why: "To hear you while you hold your Flo key or record a meeting.", required: true },
   { key: "accessibility", kind: "accessibility", label: "Accessibility", why: "Needed to paste text into the app you're typing in.", required: true },
-  { key: "inputMonitoring", kind: "input", label: "Input Monitoring", why: "Needed to notice when you hold the fn key.", required: true },
+  { key: "inputMonitoring", kind: "input", label: "Input Monitoring", why: "Needed to notice when you hold your Flo key (control by default).", required: true },
   { key: "screen", kind: "screen", label: "Screen Recording", why: "Optional: screen-aware answers and Attention. Images stay on this device.", required: false },
 ];
 
