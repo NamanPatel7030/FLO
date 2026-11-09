@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowRight, Check, CheckCircle2, Lock, Clock, Flame, FolderKanban, Keyboard, Mic, Radio, Sparkles, StickyNote, Type, Eye } from "lucide-react";
 import { api } from "../../lib/api";
+import { Notchling } from "../../lib/NotchlingFace";
+import { moodForState } from "../../lib/notchling";
 import { formatDuration, formatNumber, greeting, groupTodos, relativeTime } from "../../lib/format";
 import type { Analytics, AttentionStatus } from "../../lib/types";
 import { assistantHotkeyLabel, hotkeyLabel, useStore } from "../store";
 import { Card, CardTitle, Empty, Kbd, ProgressRing, Skeleton, Stat, StatusPill, Button } from "../ui";
 import { ClaudeSessionsCard, TodoRow } from "../components";
 import { missingRequired, PERMISSION_ITEMS, usePermissions } from "../usePermissions";
-import { Logo } from "../Logo";
 import { Ocean } from "../../island/Ocean";
 
 export default function Home() {
@@ -36,7 +37,7 @@ export default function Home() {
         <div className="relative flex items-center justify-between gap-6">
           <div>
             <div className="flex items-center gap-2 text-[13px] text-muted">
-              <Logo size={20} glow={false} />
+              <Notchling mood={moodForState({ phase: "idle" })} avatar={settings?.avatar} accent={settings?.accent} size={22} />
               <span>{new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</span>
             </div>
             <h1 className="mt-1 text-[32px] font-semibold tracking-tight">

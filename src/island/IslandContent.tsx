@@ -14,6 +14,8 @@ import { NotchViz } from "./Ribbon";
 import { isLongReply, toPlainText } from "../lib/markdown";
 import { usePresence } from "../lib/presence";
 import { GAP as PANEL_GAP, QUICK_H } from "../lib/widgets";
+import { Notchling } from "../lib/NotchlingFace";
+import type { AvatarSettings, NotchlingMood } from "../lib/notchling";
 
 interface Props {
   variant: IslandVariant;
@@ -57,6 +59,9 @@ interface Props {
   followup?: "deep" | "web" | null;
   onFollowup: (mode: "deep" | "web") => void;
   onOpenAnswer: (id: string) => void;
+  /** Notchling settings; the face shows in the notch wings when enabled */
+  avatar?: AvatarSettings;
+  accent?: string;
 }
 
 /** Number of quick actions in the peek menu (for hit-testing). */
@@ -210,6 +215,10 @@ export function IslandContent(p: Props) {
   const { variant, notch, geo } = p;
   const elapsed = useClock(p.meeting.startedAt, p.meeting.live);
   const top = notch ? geo.notchHeight : 0;
+  const avatarOn = !!p.avatar && p.avatar.enabled !== false;
+  const faceH = Math.max(18, Math.min(28, (notch ? geo.notchHeight : 34) - 8));
+  const face = (mood: NotchlingMood, h = faceH) =>
+    avatarOn ? <Notchling variant="bare" mood={mood} avatar={p.avatar} accent={p.accent} size={h} testId="notch-avatar" /> : null;
 
   switch (variant) {
     case "collapsed":
@@ -275,7 +284,25 @@ export function IslandContent(p: Props) {
       // notch: the right wing belongs to the luminous ribbon (drawn by Island)
       return (
         <div className="h-full cursor-pointer" onClick={() => api.stopSession()} title={locked ? "Hands-free" : undefined}>
-          <Wings notch={notch} geo={geo} left={<ModeIcon mode={p.mode} locked={locked} />} right={notch ? null : wave} />
+          <Wings
+            notch={notch}
+            geo={geo}
+            left={
+              avatarOn ? (
+                <span className="relative inline-flex" aria-label="Listening">
+                  {face("listen")}
+                  {(p.mode !== "dictation" || locked) && (
+                    <span className="absolute -bottom-1 -right-2 scale-[0.62]">
+                      <ModeIcon mode={p.mode} locked={locked} />
+                    </span>
+                  )}
+                </span>
+              ) : (
+                <ModeIcon mode={p.mode} locked={locked} />
+              )
+            }
+            right={notch ? null : wave}
+          />
         </div>
       );
     }
@@ -283,7 +310,12 @@ export function IslandContent(p: Props) {
     case "working": {
       const kind = p.mode === "assistant" && p.phase === "thinking" ? "think" : "transcribe";
       // notch: the ribbon settles and carries a light pulse (drawn by Island); keep an a11y status here
-      if (notch) return <div role="status" aria-label={kind === "think" ? "Thinking" : "Transcribing"} className="h-full" />;
+      if (notch)
+        return (
+          <div role="status" aria-label={kind === "think" ? "Thinking" : "Transcribing"} className="h-full">
+            {avatarOn && <Wings notch={notch} geo={geo} left={face(kind === "think" ? "think" : "talk")} right={null} />}
+          </div>
+        );
       return (
         <div className="flex h-full items-center justify-center">
           <FlowWave width={Math.max(80, p.pillW - 32)} height={18} kind={kind} />
@@ -298,7 +330,7 @@ export function IslandContent(p: Props) {
           geo={geo}
           left={
             <motion.div initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "tween", duration: 0.24, ease: [0.22, 1, 0.36, 1] }}>
-              <CheckBadge />
+              {avatarOn ? face(p.mode === "meeting" ? "proud" : "happy") : <CheckBadge />}
             </motion.div>
           }
           right={
@@ -350,7 +382,7 @@ export function IslandContent(p: Props) {
           notch={notch}
           geo={geo}
           testId="error-card"
-          icon={<AlertTriangle size={15} className="text-amber-300" />}
+          icon={avatarOn ? face("worried", 20) : <AlertTriangle size={15} className="text-amber-300" />}
           actions={
             <>
               {wantsFix(msg) && (

@@ -178,7 +178,7 @@ test("settings: Account merged into General, Notch merged into Appearance; old l
   await expect(page.getByText("Accent", { exact: true })).toBeVisible();
 });
 
-test("accent recolours the brand palette and logo live", async ({ page }) => {
+test("accent recolours the brand palette live; the Notchling logo keeps its own colours", async ({ page }) => {
   await page.goto("/#/settings/appearance");
   await page.waitForFunction(() => !!(window as any).__floMock);
   const before = await page.evaluate(() => {
@@ -190,11 +190,8 @@ test("accent recolours the brand palette and logo live", async ({ page }) => {
   await page.getByLabel("Violet").click();
   // a brand-* utility (Tailwind) follows the accent with no reload
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector(".text-brand-300")!).color)).not.toBe(before);
-  // …and so does the logo (inline SVG drawn from the accent vars)
-  const logoStop = () => page.evaluate(() => getComputedStyle(document.querySelector('svg[aria-label="Flo"] linearGradient stop[offset="0.5"]')!).stopColor);
-  const violetStop = await logoStop();
-  await page.getByLabel("Sky").click();
-  await expect.poll(logoStop).not.toBe(violetStop);
+  // the logo is the Notchling mark: brand art, it doesn't change with the accent
+  await expect(page.locator('svg[aria-label="Flo"]').first()).toBeVisible();
 });
 
 test("clock widget: add time zones in Settings and they show in the notch widgets", async ({ page }) => {

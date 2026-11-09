@@ -110,6 +110,31 @@ pub struct Settings {
     /// go Away automatically when the screen locks or after `auto_away_minutes` idle (macOS)
     pub auto_away: bool,
     pub auto_away_minutes: u32,
+    /// Notchling, Flo's mascot in the notch (Settings → Appearance → Your notch avatar)
+    pub avatar: NotchAvatar,
+}
+
+/// How the Notchling looks. Defaults are "Classic · Lucid". Unknown values fall back on the UI side.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NotchAvatar {
+    /// show the face in the notch
+    pub enabled: bool,
+    /// "pill" | "round" | "happy" | "anime" | "visor"
+    pub eyes: String,
+    /// eye glow: "lucid" | "aurora" | "mint" | "sunset" | "accent"
+    pub glow: String,
+    /// "wave" | "smile" | "cat"
+    pub mouth: String,
+    pub blush: bool,
+    /// "none" | "headphones" | "halo" | "sparkle"
+    pub accessory: String,
+}
+
+impl Default for NotchAvatar {
+    fn default() -> Self {
+        Self { enabled: true, eyes: "pill".into(), glow: "lucid".into(), mouth: "wave".into(), blush: true, accessory: "none".into() }
+    }
 }
 
 impl Default for Settings {
@@ -168,6 +193,7 @@ impl Default for Settings {
             presence: "active".into(),
             auto_away: false,
             auto_away_minutes: 10,
+            avatar: NotchAvatar::default(),
         }
     }
 }

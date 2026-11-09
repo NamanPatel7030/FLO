@@ -60,6 +60,8 @@ import { applyTheme, onNotchPreview, onSettingsBroadcast, watchSystemTheme } fro
 import { isStopped, markStopped, stopMeetingNow } from "../lib/meetingStops";
 import { playConfigured } from "../lib/cueSounds";
 import { getNotchScale, setNotchScale } from "../lib/format";
+import { Notchling } from "../lib/NotchlingFace";
+import { moodForState, type AvatarSettings } from "../lib/notchling";
 
 export interface MeetingInfo {
   live: boolean;
@@ -1000,7 +1002,7 @@ export default function Island() {
               notchWidth={geo.notchWidth}
               wing={ISLAND_WING}
               mode={shown === "listening" ? "listen" : shown === "done" ? "done" : phase === "thinking" ? "think" : "transcribe"}
-              leftWing={shown === "working"}
+              leftWing={shown === "working" && settings?.avatar?.enabled === false}
               bright={message === "hands-free"}
               sim={preview}
             />
@@ -1087,6 +1089,8 @@ export default function Island() {
                 )
               ) : (
                 <IslandContent
+                  avatar={settings?.avatar}
+                  accent={settings?.accent}
                   variant={shown}
                   notch={notch}
                   geo={geo}
@@ -1166,7 +1170,7 @@ export default function Island() {
           )}
           {/* the music live activity stays put while the shape morphs (collapsed → tray → panel) */}
           {notch && media && ["tray", "trayTooltip", "peek"].includes(shown) && <MusicWings np={media} geo={geo} />}
-          {notch && panelOpen && <PanelHeader pillW={pill.width} nh={geo.notchHeight} inner={Math.max(geo.notchWidth / 2 + (musicLive ? MUSIC_WING : 0), ...(layout?.slots ?? []).map((s) => Math.abs(s.cx) + 12))} />}
+          {notch && panelOpen && <PanelHeader pillW={pill.width} nh={geo.notchHeight} inner={Math.max(geo.notchWidth / 2 + (musicLive ? MUSIC_WING : 0), ...(layout?.slots ?? []).map((s) => Math.abs(s.cx) + 12))} avatar={settings?.avatar} accent={settings?.accent} />}
         </div>
       </motion.div>
       <AnimatePresence>
@@ -1229,7 +1233,7 @@ const PANEL_DATE = new Intl.DateTimeFormat([], { weekday: "short", month: "short
 
 /** The notch row of the open panel: a greeting on the left wing, today's date on the right,
  *  shown only where they clear the camera, the music activity and tray icons. */
-function PanelHeader({ pillW, nh, inner }: { pillW: number; nh: number; inner: number }) {
+function PanelHeader({ pillW, nh, inner, avatar, accent }: { pillW: number; nh: number; inner: number; avatar?: AvatarSettings; accent?: string }) {
   const room = pillW / 2 - inner - 18;
   if (room < 70) return null;
   const now = new Date();
@@ -1241,8 +1245,11 @@ function PanelHeader({ pillW, nh, inner }: { pillW: number; nh: number; inner: n
       animate={{ opacity: 1 }}
       transition={{ type: "tween", duration: 0.2, delay: 0.12, ease: EASE_OUT }}
     >
-      <span className="truncate text-white/80" style={{ maxWidth: room }}>
-        {greeting(now.getHours())}
+      <span className="flex min-w-0 items-center gap-2" style={{ maxWidth: room }}>
+        {avatar && avatar.enabled !== false && room >= 110 && (
+          <Notchling variant="bare" mood={moodForState({ phase: "idle", hour: now.getHours() })} avatar={avatar} accent={accent} size={Math.max(18, Math.min(26, nh - 10))} testId="panel-avatar" />
+        )}
+        <span className="truncate text-white/80">{greeting(now.getHours())}</span>
       </span>
       <span className="truncate text-white/45" style={{ maxWidth: room }}>
         {PANEL_DATE.format(now)}

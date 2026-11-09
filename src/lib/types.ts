@@ -1,3 +1,4 @@
+import type { AvatarSettings } from "./notchling";
 // ─────────────────────────────────────────────────────────────────────────────
 // Flo IPC contract. Mirrors src-tauri/src/model.rs (serde camelCase).
 // Any change here MUST be mirrored in Rust.
@@ -117,6 +118,8 @@ export interface Settings {
   /** go Away automatically when the screen locks or after `autoAwayMinutes` idle (macOS) */
   autoAway?: boolean;
   autoAwayMinutes?: number;
+  /** Notchling, Flo's mascot in the notch (Settings → Appearance) */
+  avatar?: AvatarSettings;
 }
 
 // ── presence + phone relay (src-tauri/src/push.rs, docs/mobile-api.md) ──────

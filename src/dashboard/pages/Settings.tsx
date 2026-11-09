@@ -18,6 +18,7 @@ import { playCue, SOUND_PACKS, type SoundPack } from "../../lib/cueSounds";
 import { DEFAULT_WIDGETS, WIDGETS, loadWidgets, saveWidgets, type WidgetId } from "../../lib/widgets";
 import { WidgetPreview } from "../../island/Widgets";
 import { UpdateSettingsRow } from "../UpdateCard";
+import { AvatarEditor } from "../AvatarEditor";
 import { PresenceSettings } from "../Presence";
 import { AutoContinueSettings } from "../AutoContinue";
 import { formatZoneTime, hourDiffLabel, loadZones, MAX_ZONES, onZonesChange, saveZones, searchCities, type ClockZone, type ZoneCity } from "../../lib/timezones";
@@ -276,6 +277,11 @@ function Appearance({ s, set }: P) {
     <div className="space-y-6">
       <Section first title="Theme" hint="How Flo's window looks. The notch stays black: it's part of your Mac.">
         <ThemeCard s={s} set={set} />
+      </Section>
+      <Section title="Your avatar" hint="Flo's little face lives in your notch and reacts as you work. Make it yours.">
+        <Card className="p-4">
+          <AvatarEditor value={s.avatar} accent={s.accent} onChange={(avatar) => set({ avatar })} />
+        </Card>
       </Section>
       <Section title="Colour" hint="One accent recolours everything: buttons, logo, charts and the notch.">
         <AccentCard s={s} set={set} />

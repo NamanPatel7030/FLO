@@ -26,6 +26,9 @@ import { ClaudeAvatar } from "../island/Tray";
 import { Logo } from "./Logo";
 import { Aurora, Burst } from "./onboarding/Aurora";
 import * as snd from "../lib/onboardSounds";
+import { Guide, NotchDrop } from "./onboarding/Mascot";
+import { AvatarEditor } from "./AvatarEditor";
+import type { NotchlingMood } from "../lib/notchling";
 
 const STEPS = [
   "welcome", "try", "profile", "personalise", "permissions", "setup",
@@ -38,6 +41,18 @@ const STEP_NAME: Record<Step, string> = {
   "glimpse-meetings": "Meetings", typing: "Typing speed", done: "Done",
 };
 const RECOMMENDED = "large-v3-turbo-q5_0";
+
+/** What Notchling says on each step (welcome, try, permissions and done drive their own). */
+const GUIDE: Partial<Record<Step, { mood: NotchlingMood; line: (name: string) => string }>> = {
+  profile: { mood: "happy", line: (n) => `Nice to meet you${n ? `, ${n}` : ""}! What will we write together?` },
+  personalise: { mood: "think", line: () => "I drafted a profile from your answers. Change anything you like." },
+  setup: { mood: "think", line: () => "Pick how I listen and think. On-device keeps everything on your Mac." },
+  "glimpse-handsfree": { mood: "listen", line: () => "Double-tap and I keep listening. No hands needed." },
+  "glimpse-ask": { mood: "think", line: () => "Ask me about anything on your screen." },
+  "glimpse-tray": { mood: "cool", line: () => "I keep an eye on your coding agents, so you don't have to." },
+  "glimpse-meetings": { mood: "talk", line: () => "I can take meeting notes while you stay in the conversation." },
+  typing: { mood: "excited", line: () => "Quick typing test? Then I can show how much time talking saves you." },
+};
 
 // The one question: what the user will use Flo for. Big icon tiles (no emojis).
 const USE_TILES: { id: Use; label: string; icon: React.ReactNode }[] = [
@@ -199,18 +214,19 @@ export function Onboarding() {
             transition={{ type: "spring", stiffness: 260, damping: 30 }}
             className="max-h-full w-full max-w-[760px] overflow-y-auto overflow-x-hidden py-4"
           >
-            {step === "welcome" && <Welcome onStart={() => go(1)} />}
-            {step === "try" && <TryDemo keyLabel={keys.dict} onDone={() => go(1)} />}
+            {GUIDE[step] && <Guide mood={GUIDE[step]!.mood} line={GUIDE[step]!.line(name.trim())} avatar={s.avatar} accent={s.accent} />}
+            {step === "welcome" && <Welcome onStart={() => go(1)} avatar={s.avatar} accent={s.accent} name={name.trim()} />}
+            {step === "try" && <TryDemo keyLabel={keys.dict} onDone={() => go(1)} avatar={s.avatar} accent={s.accent} />}
             {step === "profile" && <Profile name={name} setName={setName} uses={uses} setUses={setUses} />}
             {step === "personalise" && <Personalise prompt={prompt ?? ""} setPrompt={setPrompt} seeds={seeds} chosen={chosenSeeds} setChosen={setChosenSeeds} />}
-            {step === "permissions" && <Permissions />}
+            {step === "permissions" && <Permissions avatar={s.avatar} accent={s.accent} />}
             {step === "setup" && <Setup s={s} set={set} />}
             {step === "glimpse-handsfree" && <DemoHandsFree keyLabel={keys.dict} onDone={() => go(1)} />}
             {step === "glimpse-ask" && <DemoAsk keyLabel={keys.asst} onDone={() => go(1)} />}
             {step === "glimpse-tray" && <DemoTray onDone={() => go(1)} />}
             {step === "glimpse-meetings" && <DemoMeetings s={s} set={set} />}
             {step === "typing" && <TypingOffer s={s} onDone={() => go(1)} />}
-            {step === "done" && <Done keys={keys} />}
+            {step === "done" && <Done keys={keys} s={s} set={set} />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -234,13 +250,11 @@ export function Onboarding() {
 
 // ── slides ───────────────────────────────────────────────────────────────────
 
-function Welcome({ onStart }: { onStart: () => void }) {
+function Welcome({ onStart, avatar, accent, name }: { onStart: () => void; avatar?: Settings["avatar"]; accent?: string; name?: string }) {
   return (
     <div className="flex flex-col items-center text-center">
-      <motion.div initial={{ scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 240, damping: 18 }}>
-        <Logo size={92} />
-      </motion.div>
-      <motion.h1 initial={{ opacity: 0, y: 18, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ delay: 0.15, duration: 0.6 }} className="mt-8 text-[46px] font-semibold leading-tight tracking-tight">
+      <NotchDrop avatar={avatar} accent={accent} name={name} />
+      <motion.h1 initial={{ opacity: 0, y: 18, filter: "blur(8px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} transition={{ delay: 0.15, duration: 0.6 }} className="mt-2 text-[46px] font-semibold leading-tight tracking-tight">
         Welcome to Flo
       </motion.h1>
       <motion.p initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.5 }} className="mt-3 max-w-[460px] text-[17px] text-white/60">
@@ -262,7 +276,7 @@ const PHRASE = "Hello Flo, this is my first dictation";
 
 /** THE WOW: dictation before any question. Reacts to real backend events; a "Watch it" button
  *  plays a self-contained scripted version so the magic lands even if the user doesn't speak. */
-function TryDemo({ keyLabel, onDone }: { keyLabel: string; onDone: () => void }) {
+function TryDemo({ keyLabel, onDone, avatar, accent }: { keyLabel: string; onDone: () => void; avatar?: Settings["avatar"]; accent?: string }) {
   const [mode, setMode] = useState<RibbonMode | null>(null);
   const [text, setText] = useState("");
   const [typed, setTyped] = useState("");
@@ -310,6 +324,13 @@ function TryDemo({ keyLabel, onDone }: { keyLabel: string; onDone: () => void })
 
   return (
     <div className="flex flex-col items-center text-center" data-testid="demo" data-done={done ? "true" : "false"}>
+      <Guide
+        mood={done ? "celebrate" : mode === "listen" ? "listen" : mode === "transcribe" || mode === "think" ? "talk" : "happy"}
+        line={done ? "You did it! That's dictation, and it works in every app." : mode === "listen" ? "I'm all ears. Keep talking!" : mode === "transcribe" || mode === "think" ? "Writing it down for you…" : `Try me! Hold ${keyLabel} and say the line below.`}
+        avatar={avatar}
+        accent={accent}
+        size={72}
+      />
       <h2 className="text-[30px] font-semibold tracking-tight">See it in one breath</h2>
       <p className="mt-2 text-[15px] text-white/60">
         Click the box, hold <Key>{keyLabel}</Key> and say <span className="font-medium text-brand-200">"{PHRASE}"</span>
@@ -515,11 +536,33 @@ function Personalise({ prompt, setPrompt, seeds, chosen, setChosen }: { prompt: 
   );
 }
 
-function Permissions() {
+function Permissions({ avatar, accent }: { avatar?: Settings["avatar"]; accent?: string }) {
   const perms = usePermissions(2000);
+  const [asked, setAsked] = useState<string | null>(null);
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    setWaited(false);
+    if (!asked) return;
+    const t = setTimeout(() => setWaited(true), 7000);
+    return () => clearTimeout(t);
+  }, [asked]);
+  const required = PERMISSION_ITEMS.filter((it) => it.required);
+  const allOk = !!perms && required.every((it) => perms[it.key]);
+  const micOk = !!perms?.microphone;
+  const stuck = waited && !!asked && !perms?.[asked as keyof typeof perms];
+  const guide: { mood: NotchlingMood; line: string } = !perms
+    ? { mood: "think", line: "Let me check what I'm allowed to do…" }
+    : allOk
+      ? { mood: "happy", line: "All set, thank you! I can hear you and type for you now." }
+      : stuck
+        ? { mood: "worried", line: "Hmm, I still can't see it. Flip the switch in System Settings, then come back." }
+        : !micOk
+          ? { mood: "listen", line: "May I use your microphone? I only listen while you hold the key." }
+          : { mood: "think", line: "Almost there. Accessibility lets me type wherever your cursor is." };
   const ICON: Record<string, React.ReactNode> = { microphone: <Mic size={22} />, accessibility: <Keyboard size={22} />, inputMonitoring: <Keyboard size={22} />, screen: <Monitor size={22} /> };
   return (
     <div className="mx-auto max-w-[520px]">
+      <Guide mood={guide.mood} line={guide.line} avatar={avatar} accent={accent} />
       <Title icon={<ShieldCheck size={28} />} title="A few permissions" sub="Checked live. Grant each one in System Settings, then come back here." />
       <div className="flex flex-col gap-2.5">
         {PERMISSION_ITEMS.map((it) => {
@@ -538,7 +581,13 @@ function Permissions() {
               {ok ? (
                 <span className="text-[13px] font-medium text-emerald-300">Granted</span>
               ) : (
-                <Button size="sm" onClick={() => api.openPermissionSettings(it.kind)}>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setAsked(it.key);
+                    api.openPermissionSettings(it.kind);
+                  }}
+                >
                   Grant
                 </Button>
               )}
@@ -779,7 +828,14 @@ function Key({ children }: { children: React.ReactNode }) {
   return <kbd className="keycap keycap-active mx-0.5">{children}</kbd>;
 }
 
-function Done({ keys }: { keys: { dict: string; asst: string } }) {
+function Done({ keys, s, set }: { keys: { dict: string; asst: string }; s: Settings; set: (p: Partial<Settings>) => void }) {
+  const reduce = useReducedMotion();
+  const [mood, setMood] = useState<NotchlingMood>(reduce ? "love" : "celebrate");
+  useEffect(() => {
+    if (reduce) return;
+    const t = setTimeout(() => setMood("love"), 2600);
+    return () => clearTimeout(t);
+  }, [reduce]);
   const rows = useMemo(
     () => [
       [<Key key="a">{keys.dict}</Key>, "Hold to dictate anywhere"],
@@ -792,12 +848,8 @@ function Done({ keys }: { keys: { dict: string; asst: string } }) {
   );
   return (
     <div className="flex flex-col items-center py-2 text-center">
-      <motion.div initial={{ scale: 0.5, rotate: -25 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 360, damping: 15 }}>
-        <div className="flex h-20 w-20 items-center justify-center rounded-[28px] bg-gradient-to-br from-[#3dbbff] to-[#1a9be0] shadow-[0_0_60px_-8px_rgba(61,187,255,0.9)]">
-          <Check size={38} strokeWidth={3} className="text-white" />
-        </div>
-      </motion.div>
-      <motion.h2 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-6 text-[32px] font-semibold tracking-tight">You're all set</motion.h2>
+      <Guide mood={mood} line={mood === "love" ? "We're a team now. Make me yours below, or just start talking." : "Woohoo! You're all set!"} avatar={s.avatar} accent={s.accent} size={84} />
+      <motion.h2 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="text-[32px] font-semibold tracking-tight">You're all set</motion.h2>
       <p className="mt-1.5 text-[14px] text-white/55">Flo lives in your notch. Here's everything you need.</p>
       <div className="mt-7 w-full max-w-[460px] divide-y divide-white/8 rounded-2xl border border-white/8 bg-white/[0.03] px-5 text-left" data-testid="cheatsheet">
         {rows.map(([k, label], n) => (
@@ -807,6 +859,12 @@ function Done({ keys }: { keys: { dict: string; asst: string } }) {
           </motion.div>
         ))}
       </div>
+      <details className="mt-5 w-full max-w-[560px] rounded-2xl border border-white/8 bg-white/[0.03] px-5 py-3 text-left" data-testid="onboard-avatar">
+        <summary className="cursor-pointer text-[14px] font-medium text-white/85">Make me yours: eyes, glow and extras</summary>
+        <div className="mt-4">
+          <AvatarEditor compact value={s.avatar} accent={s.accent} onChange={(avatar) => set({ avatar })} />
+        </div>
+      </details>
     </div>
   );
 }

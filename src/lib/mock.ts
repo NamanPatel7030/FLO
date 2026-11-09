@@ -1,4 +1,5 @@
 // In-browser mock backend so the full UI runs with `npm run dev` outside Tauri.
+import { DEFAULT_AVATAR } from "./notchling";
 import type {
   ConfirmEvent,
   Integration,
@@ -115,6 +116,7 @@ const settings: Settings = {
   presence: "active",
   autoAway: false,
   autoAwayMinutes: 10,
+  avatar: { ...DEFAULT_AVATAR },
 };
 
 const keys = new Set<string>(["groq"]);
