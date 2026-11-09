@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only focus/click/window events: the service sleeps until you tap a text field. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+  android:accessibilityEventTypes="typeViewFocused|typeViewClicked|typeWindowStateChanged"
+  android:accessibilityFeedbackType="feedbackGeneric"
+  android:accessibilityFlags="flagDefault"
+  android:canRetrieveWindowContent="true"
+  android:notificationTimeout="150"
+  android:description="@string/flo_bubble_description" />

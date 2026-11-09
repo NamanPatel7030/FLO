@@ -2,7 +2,7 @@ node_modules/
 .expo/
 dist/
 web-build/
-android/
+/android/
 ios/
 *.apk
 *.aab

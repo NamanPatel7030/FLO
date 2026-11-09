@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="flo_bubble_label">Flo voice bubble</string>
+  <string name="flo_bubble_description">Shows a small Flo bubble next to the text field you tap. Hold Dictate and speak to type, or hold Ask and speak to ask Flo. Flo only reads the field you are typing in, never passwords, and only listens while you hold a button.</string>
+</resources>

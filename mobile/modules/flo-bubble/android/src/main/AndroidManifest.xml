@@ -1,0 +1,25 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <queries>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+  </queries>
+  <application>
+    <!-- The Flo voice bubble: appears next to a text field you tap in any app. Only the system can
+         bind it (BIND_ACCESSIBILITY_SERVICE), and only after the user turns it on in Accessibility. -->
+    <service
+      android:name="expo.modules.flobubble.FloBubbleService"
+      android:label="@string/flo_bubble_label"
+      android:exported="true"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/flo_bubble_service" />
+    </service>
+  </application>
+</manifest>
