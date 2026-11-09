@@ -95,7 +95,8 @@ rm -rf "$CARRY" && mkdir -p "$CARRY"
 for f in Flo-android.apk android-latest.json Flo-windows-x64-setup.exe Flo-windows-x64.msi Flo-linux-x86_64.AppImage Flo-linux-amd64.deb; do
   if gh release download -R "$REPO" -p "$f" -D "$CARRY" >/dev/null 2>&1; then ASSETS+=("$CARRY/$f"); else echo "  (no $f on the current release to carry forward)"; fi
 done
-git push -q "$(git remote | head -1)" HEAD 2>/dev/null || true  # the tagged commit must exist on GitHub
+# the tagged commit must exist on GitHub (works from a detached checkout too)
+git push -q "$(git remote | head -1)" "HEAD:refs/tags/v$VERSION" || { echo "Couldn't push the release commit to GitHub"; exit 1; }
 gh release create "v$VERSION" -R "$REPO" --target "$(git rev-parse HEAD)" \
   --title "Flo $VERSION" --notes "${NOTES:-Flo $VERSION}" --latest "${ASSETS[@]}"
 # the local manifest would shadow the published one on a dev server; keep it out of the way
