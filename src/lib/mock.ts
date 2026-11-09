@@ -257,6 +257,9 @@ const todos: Todo[] = [
   if (t4) t4.person = "Rahul";
 }
 
+/** n1: names the (mock) summary pass heard in the conversation ("Ana, can you…" → Speaker 2 answers) */
+const mockSpeakerSuggestions: Record<string, string> = { "Speaker 2": "Ana" };
+
 const notes: Note[] = [
   {
     id: "n1",
@@ -268,9 +271,10 @@ const notes: Note[] = [
     live: false,
     summary:
       "Team agreed to move the Apollo dashboard to glass cards with a violet→cyan accent. Ana owns the component library; launch target is the 20th. Open question: dark-mode contrast for charts.",
-    actionItems: ["Ana to finalize component library by Monday", "Send updated deck to Northwind", "Check chart contrast in dark mode"],
+    actionItems: ["Speaker 2: finalize the component library by Monday", "You: send the updated deck to Northwind", "Speaker 1: check chart contrast in dark mode"],
     transcript: [
       { t: 4, text: "Okay, let's start with the dashboard cards.", speaker: "You" },
+      { t: 12, text: "हाँ, नए कार्ड्स काफ़ी साफ़ दिख रहे हैं।", speaker: "Rahul" },
       { t: 31, text: "I like the frosted look, it feels much lighter than the old one.", speaker: "Speaker 1" },
       { t: 88, text: "Ana, can you own the component library?", speaker: "You" },
       { t: 95, text: "Yes, I can have it by Monday.", speaker: "Speaker 2" },
@@ -1107,7 +1111,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "stop_meeting":
       return stopMockMeeting();
     case "meeting_info": {
-      if (args.noteId === "n1") return { capture: "mic+call", voiced: ["Speaker 1", "Speaker 2"] };
+      if (args.noteId === "n1")
+        return { capture: "mic+call", voiced: ["Speaker 1", "Speaker 2", "Rahul"], suggestions: { ...mockSpeakerSuggestions }, knownVoices: ["Meera", "Rahul"] };
       if (args.noteId === "n2") return { capture: "mic", captureNote: "Call audio capture needs macOS 14.2 or later", voiced: [] };
       return liveNote && args.noteId === liveNote.id ? { capture: "mic+call", voiced: [] } : null;
     }
@@ -1116,6 +1121,13 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       const to = String(args.to ?? "").trim();
       if (!n || !to || to === args.from) return n ?? null;
       n.transcript = n.transcript.map((s) => (s.speaker === args.from ? { ...s, speaker: to } : s));
+      // like the backend: generic labels in the summary / action items follow, the suggestion is used up
+      if (/^Speaker \d+$/.test(args.from)) {
+        const re = new RegExp(`\\b${args.from}\\b`, "g");
+        n.summary = n.summary.replace(re, to);
+        n.actionItems = n.actionItems.map((a) => a.replace(re, to));
+      }
+      delete mockSpeakerSuggestions[args.from];
       mockEmit(EV.notes, {});
       return { ...n };
     }

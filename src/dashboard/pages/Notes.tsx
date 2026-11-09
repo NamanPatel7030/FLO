@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { ArrowDown, ListChecks, Mic, Pencil, Plus, Radio, Sparkles, Square, StickyNote, Trash2, Copy, Users } from "lucide-react";
@@ -8,19 +8,12 @@ import { api, on } from "../../lib/api";
 import { formatClock, formatDuration, relativeTime } from "../../lib/format";
 import { EV, type MeetingEvent, type MeetingInfo, type MeetingSegment, type Note } from "../../lib/types";
 import { useStore } from "../store";
-import { Button, Card, CardTitle, Empty, Input, PageHeader, Skeleton, Tooltip } from "../ui";
+import { shownName, speakerColor as defaultColor, speakerPalette, speakerStats, splitOwner } from "../../lib/speakers";
 
-/** One colour per speaker, stable across notes: You, then Speaker N by number, names by hash. */
-const SPEAKER_COLORS = ["#8b5cf6", "#f59e0b", "#10b981", "#ec4899", "#3b82f6", "#ef4444", "#14b8a6", "#a855f7"];
-function speakerColor(who?: string): string {
-  if (!who || who === "You") return "#0ea5e9";
-  if (who === "Others") return "#94a3b8";
-  const n = /^Speaker (\d+)$/.exec(who);
-  if (n) return SPEAKER_COLORS[(Number(n[1]) - 1) % SPEAKER_COLORS.length];
-  let h = 0;
-  for (const c of who) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return SPEAKER_COLORS[h % SPEAKER_COLORS.length];
-}
+/** Per-note speaker colours (no two people share one); falls back to the global mapping. */
+const ColorCtx = createContext<(who?: string) => string>(defaultColor);
+const useSpeakerColor = () => useContext(ColorCtx);
+import { Button, Card, CardTitle, Empty, Input, PageHeader, Skeleton, Tooltip } from "../ui";
 
 /** Keep segments ordered by start time (the mic and call tracks finish out of order). */
 function insertSorted(segs: MeetingSegment[], s: MeetingSegment): MeetingSegment[] {
@@ -68,7 +61,8 @@ function CaptureBadge({ info }: { info: MeetingInfo | null }) {
 }
 
 /** Speaker label in its colour; click to rename (everyone but "You"). */
-function SpeakerTag({ who, onRename }: { who: string; onRename?: (to: string) => void }) {
+function SpeakerTag({ who, me, names, onRename }: { who: string; me?: string; names?: string[]; onRename?: (to: string) => void }) {
+  const speakerColor = useSpeakerColor();
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(who);
   const color = speakerColor(who);
@@ -76,6 +70,7 @@ function SpeakerTag({ who, onRename }: { who: string; onRename?: (to: string) =>
     return (
       <input
         autoFocus
+        list={names?.length ? "flo-known-voices" : undefined}
         data-testid="speaker-rename-input"
         aria-label={`Rename ${who}`}
         className="w-32 rounded-md border border-[var(--border)] bg-[var(--glass)] px-1.5 py-0.5 text-[12px] font-semibold outline-none"
@@ -112,14 +107,15 @@ function SpeakerTag({ who, onRename }: { who: string; onRename?: (to: string) =>
       className={clsx("group inline-flex items-center gap-1 text-[12px] font-semibold", canRename && "cursor-pointer hover:underline")}
       style={{ color }}
     >
-      {who}
+      {shownName(who, me)}
       {canRename && <Pencil size={10} className="opacity-0 transition group-hover:opacity-70" />}
     </button>
   );
 }
 
 /** Transcript rows: a colour bar per speaker, the name shown whenever the speaker changes. */
-function TranscriptRows({ segs, onRename }: { segs: MeetingSegment[]; onRename?: (from: string, to: string) => void }) {
+function TranscriptRows({ segs, me, names, onRename }: { segs: MeetingSegment[]; me?: string; names?: string[]; onRename?: (from: string, to: string) => void }) {
+  const speakerColor = useSpeakerColor();
   return (
     <>
       {segs.map((s, i) => {
@@ -136,13 +132,84 @@ function TranscriptRows({ segs, onRename }: { segs: MeetingSegment[]; onRename?:
             <span className="w-11 shrink-0 pt-[1px] font-mono text-[11.5px] tabular-nums text-faint">{formatClock(s.t)}</span>
             {who && <span className="w-[3px] shrink-0 rounded-full" style={{ background: speakerColor(who), opacity: 0.75 }} aria-hidden />}
             <div className="min-w-0">
-              {showWho && <SpeakerTag who={who!} onRename={onRename ? (to) => onRename(who!, to) : undefined} />}
+              {showWho && <SpeakerTag who={who!} me={me} names={names} onRename={onRename ? (to) => onRename(who!, to) : undefined} />}
               <div className="text-[13.5px] leading-relaxed selectable">{s.text}</div>
             </div>
           </motion.div>
         );
       })}
     </>
+  );
+}
+
+/** Everyone on the call: colour, name, share of the talking, and one-click names Flo heard. */
+function SpeakersBar({
+  segs,
+  me,
+  info,
+  onRename,
+}: {
+  segs: MeetingSegment[];
+  me?: string;
+  info: MeetingInfo | null;
+  onRename: (from: string, to: string) => void;
+}) {
+  const speakerColor = useSpeakerColor();
+  const stats = speakerStats(segs);
+  if (stats.length < 2 && !stats.some((s) => s.who !== "You")) return null;
+  const suggestions = Object.entries(info?.suggestions ?? {}).filter(([from]) => stats.some((s) => s.who === from));
+  return (
+    <div className="mb-4 flex flex-col gap-2" data-testid="speakers-bar">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {stats.map(({ who, share }) => (
+          <span
+            key={who}
+            data-testid="speaker-chip"
+            data-speaker={who}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--glass)] px-2.5 py-1 text-[12px] font-medium"
+          >
+            <span className="h-2 w-2 rounded-full" style={{ background: speakerColor(who) }} aria-hidden />
+            <span style={{ color: speakerColor(who) }}>{shownName(who, me)}</span>
+            {who === "You" && me?.trim() && <span className="text-[10.5px] text-faint">you</span>}
+            <span className="tabular-nums text-faint">{share}%</span>
+          </span>
+        ))}
+      </div>
+      {suggestions.map(([from, to]) => (
+        <div
+          key={from}
+          data-testid="speaker-suggestion"
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[var(--border)] px-2.5 py-1.5 text-[12px] text-muted"
+        >
+          <Sparkles size={12} className="text-brand-500" />
+          <span>
+            <span className="font-semibold" style={{ color: speakerColor(from) }}>
+              {from}
+            </span>{" "}
+            sounds like <span className="font-semibold text-[var(--fg)]">{to}</span> from the conversation.
+          </span>
+          <Button size="sm" variant="glass" onClick={() => onRename(from, to)}>
+            Name them {to}
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Action item with its owner as a coloured name (Fathom style). */
+function ActionItemText({ item, me }: { item: string; me?: string }) {
+  const speakerColor = useSpeakerColor();
+  const { owner, task } = splitOwner(item);
+  if (!owner) return <span className="text-[13px]">• {task}</span>;
+  return (
+    <span className="text-[13px]">
+      •{" "}
+      <span data-testid="action-owner" className="font-semibold" style={{ color: speakerColor(owner) }}>
+        {shownName(owner, me)}
+      </span>
+      : {task}
+    </span>
   );
 }
 
@@ -220,6 +287,7 @@ export default function Notes() {
 }
 
 function LiveNote({ note }: { note: Note }) {
+  const me = useStore((s) => s.settings?.userName);
   const { toast, refreshNotes } = useStore();
   const [stopping, setStopping] = useState(false);
   const stop = async () => {
@@ -319,7 +387,9 @@ function LiveNote({ note }: { note: Note }) {
         <CardTitle>Live transcript</CardTitle>
         <div ref={scroller} onScroll={onScroll} className="flex max-h-[46vh] flex-col gap-2.5 overflow-y-auto pr-1" data-testid="live-transcript">
           <AnimatePresence initial={false}>
-            <TranscriptRows segs={segs} />
+            <ColorCtx.Provider value={speakerPalette(segs.map((x) => x.speaker))}>
+              <TranscriptRows segs={segs} me={me} />
+            </ColorCtx.Provider>
           </AnimatePresence>
           <div className="flex gap-3" data-testid="live-line">
             <span className="w-11 shrink-0 pt-[1px] font-mono text-[11.5px] tabular-nums text-brand-300/70">{formatClock(elapsed)}</span>
@@ -373,6 +443,8 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
   const { go, refreshNotes } = useStore();
   const [added, setAdded] = useState<Set<number>>(new Set());
   const info = useMeetingInfo(note.id, note.transcript);
+  const me = useStore((s) => s.settings?.userName);
+  const names = [...new Set([...(info?.knownVoices ?? []), ...Object.values(info?.suggestions ?? {})])];
   const rename = async (from: string, to: string) => {
     try {
       await api.renameSpeaker(note.id, from, to);
@@ -383,7 +455,9 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
       onToast({ kind: "error", text: `Couldn't rename: ${e}` });
     }
   };
+  const palette = useMemo(() => speakerPalette(note.transcript.map((x) => x.speaker)), [note.transcript]);
   return (
+    <ColorCtx.Provider value={palette}>
     <div className="flex flex-col gap-4">
       <Card strong className="p-5">
         <div className="flex items-start justify-between">
@@ -434,7 +508,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
             <div className="flex flex-col gap-1">
               {note.actionItems.map((a, i) => (
                 <div key={i} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-[var(--glass)]">
-                  <span className="text-[13px]">• {a}</span>
+                  <ActionItemText item={a} me={me} />
                   <Button
                     size="sm"
                     variant={added.has(i) ? "ghost" : "glass"}
@@ -459,10 +533,19 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
         {note.transcript.some((s) => s.speaker && s.speaker !== "You") && (
           <p className="-mt-1 mb-3 text-[11.5px] text-faint">Click a speaker's name to rename them everywhere in this note.</p>
         )}
+        <SpeakersBar segs={note.transcript} me={me} info={info} onRename={rename} />
+        {names.length > 0 && (
+          <datalist id="flo-known-voices">
+            {names.map((n) => (
+              <option key={n} value={n} />
+            ))}
+          </datalist>
+        )}
         <div className="flex flex-col gap-2.5" data-testid="note-transcript">
-          <TranscriptRows segs={note.transcript} onRename={rename} />
+          <TranscriptRows segs={note.transcript} me={me} names={names} onRename={rename} />
         </div>
       </Card>
     </div>
+    </ColorCtx.Provider>
   );
 }

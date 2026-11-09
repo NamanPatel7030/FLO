@@ -285,7 +285,12 @@ test("meeting notes: speakers have their own colours and can be renamed across t
   await mock(page);
   const tr = page.locator('[data-testid="note-transcript"]');
   await expect(page.locator('[data-testid="capture-mode"]')).toHaveText("You + call audio");
-  await expect(tr.locator('[data-testid="speaker-tag"]').first()).toHaveText("You");
+  // your own lines carry your profile name (stored as the stable label "You")
+  await expect(tr.locator('[data-testid="speaker-tag"]').first()).toHaveAttribute("data-speaker", "You");
+  await expect(tr.locator('[data-testid="speaker-tag"]').first()).toHaveText("Parth");
+  // everyone on the call, with their share of the talking; owners on action items
+  await expect(page.locator('[data-testid="speaker-chip"]')).toHaveCount(4);
+  await expect(page.locator('[data-testid="action-owner"]').first()).toHaveText("Speaker 2");
   // consistent colour per speaker, different between speakers
   const colorOf = (who: string) => tr.locator(`[data-speaker="${who}"]`).first().getAttribute("data-color");
   const [you, s1, s2] = [await colorOf("You"), await colorOf("Speaker 1"), await colorOf("Speaker 2")];
@@ -305,11 +310,24 @@ test("meeting notes: speakers have their own colours and can be renamed across t
   await expect(page.getByText("Flo will recognize this voice next time.")).toBeVisible();
   const n = await invoke(page, "get_note", { id: "n1" });
   expect(n.transcript.filter((s: any) => s.speaker === "Ana").length).toBe(2);
+  // the name Flo heard in the conversation was for Speaker 2, now used up
+  await expect(page.locator('[data-testid="speaker-suggestion"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="action-owner"]').first()).toHaveText("Ana");
   // Escape cancels a rename
   await tr.locator('[data-speaker="Speaker 1"]').first().click();
   await input.fill("Nobody");
   await input.press("Escape");
   await expect(tr.locator('[data-speaker="Speaker 1"]')).toHaveCount(2);
+});
+
+test("meeting notes: a name heard in the conversation is one click away", async ({ page }) => {
+  await page.goto("/#/notes/n1");
+  await mock(page);
+  const tip = page.locator('[data-testid="speaker-suggestion"]');
+  await expect(tip).toContainText("sounds like Ana");
+  await tip.getByRole("button", { name: "Name them Ana" }).click();
+  await expect(page.locator('[data-testid="note-transcript"] [data-speaker="Ana"]')).toHaveCount(2);
+  await expect(tip).toHaveCount(0);
 });
 
 test("meeting notes: mic-only meetings say so", async ({ page }) => {

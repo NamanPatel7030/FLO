@@ -292,6 +292,10 @@ export interface MeetingInfo {
   captureNote?: string;
   /** speaker labels with a stored voice (renaming them teaches Flo the voice) */
   voiced: string[];
+  /** "Speaker 2" → "Riya": names the conversation revealed (confirm with one click) */
+  suggestions?: Record<string, string>;
+  /** every voice Flo remembers (rename autocomplete) */
+  knownVoices?: string[];
 }
 
 export interface MeetingEvent {
