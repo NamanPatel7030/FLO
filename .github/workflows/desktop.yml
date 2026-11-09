@@ -10,6 +10,8 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    # also on this branch, so the workflow can be exercised before it reaches the default branch
+    branches: ["ci-desktop"]
 
 permissions:
   contents: write
