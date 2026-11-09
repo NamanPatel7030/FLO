@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Backdrop } from "./Backdrop";
+import { PastelBackdrop as Backdrop } from "./site/Backdrop";
 import { Logo } from "./Logo";
 import { MakerSignature } from "./Signature";
 

@@ -1,17 +1,45 @@
-import { Aurora } from "@/components/Aurora";
-import { Footer } from "@/components/Footer";
-import { Landing } from "@/components/Landing";
+import { MotionConfig } from "motion/react";
+import { AgentSection, AssistantSection, SkillsSection } from "@/components/site/Assistant";
+import { PastelBackdrop } from "@/components/site/Backdrop";
+import { CompareSection, FaqSection, FinalCTA, MakerSection, MoreSection, PrivacySection, SiteFooter } from "@/components/site/Closing";
+import { AppsMarquee, Hero } from "@/components/site/Hero";
+import { CustomSection, WidgetsSection } from "@/components/site/Notch";
+import { SiteNav } from "@/components/site/SiteNav";
+import { Dictation, LanguagesSection, LearnsWords } from "@/components/site/Voice";
+import { ClaudeSection, MeetingsSection, ProjectsSection, TodosSection } from "@/components/site/Work";
 import { getUser } from "@/lib/supabase/server";
 
 export default async function Home() {
   const signedIn = !!(await getUser());
   return (
-    <>
-      <Aurora />
-      <Landing signedIn={signedIn} />
-      <Footer />
-      {/* room for the floating dock */}
-      <div aria-hidden className="h-24" />
-    </>
+    <MotionConfig reducedMotion="user">
+      <div className="v2">
+      <PastelBackdrop />
+      <SiteNav signedIn={signedIn} />
+      <main>
+        <Hero />
+        <AppsMarquee />
+        <Dictation />
+        <LanguagesSection />
+        <AssistantSection />
+        <SkillsSection />
+        <AgentSection />
+        <LearnsWords />
+        <TodosSection />
+        <ProjectsSection />
+        <MeetingsSection />
+        <ClaudeSection />
+        <WidgetsSection />
+        <CustomSection />
+        <PrivacySection />
+        <MoreSection />
+        <CompareSection />
+        <MakerSection />
+        <FaqSection />
+        <FinalCTA />
+      </main>
+      <SiteFooter />
+      </div>
+    </MotionConfig>
   );
 }

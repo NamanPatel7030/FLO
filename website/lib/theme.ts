@@ -11,10 +11,7 @@ export const THEME_EVENT = "flo-theme";
  * Inline <head> script: resolves the stored preference before paint (no flash of the wrong theme)
  * and keeps following the OS while the preference is "system".
  */
-export const THEME_SCRIPT = `(function(){var d=document.documentElement,m;try{m=window.matchMedia("(prefers-color-scheme: dark)")}catch(e){}
-function pref(){var p;try{p=localStorage.getItem("${THEME_KEY}")}catch(e){}return p==="light"||p==="dark"?p:"system"}
-function apply(){var p=pref(),t=p==="system"?(m&&m.matches?"dark":"light"):p;d.dataset.theme=t;d.dataset.themePref=p;d.style.colorScheme=t}
-apply();if(m){var f=function(){if(pref()==="system")apply()};m.addEventListener?m.addEventListener("change",f):m.addListener&&m.addListener(f)}})();`;
+export const THEME_SCRIPT = `(function(){var d=document.documentElement;d.dataset.theme="light";d.dataset.themePref="light";d.style.colorScheme="light";try{localStorage.removeItem("${THEME_KEY}")}catch(e){}})();`;
 
 export function readPref(): ThemePref {
   if (typeof document === "undefined") return "system";

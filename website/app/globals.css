@@ -2,7 +2,8 @@
 
 @theme {
   --font-sans: var(--font-sans-loaded), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-display: var(--font-display), "Space Grotesk", var(--font-sans-loaded), system-ui, sans-serif;
+  --font-display: var(--font-sans-loaded), -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-serif: var(--font-serif-loaded), "Instrument Serif", ui-serif, Georgia, serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
   --color-brand-50: #f2fbff;
   --color-brand-100: #e3f6ff;
@@ -134,12 +135,12 @@
   --color-red-300: oklch(50.5% 0.213 27.518);
   --color-rose-200: oklch(45.5% 0.188 13.697);
 
-  --page: #f5f8fc;
-  --page-grad: linear-gradient(172deg, #e7f2fc 0%, #f1f6fc 30%, #f7f9fc 62%, #f3f6fa 100%);
-  --pool-1: rgb(125 211 252 / 0.34);
-  --pool-2: rgb(196 181 253 / 0.2);
-  --pool-3: rgb(186 230 253 / 0.38);
-  --pool-4: rgb(253 214 170 / 0.18);
+  --page: #f4f6fb;
+  --page-grad: linear-gradient(180deg, #f6f7fc 0%, #f3f5fb 50%, #f6f4fa 100%);
+  --pool-1: rgb(150 214 255 / 0.55);
+  --pool-2: rgb(206 190 255 / 0.5);
+  --pool-3: rgb(255 214 196 / 0.45);
+  --pool-4: rgb(186 238 222 / 0.45);
   --caustic: rgb(255 255 255 / 0.5);
   --top-fade: rgb(255 255 255 / 0);
   --grain: 0.02;
@@ -156,22 +157,22 @@
   --shimmer: linear-gradient(100deg, #0a5c91 0%, #0f7fc0 24%, #1a9be0 42%, #4cc3fb 50%, #1a9be0 58%, #0f7fc0 76%, #0a5c91 100%);
   --accent-grad: linear-gradient(110deg, #0a4f7d 0%, #0f7fc0 45%, #1a9be0 100%);
 
-  --glass-fill: rgb(255 255 255 / 0.68);
-  --glass-fill-strong: rgb(255 255 255 / 0.84);
+  --glass-fill: rgb(255 255 255 / 0.52);
+  --glass-fill-strong: rgb(255 255 255 / 0.7);
   --surface: rgb(255 255 255 / 0.82);
   --surface-solid: #fff;
   --sheen: linear-gradient(180deg, rgb(255 255 255 / 0.85) 0%, rgb(255 255 255 / 0.2) 40%, rgb(255 255 255 / 0) 70%);
   --sheen-strong: linear-gradient(180deg, rgb(255 255 255 / 0.95) 0%, rgb(255 255 255 / 0.3) 40%, rgb(255 255 255 / 0) 70%);
   --tint: rgb(125 211 252 / 0.1);
-  --line: rgb(15 40 72 / 0.09);
-  --line-strong: rgb(15 40 72 / 0.13);
+  --line: rgb(255 255 255 / 0.75);
+  --line-strong: rgb(255 255 255 / 0.9);
   --line-hover: rgb(26 155 224 / 0.45);
   --hi: rgb(255 255 255 / 1);
   --lo: rgb(15 40 72 / 0.03);
   --shadow: 0 1px 2px rgb(16 36 64 / 0.05), 0 16px 40px -22px rgb(28 78 136 / 0.22);
   --shadow-strong: 0 1px 2px rgb(16 36 64 / 0.05), 0 28px 64px -30px rgb(28 78 136 / 0.3);
   --shadow-xl: 0 1px 3px rgb(16 36 64 / 0.05), 0 30px 70px -36px rgb(28 78 136 / 0.32);
-  --blur: blur(20px) saturate(160%);
+  --blur: blur(24px) saturate(180%);
   --well: rgb(15 40 72 / 0.035);
   --well-line: rgb(15 40 72 / 0.08);
   --ring-offset: #fff;
@@ -1889,4 +1890,211 @@ h2 {
     border-color: rgb(15 40 70 / 0.12);
     box-shadow: 0 24px 60px -20px rgb(15 40 70 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.9);
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Flo site v2: light, frosted pastel glass. Everything below is used by components/site/*
+   and the auth pages. Light only (THEME_SCRIPT pins data-theme="light").
+   ════════════════════════════════════════════════════════════════════════════ */
+:root {
+  --v2-ink: #0b1220;
+  --v2-ink-2: #334155;
+  --v2-muted: #5b6678;
+  --v2-faint: #8a94a6;
+  --v2-blue: #3b9dff;
+  --v2-violet: #8b7cff;
+  --v2-pink: #ff8fb8;
+  --v2-peach: #ffb38a;
+  --v2-mint: #5fd3b0;
+  --v2-grad: linear-gradient(100deg, #2f8cff 0%, #7a6cff 45%, #ff7eb0 100%);
+  --v2-glass: rgb(255 255 255 / 0.55);
+  --v2-glass-2: rgb(255 255 255 / 0.72);
+  --v2-edge: rgb(255 255 255 / 0.85);
+  --v2-shadow: 0 1px 1px rgb(20 30 60 / 0.03), 0 10px 30px -12px rgb(40 60 120 / 0.18), 0 30px 80px -40px rgb(80 70 160 / 0.22);
+}
+
+/* The v2 pages use real white. (The legacy light theme maps Tailwind's `white` to ink so old
+   dark-first markup stays readable; .v2 undoes that for the new design.) */
+.v2 { --color-white: #fff; color: var(--v2-ink); }
+
+/* primary button on light: a dark glassy pill */
+:root[data-theme="light"] .btn-primary {
+  color: #fff;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0) 50%), linear-gradient(180deg, #1b2335, #0b1220);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 10px 24px -10px rgb(11 18 32 / 0.55), 0 0 0 1px rgb(11 18 32 / 0.9);
+}
+:root[data-theme="light"] .btn-primary:hover {
+  filter: none;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.2), rgb(255 255 255 / 0) 50%), linear-gradient(180deg, #263049, #111a2c);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.22), 0 14px 30px -10px rgb(60 80 200 / 0.45), 0 0 0 1px rgb(11 18 32 / 0.9);
+}
+:root[data-theme="light"] .btn-primary .border-l { border-color: rgb(255 255 255 / 0.16); }
+:root[data-theme="light"] .btn-glass {
+  background: rgb(255 255 255 / 0.6);
+  border-color: rgb(255 255 255 / 0.9);
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgb(20 30 60 / 0.06), 0 10px 24px -14px rgb(40 60 120 / 0.3);
+}
+:root[data-theme="light"] .field {
+  background: rgb(255 255 255 / 0.7);
+  border-color: rgb(15 30 60 / 0.1);
+  backdrop-filter: blur(10px);
+}
+:root[data-theme="light"] .download-menu {
+  background: rgb(255 255 255 / 0.82);
+  border: 1px solid rgb(255 255 255 / 0.9);
+  box-shadow: var(--v2-shadow);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+/* glass surfaces */
+.g {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.18)), var(--v2-glass);
+  border: 1px solid var(--v2-edge);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.95), var(--v2-shadow);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+.g-2 {
+  background: var(--v2-glass-2);
+  border: 1px solid rgb(255 255 255 / 0.9);
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgb(20 30 60 / 0.05), 0 8px 20px -12px rgb(40 60 120 / 0.2);
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+}
+.g-inset {
+  background: rgb(240 244 252 / 0.6);
+  box-shadow: inset 0 1px 2px rgb(20 30 60 / 0.06), inset 0 0 0 1px rgb(20 40 80 / 0.05);
+}
+/* a thin iridescent rim on hover-able cards */
+.g-rim { position: relative; }
+.g-rim::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgb(255 255 255 / 0.9), rgb(150 200 255 / 0.5), rgb(200 180 255 / 0.5), rgb(255 255 255 / 0.9));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.serif { font-family: var(--font-serif); font-weight: 400; letter-spacing: -0.01em; }
+.serif-i { font-family: var(--font-serif); font-style: italic; font-weight: 400; letter-spacing: -0.01em; }
+.grad-text {
+  background-image: var(--v2-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.ink { color: var(--v2-ink); }
+.ink-2 { color: var(--v2-ink-2); }
+.mut { color: var(--v2-muted); }
+.fnt { color: var(--v2-faint); }
+
+.v2-h2 {
+  font-size: clamp(36px, 5.2vw, 68px);
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-weight: 600;
+  color: var(--v2-ink);
+  text-wrap: balance;
+}
+.v2-h2 .serif-i { letter-spacing: -0.02em; font-size: 1.08em; }
+.v2-lead { font-size: clamp(16px, 1.35vw, 19px); line-height: 1.6; color: var(--v2-muted); text-wrap: pretty; }
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.38rem 0.8rem 0.38rem 0.6rem;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--v2-ink-2);
+  background: rgb(255 255 255 / 0.6);
+  border: 1px solid rgb(255 255 255 / 0.95);
+  box-shadow: 0 1px 2px rgb(20 30 60 / 0.06), 0 6px 16px -10px rgb(40 60 120 / 0.3);
+  backdrop-filter: blur(12px);
+}
+.tag-dot { width: 7px; height: 7px; border-radius: 9999px; background: var(--v2-grad); box-shadow: 0 0 0 3px rgb(122 108 255 / 0.15); }
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9em;
+  height: 1.9em;
+  padding: 0 0.55em;
+  border-radius: 0.55em;
+  font: 600 0.78em/1 var(--font-sans);
+  color: var(--v2-ink-2);
+  background: linear-gradient(180deg, #fff, #eef2f8);
+  border: 1px solid rgb(20 40 80 / 0.12);
+  box-shadow: 0 2px 0 rgb(20 40 80 / 0.1), inset 0 1px 0 #fff;
+}
+
+.chip2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 9999px;
+  padding: 0.5rem 0.95rem;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--v2-ink-2);
+  background: rgb(255 255 255 / 0.55);
+  border: 1px solid rgb(255 255 255 / 0.9);
+  box-shadow: 0 1px 2px rgb(20 30 60 / 0.05);
+  transition: background 0.2s, box-shadow 0.2s, color 0.2s, transform 0.15s;
+  cursor: pointer;
+}
+.chip2:hover { background: rgb(255 255 255 / 0.85); }
+.chip2:active { transform: scale(0.97); }
+.chip2[aria-pressed="true"], .chip2[aria-selected="true"] {
+  color: #fff;
+  background: linear-gradient(180deg, #1f2940, #0b1220);
+  border-color: rgb(11 18 32 / 0.9);
+  box-shadow: 0 8px 18px -10px rgb(11 18 32 / 0.6);
+}
+
+/* dotted canvas */
+.dotgrid {
+  background-image: radial-gradient(rgb(60 80 140 / 0.16) 1px, transparent 1.2px);
+  background-size: 18px 18px;
+}
+
+/* listening wave (used by the hero notch, dictation and auth) */
+.vwave { display: inline-flex; align-items: center; gap: 3px; height: 18px; }
+.vwave i { display: block; width: 3px; height: 100%; border-radius: 3px; background: var(--wc, #fff); transform: scaleY(0.25); transform-origin: center; }
+.vwave[data-on] i { animation: vwave 0.9s ease-in-out infinite; }
+.vwave i:nth-child(2n) { animation-duration: 0.7s; }
+.vwave i:nth-child(3n) { animation-duration: 1.1s; }
+@keyframes vwave { 0%, 100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
+
+.caret-v2 { display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -0.15em; background: var(--v2-blue); border-radius: 2px; animation: flo-caret 1s steps(1) infinite; }
+
+/* the hardware notch: stays black */
+.hw-notch {
+  background: #000;
+  box-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.45), inset 0 -1px 0 rgb(255 255 255 / 0.06);
+  color: #fff;
+}
+
+/* drifting pastel blobs */
+.blob { position: absolute; border-radius: 9999px; filter: blur(60px); opacity: 0.9; will-change: transform; }
+@keyframes blob-a { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(8vw, 6vh) scale(1.12); } }
+@keyframes blob-b { 0%, 100% { transform: translate(0, 0) scale(1.05); } 50% { transform: translate(-9vw, 8vh) scale(0.95); } }
+@keyframes blob-c { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(6vw, -7vh) scale(1.1); } }
+
+.marquee2 { display: flex; width: max-content; animation: flo-marquee 40s linear infinite; }
+.marquee-mask { -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent); mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent); }
+
+.float-y { animation: float-y 7s ease-in-out infinite; }
+@keyframes float-y { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .blob, .marquee2, .float-y, .vwave[data-on] i, .caret-v2 { animation: none !important; }
 }

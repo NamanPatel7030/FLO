@@ -1,10 +1,18 @@
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk, Inter } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { THEME_SCRIPT } from "@/lib/theme";
 
-const display = Space_Grotesk({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-display", display: "swap" });
-const sans = Inter({ subsets: ["latin"], variable: "--font-sans-loaded", display: "swap" });
+// Self-hosted (no build-time fetch from Google Fonts). Inter for UI and headlines, Instrument Serif for accents.
+const sans = localFont({ src: "./fonts/Inter-normal.woff2", weight: "400 700", variable: "--font-sans-loaded", display: "swap" });
+const serif = localFont({
+  src: [
+    { path: "./fonts/InstrumentSerif-normal.woff2", style: "normal", weight: "400" },
+    { path: "./fonts/InstrumentSerif-italic.woff2", style: "italic", weight: "400" },
+  ],
+  variable: "--font-serif-loaded",
+  display: "swap",
+});
 
 const site = process.env.SITE_URL || "http://localhost:3000";
 
@@ -30,17 +38,14 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f8fc" },
-    { media: "(prefers-color-scheme: dark)", color: "#05070a" },
-  ],
+  themeColor: "#f4f6fb",
   width: "device-width",
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${sans.variable} ${serif.variable}`} suppressHydrationWarning>
       <head>
         {/* resolve the theme before first paint: no flash of the wrong one */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />

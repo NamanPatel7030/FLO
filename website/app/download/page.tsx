@@ -1,27 +1,29 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { Apple, Download, KeyRound, LogIn, MonitorDown, Terminal } from "lucide-react";
-import { AuthShell } from "@/components/AuthShell";
+import { Apple, Download, KeyRound, LogIn, MonitorDown, MousePointerClick, ShieldCheck, Smartphone, Terminal } from "lucide-react";
+import { Logo } from "@/components/Logo";
 import { SignOutButton } from "@/components/SignOutButton";
-import { downloadUrl, gatedHref } from "@/lib/downloads";
+import { PastelBackdrop } from "@/components/site/Backdrop";
+import { downloadUrl, gatedHref, type DownloadOS } from "@/lib/downloads";
 import { getUser } from "@/lib/supabase/server";
 
 export const metadata = { title: "Download" };
 export const dynamic = "force-dynamic";
 
-type OS = "mac" | "windows" | "linux";
-
-function detect(ua: string): OS {
+function detect(ua: string): DownloadOS {
+  if (/android/i.test(ua)) return "android";
   if (/windows/i.test(ua)) return "windows";
-  if (/linux|x11/i.test(ua) && !/android/i.test(ua)) return "linux";
+  if (/linux|x11/i.test(ua)) return "linux";
   return "mac";
 }
 
 // file locations stay on the server; the page only links to the signed-in /api/download/<os> route
-const BUILDS: { os: OS; label: string; sub: string; icon: typeof Apple }[] = [
-  { os: "mac", label: "macOS", sub: "Apple silicon and Intel · macOS 13+", icon: Apple },
-  { os: "windows", label: "Windows", sub: "Windows 10 and 11 · beta", icon: MonitorDown },
-  { os: "linux", label: "Linux", sub: ".deb and AppImage · beta", icon: Terminal },
+const BUILDS: { os: DownloadOS; label: string; sub: string; icon: typeof Apple; tint: string }[] = [
+  { os: "mac", label: "macOS", sub: "Apple silicon (M1 or later) · macOS 13+", icon: Apple, tint: "from-[#a9dcff] to-[#d8ccff]" },
+  { os: "android", label: "Android", sub: "Pair with your Mac by QR · alerts while you're away", icon: Smartphone, tint: "from-[#c4f0e2] to-[#a9dcff]" },
+  { os: "windows", label: "Windows", sub: "Windows 10 and 11 · beta", icon: MonitorDown, tint: "from-[#ffd6c4] to-[#ffc6dc]" },
+  { os: "linux", label: "Linux", sub: ".deb and AppImage · beta", icon: Terminal, tint: "from-[#e8dcff] to-[#ffd6c4]" },
 ];
 
 export default async function DownloadPage() {
@@ -32,68 +34,97 @@ export default async function DownloadPage() {
   const first = user.name.split(" ")[0];
 
   return (
-    <AuthShell>
-      <div className="w-full max-w-2xl">
+    <div className="v2 min-h-dvh px-4 py-6 sm:px-6">
+      <PastelBackdrop />
+      <header className="mx-auto flex max-w-5xl items-center justify-between">
+        <Link href="/" className="flex items-center gap-2.5" aria-label="Flo home">
+          <Logo size={32} />
+          <span className="text-lg font-semibold tracking-tight ink">Flo</span>
+        </Link>
+        <SignOutButton />
+      </header>
+
+      <main className="mx-auto max-w-5xl pb-16 pt-12 md:pt-16">
         <div className="text-center">
-          <p className="eyebrow">You&apos;re in{first ? `, ${first}` : ""}</p>
-          <h1 className="mt-3 text-[34px] font-semibold tracking-tight sm:text-[44px]">Download Flo</h1>
-          <p className="mt-3 text-muted">Signed in as {user.email}</p>
+          <span className="tag">
+            <span className="tag-dot" />
+            You&apos;re in{first ? `, ${first}` : ""}
+          </span>
+          <h1 className="mt-6 text-[clamp(44px,7vw,84px)] font-semibold leading-[0.95] tracking-[-0.05em] ink">
+            Get <span className="serif-i grad-text pr-1">Flo.</span>
+          </h1>
+          <p className="mt-4 text-[15px] mut">Signed in as {user.email}</p>
         </div>
 
-        <div className="mt-10 flex flex-col gap-3" data-testid="downloads">
+        <div className="mt-12 grid gap-3 sm:grid-cols-2" data-testid="downloads">
           {builds.map((b, i) => {
             const ready = !!downloadUrl(b.os);
             const primary = i === 0;
             return (
-              <div key={b.os} className={`${primary ? "glass-strong" : "glass"} flex items-center gap-4 rounded-3xl p-5`} data-os={b.os}>
-                <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${primary ? "accent-bg text-[#001522]" : "bg-white/5 text-brand-200"}`}>
-                  <b.icon size={22} />
+              <div key={b.os} className={`g relative flex flex-col overflow-hidden rounded-[30px] p-6 ${primary ? "sm:col-span-2 sm:flex-row sm:items-center sm:gap-6 sm:p-8" : ""}`} data-os={b.os}>
+                <div className={`absolute inset-0 -z-10 bg-gradient-to-br opacity-50 ${b.tint}`} />
+                <span className={`grid shrink-0 place-items-center rounded-2xl bg-white/80 text-[var(--v2-ink)] shadow-sm ${primary ? "h-16 w-16" : "h-12 w-12"}`}>
+                  <b.icon size={primary ? 28 : 22} />
                 </span>
-                <div className="flex-1">
-                  <p className="text-[17px] font-semibold">
-                    {b.label} {primary && <span className="ml-1 rounded-full bg-brand-300/15 px-2 py-0.5 align-middle text-[11px] font-medium text-brand-200">your computer</span>}
+                <div className="mt-4 flex-1 sm:mt-0">
+                  <p className={`font-semibold tracking-tight ink ${primary ? "text-[26px]" : "text-[18px]"} ${primary ? "" : "mt-0"}`}>
+                    {b.label}
+                    {primary && <span className="ml-2 rounded-full bg-white/80 px-2.5 py-1 align-middle text-[11.5px] font-semibold ink-2">your device</span>}
                   </p>
-                  <p className="text-[13.5px] text-muted">{b.sub}</p>
+                  <p className="mt-1 text-[14px] mut">{b.sub}</p>
                 </div>
-                {ready ? (
-                  <a href={gatedHref(b.os)} className={`btn ${primary ? "btn-primary" : "btn-glass"} px-5 py-2.5 text-[14px]`} data-testid={`download-${b.os}`}>
-                    <Download size={16} /> Download
-                  </a>
-                ) : (
-                  <span className="rounded-full border border-white/10 px-4 py-2 text-[13px] text-faint" data-testid={`download-${b.os}`}>
-                    Coming soon
-                  </span>
-                )}
+                <div className="mt-5 sm:mt-0">
+                  {ready ? (
+                    <a href={gatedHref(b.os)} className={`btn ${primary ? "btn-primary h-14 px-7 text-[15px]" : "btn-glass h-11 px-5 text-[14px] ink"}`} data-testid={`download-${b.os}`}>
+                      <Download size={17} /> Download{primary ? ` for ${b.label}` : ""}
+                    </a>
+                  ) : (
+                    <span className="inline-flex h-11 items-center rounded-full bg-white/60 px-5 text-[13.5px] font-medium fnt" data-testid={`download-${b.os}`}>
+                      Coming soon
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
 
-        <div className="glass mt-6 rounded-3xl p-6">
-          <h2 className="text-[17px] font-semibold">Then, in three steps</h2>
-          <ol className="mt-4 flex flex-col gap-4 text-[14.5px] text-muted">
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-300/15 text-[13px] font-semibold text-brand-200">1</span>
-              Open the download and drag Flo into Applications.
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-300/15 text-[13px] font-semibold text-brand-200">2</span>
-              <span>
-                Open Flo and <span className="text-ink"><LogIn size={14} className="mb-0.5 inline" /> sign in with this account</span>: the same email and password, or Continue with Google.
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-300/15 text-[13px] font-semibold text-brand-200">3</span>
-              <span>
-                Follow the short setup. Add your own AI key <KeyRound size={14} className="mb-0.5 inline" /> or use a local model, then hold ⌃ and talk.
-              </span>
-            </li>
+        <section className="g mt-6 rounded-[30px] p-6 sm:p-8" aria-labelledby="steps">
+          <h2 id="steps" className="text-[22px] font-semibold tracking-tight ink">
+            Then, in <span className="serif-i grad-text">four steps</span>
+          </h2>
+          <ol className="mt-6 grid gap-3 md:grid-cols-2">
+            {[
+              [Download, "Install", "Open the .dmg and drag Flo into Applications."],
+              [
+                ShieldCheck,
+                "Allow it once",
+                "Flo isn't notarized by Apple yet, so macOS blocks the first launch. Open System Settings → Privacy & Security, scroll down and click Open Anyway next to Flo.",
+              ],
+              [LogIn, "Sign in", "Open Flo and sign in with this account: Continue with Google, or the same email and password."],
+              [KeyRound, "Talk", "Follow the short setup. Add your own AI key or use a local model, then hold ⌃ control and talk."],
+            ].map(([I, t, d], k) => {
+              const Icon = I as typeof Download;
+              return (
+                <li key={t as string} className="g-2 flex gap-4 rounded-2xl p-4">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#0b1220] text-white">
+                    <Icon size={18} />
+                  </span>
+                  <span>
+                    <span className="block text-[15px] font-semibold ink">
+                      {k + 1}. {t as string}
+                    </span>
+                    <span className="mt-0.5 block text-[14px] leading-relaxed mut">{d as string}</span>
+                  </span>
+                </li>
+              );
+            })}
           </ol>
-        </div>
-        <div className="mt-6 text-center">
-          <SignOutButton />
-        </div>
-      </div>
-    </AuthShell>
+          <p className="mt-5 flex items-center gap-2 text-[13px] fnt">
+            <MousePointerClick size={14} /> On macOS 14 or older you can also right-click Flo in Applications and choose Open.
+          </p>
+        </section>
+      </main>
+    </div>
   );
 }
