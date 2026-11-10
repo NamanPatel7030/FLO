@@ -25,6 +25,11 @@ internal object Prefs {
   fun setEnabled(c: Context, on: Boolean) = sp(c).edit().putBoolean("enabled", on).apply()
   fun enabled(c: Context): Boolean = sp(c).getBoolean("enabled", true)
 
-  fun setOffsetY(c: Context, y: Int) = sp(c).edit().putInt("y", y).apply()
-  fun offsetY(c: Context): Int = sp(c).getInt("y", Int.MIN_VALUE)
+  /** Where the thumb dock rests: which side, and its top as a fraction of the screen height (so it
+   *  survives rotation). The old up/down offset ("y", from the edge-centered bubble) is dropped. */
+  fun setDock(c: Context, right: Boolean, yFraction: Float) =
+    sp(c).edit().putBoolean("dock_right", right).putFloat("dock_y", yFraction.coerceIn(0f, 1f)).remove("y").apply()
+  fun dockRight(c: Context): Boolean = sp(c).getBoolean("dock_right", true)
+  /** -1 until the dock has been moved once (then the default spot is used). */
+  fun dockY(c: Context): Float = sp(c).getFloat("dock_y", -1f)
 }

@@ -36,7 +36,9 @@ export type IconName =
   | 'lock'
   | 'plus'
   | 'minus'
-  | 'terminal';
+  | 'terminal'
+  | 'more'
+  | 'info';
 
 const P: Record<IconName, string[]> = {
   qr: [
@@ -95,6 +97,8 @@ const P: Record<IconName, string[]> = {
   plus: ['M12 5v14M5 12h14'],
   minus: ['M5 12h14'],
   terminal: ['M4 5.5h16v13H4z', 'M7.5 10l2.5 2-2.5 2M12.5 14.5h4'],
+  more: ['M12 5h.01M12 12h.01M12 19h.01'],
+  info: ['M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17Z', 'M12 11v5.5', 'M12 7.8h.01'],
 };
 
 export function Icon({
@@ -108,7 +112,7 @@ export function Icon({
   color?: string;
   strokeWidth?: number;
 }) {
-  const isKeypad = name === 'keypad';
+  const isKeypad = name === 'keypad' || name === 'more';
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       {P[name].map((d, i) => (
