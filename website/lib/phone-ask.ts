@@ -9,6 +9,7 @@ export const PHONE_ANSWER_RULES = `You are Flo, answering from the user's phone.
 Rules:
 - When asked to write, draft, compose, reply, rewrite, translate or make text (a message, wish, email, caption, comment, answer), output only the finished text, ready to send. No preamble ("Here's a draft:"), no quotes around it, no explanations, no notes, no options, no sign-off offers ("Let me know if...").
 - Never describe what you wrote. "draft a message: happy Diwali" means you output the Diwali message itself, not "Message drafted".
+- Never repeat the instruction or start with a label. "message to Priya I'll be late" means you output only "I'll be 10 minutes late, sorry!", never "Message to Priya: ..." or "Message: ...".
 - If the screen of the user's phone is given, read it: who they are talking to, what was said last, the app. Reply to what is actually there, using real names and details. Never use placeholders like [Name].
 - Match the language, script and tone requested. If the user asks for Hindi, Hinglish or Gujarati, or the conversation on screen is in that language, write in it.
 - Fit the app: chat messages are short and natural; an email gets a greeting and a sign-off with the user's name.
@@ -57,6 +58,32 @@ function stripAiDashes(s: string): string {
   return t.replaceAll(" ,", ",");
 }
 
+const LABEL_WORDS = ["message", "reply", "text", "draft", "answer", "response", "wish", "caption", "email", "note"];
+
+/**
+ * "Message to Priya: text", "**Reply:** text", "Text to send:\ntext": the user's instruction echoed as
+ * a label. Returns what follows it, or null. Mirrors strip_instruction_label in src-tauri/src/prompts.rs.
+ */
+function stripInstructionLabel(s: string): string | null {
+  const nl = s.indexOf("\n");
+  const first = nl >= 0 ? s.slice(0, nl) : s;
+  const others = nl >= 0 ? s.slice(nl + 1).trim() : "";
+  let at = -1;
+  let sep = "";
+  for (const p of [":", " - ", " \u2013 ", " \u2014 "]) {
+    const i = first.indexOf(p);
+    if (i >= 0 && (at < 0 || i < at)) { at = i; sep = p; }
+  }
+  if (at < 0 || [...first.slice(0, at)].length > 60) return null;
+  const words = first.slice(0, at).replace(/\*/g, "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (words[0] === "your" || words[0] === "the") words.shift();
+  if (!LABEL_WORDS.includes(words.shift() ?? "")) return null;
+  if (!(words.length === 0 || ((words[0] === "to" || words[0] === "for") && words.length <= 5))) return null;
+  const rest = first.slice(at + sep.length).replace(/^[\s*]+|[\s*]+$/g, "");
+  if (rest) return others ? `${rest}\n${others}` : rest;
+  return others || null;
+}
+
 /** Safety net on a model's answer: drop "Here's a draft:", code fences, quotes around everything, "Let me know if...". */
 export function cleanPhoneAnswer(raw: string): string {
   let s = raw.trim();
@@ -66,13 +93,8 @@ export function cleanPhoneAnswer(raw: string): string {
     if (nl >= 0 && /^[A-Za-z0-9]*$/.test(inner.slice(0, nl).trim())) inner = inner.slice(nl + 1);
     s = inner.trim();
   }
-  const lower = s.toLowerCase();
-  for (const p of ["draft:", "message:", "reply:"]) {
-    if (lower.startsWith(p) && s.slice(p.length).trim()) {
-      s = s.slice(p.length).trim();
-      break;
-    }
-  }
+  const unlabeled = stripInstructionLabel(s);
+  if (unlabeled !== null) s = unlabeled;
   const nl = s.indexOf("\n");
   if (nl >= 0 && isPreamble(s.slice(0, nl)) && s.slice(nl + 1).trim()) s = s.slice(nl + 1).trim();
   const lines = s.split("\n");

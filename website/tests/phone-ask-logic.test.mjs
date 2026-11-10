@@ -130,3 +130,15 @@ test("migration 0007 adds nullable, capped columns and keeps the table closed", 
   assert.doesNotMatch(m, /\bgrant\b/i);
   assert.doesNotMatch(m, /create policy/i);
 });
+
+test("phone answer cleanup drops the instruction echoed as a label", () => {
+  assert.equal(cleanPhoneAnswer("Message to Priya: I'll be 10 minutes late."), "I'll be 10 minutes late.");
+  assert.equal(cleanPhoneAnswer("Message for this person - Happy Diwali!"), "Happy Diwali!");
+  assert.equal(cleanPhoneAnswer("Reply to Bhavya: Sure, tonight works."), "Sure, tonight works.");
+  assert.equal(cleanPhoneAnswer("**Message:** Happy Diwali!"), "Happy Diwali!");
+  assert.equal(cleanPhoneAnswer("Your message: See you at 5"), "See you at 5");
+  assert.equal(cleanPhoneAnswer("Text to send:\nHappy Diwali!"), "Happy Diwali!");
+  assert.equal(cleanPhoneAnswer("Message me when you reach home."), "Message me when you reach home.");
+  assert.equal(cleanPhoneAnswer("Reply to all with the deck, please."), "Reply to all with the deck, please.");
+  assert.equal(cleanPhoneAnswer("Meeting at 5: see you there"), "Meeting at 5: see you there");
+});

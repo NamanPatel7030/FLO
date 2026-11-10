@@ -257,6 +257,7 @@ pub const PHONE_ANSWER_RULES: &str = r#"You are Flo, answering from the user's p
 Rules:
 - When asked to write, draft, compose, reply, rewrite, translate or make text (a message, wish, email, caption, comment, answer), output only the finished text, ready to send. No preamble ("Here's a draft:"), no quotes around it, no explanations, no notes, no options, no sign-off offers ("Let me know if...").
 - Never describe what you wrote. "draft a message: happy Diwali" means you output the Diwali message itself, not "Message drafted".
+- Never repeat the instruction or start with a label. "message to Priya I'll be late" means you output only "I'll be 10 minutes late, sorry!", never "Message to Priya: ..." or "Message: ...".
 - If the screen of the user's phone is given, read it: who they are talking to, what was said last, the app. Reply to what is actually there, using real names and details. Never use placeholders like [Name].
 - Match the language, script and tone requested. If the user asks for Hindi, Hinglish or Gujarati, or the conversation on screen is in that language, write in it.
 - Fit the app: chat messages are short and natural; an email gets a greeting and a sign-off with the user's name.
@@ -304,6 +305,44 @@ fn strip_wrapping_quotes(s: &str) -> &str {
     s
 }
 
+const LABEL_WORDS: &[&str] = &["message", "reply", "text", "draft", "answer", "response", "wish", "caption", "email", "note"];
+
+/// The first line starts with a label like "Message to Priya:", "**Reply:**", "Your message -" or
+/// "Text to send:" (the user's instruction echoed back): return what follows it. A sentence that
+/// merely starts with such a word ("Message me when...", "Reply to all with...") has no separator
+/// right after a short label, so it is kept.
+fn strip_instruction_label(s: &str) -> Option<String> {
+    let (first, others) = match s.split_once('\n') {
+        Some((f, o)) => (f, Some(o)),
+        None => (s, None),
+    };
+    let seps = [":", " - ", " \u{2013} ", " \u{2014} "];
+    let (at, sep) = seps.iter().filter_map(|p| first.find(p).map(|i| (i, *p))).min_by_key(|(i, _)| *i)?;
+    if first[..at].chars().count() > 60 {
+        return None;
+    }
+    let head = first[..at].replace('*', "").to_lowercase();
+    let mut words = head.split_whitespace().peekable();
+    if matches!(words.peek(), Some(&("your" | "the"))) {
+        words.next();
+    }
+    if !LABEL_WORDS.contains(&words.next()?) {
+        return None;
+    }
+    let tail: Vec<&str> = words.collect();
+    if !(tail.is_empty() || (matches!(tail[0], "to" | "for") && tail.len() <= 5)) {
+        return None;
+    }
+    let rest = first[at + sep.len()..].trim_matches(|c: char| c == '*' || c.is_whitespace());
+    let more = others.map(str::trim).filter(|o| !o.is_empty());
+    match (rest.is_empty(), more) {
+        (false, Some(m)) => Some(format!("{rest}\n{m}")),
+        (false, None) => Some(rest.to_string()),
+        (true, Some(m)) => Some(m.to_string()),
+        (true, None) => None,
+    }
+}
+
 /// Safety net on a phone answer: drop a "Here's a draft:" line, code fences, quotes around the whole
 /// text and a trailing "Let me know if..." so only the deliverable is inserted.
 pub fn clean_phone_answer(raw: &str) -> String {
@@ -313,13 +352,9 @@ pub fn clean_phone_answer(raw: &str) -> String {
         let inner = inner.split_once('\n').map(|(first, rest)| if first.trim().chars().all(|c| c.is_ascii_alphanumeric()) { rest } else { inner }).unwrap_or(inner);
         s = inner.trim().to_string();
     }
-    // "Draft: text" on one line, or a preamble line followed by the text
-    let lower = s.to_lowercase();
-    for p in ["draft:", "message:", "reply:"] {
-        if lower.starts_with(p) && s.len() > p.len() && !s[p.len()..].trim().is_empty() {
-            s = s[p.len()..].trim().to_string();
-            break;
-        }
+    // "Message to Priya: text", "Draft: text", "Text to send:\ntext": the instruction echoed as a label
+    if let Some(rest) = strip_instruction_label(&s) {
+        s = rest;
     }
     if let Some((first, rest)) = s.split_once('\n') {
         if is_preamble(first) && !rest.trim().is_empty() {
@@ -441,5 +476,19 @@ mod tests {
         // a lone preamble is not stripped to nothing
         assert_eq!(clean_phone_answer("Here you go:"), "Here you go:");
         assert_eq!(clean_phone_answer("  "), "");
+    }
+
+    #[test]
+    fn phone_answer_cleanup_drops_instruction_labels() {
+        // the user said "message to Priya ..." and the model echoed the instruction as a label
+        assert_eq!(clean_phone_answer("Message to Priya: I'll be 10 minutes late."), "I'll be 10 minutes late.");
+        assert_eq!(clean_phone_answer("Message for this person - Happy Diwali!"), "Happy Diwali!");
+        assert_eq!(clean_phone_answer("Reply to Bhavya: Sure, tonight works."), "Sure, tonight works.");
+        assert_eq!(clean_phone_answer("**Message:** Happy Diwali!"), "Happy Diwali!");
+        assert_eq!(clean_phone_answer("Your message: See you at 5"), "See you at 5");
+        assert_eq!(clean_phone_answer("Text to send:\nHappy Diwali!"), "Happy Diwali!");
+        // a message that really starts with these words is kept
+        assert_eq!(clean_phone_answer("Message me when you reach home."), "Message me when you reach home.");
+        assert_eq!(clean_phone_answer("Reply to all with the deck, please."), "Reply to all with the deck, please.");
     }
 }
