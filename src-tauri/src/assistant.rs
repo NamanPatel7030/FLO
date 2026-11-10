@@ -183,8 +183,13 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
 
 async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>, mode: &str) -> Result<AssistantResponse> {
     let ctx = Ctx { query: query.to_string(), selection: selection.clone(), front: front.clone(), screen: screen.clone() };
+    // Slack is read live only when the request is about it (a word check, no network)
+    // (a pending Keychain prompt must not hold the answer)
+    let slack_on = tokio::time::timeout(std::time::Duration::from_secs(2), crate::secrets::get_api_key_async("slack")).await.ok().and_then(|r| r.ok()).flatten().is_some();
+    let slack_ask = slack_wanted(slack_on, query, &crate::slack_read::known_names());
     // 1) instant local commands ("open Slack", "google …", "play … on youtube") — no AI needed
-    if selection.is_none() && mode == "quick" {
+    // ("search Slack for …" is a Slack read, not a web search)
+    if selection.is_none() && mode == "quick" && !slack_ask {
         if let Some(intent) = crate::intents::parse(query) {
             let result = execute(st, &intent.action, front, false).await;
             let (reply, results) = match result {
@@ -295,6 +300,16 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
         system.push_str(&prompts::skill_note(&k.name, &k.instructions, &k.platforms));
         system.push_str(&skill_docs(st, k));
     }
+    let slack_data = if slack_ask {
+        Some(match tokio::time::timeout(SLACK_TIMEOUT, crate::slack_read::context_for(st, query)).await {
+            Ok(Ok(d)) => d,
+            Ok(Err(e)) => format!("(Couldn't read Slack just now: {e})"),
+            Err(_) => "(Slack didn't answer in time.)".into(),
+        })
+    } else {
+        None
+    };
+    system.push_str(&crate::slack_read::assistant_note(slack_on, slack_data.as_deref()));
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));
     }
@@ -365,6 +380,15 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
         mode: mode.into(),
         sources,
     })
+}
+
+/// Longest wait for Slack data before answering without it.
+const SLACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// Fetch Slack for this request? Only when Slack is connected, the request is about Slack, and it
+/// isn't just "open Slack".
+pub fn slack_wanted(connected: bool, query: &str, names: &[String]) -> bool {
+    connected && crate::slack_read::is_slack_request(query, names) && !crate::slack_read::is_open_command(query)
 }
 
 /// The Knowledge documents a skill attaches ("doc:<id>" on the canvas), as prompt text.
@@ -636,6 +660,19 @@ mod cache_tests {
         assert!(!super::handed_to_screen(&resp(vec![AssistantAction::OpenApp { name: "Slack".into() }], vec!["Opened Slack"])));
         // the result lines follow the actions in order
         assert!(super::handed_to_screen(&resp(vec![AssistantAction::OpenApp { name: "Slack".into() }, auto()], vec!["Opened Slack", "On it: x"])));
+    }
+
+    #[test]
+    fn slack_is_read_only_when_connected_and_asked() {
+        let names = vec!["Bhavya Shah".to_string()];
+        assert!(super::slack_wanted(true, "Can you check Slack messages as you are connected?", &names));
+        assert!(super::slack_wanted(true, "search slack for the invoice", &names));
+        // "search …" would otherwise be a local web search
+        assert!(crate::intents::parse("search slack for the invoice").is_some());
+        assert!(!super::slack_wanted(false, "check my slack", &names));
+        assert!(!super::slack_wanted(true, "open slack", &names));
+        assert!(!super::slack_wanted(true, "add a to-do to buy milk", &names));
+        assert!(super::SLACK_TIMEOUT < super::llm_timeout("quick"));
     }
 
     #[test]

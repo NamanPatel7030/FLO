@@ -45,6 +45,7 @@ mod speakers;
 mod sysaudio;
 mod vault;
 mod slack;
+mod slack_read;
 mod state;
 mod stt;
 mod sync;

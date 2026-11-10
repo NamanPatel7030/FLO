@@ -236,6 +236,23 @@ pub async fn confirm(st: &Shared, id: &str, approve: bool) -> Result<String> {
     Ok(format!("Sent to {name}"))
 }
 
+// ── reads for the assistant (slack_read.rs) ──────────────────────────────────
+
+/// One Slack Web API call (egress Purpose::Slack), for slack_read.rs.
+pub(crate) async fn api(st: &Shared, method: &str, params: &[(&'static str, String)], post: bool) -> Result<Value> {
+    call(st, method, params, post).await
+}
+
+/// The connected user's member id (cached after the first auth.test).
+pub(crate) async fn my_id(st: &Shared) -> Result<String> {
+    me(st).await
+}
+
+/// Teammate names already resolved by the to-do scan (no network).
+pub(crate) fn cached_names() -> Vec<String> {
+    CACHE.lock().as_ref().map(|c| c.names.values().filter(|n| !(n.len() >= 9 && n.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))).cloned().collect()).unwrap_or_default()
+}
+
 // ── connect / disconnect ─────────────────────────────────────────────────────
 // One click: Flo asks its website for a one-time Connect URL (bound to sha256(verifier)), opens it in
 // the browser, the user approves on slack.com, the website seals the user token for ≤5 min and sends
@@ -266,6 +283,7 @@ pub fn challenge_of(verifier: &str) -> String {
 
 pub fn reset_cache() {
     *CACHE.lock() = None;
+    crate::slack_read::reset();
 }
 
 /// Begin one-click Connect Slack: get a Connect URL from our website and open it in the browser.
