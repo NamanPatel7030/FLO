@@ -6,7 +6,7 @@ import { api, on } from "../../lib/api";
 import { permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyOptions, hotkeyWords, relativeTime, sameHotkey } from "../../lib/format";
 import { deviceWord, keyStoreName, os, settingsApp } from "../../lib/os";
-import { unusedModelMb } from "../../lib/models";
+import { LANGUAGE_CHOICES, pickLanguage, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
 import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
@@ -882,35 +882,40 @@ function Voice({ s, set }: P) {
 
       <Card className="p-4">
         <CardTitle icon={<Mic size={15} />}>Language you speak</CardTitle>
-        <FieldHelp>For best accuracy in Hindi or Gujarati, pick the language instead of Auto. Auto can drift to English on mixed or accented speech.</FieldHelp>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {[
-            { value: "auto", label: "Auto-detect", native: "" },
-            { value: "en", label: "English", native: "" },
-            { value: "hi", label: "Hindi", native: "हिंदी" },
-            { value: "gu", label: "Gujarati", native: "ગુજરાતી" },
-            { value: "hi-en", label: "Hinglish", native: "Roman" },
-            { value: "es", label: "Spanish", native: "Español" },
-            { value: "de", label: "German", native: "Deutsch" },
-            { value: "fr", label: "French", native: "Français" },
-          ].map((l) => {
-            const active = s.language === l.value;
-            return (
-              <button
-                key={l.value}
-                onClick={() => set({ language: l.value })}
-                aria-pressed={active}
-                className={clsx(
-                  "flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-[13px] font-medium transition",
-                  active ? "border-[var(--accent)] glass-strong text-[var(--fg)]" : "border-[var(--border)] glass text-muted hover:text-[var(--fg)]",
-                )}
-              >
-                {l.label}
-                {l.native && <span className={clsx("text-[12px]", active ? "text-[var(--accent)]" : "text-faint")}>{l.native}</span>}
-              </button>
-            );
-          })}
-        </div>
+        <FieldHelp>Auto picks English, Hindi or Gujarati for each dictation. English is always written in English letters, Hindi in Devanagari and Gujarati in Gujarati script. Pick Hinglish to get Hindi in Roman letters.</FieldHelp>
+        {[false, true].map((more) => (
+          <div key={String(more)} className={clsx("flex flex-wrap gap-2", more ? "mt-2" : "mt-3")}>
+            {LANGUAGE_CHOICES.filter((l) => !!l.more === more).map((l) => {
+              const active = s.language === l.value;
+              return (
+                <button
+                  key={l.value}
+                  onClick={() => set(pickLanguage(l.value))}
+                  aria-pressed={active}
+                  className={clsx(
+                    "flex items-center gap-1.5 rounded-xl border transition",
+                    more ? "px-2.5 py-1.5 text-[12px]" : "px-3.5 py-2 text-[13px] font-medium",
+                    active ? "border-[var(--accent)] glass-strong text-[var(--fg)]" : "border-[var(--border)] glass text-muted hover:text-[var(--fg)]",
+                  )}
+                >
+                  {l.label}
+                  {l.native && <span className={clsx("text-[12px]", active ? "text-[var(--accent)]" : "text-faint")}>{l.native}</span>}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+        {suggestSarvamForGujarati(s) && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--glass)] px-3 py-2.5 text-[12.5px]">
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold">Gujarati works best with Sarvam AI</div>
+              <div className="text-muted">On-device Whisper can't write Gujarati well, so Flo hears it through Hindi and converts it to Gujarati script. Expect some spelling slips. Sarvam AI understands Gujarati natively (needs your Sarvam key).</div>
+            </div>
+            <Button size="sm" onClick={() => set(switchToSarvam())}>
+              Switch to Sarvam AI
+            </Button>
+          </div>
+        )}
       </Card>
       {s.sttProvider === "local" && (
         <Card className="p-5">

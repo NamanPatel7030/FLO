@@ -251,6 +251,52 @@ fn prefer_consistent_spelling(words: &mut [String]) {
     }
 }
 
+/// Devanagari → Gujarati script, letter for letter (both follow the ISCII layout, so the code
+/// points sit at the same offset in their Unicode blocks). Whisper writes Gujarati speech in
+/// Devanagari (its language detector takes it for Hindi, and its Hindi decode of Gujarati is
+/// phonetically close), so this turns that into readable Gujarati. Other text passes through.
+pub fn devanagari_to_gujarati(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let u = c as u32;
+        if !(0x0900..=0x097F).contains(&u) {
+            out.push(c);
+            continue;
+        }
+        let mapped = match u {
+            0x093C => continue,                     // nukta: Gujarati doesn't write it
+            0x0958..=0x095F => [0x0915, 0x0916, 0x0917, 0x091C, 0x0921, 0x0922, 0x092B, 0x092F][(u - 0x0958) as usize] + 0x180,
+            0x0964 | 0x0965 => '.' as u32,          // danda: Gujarati ends sentences with a full stop
+            0x0929 => 0x0AA8,                       // ऩ → ન
+            0x0931 => 0x0AB0,                       // ऱ → ર
+            0x0934 => 0x0AB3,                       // ऴ → ળ
+            0x090E | 0x0912 => u + 0x180 - 1,       // short e / o → e / o
+            0x0946 | 0x094A => u + 0x180 + 1,
+            _ => u + 0x180,
+        };
+        match char::from_u32(mapped).filter(|m| !is_unassigned_gujarati(*m)) {
+            Some(m) => out.push(m),
+            None => out.push(c),
+        }
+    }
+    out
+}
+
+/// Gujarati → Devanagari, letter for letter (see `devanagari_to_gujarati`). Used to show the Hindi
+/// decoder Gujarati context (dictionary words, the previous sentence) in a script it reads.
+pub fn gujarati_to_devanagari(s: &str) -> String {
+    s.chars()
+        .map(|c| match c as u32 {
+            u @ 0x0A81..=0x0AFF => char::from_u32(u - 0x180).unwrap_or(c),
+            _ => c,
+        })
+        .collect()
+}
+
+fn is_unassigned_gujarati(c: char) -> bool {
+    matches!(c as u32, 0x0A80 | 0x0A84 | 0x0A8E | 0x0A92 | 0x0AA9 | 0x0AB1 | 0x0AB4 | 0x0ABA | 0x0ABB | 0x0AC6 | 0x0ACA | 0x0ACE | 0x0ACF | 0x0AD1..=0x0ADF | 0x0AE4 | 0x0AE5 | 0x0AF2..=0x0AF8)
+}
+
 const FILLERS: &[&str] = &["um", "uh", "erm", "uhm", "hmm", "mm"];
 
 /// Rule-based cleanup used when no LLM is configured (or it fails).
@@ -1386,5 +1432,35 @@ mod tidy_tests {
         let out = tidy_transcript(raw);
         assert!(out.contains("colors. Like light theme I want, light, theme and"), "{out}");
         assert!(!out.contains("Thim"), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::*;
+
+    #[test]
+    fn devanagari_rescripts_to_gujarati_letter_for_letter() {
+        // Whisper's Hindi decode of Gujarati speech (ElevenLabs clip "gu1"), rescripted
+        assert_eq!(
+            devanagari_to_gujarati("काले सवारे 10 वागे meeting छे, बध्धाने याद करावी दे जो."),
+            "કાલે સવારે 10 વાગે meeting છે, બધ્ધાને યાદ કરાવી દે જો."
+        );
+        // nukta letters lose the nukta (Gujarati doesn't write it), danda becomes a full stop
+        assert_eq!(devanagari_to_gujarati("ज़रूर फ़ोन करो।"), "જરૂર ફોન કરો.");
+        // chandrabindu, anusvara, candra o
+        assert_eq!(devanagari_to_gujarati("हाँ ऑफिस में"), "હાઁ ઑફિસ મેં");
+        // letters without a Gujarati twin fall back to the nearest one, never a missing code point
+        let out = devanagari_to_gujarati("ऩ ऱ ऴ");
+        assert_eq!(out, "ન ર ળ");
+        // English and Gujarati text pass through untouched
+        assert_eq!(devanagari_to_gujarati("Send it. આજે"), "Send it. આજે");
+    }
+
+    #[test]
+    fn gujarati_rescripts_to_devanagari_and_back() {
+        assert_eq!(gujarati_to_devanagari("આજે મીટિંગ છે, Rahul."), "आजे मीटिंग छे, Rahul.");
+        let g = "તમે સાંજે બજારમાંથી દૂધ અને શાકભાજી લાવશો?";
+        assert_eq!(devanagari_to_gujarati(&gujarati_to_devanagari(g)), g);
     }
 }

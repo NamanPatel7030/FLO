@@ -362,7 +362,9 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
             .await?
             .ok_or_else(|| anyhow!("No API key for {}. Add it in Settings → AI.", s.stt_provider))?;
         let lang = lang_override.unwrap_or_else(|| s.language.clone());
-        stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &lang, &prompt).await
+        let text = stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &lang, &prompt).await?;
+        // Gujarati in Gujarati script, whatever script the engine wrote it in
+        Ok(stt::cloud_script(&text, &lang, &stt::allowed_languages(&s.auto_languages)))
     }
 }
 

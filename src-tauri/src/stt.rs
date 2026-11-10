@@ -115,11 +115,30 @@ fn norm_words(t: &str) -> Vec<String> {
     t.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).filter(|w| !w.is_empty()).collect()
 }
 
+/// "A, A-cut-off": the whole text followed by the start of another copy, cut off mid-word by the
+/// token cap, with no full stop in between (so the sentence-level check can't see it).
+fn collapse_cut_copy(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let key = norm_words(text);
+    let n = words.len();
+    if key.len() != n || n < 7 || text.trim_end().ends_with(['.', '?', '!', '।']) {
+        return text.to_string();
+    }
+    for a in n.div_ceil(2)..n.saturating_sub(2) {
+        let rest = &key[a..];
+        let k = rest.len();
+        if k >= 3 && k < a && rest[..k - 1] == key[..k - 1] && key[k - 1].starts_with(rest[k - 1].as_str()) {
+            return words[..a].join(" ");
+        }
+    }
+    text.to_string()
+}
+
 /// Remove the decoder's repetition loops: the same sentence (or its tail) emitted again and again,
 /// a short phrase repeated three or more times in a row, and the cut-off start of yet another
 /// copy at the end. Ordinary speech ("very very good", "No, no, I meant…") is left alone.
 pub fn collapse_loops(text: &str) -> String {
-    let text = collapse_repeat(text.trim());
+    let text = collapse_cut_copy(&collapse_repeat(text.trim()));
     // 1) sentence level
     let mut sentences: Vec<String> = vec![];
     let mut cur = String::new();
@@ -340,6 +359,110 @@ pub fn allowed_languages(configured: &[String]) -> Vec<String> {
         out = vec!["en".into(), "hi".into()];
     }
     out
+}
+
+/// The decoder Whisper runs for `lang`. Its Gujarati decoder is unusable: forced to "gu",
+/// large-v3-turbo (and large-v3) writes Romanian- or Lithuanian-looking Latin text, Urdu script
+/// or nothing (CER 0.4–1.8 on the language bench). Its Hindi decoder writes Gujarati speech
+/// phonetically in Devanagari, which rescripts letter for letter to Gujarati (CER 0.05–0.23).
+pub fn decoder_lang(lang: &str) -> &str {
+    if lang == "gu" {
+        "hi"
+    } else {
+        lang
+    }
+}
+
+/// The initial prompt for a decode in `lang`: `prompt_for` on the decoder's language, with any
+/// Gujarati in the prompt (dictionary words, the previous sentence) rewritten in Devanagari when
+/// the Hindi decoder hears Gujarati, so it keeps steering the decode.
+pub fn whisper_prompt(lang: &str, prompt: &str) -> String {
+    if decoder_lang(lang) == "hi" {
+        prompt_for("hi", &crate::text::gujarati_to_devanagari(prompt))
+    } else {
+        prompt_for(lang, prompt)
+    }
+}
+
+/// Words that only Gujarati uses, as Whisper's Hindi decoder spells them ("छे" is, "तमे" you,
+/// "अने" and, "नथी" isn't…), and Hindi-only words ("है", "और", "नहीं"…).
+const GUJARATI_WORDS: &[&str] = &[
+    "छे", "छें", "छुं", "छूं", "छू", "छो", "छीए", "छीये", "नथी", "हतो", "हती", "हतुं", "हतु", "हता", "तमे", "तमें", "अमे", "मारे",
+    "मारुं", "मारू", "मने", "तने", "अने", "पण", "शुं", "शू", "केम", "हवे", "आजे", "सवारे", "थई", "थाई", "गयुं", "गयू",
+    "ग्यूं", "जाउं", "जाऊं", "हुं", "आवजो", "तमारुं", "तमारी", "आपणे", "एटले", "बधा", "बधाने", "बध्धाने", "कयुं", "लावशो", "करशो",
+    "जोईए", "जोइए", "सारुं", "बहु", "क्यां", "अहीं", "त्यां",
+];
+const HINDI_WORDS: &[&str] = &[
+    "है", "हैं", "था", "थे", "और", "नहीं", "नही", "मैं", "मुझे", "क्या", "रहा", "रही", "रहे", "हूँ", "हूं", "को", "का", "की", "के", "से",
+    "में", "यह", "वह", "भी", "आप", "हम", "क्यों", "कैसे", "गया", "गई", "करना", "चाहिए",
+];
+
+/// Is this Devanagari transcript (Whisper's Hindi decode) really Gujarati speech? Counts
+/// Gujarati-only words and suffixes (-वानुं "to do", -नुं "of", -मां "in") against Hindi-only ones.
+pub fn looks_gujarati(devanagari: &str) -> bool {
+    let words: Vec<&str> = devanagari.split(|c: char| !(c.is_alphanumeric() || ('\u{0900}'..='\u{097F}').contains(&c))).filter(|w| !w.is_empty()).collect();
+    let (mut gu, mut hi) = (0, 0);
+    for w in &words {
+        let n = w.chars().count();
+        if GUJARATI_WORDS.contains(w) || (n >= 4 && (w.ends_with("वानुं") || w.ends_with("वानू") || w.ends_with("वानु") || w.ends_with("नुं") || w.ends_with("मां"))) {
+            gu += 1;
+        } else if HINDI_WORDS.contains(w) {
+            hi += 1;
+        }
+    }
+    gu > 0 && gu > hi
+}
+
+/// The language a clip ends up in. `lid` is what Whisper's detector picked among `allowed`,
+/// `text` the decode. The detector calls Gujarati speech Hindi (0.3–0.8 "hi" vs 0.0–0.2 "gu" on
+/// the language bench), so when Gujarati is allowed, a Hindi-decoder transcript is settled by
+/// its words: Gujarati-only words → "gu", otherwise "hi" (if allowed).
+pub fn final_language(lid: &str, text: &str, allowed: &[String]) -> String {
+    if decoder_lang(lid) != "hi" {
+        return lid.to_string();
+    }
+    let has = |l: &str| allowed.iter().any(|a| a == l);
+    if has("gu") && looks_gujarati(text) {
+        "gu".into()
+    } else if has("hi") {
+        "hi".into()
+    } else {
+        lid.to_string()
+    }
+}
+
+/// The transcript in the script of `lang`: Gujarati comes out of the Hindi decoder in
+/// Devanagari and is rewritten in Gujarati script; everything else is left as it is.
+pub fn in_script(text: &str, lang: &str) -> String {
+    if lang == "gu" {
+        crate::text::devanagari_to_gujarati(text)
+    } else {
+        text.to_string()
+    }
+}
+
+/// The language sent to a cloud engine. Groq serves Whisper large-v3(-turbo), whose Gujarati
+/// decoder is as broken as the local one, so it hears Gujarati through Hindi like on-device.
+pub fn cloud_language<'a>(provider: &str, language: &'a str) -> &'a str {
+    if provider == "groq" && language == "gu" {
+        "hi"
+    } else {
+        language
+    }
+}
+
+/// A cloud transcript in the right script: Gujarati that came back in Devanagari (Groq's Hindi
+/// decode, or an "auto" request where `allowed` includes Gujarati) is rewritten in Gujarati.
+pub fn cloud_script(text: &str, language: &str, allowed: &[String]) -> String {
+    let deva = text.chars().any(|c| ('\u{0900}'..='\u{097F}').contains(&c));
+    if !deva {
+        return text.to_string();
+    }
+    match language {
+        "gu" => in_script(text, "gu"),
+        "auto" | "" if allowed.iter().any(|a| a == "gu") && looks_gujarati(text) => in_script(text, "gu"),
+        _ => text.to_string(),
+    }
 }
 
 /// Pure (unit-tested): the detected language restricted to `allowed`. `scored` are (code, logit or
@@ -613,28 +736,35 @@ impl LocalWhisper {
             let p = if prompt.is_empty() { HINGLISH_PROMPT.to_string() } else { format!("{HINGLISH_PROMPT} {}", prompt_for("en", prompt)) };
             self.decode_checked(model_file, samples, "en", &p, ACCEPT)?.0
         } else if lang_in != "auto" {
-            self.decode_checked(model_file, samples, lang_in, &prompt_for(lang_in, prompt), ACCEPT)?.0
+            // Gujarati: the Hindi decoder, rewritten in Gujarati script (see `decoder_lang`)
+            let (text, conf) = self.decode_checked(model_file, samples, decoder_lang(lang_in), &whisper_prompt(lang_in, prompt), ACCEPT)?.0;
+            (in_script(&text, lang_in), conf)
         } else {
             let cands = self.auto_langs.lock().clone();
             let sticky = self.detected.lock().clone().filter(|l| cands.is_empty() || cands.contains(l));
             let first_lang = sticky.clone().or_else(|| cands.first().cloned()).unwrap_or_else(|| "en".into());
-            let (first, mut state) = self.decode_with(model_file, samples, &first_lang, &prompt_for(&first_lang, prompt), DecodeOpts::FAST)?;
+            let first_dec = decoder_lang(&first_lang).to_string();
+            let (first, mut state) = self.decode_with(model_file, samples, &first_dec, &whisper_prompt(&first_lang, prompt), DecodeOpts::FAST)?;
             // which language was that? one decoder step on the encoder output we already have
             let td = std::time::Instant::now();
-            let lang = self.lang_from_state(model_file, &mut state, &cands).unwrap_or_else(|| first_lang.clone());
+            let lid = self.lang_from_state(model_file, &mut state, &cands).unwrap_or_else(|| first_lang.clone());
             timing.detect_ms = td.elapsed().as_millis();
             timing.detected = true;
-            *self.detected.lock() = Some(lang.clone());
-            if lang == first_lang {
-                if accepted(&first, &lang, ACCEPT, secs) {
+            let dec = decoder_lang(&lid).to_string();
+            let (text, conf) = if dec == first_dec {
+                if accepted(&first, &dec, ACCEPT, secs) {
                     first
                 } else {
-                    self.decode_accurate(model_file, samples, &lang, &prompt_for(&lang, prompt))?
+                    self.decode_accurate(model_file, samples, &dec, &whisper_prompt(&lid, prompt))?
                 }
             } else {
                 // e.g. Hindi after English: the first decode was a translation, not a transcript
-                self.decode_checked(model_file, samples, &lang, &prompt_for(&lang, prompt), ACCEPT)?.0
-            }
+                self.decode_checked(model_file, samples, &dec, &whisper_prompt(&lid, prompt), ACCEPT)?.0
+            };
+            // Hindi or Gujarati? Whisper's detector can't tell; the words can
+            let lang = final_language(&lid, &text, &cands);
+            *self.detected.lock() = Some(lang.clone());
+            (in_script(&text, &lang), conf)
         };
         timing.total_ms = t0.elapsed().as_millis();
         timing.confidence = confidence;
@@ -803,6 +933,7 @@ pub async fn transcribe_cloud(egress: &Egress, provider: &str, model: &str, key:
     if provider == "sarvam" {
         return transcribe_sarvam(egress, model, key, samples, language).await;
     }
+    let language = cloud_language(provider, language);
     // Whisper-style APIs take ISO-639-1 codes; Hinglish is Hindi speech written in Roman letters,
     // which they produce from an English-language decode steered by a romanized prompt
     let (language, prompt) = match language {
@@ -1151,6 +1282,96 @@ mod tests {
         let odd: Vec<String> = vec!["xx".into(), "en".into()];
         assert_eq!(best_candidate(&probs, &odd, id).as_deref(), Some("en"));
         assert_eq!(best_candidate(&probs, &[], id), None);
+    }
+
+    #[test]
+    fn a_sentence_followed_by_its_own_cut_off_copy_is_kept_once() {
+        // real Hindi-decoder output for a Gujarati clip (ElevenLabs "gu3"): one copy and the
+        // start of another, without a full stop between them
+        let raw = "तमें सांजे बजारमाथी दूद अने शाक भाजी लाऊशो, तमें सांजे बजारमाथी दूद अने शाक भ";
+        assert_eq!(collapse_loops(raw), "तमें सांजे बजारमाथी दूद अने शाक भाजी लाऊशो,");
+        // ordinary speech that happens to repeat a few words stays
+        let t = "I want to go home, I want to go now";
+        assert_eq!(collapse_loops(t), t);
+    }
+
+    #[test]
+    fn gujarati_is_decoded_by_the_hindi_decoder() {
+        assert_eq!(decoder_lang("gu"), "hi");
+        assert_eq!(decoder_lang("hi"), "hi");
+        assert_eq!(decoder_lang("en"), "en");
+        // Gujarati context reaches the Hindi decoder in Devanagari instead of being dropped
+        let p = whisper_prompt("gu", "Flo, Rahul. આજે મીટિંગ છે અને હું ઘરે જાઉં છું.");
+        assert!(p.contains("आजे मीटिंग छे"), "{p}");
+        assert!(!p.chars().any(|c| ('\u{0A80}'..='\u{0AFF}').contains(&c)), "{p}");
+        assert_eq!(whisper_prompt("en", "Flo, Rahul"), "Flo, Rahul");
+    }
+
+    #[test]
+    fn hindi_decodes_of_gujarati_speech_are_recognised() {
+        // real Hindi-decoder outputs for Gujarati clips (ElevenLabs + macOS say, language bench)
+        for t in [
+            "काले सवारे दस वागे मीटिंग छे बधाने याद करावी दे जो",
+            "चली सवारी 10 वागे मीतिंग छे.",
+            "मारे राहुलने इन्वोईस मोकलवानू छे।",
+            "आजनु काम पूरुं थैग्यूं, हवे हुं घरे जांग छूं.",
+            "तमे साजी बजारमान थी दूद अने शात भाजी लाब शो?",
+        ] {
+            assert!(looks_gujarati(t), "{t}");
+        }
+        // Hindi and Hinglish stay Hindi; English isn't Gujarati
+        for t in [
+            "मुझे राहुल को आज शाम तक इन्वोईस भेजना है।",
+            "कल meeting है, please सबको याद दिला देना और report भी भेज देना.",
+            "काले बादल आ गए हैं।",
+            "आज का काम पूरा हो गया, अब घर जा रहा हूँ।",
+            "Please send the invoice.",
+        ] {
+            assert!(!looks_gujarati(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn auto_settles_hindi_vs_gujarati_from_what_was_said() {
+        let all: Vec<String> = vec!["en".into(), "hi".into(), "gu".into()];
+        let en_hi: Vec<String> = vec!["en".into(), "hi".into()];
+        let gu_text = "काले सवारे दस वागे मीटिंग छे";
+        let hi_text = "मुझे राहुल को इनवॉइस भेजना है।";
+        // Whisper's detector calls Gujarati "hi": the words decide
+        assert_eq!(final_language("hi", gu_text, &all), "gu");
+        assert_eq!(final_language("hi", hi_text, &all), "hi");
+        assert_eq!(final_language("gu", hi_text, &all), "hi");
+        // Gujarati not among the user's languages: Hindi stays Hindi
+        assert_eq!(final_language("hi", gu_text, &en_hi), "hi");
+        // English is never re-labelled
+        assert_eq!(final_language("en", "Please send it.", &all), "en");
+        // a Gujarati-only setup keeps Gujarati even without marker words
+        assert_eq!(final_language("gu", "राहुल", &["en".to_string(), "gu".to_string()]), "gu");
+    }
+
+    #[test]
+    fn transcripts_come_out_in_the_script_of_their_language() {
+        assert_eq!(in_script("काले सवारे 10 वागे meeting छे.", "gu"), "કાલે સવારે 10 વાગે meeting છે.");
+        assert_eq!(in_script("मुझे इनवॉइस भेजना है।", "hi"), "मुझे इनवॉइस भेजना है।");
+        assert_eq!(in_script("Send it.", "en"), "Send it.");
+        assert_eq!(in_script("કાલે મીટિંગ છે", "gu"), "કાલે મીટિંગ છે");
+    }
+
+    #[test]
+    fn cloud_gujarati_ends_in_gujarati_script() {
+        let all: Vec<String> = vec!["en".into(), "hi".into(), "gu".into()];
+        // Groq runs Whisper large-v3: same broken Gujarati decoder, so it hears Gujarati via Hindi
+        assert_eq!(cloud_language("groq", "gu"), "hi");
+        assert_eq!(cloud_language("openai", "gu"), "gu");
+        assert_eq!(cloud_language("sarvam", "gu"), "gu");
+        assert_eq!(cloud_language("groq", "en"), "en");
+        // whatever comes back in Devanagari for Gujarati is rescripted; native output is untouched
+        assert_eq!(cloud_script("काले मीटिंग छे", "gu", &all), "કાલે મીટિંગ છે");
+        assert_eq!(cloud_script("કાલે મીટિંગ છે", "gu", &all), "કાલે મીટિંગ છે");
+        assert_eq!(cloud_script("काले सवारे मीटिंग छे", "auto", &all), "કાલે સવારે મીટિંગ છે");
+        assert_eq!(cloud_script("मुझे भेजना है", "auto", &all), "मुझे भेजना है");
+        assert_eq!(cloud_script("Send it.", "auto", &all), "Send it.");
+        assert_eq!(cloud_script("काले सवारे मीटिंग छे", "hi", &all), "काले सवारे मीटिंग छे");
     }
 
     #[test]

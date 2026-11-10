@@ -112,7 +112,9 @@ fn stt_bench() {
     let model = PathBuf::from(model);
     let mem_start = footprint_mb();
     let w = LocalWhisper::default();
-    *w.auto_langs.lock() = vec!["en".into(), "hi".into(), "gu".into()];
+    // FLO_BENCH_AUTO_LANGS=en,hi → the default allowed set; unset → en/hi/gu like the user's settings
+    let auto: Vec<String> = std::env::var("FLO_BENCH_AUTO_LANGS").unwrap_or_else(|_| "en,hi,gu".into()).split(',').map(String::from).collect();
+    *w.auto_langs.lock() = allowed_languages(&auto);
     let t = std::time::Instant::now();
     w.warm(&model);
     let load_ms = t.elapsed().as_millis();
@@ -147,11 +149,11 @@ fn stt_bench() {
             let row = json!({
                 "clip": name, "lang": lang, "cond": cond, "secs": (secs * 10.0).round() / 10.0, "ms": ms,
                 "detect_ms": timing.detect_ms, "detected": w.detected_lang(), "conf": (timing.confidence * 100.0).round() / 100.0,
-                "retried": retried, "degenerate": is_degenerate(&text),
+                "retried": retried, "degenerate": is_degenerate(&text), "script_ok": script_ok(&text, lang),
                 "wer": (wer(expect, &text) * 1000.0).round() / 1000.0, "cer": (cer(expect, &text) * 1000.0).round() / 1000.0,
                 "text": text,
             });
-            println!("{name:10} {cond:8} {ms:5} ms wer {:.2} cer {:.2} retry {retried:5} lang {:?} | {}", row["wer"].as_f64().unwrap(), row["cer"].as_f64().unwrap(), w.detected_lang(), row["text"].as_str().unwrap());
+            println!("{name:10} {cond:8} {ms:5} ms wer {:.2} cer {:.2} script {:5} lang {:?} | {}", row["wer"].as_f64().unwrap(), row["cer"].as_f64().unwrap(), script_ok(&text, lang), w.detected_lang(), row["text"].as_str().unwrap());
             rows.push(row);
         }
         prev_text = expect.to_string();
@@ -159,7 +161,7 @@ fn stt_bench() {
     }
     // summary per language and condition
     let mut summary = serde_json::Map::new();
-    for key in ["en", "hi", "gu", "clean", "quiet", "noisy", "streamed", "all"] {
+    for key in ["en", "hi", "gu", "hi-en", "clean", "quiet", "noisy", "streamed", "all"] {
         let sel: Vec<&Value> = rows.iter().filter(|r| key == "all" || r["lang"] == key || r["cond"] == key).collect();
         if sel.is_empty() {
             continue;
@@ -173,6 +175,7 @@ fn stt_bench() {
                 "n": sel.len(), "wer": (avg("wer") * 1000.0).round() / 1000.0, "cer": (avg("cer") * 1000.0).round() / 1000.0,
                 "ms_mean": avg("ms").round(), "ms_p50": ms[ms.len() / 2], "ms_p90": ms[(ms.len() * 9 / 10).min(ms.len() - 1)],
                 "retries": sel.iter().filter(|r| r["retried"].as_bool().unwrap_or(false)).count(),
+                "script_wrong": sel.iter().filter(|r| !r["script_ok"].as_bool().unwrap_or(false)).count(),
                 "degenerate_final": sel.iter().filter(|r| r["degenerate"].as_bool().unwrap_or(false)).count(),
                 "wrong_lang": sel.iter().filter(|r| r["detected"].as_str().is_some_and(|d| d != r["lang"].as_str().unwrap_or(""))).count(),
             }),
@@ -343,6 +346,20 @@ fn vad_bench() {
     }
 }
 
+/// Is `text` written in the script `lang` should come out in? English and Hinglish: Latin only;
+/// Hindi: Devanagari; Gujarati: Gujarati script (no Devanagari).
+pub fn script_ok(text: &str, lang: &str) -> bool {
+    let deva = text.chars().filter(|c| ('\u{0900}'..='\u{097F}').contains(c)).count();
+    let guj = text.chars().filter(|c| ('\u{0A80}'..='\u{0AFF}').contains(c)).count();
+    let other = text.chars().filter(|c| c.is_alphabetic() && !c.is_ascii() && !('\u{0900}'..='\u{097F}').contains(c) && !('\u{0A80}'..='\u{0AFF}').contains(c)).count();
+    match lang {
+        "en" | "hi-en" => deva + guj + other == 0 && text.chars().any(|c| c.is_ascii_alphabetic()),
+        "hi" => deva > 0 && guj == 0 && other == 0,
+        "gu" => guj > 0 && deva == 0 && other == 0,
+        _ => true,
+    }
+}
+
 fn text_tail(s: &str) -> String {
     crate::text::truncate_chars(s, 200)
 }
@@ -359,5 +376,56 @@ mod metric_tests {
         assert!((wer("a b c d", "a x c d") - 0.25).abs() < 1e-6);
         assert!(wer("a b", "a b a b a b a b") > 1.0); // runaway output counts against it
         assert!(cer("કાલે મીટિંગ છે", "કાલે મીટીંગ છે") > 0.0);
+    }
+
+    #[test]
+    fn script_check_per_language() {
+        assert!(script_ok("Send it.", "en"));
+        assert!(!script_ok("प्लीस सेंड", "en"));
+        assert!(script_ok("कल meeting है", "hi"));
+        assert!(!script_ok("काले सवारे 10 वागे meeting छे", "gu"));
+        assert!(script_ok("કાલે સવારે 10 વાગે meeting છે", "gu"));
+        assert!(!script_ok("Aš nuca am pôruta", "gu"));
+        assert!(script_ok("Kal meeting hai", "hi-en"));
+    }
+}
+
+/// Gujarati / Hindi / English probe: each clip decoded in every candidate language (fast and full
+/// window), Whisper's full-window language probabilities, and the Hindi decode re-scripted to
+/// Gujarati. Shows what the model can do per language, independent of detection.
+/// FLO_BENCH_MANIFEST=… FLO_BENCH_MODEL=… cargo test --release --lib stt_lang_probe -- --ignored --nocapture
+#[test]
+#[ignore]
+fn stt_lang_probe() {
+    let (Ok(manifest), Ok(model)) = (std::env::var("FLO_BENCH_MANIFEST"), std::env::var("FLO_BENCH_MODEL")) else { return };
+    let only = std::env::var("FLO_PROBE_ONLY").unwrap_or_default();
+    let clips: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+    let model = PathBuf::from(model);
+    let w = LocalWhisper::default();
+    w.warm(&model);
+    let _ = w.decode_with(&model, &vec![0.0; 16_000], "en", "", DecodeOpts::SAFE);
+    for c in &clips {
+        let name = c["name"].as_str().unwrap();
+        if !only.is_empty() && !name.starts_with(&only) {
+            continue;
+        }
+        let expect = c["text"].as_str().unwrap();
+        let audio = crate::audio::trim_silence(&read_wav(c["wav"].as_str().unwrap()));
+        let ctx = w.context(&model).unwrap();
+        let mut state = ctx.create_state().unwrap();
+        state.pcm_to_mel(&padded(&audio), threads()).unwrap();
+        let (_, probs) = state.lang_detect(0, threads()).unwrap();
+        let p = |l: &str| whisper_rs::get_lang_id(l).and_then(|i| probs.get(i as usize).copied()).unwrap_or(0.0);
+        let mut top: Vec<(usize, f32)> = probs.iter().copied().enumerate().collect();
+        top.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let top3: Vec<String> = top.iter().take(3).map(|(i, v)| format!("{}:{v:.2}", whisper_rs::get_lang_str(*i as i32).unwrap_or("?"))).collect();
+        println!("{name:10} [{}] LID en {:.2} hi {:.2} gu {:.2} | top {}", c["lang"], p("en"), p("hi"), p("gu"), top3.join(" "));
+        for lang in ["en", "hi", "gu"] {
+            for (oname, o) in [("fast", DecodeOpts::FAST), ("full", DecodeOpts::ACCURATE)] {
+                let ((text, conf), _) = w.decode_with(&model, &audio, lang, &prompt_for(lang, ""), o).unwrap();
+                let extra = if lang == "hi" { format!(" | as gu: cer {:.2}", cer(expect, &crate::text::devanagari_to_gujarati(&text))) } else { String::new() };
+                println!("   {lang} {oname}: cer {:.2} conf {conf:.2}{extra} | {text}", cer(expect, &text));
+            }
+        }
     }
 }
