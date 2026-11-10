@@ -880,6 +880,7 @@ pub fn permissions() -> Permissions {
             screen: CGPreflightScreenCaptureAccess(),
             hotkey_active: HOTKEY_ACTIVE.load(Ordering::SeqCst),
             accessibility_stale: crate::tcc::accessibility_stale(ax),
+            hotkey_problem: None,
         }
     }
 }

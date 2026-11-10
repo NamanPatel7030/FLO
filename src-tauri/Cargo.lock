@@ -1873,7 +1873,10 @@ dependencies = [
  "url",
  "uuid",
  "whisper-rs",
+ "windows 0.62.2",
+ "x11rb",
  "xcap",
+ "zbus 5.19.0",
 ]
 
 [[package]]

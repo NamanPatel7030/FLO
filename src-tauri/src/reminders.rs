@@ -12,7 +12,21 @@ pub(crate) fn notify(title: &str, body: &str) {
     let _ = std::process::Command::new("osascript").arg("-e").arg(script).spawn();
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Linux: the desktop's notification daemon via `notify-send` (libnotify), when installed.
+#[cfg(target_os = "linux")]
+pub(crate) fn notify(title: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send").args(["--app-name=Flo", "--icon=com.flo.flow", &format!("Flo · {title}"), body]).spawn();
+}
+
+/// Windows: a toast from Flo's Start-menu entry (the installer registers its AppUserModelID).
+#[cfg(target_os = "windows")]
+pub(crate) fn notify(title: &str, body: &str) {
+    if let Err(e) = crate::platform::toast(title, body) {
+        log::warn!("notification: {e}");
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub(crate) fn notify(_title: &str, _body: &str) {}
 
 pub fn spawn(st: Shared) {

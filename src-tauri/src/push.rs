@@ -411,7 +411,18 @@ mod idle {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod idle {
+    /// Windows: GetLastInputInfo. Linux: MIT-SCREEN-SAVER on X11 (None on Wayland).
+    pub fn seconds() -> Option<f64> {
+        crate::platform::idle_seconds()
+    }
+    pub fn screen_locked() -> bool {
+        false
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 mod idle {
     pub fn seconds() -> Option<f64> {
         None

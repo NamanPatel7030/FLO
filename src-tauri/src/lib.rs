@@ -70,16 +70,23 @@ static GEOMETRY: Mutex<Option<IslandGeometry>> = Mutex::new(None);
 static ISLAND_RECT: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
 
 /// Must be called on the main thread on macOS.
-fn compute_geometry() -> IslandGeometry {
-    let g = platform::island_geometry();
+fn compute_geometry(app: &AppHandle) -> IslandGeometry {
+    let mut g = platform::island_geometry();
+    if g.screen_width <= 0.0 {
+        // Windows / Linux: the primary display's work-area width in logical px
+        if let Ok(Some(m)) = app.primary_monitor() {
+            g.screen_width = m.work_area().size.width as f64 / m.scale_factor();
+        }
+    }
     *GEOMETRY.lock() = Some(g.clone());
     g
 }
 
 pub(crate) fn island_geometry(app: &AppHandle) -> anyhow::Result<IslandGeometry> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let a = app.clone();
     app.run_on_main_thread(move || {
-        let _ = tx.send(compute_geometry());
+        let _ = tx.send(compute_geometry(&a));
     })?;
     Ok(rx.recv_timeout(std::time::Duration::from_secs(2))?)
 }
@@ -115,17 +122,46 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
         w.set_position(LogicalPosition::new(x, y))?;
         return Ok(());
     }
+    // Windows / Linux (no notch): a floating pill at the top centre of the primary display's work
+    // area (below a top panel / above nothing on Windows). Computed in physical pixels from that
+    // monitor, so it lands right with mixed DPI across several displays.
     #[allow(unreachable_code)]
-    w.set_size(LogicalSize::new(width, height))?;
-    if let Some(m) = w.primary_monitor()? {
-        let scale = m.scale_factor();
-        let wa = m.work_area();
-        let x = (wa.position.x as f64 + wa.size.width as f64) / scale - width - 16.0;
-        let y = (wa.position.y as f64 + wa.size.height as f64) / scale - height - 16.0;
-        w.set_position(LogicalPosition::new(x, y))?;
-        *ISLAND_RECT.lock() = Some((x, y, width, height));
+    {
+        let Some(m) = w.primary_monitor()?.or(w.current_monitor()?) else {
+            w.set_size(LogicalSize::new(width, height))?;
+            return Ok(());
+        };
+        let (pos, size) = island_rect_on(m.scale_factor(), (m.work_area().position.x, m.work_area().position.y), (m.work_area().size.width, m.work_area().size.height), width, height);
+        w.set_size(tauri::PhysicalSize::new(size.0, size.1))?;
+        w.set_position(tauri::PhysicalPosition::new(pos.0, pos.1))?;
+        let s = m.scale_factor();
+        *ISLAND_RECT.lock() = Some((pos.0 as f64 / s, pos.1 as f64 / s, width, height));
+        Ok(())
     }
-    Ok(())
+}
+
+/// Top-centre island frame in physical pixels for a work area (physical origin + size) at `scale`.
+/// Returns ((x, y), (w, h)).
+fn island_rect_on(scale: f64, origin: (i32, i32), area: (u32, u32), width: f64, height: f64) -> ((i32, i32), (u32, u32)) {
+    const TOP_GAP: f64 = 6.0;
+    let w = (width * scale).round().max(1.0);
+    let h = (height * scale).round().max(1.0);
+    let x = origin.0 as f64 + ((area.0 as f64 - w) / 2.0).max(0.0);
+    let y = origin.1 as f64 + TOP_GAP * scale;
+    ((x.round() as i32, y.round() as i32), (w as u32, h as u32))
+}
+
+#[cfg(test)]
+mod island_rect_tests {
+    #[test]
+    fn centres_on_the_work_area_in_physical_pixels() {
+        // 1920x1040 work area at 100 %
+        assert_eq!(super::island_rect_on(1.0, (0, 0), (1920, 1040), 200.0, 40.0), ((860, 6), (200, 40)));
+        // a 150 % display to the right of the primary one, with a top panel 48 px tall
+        assert_eq!(super::island_rect_on(1.5, (1920, 48), (2560, 1392), 200.0, 40.0), ((1920 + 1130, 57), (300, 60)));
+        // wider than the screen: pinned to the left edge rather than off screen
+        assert_eq!(super::island_rect_on(1.0, (0, 0), (100, 100), 200.0, 40.0).0, (0, 6));
+    }
 }
 
 /// The dashboard window is destroyed when closed (frees ~100 MB of WebKit memory) and
@@ -150,8 +186,8 @@ pub(crate) fn show_dashboard(app: &AppHandle, route: Option<&str>) {
 }
 
 fn create_island(app: &AppHandle) -> tauri::Result<()> {
-    let geo = compute_geometry(); // setup runs on the main thread
-    let (w, h) = if geo.platform == "macos" { (geo.notch_width, geo.notch_height) } else { (64.0, 64.0) };
+    let geo = compute_geometry(app); // setup runs on the main thread
+    let (w, h) = if geo.platform == "macos" { (geo.notch_width, geo.notch_height) } else { (88.0, 64.0) };
     let mut b = WebviewWindowBuilder::new(app, "island", WebviewUrl::App("index.html".into()))
         .initialization_script("if (!location.hash || location.hash === '#/') { location.hash = '#/island'; }")
         .title("Flo Island")
@@ -168,10 +204,20 @@ fn create_island(app: &AppHandle) -> tauri::Result<()> {
     {
         b = b.accept_first_mouse(true);
     }
+    // Windows / Linux: never take keyboard focus from the app you're dictating into (Windows:
+    // WS_EX_NOACTIVATE; GTK: accept-focus off). The quick-note widget asks for focus when clicked.
+    #[cfg(not(target_os = "macos"))]
+    {
+        b = b.focusable(false);
+    }
     let win = b.build()?;
     #[cfg(target_os = "macos")]
     if let Ok(ptr) = win.ns_window() {
         platform::configure_island(ptr);
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(hwnd) = win.hwnd() {
+        platform::configure_island(hwnd.0 as *mut std::ffi::c_void);
     }
     let _ = &win;
     let _ = place_island(app, w, h);
@@ -434,6 +480,7 @@ pub fn run() {
             commands::local_models,
             commands::get_island_geometry,
             commands::island_resize,
+            commands::island_focus,
             commands::open_dashboard,
             commands::take_mcp_prefill,
             commands::clear_caches,

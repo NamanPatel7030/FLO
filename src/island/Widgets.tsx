@@ -432,6 +432,8 @@ function NoteWidget() {
             /* ignore */
           }
         }}
+        onFocus={() => void api.islandFocus(true).catch(() => {})}
+        onBlur={() => void api.islandFocus(false).catch(() => {})}
         placeholder="Jot something…"
         className="mt-1 h-full w-full resize-none bg-transparent text-[12px] text-white/85 placeholder:text-white/30 focus:outline-none"
       />

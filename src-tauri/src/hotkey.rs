@@ -241,7 +241,7 @@ impl Machine {
     }
 
     /// Windows variant: two independent keys, either starts a session.
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[allow(dead_code)]
     pub fn update_two_keys(&mut self, dictate: bool, assistant: bool) -> Option<HotkeyEvent> {
         let any = dictate || assistant;
         match (self.held, any) {
@@ -262,6 +262,110 @@ impl Machine {
             }
             _ => None,
         }
+    }
+}
+
+// ── Windows / Linux: raw key events → modifier state (platform-agnostic, unit tested) ──────
+// (compiled everywhere so the tests run on every OS)
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// A physical key as the Windows hook, X11 (rdev) and evdev readers report it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PcKey {
+    Ctrl(bool), // true = right-hand key
+    Alt(bool),
+    /// the Windows key / Super
+    Win(bool),
+    Shift(bool),
+    Space,
+    Esc,
+    /// any other key, by an id unique per key (repeats are recognised by it)
+    Other(u32),
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// What `fn` means on a PC keyboard (it has no readable fn key): Ctrl + Win / Super.
+fn pc_mods(mut m: Mods) -> Mods {
+    if m.fn_ {
+        m.fn_ = false;
+        m.ctrl = true;
+        m.cmd = true;
+    }
+    m
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+impl HotkeyConfig {
+    /// The configured combos for a Windows / Linux keyboard: `fn` (macOS) becomes Ctrl + Win, so
+    /// the defaults are hold Ctrl → dictation, hold Ctrl + Win → assistant.
+    pub fn for_pc(self) -> Self {
+        let d = pc_mods(self.dictation);
+        let mut a = pc_mods(self.assistant);
+        if a == d {
+            a = if d == pc_mods(Mods { fn_: true, ..Default::default() }) { Mods { ctrl: true, ..Default::default() } } else { pc_mods(Mods { fn_: true, ..Default::default() }) };
+        }
+        Self { dictation: d, assistant: a }
+    }
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// Turns key down / up events into push-to-talk events. Ignores auto-repeat, and swallows the key
+/// up of any key whose key down it swallowed (the Space of Ctrl + Space).
+#[derive(Default, Debug)]
+pub struct PcKeys {
+    machine: Machine,
+    down: std::collections::HashSet<PcKey>,
+    swallowed: std::collections::HashSet<PcKey>,
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+impl PcKeys {
+    pub fn mods(&self) -> Mods {
+        let has = |f: fn(&PcKey) -> bool| self.down.iter().any(f);
+        Mods {
+            fn_: false,
+            ctrl: has(|k| matches!(k, PcKey::Ctrl(_))),
+            alt: has(|k| matches!(k, PcKey::Alt(_))),
+            cmd: has(|k| matches!(k, PcKey::Win(_))),
+            shift: has(|k| matches!(k, PcKey::Shift(_))),
+        }
+    }
+
+    /// Feed one key event. Returns (event, swallow this key event).
+    pub fn feed(&mut self, key: PcKey, is_down: bool, cfg: &HotkeyConfig) -> (Option<HotkeyEvent>, bool) {
+        let modifier = matches!(key, PcKey::Ctrl(_) | PcKey::Alt(_) | PcKey::Win(_) | PcKey::Shift(_));
+        if !is_down {
+            self.down.remove(&key);
+            let swallow = self.swallowed.remove(&key);
+            if modifier {
+                return (self.machine.update_mods(self.mods(), cfg), swallow);
+            }
+            return (None, swallow);
+        }
+        if !self.down.insert(key) {
+            // auto-repeat: keep swallowing a swallowed key, otherwise nothing changed
+            return (None, self.swallowed.contains(&key));
+        }
+        if modifier {
+            return (self.machine.update_mods(self.mods(), cfg), false);
+        }
+        let code = match key {
+            PcKey::Space => KEY_SPACE,
+            PcKey::Esc => KEY_ESC,
+            PcKey::Other(n) => 1000 + n as i64,
+            _ => unreachable!(),
+        };
+        let (ev, swallow) = self.machine.key_down_code(code);
+        if swallow {
+            self.swallowed.insert(key);
+        }
+        (ev, swallow)
+    }
+
+    /// Forget held keys (e.g. after the session was locked / the hook restarted).
+    pub fn clear(&mut self) {
+        self.down.clear();
+        self.swallowed.clear();
     }
 }
 
@@ -447,5 +551,63 @@ mod tests {
         let mut mc = Machine::default();
         assert_eq!(mc.update_two_keys(false, true), Some(HotkeyEvent::Press(Mode::Assistant)));
         assert_eq!(mc.update_two_keys(false, false), Some(HotkeyEvent::Release));
+    }
+
+    fn pc() -> HotkeyConfig {
+        HotkeyConfig::default().for_pc()
+    }
+
+    #[test]
+    fn pc_defaults_are_ctrl_and_ctrl_win() {
+        let c = pc();
+        assert_eq!(c.dictation, m("ctrl"));
+        assert_eq!(c.assistant, m("ctrl+cmd"));
+        assert_eq!(HotkeyConfig::from_strings("fn+ctrl", "alt").for_pc().dictation, m("ctrl+cmd"));
+        // fn and fn+ctrl both become Ctrl+Win: the assistant moves off the dictation combo
+        let c = HotkeyConfig::from_strings("fn", "fn+ctrl").for_pc();
+        assert_ne!(c.dictation, c.assistant);
+    }
+
+    #[test]
+    fn pc_hold_ctrl_dictates_and_adding_win_switches() {
+        let (c, mut k) = (pc(), PcKeys::default());
+        assert_eq!(k.feed(PcKey::Ctrl(true), true, &c), (Some(HotkeyEvent::Press(Mode::Dictation)), false));
+        assert_eq!(k.feed(PcKey::Ctrl(true), true, &c), (None, false)); // auto-repeat
+        assert_eq!(k.feed(PcKey::Win(false), true, &c), (Some(HotkeyEvent::Switch(Mode::Assistant)), false));
+        assert_eq!(k.feed(PcKey::Win(false), false, &c).0, None);
+        assert_eq!(k.feed(PcKey::Ctrl(true), false, &c).0, Some(HotkeyEvent::Release));
+    }
+
+    #[test]
+    fn pc_win_then_ctrl_starts_the_assistant() {
+        let (c, mut k) = (pc(), PcKeys::default());
+        assert_eq!(k.feed(PcKey::Win(true), true, &c).0, None);
+        assert_eq!(k.feed(PcKey::Ctrl(false), true, &c).0, Some(HotkeyEvent::Press(Mode::Assistant)));
+        assert_eq!(k.feed(PcKey::Ctrl(false), false, &c).0, Some(HotkeyEvent::Release));
+    }
+
+    #[test]
+    fn pc_shortcut_cancels_and_space_locks_swallowing_its_repeats() {
+        let (c, mut k) = (pc(), PcKeys::default());
+        k.feed(PcKey::Ctrl(false), true, &c);
+        assert_eq!(k.feed(PcKey::Other(67), true, &c), (Some(HotkeyEvent::Cancel), false)); // Ctrl+C
+        k.feed(PcKey::Other(67), false, &c);
+        assert_eq!(k.feed(PcKey::Ctrl(false), false, &c).0, None);
+
+        k.feed(PcKey::Ctrl(false), true, &c);
+        assert_eq!(k.feed(PcKey::Space, true, &c), (Some(HotkeyEvent::Lock(Mode::Dictation)), true));
+        assert_eq!(k.feed(PcKey::Space, true, &c), (None, true)); // repeat: still swallowed, no finish
+        assert_eq!(k.feed(PcKey::Space, false, &c), (None, true)); // and its key up
+        assert_eq!(k.feed(PcKey::Ctrl(false), false, &c).0, None); // hands-free keeps going
+        assert_eq!(k.feed(PcKey::Other(1), true, &c), (None, false)); // typing is fine
+        assert_eq!(k.feed(PcKey::Ctrl(false), true, &c).0, Some(HotkeyEvent::Release)); // tap to finish
+    }
+
+    #[test]
+    fn pc_digit_keys_never_look_like_space_or_esc() {
+        // VK '1' is 0x31 = 49 (= KEY_SPACE) and VK '5' is 0x35 = 53 (= KEY_ESC) on Windows
+        let (c, mut k) = (pc(), PcKeys::default());
+        k.feed(PcKey::Ctrl(false), true, &c);
+        assert_eq!(k.feed(PcKey::Other(0x31), true, &c), (Some(HotkeyEvent::Cancel), false));
     }
 }

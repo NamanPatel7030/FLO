@@ -8,6 +8,10 @@
 //! `NSAudioCaptureUsageDescription` in Info.plist; macOS asks the user once
 //! ("System Audio Recording Only"), much lighter than Screen Recording.
 //!
+//! Windows: WASAPI **loopback** of the default output device (via cpal): everything you hear.
+//! Linux: the default sink's **monitor** source through PulseAudio / PipeWire (`parec`, else
+//! `pw-record`). Neither can exclude Flo's own sounds, which are rare during a meeting.
+//!
 //! Anything unavailable (older macOS, denied permission, tap/aggregate failure, other OS) is an
 //! `Err` with a human-readable reason → the meeting falls back to mic-only.
 use crate::audio::{self, TARGET_RATE};
@@ -31,6 +35,8 @@ pub struct SystemTap {
     buf: Arc<Mutex<Buf>>,
     #[cfg(target_os = "macos")]
     inner: Option<mac::Tap>,
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    inner: Option<pc::Tap>,
 }
 
 impl SystemTap {
@@ -45,10 +51,15 @@ impl SystemTap {
             let inner = mac::Tap::start(buf.clone())?;
             Ok(Self { buf, inner: Some(inner) })
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        {
+            let inner = pc::Tap::start(buf.clone())?;
+            Ok(Self { buf, inner: Some(inner) })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
             let _ = buf;
-            Err(anyhow!("Call audio capture is only available on macOS 14.2 or later"))
+            Err(anyhow!("Call audio capture isn't available on this OS"))
         }
     }
 
@@ -65,7 +76,7 @@ impl SystemTap {
     }
 
     pub fn stop(mut self) -> Vec<f32> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if let Some(t) = self.inner.take() {
             t.stop();
         }
@@ -75,7 +86,7 @@ impl SystemTap {
 
 impl Drop for SystemTap {
     fn drop(&mut self) {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         if let Some(t) = self.inner.take() {
             t.stop();
         }
@@ -135,6 +146,171 @@ pub fn probe(secs: f32, out: &str) {
     let txt = serde_json::to_string_pretty(&report).unwrap_or_default();
     println!("{txt}");
     let _ = std::fs::write(format!("{out}.json"), txt);
+}
+
+/// Little-endian f32 samples from a byte stream; returns the samples and the leftover bytes
+/// (a read can end mid-sample).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn f32_le_samples(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<f32> {
+    pending.extend_from_slice(chunk);
+    let whole = pending.len() / 4 * 4;
+    let out = pending[..whole].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+    pending.drain(..whole);
+    out
+}
+
+#[cfg(target_os = "windows")]
+mod pc {
+    //! WASAPI loopback: cpal opens an *input* stream on the default *output* device, which WASAPI
+    //! delivers as a loopback capture of everything that device plays.
+    use super::{downmix, push, Buf};
+    use anyhow::{anyhow, Result};
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use parking_lot::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    pub struct Tap {
+        stop: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Tap {
+        pub fn start(buf: Arc<Mutex<Buf>>) -> Result<Self> {
+            let stop = Arc::new(AtomicBool::new(false));
+            let (tx, rx) = std::sync::mpsc::channel::<Result<()>>();
+            let stop2 = stop.clone();
+            // the stream lives on its own thread (cpal streams aren't Send on every backend)
+            let thread = std::thread::Builder::new().name("flo-loopback".into()).spawn(move || {
+                let open = || -> Result<cpal::Stream> {
+                    let dev = cpal::default_host().default_output_device().ok_or_else(|| anyhow!("no speakers / headphones to listen to"))?;
+                    let cfg = dev.default_output_config().map_err(|e| anyhow!("speaker format: {e}"))?;
+                    let ch = cfg.channels() as usize;
+                    buf.lock().rate = cfg.sample_rate().0;
+                    let err = |e| log::warn!("loopback: {e}");
+                    let b = buf.clone();
+                    let stream = match cfg.sample_format() {
+                        cpal::SampleFormat::F32 => dev.build_input_stream(&cfg.into(), move |d: &[f32], _: &_| push(&b, &downmix(&[(ch, d)])), err, None),
+                        cpal::SampleFormat::I16 => dev.build_input_stream(
+                            &cfg.into(),
+                            move |d: &[i16], _: &_| {
+                                let f: Vec<f32> = d.iter().map(|s| *s as f32 / 32768.0).collect();
+                                push(&b, &downmix(&[(ch, &f)]))
+                            },
+                            err,
+                            None,
+                        ),
+                        other => return Err(anyhow!("unsupported speaker format {other:?}")),
+                    }
+                    .map_err(|e| anyhow!("loopback capture: {e}"))?;
+                    stream.play().map_err(|e| anyhow!("loopback capture: {e}"))?;
+                    Ok(stream)
+                };
+                match open() {
+                    Ok(stream) => {
+                        let _ = tx.send(Ok(()));
+                        while !stop2.load(Ordering::SeqCst) {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        drop(stream);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                    }
+                }
+            })?;
+            rx.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_| anyhow!("loopback capture didn't start"))??;
+            Ok(Self { stop, thread: Some(thread) })
+        }
+
+        pub fn stop(mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(t) = self.thread.take() {
+                let _ = t.join();
+            }
+        }
+    }
+
+    impl Drop for Tap {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod pc {
+    //! The default sink's monitor source (what you hear), recorded by `parec` (PulseAudio and
+    //! pipewire-pulse) or `pw-record` (PipeWire) as raw 48 kHz mono f32 on stdout.
+    use super::{f32_le_samples, push, Buf};
+    use anyhow::{anyhow, Result};
+    use parking_lot::Mutex;
+    use std::io::Read;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::Arc;
+
+    const RATE: u32 = 48_000;
+
+    pub struct Tap {
+        child: Child,
+    }
+
+    fn spawn() -> Result<Child> {
+        let rate = RATE.to_string();
+        let parec = Command::new("parec")
+            .args(["--device=@DEFAULT_MONITOR@", "--format=float32le", "--channels=1", "--raw", "--latency-msec=100"])
+            .arg(format!("--rate={rate}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+        if let Ok(c) = parec {
+            return Ok(c);
+        }
+        Command::new("pw-record")
+            .args(["-P", "{ stream.capture.sink=true }", "--format", "f32", "--channels", "1", "--rate", &rate, "-"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| anyhow!("Call audio needs PulseAudio or PipeWire tools (parec or pw-record)"))
+    }
+
+    impl Tap {
+        pub fn start(buf: Arc<Mutex<Buf>>) -> Result<Self> {
+            let mut child = spawn()?;
+            let mut out = child.stdout.take().ok_or_else(|| anyhow!("no audio stream"))?;
+            buf.lock().rate = RATE;
+            std::thread::Builder::new().name("flo-monitor".into()).spawn(move || {
+                let mut chunk = [0u8; 8192];
+                let mut pending = Vec::new();
+                while let Ok(n) = out.read(&mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    push(&buf, &f32_le_samples(&mut pending, &chunk[..n]));
+                }
+            })?;
+            // a recorder that exits at once (no monitor source) is a failure, not silence
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            if let Ok(Some(st)) = child.try_wait() {
+                return Err(anyhow!("couldn't record the speaker output ({st})"));
+            }
+            Ok(Self { child })
+        }
+
+        pub fn stop(mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    impl Drop for Tap {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -452,6 +628,16 @@ mod mac {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn f32_stream_keeps_partial_samples() {
+        let bytes: Vec<u8> = [0.5f32, -1.0].iter().flat_map(|f| f.to_le_bytes()).collect();
+        let mut pending = Vec::new();
+        assert_eq!(super::f32_le_samples(&mut pending, &bytes[..6]), vec![0.5]);
+        assert_eq!(pending.len(), 2);
+        assert_eq!(super::f32_le_samples(&mut pending, &bytes[6..]), vec![-1.0]);
+        assert!(pending.is_empty());
+    }
+
     use super::*;
 
     #[test]

@@ -597,27 +597,53 @@ pub fn set_muted(muted: bool) -> anyhow::Result<()> {
 }
 
 // ── non-macOS stubs (wired for parity; implemented per-OS later) ──────────────
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub fn now_playing() -> Option<NowPlaying> {
+    crate::platform::now_playing()
+}
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub fn control(action: &str) -> anyhow::Result<()> {
+    crate::platform::media_control(action)
+}
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub fn get_volume() -> Option<u8> {
+    crate::platform::get_volume()
+}
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub fn set_volume(level: u8) -> anyhow::Result<u8> {
+    crate::platform::set_volume(level)
+}
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub fn step_volume(delta: i32) -> anyhow::Result<u8> {
+    let cur = get_volume().unwrap_or(50) as i32;
+    set_volume((cur + delta).clamp(0, 100) as u8)
+}
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub fn set_muted(muted: bool) -> anyhow::Result<()> {
+    crate::platform::set_muted(muted)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub fn now_playing() -> Option<NowPlaying> {
     None
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub fn control(_action: &str) -> anyhow::Result<()> {
     anyhow::bail!("media control not supported on this OS yet")
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub fn get_volume() -> Option<u8> {
     None
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub fn set_volume(level: u8) -> anyhow::Result<u8> {
     Ok(level)
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub fn step_volume(_delta: i32) -> anyhow::Result<u8> {
     Ok(0)
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub fn set_muted(_muted: bool) -> anyhow::Result<()> {
     Ok(())
 }

@@ -50,7 +50,7 @@ pub fn island_geometry() -> IslandGeometry {
 }
 pub fn configure_island(_w: *mut c_void) {}
 pub fn island_position(_g: &IslandGeometry, _w: f64, _h: f64) -> (f64, f64) { (0.0, 0.0) }
-pub fn permissions() -> Permissions { Permissions { microphone: true, accessibility: true, input_monitoring: true, screen: true, hotkey_active: false, accessibility_stale: false } }
+pub fn permissions() -> Permissions { Permissions { microphone: true, accessibility: true, input_monitoring: true, screen: true, hotkey_active: false, accessibility_stale: false, hotkey_problem: None } }
 pub fn open_permission_settings(_kind: &str) {}
 pub fn fix_fn_key() -> Result<String> { Ok(String::new()) }
 pub fn ocr(_rgba: &[u8], _w: u32, _h: u32) -> Option<String> { None }

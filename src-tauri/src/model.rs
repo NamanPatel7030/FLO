@@ -725,6 +725,9 @@ pub struct Permissions {
     pub hotkey_active: bool,
     /// trusted under an earlier build, not this one: an update left a stale Accessibility switch
     pub accessibility_stale: bool,
+    /// why the push-to-talk key can't be read (Linux: "add yourself to the input group")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hotkey_problem: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

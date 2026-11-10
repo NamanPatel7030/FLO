@@ -853,6 +853,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "island_resize":
       resizeLog.push({ w: args.width, h: args.height, at: Date.now() });
       return null;
+    case "island_focus":
+      return null;
     case "open_dashboard":
       return null;
     case "account_status":

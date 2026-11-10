@@ -76,6 +76,8 @@ export const api = {
 
   getIslandGeometry: () => call<IslandGeometry>("get_island_geometry"),
   islandResize: (width: number, height: number) => call<void>("island_resize", { width, height }),
+  /** Windows / Linux: let the island take keyboard focus while the quick note is typed into. */
+  islandFocus: (focus: boolean) => call<void>("island_focus", { focus }),
   openDashboard: (route?: string) => call<void>("open_dashboard", { route }),
 
   startSession: (mode: Mode) => call<void>("start_session", { mode }),

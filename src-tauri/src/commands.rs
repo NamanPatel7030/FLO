@@ -134,6 +134,22 @@ pub fn island_resize(app: tauri::AppHandle, width: f64, height: f64) -> R<()> {
     crate::place_island(&app, width, height).map_err(e)
 }
 
+/// Windows / Linux: the island never takes keyboard focus, except while the quick-note widget is
+/// being typed into (it asks with `focus: true`, and gives it back on blur). No-op on macOS, where
+/// the non-activating panel becomes key by itself.
+#[tauri::command]
+pub fn island_focus(app: tauri::AppHandle, focus: bool) -> R<()> {
+    #[cfg(not(target_os = "macos"))]
+    if let Some(w) = tauri::Manager::get_webview_window(&app, "island") {
+        w.set_focusable(focus).map_err(e)?;
+        if focus {
+            w.set_focus().map_err(e)?;
+        }
+    }
+    let _ = (&app, focus);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn take_mcp_prefill() -> R<Option<serde_json::Value>> {
     Ok(crate::assistant::MCP_PREFILL.lock().take())
