@@ -22,6 +22,8 @@ interface ComputerCtx {
   notice: string | null;
   /** questions waiting for Allow / Deny right now */
   needsYouCount: number;
+  /** the phone's own changes still on the way (read-only; the settings screen shows their progress) */
+  pending: readonly Pending[];
   refresh(): Promise<void>;
   act(kind: ActionKind, target: string, value?: boolean | number | string): Promise<void>;
   clearNotice(): void;
@@ -141,6 +143,7 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
     error,
     notice,
     needsYouCount,
+    pending,
     refresh,
     act,
     clearNotice: () => setNotice(null),

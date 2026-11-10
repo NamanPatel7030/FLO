@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, LayoutAnimation, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isMuted } from '../lib/kinds';
 import { useFlo } from '../state/FloContext';
@@ -17,6 +17,7 @@ import { tap } from '../ui/Buttons';
 import { colors, fonts, type, themed } from '../ui/theme';
 import { InboxRow } from './InboxRow';
 import { PresenceCard } from './PresenceCard';
+import { layoutNext } from '../ui/motion';
 
 function greeting(d = new Date()): string {
   const h = d.getHours();
@@ -57,7 +58,7 @@ export function HomeScreen({ onSettings, onVoice, onNeedsYou, onTodos }: { onSet
   }, [flo.focusId, flo]);
 
   const toggle = (id: string) => {
-    LayoutAnimation.configureNext(LayoutAnimation.create(240, 'easeInEaseOut', 'opacity'));
+    layoutNext(240);
     setExpanded((cur) => (cur === id ? null : id));
   };
 

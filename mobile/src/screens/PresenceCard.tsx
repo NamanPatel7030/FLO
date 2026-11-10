@@ -9,6 +9,7 @@ import { Icon } from '../ui/Icons';
 import { Notchling } from '../ui/Notchling';
 import { usePrefs } from '../state/Prefs';
 import { colors, fonts, radius, type, themed } from '../ui/theme';
+import { forever, spring, timing } from '../ui/motion';
 
 const native = Platform.OS !== 'web';
 
@@ -24,7 +25,7 @@ function Segmented({
   const [w, setW] = useState(0);
   const x = useRef(new Animated.Value(value === 'away' ? 1 : 0)).current;
   useEffect(() => {
-    Animated.spring(x, { toValue: value === 'away' ? 1 : 0, useNativeDriver: native, speed: 16, bounciness: 6 }).start();
+    spring(x, { toValue: value === 'away' ? 1 : 0, useNativeDriver: native, speed: 16, bounciness: 6 }).start();
   }, [value, x]);
   const half = Math.max(0, (w - 8) / 2);
   const tx = x.interpolate({ inputRange: [0, 1], outputRange: [0, half] });
@@ -86,14 +87,14 @@ export function PresenceCard({
   const [, force] = useState(0);
 
   useEffect(() => {
-    Animated.timing(fade, { toValue: away ? 1 : 0, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
+    timing(fade, { toValue: away ? 1 : 0, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
   }, [away, fade]);
 
   useEffect(() => {
-    const loop = Animated.loop(
+    const loop = forever(() =>
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1600, easing: Easing.out(Easing.quad), useNativeDriver: native }),
-        Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: native }),
+        timing(pulse, { toValue: 1, duration: 1600, easing: Easing.out(Easing.quad), useNativeDriver: native }),
+        timing(pulse, { toValue: 0, duration: 0, useNativeDriver: native }),
       ]),
     );
     loop.start();

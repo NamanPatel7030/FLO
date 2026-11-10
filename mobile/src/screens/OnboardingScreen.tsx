@@ -9,6 +9,7 @@ import { GlassCard } from '../ui/Glass';
 import { Icon, QrGlyph, type IconName } from '../ui/Icons';
 import { Notchling, type Mood } from '../ui/Notchling';
 import { colors, fonts, radius, themed, type } from '../ui/theme';
+import { timing } from '../ui/motion';
 
 const native = Platform.OS !== 'web';
 const PAGES = 4;
@@ -24,8 +25,8 @@ function NotchDrop({ mood, avatar }: { mood: Mood; avatar: ReturnType<typeof use
   const fade = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(y, { toValue: 0, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: native }),
-      Animated.timing(fade, { toValue: 1, duration: 500, useNativeDriver: native }),
+      timing(y, { toValue: 0, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: native }),
+      timing(fade, { toValue: 1, duration: 500, useNativeDriver: native }),
     ]).start();
   }, [y, fade]);
   return (
@@ -38,7 +39,7 @@ function NotchDrop({ mood, avatar }: { mood: Mood; avatar: ReturnType<typeof use
 function Feature({ icon, title, body, delay }: { icon: IconName; title: string; body: string; delay: number }) {
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.timing(v, { toValue: 1, duration: 520, delay, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
+    timing(v, { toValue: 1, duration: 520, delay, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
   }, [v, delay]);
   return (
     <Animated.View style={{ opacity: v, transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }] }}>
@@ -92,7 +93,7 @@ export function OnboardingScreen({ onScan, onEnterCode, error }: { onScan: () =>
 
   useEffect(() => {
     slide.setValue(0);
-    Animated.timing(slide, { toValue: 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
+    timing(slide, { toValue: 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
   }, [page, slide]);
 
   const go = (p: number) => {

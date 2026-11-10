@@ -13,15 +13,17 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { colors, fonts, radius, themed } from './theme';
+import { hapticsOn, spring } from './motion';
 
+/** A light haptic tap, unless this phone's Haptics switch is off. */
 export function tap(style: Haptics.ImpactFeedbackStyle = Haptics.ImpactFeedbackStyle.Light) {
-  if (Platform.OS !== 'web') void Haptics.impactAsync(style).catch(() => undefined);
+  if (Platform.OS !== 'web' && hapticsOn()) void Haptics.impactAsync(style).catch(() => undefined);
 }
 
 function usePressScale() {
   const scale = useRef(new Animated.Value(1)).current;
   const to = (v: number) =>
-    Animated.spring(scale, { toValue: v, useNativeDriver: Platform.OS !== 'web', speed: 40, bounciness: 6 }).start();
+    spring(scale, { toValue: v, useNativeDriver: Platform.OS !== 'web', speed: 40, bounciness: 6 }).start();
   return { scale, onPressIn: () => to(0.97), onPressOut: () => to(1) };
 }
 

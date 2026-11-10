@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { tap } from './Buttons';
 import { Icon, type IconName } from './Icons';
 import { colors, fonts, themed } from './theme';
+import { spring } from './motion';
 
 export type Tab = 'home' | 'todos' | 'needs' | 'settings';
 
@@ -22,7 +23,7 @@ export const TAB_BAR_SPACE = 104;
 function TabButton({ tab, active, badge, onPress }: { tab: (typeof TABS)[number]; active: boolean; badge?: number; onPress: () => void }) {
   const v = useRef(new Animated.Value(active ? 1 : 0)).current;
   useEffect(() => {
-    Animated.spring(v, { toValue: active ? 1 : 0, useNativeDriver: Platform.OS !== 'web', speed: 20, bounciness: 8 }).start();
+    spring(v, { toValue: active ? 1 : 0, useNativeDriver: Platform.OS !== 'web', speed: 20, bounciness: 8 }).start();
   }, [active, v]);
   const color = active ? colors.sky : colors.inkMuted;
   return (

@@ -14,9 +14,13 @@ export interface Prefs {
   onboarded: boolean;
   /** keep the Ask / Dictate shortcut in the notification shade */
   quickActions: boolean;
+  /** screen transitions, springs and the drifting backdrop (off = everything jumps into place) */
+  animations: boolean;
+  /** a light tap when you press buttons and toggles */
+  haptics: boolean;
 }
 
-export const DEFAULT_PREFS: Prefs = { theme: 'light', accent: null, avatar: DEFAULT_AVATAR, onboarded: false, quickActions: true };
+export const DEFAULT_PREFS: Prefs = { theme: 'light', accent: null, avatar: DEFAULT_AVATAR, onboarded: false, quickActions: true, animations: true, haptics: true };
 export const PREFS_KEY = 'flo.prefs.v1';
 
 /** Merge stored JSON over the defaults, dropping anything malformed (unit-tested). */
@@ -35,7 +39,15 @@ export function parsePrefs(raw: string | null): Prefs {
       extra: pick(a.extra, ['none', 'headphones', 'halo', 'sparkle'] as const, DEFAULT_AVATAR.extra),
       cheeks: typeof a.cheeks === 'boolean' ? a.cheeks : DEFAULT_AVATAR.cheeks,
     };
-    return { theme, accent, avatar, onboarded: p.onboarded === true, quickActions: p.quickActions !== false };
+    return {
+      theme,
+      accent,
+      avatar,
+      onboarded: p.onboarded === true,
+      quickActions: p.quickActions !== false,
+      animations: p.animations !== false,
+      haptics: p.haptics !== false,
+    };
   } catch {
     return DEFAULT_PREFS;
   }
@@ -45,3 +57,12 @@ export function resolveDark(mode: ThemeMode, system: ColorSchemeName): boolean {
   return mode === 'dark' || (mode === 'system' && system === 'dark');
 }
 
+
+/** Animations play only if they're on in Flo *and* Android isn't set to remove animations. */
+export function resolveMotion(animations: boolean, osReduceMotion: boolean): boolean {
+  return animations && !osReduceMotion;
+}
+
+export function themeLabel(mode: ThemeMode): string {
+  return mode === 'system' ? 'System' : mode === 'dark' ? 'Dark' : 'Light';
+}

@@ -6,6 +6,7 @@ import { kindLabel, metaForKind } from '../lib/kinds';
 import { GlassCard } from './Glass';
 import { KindIcon } from './KindIcon';
 import { colors, fonts, type, themed } from './theme';
+import { spring, timing } from './motion';
 
 const native = Platform.OS !== 'web';
 
@@ -22,14 +23,14 @@ export function InAppBanner({
   useEffect(() => {
     if (!banner) return;
     y.setValue(-160);
-    Animated.spring(y, { toValue: 0, useNativeDriver: native, speed: 14, bounciness: 8 }).start();
+    spring(y, { toValue: 0, useNativeDriver: native, speed: 14, bounciness: 8 }).start();
     const t = setTimeout(hide, 5000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [banner?.key]);
 
   function hide() {
-    Animated.timing(y, { toValue: -180, duration: 260, easing: Easing.in(Easing.quad), useNativeDriver: native }).start(
+    timing(y, { toValue: -180, duration: 260, easing: Easing.in(Easing.quad), useNativeDriver: native }).start(
       () => onDismiss(),
     );
   }

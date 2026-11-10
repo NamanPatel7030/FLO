@@ -21,6 +21,7 @@ export type Mood =
   | 'worried';
 
 import { DEFAULT_AVATAR, GLOWS, type AvatarStyle } from '../lib/avatar';
+import { forever, timing } from './motion';
 export { DEFAULT_AVATAR, GLOWS } from '../lib/avatar';
 export type { AvatarStyle, EyeStyle, GlowStyle, MouthStyle, Extra } from '../lib/avatar';
 
@@ -84,11 +85,11 @@ function useLoop(on: boolean, ms: number, mode: 'pingpong' | 'saw' = 'pingpong')
     }
     const anim =
       mode === 'saw'
-        ? Animated.loop(Animated.timing(v, { toValue: 1, duration: ms, easing: Easing.linear, useNativeDriver: native }))
-        : Animated.loop(
+        ? forever(() => timing(v, { toValue: 1, duration: ms, easing: Easing.linear, useNativeDriver: native }))
+        : forever(() =>
             Animated.sequence([
-              Animated.timing(v, { toValue: 1, duration: ms / 2, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
-              Animated.timing(v, { toValue: 0, duration: ms / 2, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
+              timing(v, { toValue: 1, duration: ms / 2, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
+              timing(v, { toValue: 0, duration: ms / 2, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
             ]),
           );
     anim.start();

@@ -5,12 +5,12 @@ import { Alert, Linking, Platform, ScrollView, StyleSheet, Text, View } from 're
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GROUPS, MUTABLE_GROUPS } from '../lib/kinds';
 import { useFlo } from '../state/FloContext';
-import { usePrefs } from '../state/Prefs';
+import { themeLabel, usePrefs, type ThemeMode } from '../state/Prefs';
 import { useUpdates } from '../state/Updates';
 import { installedBuild, installedVersion } from '../lib/updates';
 import { Pressable } from 'react-native';
 import { Notchling } from '../ui/Notchling';
-import { GlassButton, IconButton } from '../ui/Buttons';
+import { GlassButton, IconButton, tap } from '../ui/Buttons';
 import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
 import { KindIcon } from '../ui/KindIcon';
@@ -47,6 +47,34 @@ function confirm(title: string, message: string, cta: string): Promise<boolean> 
   );
 }
 
+const THEMES: ThemeMode[] = ['light', 'dark', 'system'];
+
+/** Light / Dark / System, applied the moment you tap. */
+function ThemePicker({ value, onChange }: { value: ThemeMode; onChange: (t: ThemeMode) => void }) {
+  return (
+    <View style={styles.seg} accessibilityRole="radiogroup" accessibilityLabel="Theme">
+      {THEMES.map((t) => {
+        const on = t === value;
+        return (
+          <Pressable
+            key={t}
+            testID={`phone-theme-${t}`}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on }}
+            onPress={() => {
+              tap();
+              if (!on) onChange(t);
+            }}
+            style={[styles.segItem, on && styles.segOn]}
+          >
+            <Text style={[styles.segText, on && styles.segTextOn]}>{themeLabel(t)}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: () => void; onCustomize: () => void; onComputer: () => void }) {
   const insets = useSafeAreaInsets();
   const flo = useFlo();
@@ -56,7 +84,7 @@ export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: (
   const [unpairing, setUnpairing] = useState(false);
   const user = flo.session?.user ?? { name: '', email: '' };
   const perm = flo.permission;
-  const { prefs, update } = usePrefs();
+  const { prefs, update, osReduceMotion } = usePrefs();
   const upd = useUpdates();
 
   const permCopy =
@@ -106,6 +134,67 @@ export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: (
         </View>
       </GlassCard>
 
+      <Text style={styles.section}>This phone</Text>
+      <GlassCard style={{ paddingVertical: 4 }}>
+        <View style={styles.kindRow}>
+          <View style={styles.rowIcon}>
+            <Icon name={prefs.theme === 'dark' ? 'moon' : 'palette'} size={19} color={colors.sky} />
+          </View>
+          <View style={{ flex: 1, gap: 10 }}>
+            <Text style={styles.rowTitle}>Theme</Text>
+            <ThemePicker value={prefs.theme} onChange={(theme) => update({ theme })} />
+          </View>
+        </View>
+        <View style={[styles.kindRow, styles.divider]}>
+          <View style={styles.rowIcon}>
+            <Icon name="sparkle" size={19} color={colors.sky} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Animations</Text>
+            <Text style={type.small} testID="phone-animations-hint">
+              {osReduceMotion
+                ? "Android's Remove animations is on, so Flo stays still too."
+                : prefs.animations
+                  ? 'Transitions, springs and the moving background.'
+                  : 'Off: screens change instantly.'}
+            </Text>
+          </View>
+          <Toggle value={prefs.animations && !osReduceMotion} label="Animations" onChange={(animations) => update({ animations })} />
+        </View>
+        <View style={[styles.kindRow, styles.divider]}>
+          <View style={styles.rowIcon}>
+            <Icon name="hand" size={19} color={colors.sky} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Haptics</Text>
+            <Text style={type.small}>A light tap when you press buttons and switches.</Text>
+          </View>
+          <Toggle value={prefs.haptics} label="Haptics" onChange={(haptics) => update({ haptics })} />
+        </View>
+        <View style={[styles.kindRow, styles.divider]}>
+          <View style={styles.rowIcon}>
+            <Icon name="mic" size={19} color={colors.sky} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Ask Flo shortcut</Text>
+            <Text style={type.small}>Ask or Dictate from the notification shade with one tap.</Text>
+          </View>
+          <Toggle value={prefs.quickActions} label="Ask Flo shortcut" onChange={(v) => update({ quickActions: v })} />
+        </View>
+        <Pressable testID="open-customize" accessibilityRole="button" onPress={onCustomize} style={[styles.kindRow, styles.divider]}>
+          <Notchling size={40} avatar={prefs.avatar} accent={colors.sky} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTitle}>Accent and Notchling</Text>
+            <Text style={type.small}>Make Flo yours on this phone.</Text>
+          </View>
+          <Icon name="chevron" size={18} color={colors.inkMuted} />
+        </Pressable>
+      </GlassCard>
+      <Text style={styles.footnote}>Saved on this phone and applied right away. Your computer keeps its own settings.</Text>
+
+      {bubble.state() !== 'unavailable' && <Text style={styles.section}>Voice bubble</Text>}
+      <BubbleCard />
+
       <Text style={styles.section}>Your computer</Text>
       <Pressable testID="open-computer-settings" accessibilityRole="button" onPress={onComputer}>
         <GlassCard style={styles.rowCard}>
@@ -123,40 +212,15 @@ export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: (
                     pcFresh.offline ? 'looks offline' : `updated ${computer.updatedAt ? relativeTime(computer.updatedAt) : ''}`
                   }`}
             </Text>
-            {!!pc && <Text style={[type.small, { color: colors.sky, marginTop: 2 }]}>See and change its settings</Text>}
+            {!!pc && <Text style={[type.small, { color: colors.sky, marginTop: 2 }]}>See and change Flo's settings there</Text>}
           </View>
           <Icon name="chevron" size={18} color={colors.inkMuted} />
         </GlassCard>
       </Pressable>
 
-      <Text style={styles.section}>Look</Text>
-      <Pressable testID="open-customize" accessibilityRole="button" onPress={onCustomize}>
-        <GlassCard style={styles.rowCard}>
-          <Notchling size={40} avatar={prefs.avatar} accent={colors.sky} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>Make it yours</Text>
-            <Text style={type.small}>
-              {prefs.theme === 'system' ? 'System' : prefs.theme === 'dark' ? 'Dark' : 'Light'} theme, accent and your Notchling
-            </Text>
-          </View>
-          <Icon name="chevron" size={18} color={colors.inkMuted} />
-        </GlassCard>
-      </Pressable>
-
-      <Text style={styles.section}>Ask Flo shortcut</Text>
-      <GlassCard style={styles.rowCard}>
-        <View style={styles.rowIcon}>
-          <Icon name="mic" size={19} color={colors.sky} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.rowTitle}>Keep it in the notification shade</Text>
-          <Text style={type.small}>Ask Flo or Dictate from anywhere with one tap.</Text>
-        </View>
-        <Toggle value={prefs.quickActions} label="Ask Flo shortcut" onChange={(v) => update({ quickActions: v })} />
-      </GlassCard>
-
-      {bubble.state() !== 'unavailable' && <Text style={styles.section}>Voice bubble</Text>}
-      <BubbleCard />
+      <Text style={styles.footnote}>
+        {pc ? `Flo's settings on your ${computerName(pc.computer.platform)}. Changing them there doesn't change this phone.` : 'Flo on your computer has its own settings. They show up here once it checks in.'}
+      </Text>
 
       <Text style={styles.section}>App updates</Text>
       <GlassCard style={styles.rowCard}>
@@ -318,4 +382,21 @@ const styles = themed(() => StyleSheet.create({
   divider: { borderTopWidth: 1, borderTopColor: colors.hairline },
   footnote: { ...type.small, marginTop: 12, marginHorizontal: 6, color: colors.inkFaint },
   version: { ...type.small, textAlign: 'center', marginTop: 28, color: colors.inkFaint },
+  seg: {
+    flexDirection: 'row',
+    padding: 3,
+    borderRadius: 14,
+    backgroundColor: colors.dark ? 'rgba(255,255,255,0.06)' : 'rgba(20,30,60,0.06)',
+  },
+  segItem: { flex: 1, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  segOn: {
+    backgroundColor: colors.dark ? 'rgba(255,255,255,0.12)' : '#ffffff',
+    shadowColor: '#2b2370',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  segText: { fontFamily: fonts.medium, fontSize: 14, color: colors.inkMuted },
+  segTextOn: { fontFamily: fonts.semibold, color: colors.ink },
 }));

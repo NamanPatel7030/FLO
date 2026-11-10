@@ -3,6 +3,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { tap } from './Buttons';
 import { colors, themed } from './theme';
+import { spring } from './motion';
 
 export function Toggle({
   value,
@@ -17,7 +18,7 @@ export function Toggle({
 }) {
   const v = useRef(new Animated.Value(value ? 1 : 0)).current;
   useEffect(() => {
-    Animated.spring(v, { toValue: value ? 1 : 0, useNativeDriver: false, speed: 22, bounciness: 7 }).start();
+    spring(v, { toValue: value ? 1 : 0, useNativeDriver: false, speed: 22, bounciness: 7 }).start();
   }, [value, v]);
   const x = v.interpolate({ inputRange: [0, 1], outputRange: [3, 23] });
   return (

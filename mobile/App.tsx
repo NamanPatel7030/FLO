@@ -32,6 +32,7 @@ import { Backdrop } from './src/ui/Backdrop';
 import { InAppBanner } from './src/ui/Banner';
 import { Icon } from './src/ui/Icons';
 import { colors, fonts, themed } from './src/ui/theme';
+import { spring, timing } from './src/ui/motion';
 
 type Route = 'welcome' | 'scan' | 'code' | Tab | 'computer' | 'customize' | 'voice';
 const TABS: readonly Route[] = ['home', 'todos', 'needs', 'settings'];
@@ -43,7 +44,7 @@ function Transition({ routeKey, children }: { routeKey: string; children: React.
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     v.setValue(0);
-    Animated.timing(v, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
+    timing(v, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: native }).start();
   }, [routeKey, v]);
   return (
     <Animated.View
@@ -65,7 +66,7 @@ function Toast({ text, raised }: { text: string | null; raised?: boolean }) {
   const insets = useSafeAreaInsets();
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.spring(v, { toValue: text ? 1 : 0, useNativeDriver: native, speed: 14, bounciness: 6 }).start();
+    spring(v, { toValue: text ? 1 : 0, useNativeDriver: native, speed: 14, bounciness: 6 }).start();
   }, [text, v]);
   if (!text) return null;
   return (

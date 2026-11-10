@@ -1,10 +1,17 @@
 // Every setting of Flo on your computer that's safe to show (never API keys or tokens). Simple ones
 // (toggles, choices, numbers) can be changed here; privacy settings and the rest are read-only.
+//
+// These are the computer's settings, not the phone's: the phone's own theme, animations and
+// haptics live in Settings > This phone. A change here goes through the server to the computer, so
+// each row says where it is (sending, applied, waiting for an offline computer, refused) and never
+// spins for more than a few seconds (lib/settingSync.ts).
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ComputerSetting } from '../api/types';
-import { groupSettings, settingText } from '../lib/computer';
+import { computerName, freshness, groupSettings, settingText } from '../lib/computer';
+import { spins, statusLine, type SettingChange } from '../lib/settingSync';
+import { useSettingSync } from '../state/SettingSync';
 import { useComputer } from '../state/Computer';
 import { IconButton, tap } from '../ui/Buttons';
 import { ActionNotice, ComputerLine, NoComputer } from '../ui/ComputerBits';
@@ -41,7 +48,19 @@ function Stepper({ s, onChange }: { s: ComputerSetting; onChange: (n: number) =>
   );
 }
 
-function SettingRow({ s, first, onSet }: { s: ComputerSetting; first: boolean; onSet: (v: boolean | number | string) => void }) {
+const valueText = (s: ComputerSetting) => (v: ComputerSetting['value']) => settingText({ ...s, value: v });
+
+function SettingRow({
+  s,
+  first,
+  change,
+  onSet,
+}: {
+  s: ComputerSetting;
+  first: boolean;
+  change?: SettingChange;
+  onSet: (v: boolean | number | string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const editable = s.editable;
   const right = !editable ? (
@@ -73,14 +92,30 @@ function SettingRow({ s, first, onSet }: { s: ComputerSetting; first: boolean; o
     </Pressable>
   ) : null;
 
+  const status = statusLine(change, valueText(s));
+  const statusColor =
+    change?.phase === 'applied'
+      ? colors.green
+      : change?.phase === 'failed'
+        ? colors.errorText
+        : change?.phase === 'sending'
+          ? colors.inkMuted
+          : colors.amber;
+
   return (
     <View testID={`setting-${s.key}`} style={[styles.row, !first && styles.divider]}>
       <View style={styles.rowTop}>
         <View style={{ flex: 1 }}>
           <Text style={[styles.label, !editable && { color: colors.inkSoft }]}>{s.label}</Text>
           {!editable && !!s.hint && <Text style={styles.hint}>{s.hint}</Text>}
+          {!!status && (
+            <View style={styles.statusRow} testID={`setting-status-${s.key}`}>
+              {change?.phase === 'applied' && <Icon name="check" size={13} color={colors.green} strokeWidth={2.6} />}
+              <Text style={[styles.status, { color: statusColor }]}>{status}</Text>
+            </View>
+          )}
         </View>
-        {s.sending && <ActivityIndicator size="small" color={colors.sky} style={{ marginRight: 6 }} />}
+        {spins(change) && <ActivityIndicator size="small" color={colors.sky} style={{ marginRight: 6 }} />}
         {right}
       </View>
       {open && s.kind === 'select' && (
@@ -112,7 +147,10 @@ function SettingRow({ s, first, onSet }: { s: ComputerSetting; first: boolean; o
 export function ComputerSettingsScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
   const c = useComputer();
+  const sync = useSettingSync();
   const groups = c.state ? groupSettings(c.state.settings) : [];
+  const name = c.state ? computerName(c.state.computer.platform) : 'computer';
+  const offline = freshness(c.updatedAt).offline;
   return (
     <ScrollView
       testID="computer-settings"
@@ -126,7 +164,7 @@ export function ComputerSettingsScreen({ onBack }: { onBack: () => void }) {
           <Icon name="back" color={colors.ink} />
         </IconButton>
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={styles.headerTitle}>Flo on your computer</Text>
+          <Text style={styles.headerTitle}>Flo on your {name}</Text>
           <ComputerLine />
         </View>
         <View style={{ width: 44 }} />
@@ -136,15 +174,28 @@ export function ComputerSettingsScreen({ onBack }: { onBack: () => void }) {
         <NoComputer />
       ) : (
         <>
+          <GlassCard style={styles.scope}>
+            <Icon name="laptop" size={18} color={colors.sky} />
+            <Text style={styles.scopeText}>
+              These are Flo's settings on your {name}. They don't change this phone: its theme, animations and haptics are in Settings, This phone.
+            </Text>
+          </GlassCard>
+          {offline && (
+            <View style={styles.offline} testID="computer-offline">
+              <Text style={styles.offlineText}>
+                Your {name} looks offline. Changes you make wait on Flo's server and apply when Flo is open there again (within 10 minutes).
+              </Text>
+            </View>
+          )}
           <Text style={styles.intro}>
-            Changes apply on your computer within a few seconds. Settings with a lock change only there. API keys and passwords never leave your computer.
+            Changes reach your {name} in about 10 to 20 seconds. Settings with a lock change only there. API keys and passwords never leave your computer.
           </Text>
           {groups.map((g) => (
             <View key={g.section}>
               <Text style={styles.section}>{g.section}</Text>
               <GlassCard style={{ paddingVertical: 2 }}>
                 {g.items.map((s, i) => (
-                  <SettingRow key={s.key} s={s} first={i === 0} onSet={(v) => void c.act('setting', s.key, v)} />
+                  <SettingRow key={s.key} s={s} first={i === 0} change={sync.changes[s.key]} onSet={(v) => sync.send(s, v)} />
                 ))}
               </GlassCard>
             </View>
@@ -159,7 +210,20 @@ const styles = themed(() =>
   StyleSheet.create({
     header: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
     headerTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.ink },
-    intro: { ...type.small, marginHorizontal: 6, marginBottom: 4 },
+    intro: { ...type.small, marginHorizontal: 6, marginBottom: 4, marginTop: 12 },
+    scope: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, padding: 14 },
+    scopeText: { ...type.small, flex: 1, color: colors.inkSoft },
+    offline: {
+      marginTop: 12,
+      padding: 14,
+      borderRadius: 16,
+      backgroundColor: colors.dark ? 'rgba(245,181,68,0.08)' : 'rgba(196,122,0,0.07)',
+      borderWidth: 1,
+      borderColor: colors.dark ? 'rgba(245,181,68,0.25)' : 'rgba(196,122,0,0.22)',
+    },
+    offlineText: { ...type.small, color: colors.amber },
+    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+    status: { fontFamily: fonts.medium, fontSize: 12.5, lineHeight: 17, flexShrink: 1 },
     section: { ...type.micro, marginTop: 24, marginBottom: 10, marginLeft: 6 },
     row: { paddingHorizontal: 16, paddingVertical: 13 },
     rowTop: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 32 },

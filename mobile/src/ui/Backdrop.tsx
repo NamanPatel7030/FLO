@@ -1,29 +1,28 @@
 // Soft pastel blobs behind the glass (light), deep-ocean glows (dark). The blobs drift slowly.
 import React, { useEffect, useRef } from 'react';
-import { AccessibilityInfo, Animated, Easing, Platform, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
 import Svg, { Defs, Ellipse, RadialGradient, Stop } from 'react-native-svg';
 import { colors, themed } from './theme';
+import { forever, timing } from './motion';
+import { usePrefs } from '../state/Prefs';
 
 const native = Platform.OS !== 'web';
 
 export function Backdrop({ intensity = 1, children }: { intensity?: number; children?: React.ReactNode }) {
   const drift = useRef(new Animated.Value(0)).current;
+  // drifts only while this phone's animations are on (Settings > This phone, and Android's own switch)
+  const { motion } = usePrefs();
   useEffect(() => {
-    let loop: Animated.CompositeAnimation | null = null;
-    void AccessibilityInfo.isReduceMotionEnabled()
-      .catch(() => false)
-      .then((reduce) => {
-        if (reduce) return;
-        loop = Animated.loop(
-          Animated.sequence([
-            Animated.timing(drift, { toValue: 1, duration: 14000, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
-            Animated.timing(drift, { toValue: 0, duration: 14000, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
-          ]),
-        );
-        loop.start();
-      });
-    return () => loop?.stop();
-  }, [drift]);
+    if (!motion) return;
+    const loop = forever(() =>
+      Animated.sequence([
+        timing(drift, { toValue: 1, duration: 14000, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
+        timing(drift, { toValue: 0, duration: 14000, easing: Easing.inOut(Easing.sin), useNativeDriver: native }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [drift, motion]);
   const o = (colors.dark ? 0.55 : 0.85) * intensity;
   const blob = (id: string, c: string) => (
     <RadialGradient id={id} cx="50%" cy="50%" r="50%">

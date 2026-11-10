@@ -1,6 +1,6 @@
 // To-dos from your computer: check one off here and it's done there too. Done ones can be undone.
 import React, { useState } from 'react';
-import { FlatList, LayoutAnimation, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { TodoDone, TodoOpen } from '../api/types';
 import { dueLabel } from '../lib/computer';
@@ -12,6 +12,7 @@ import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
 import { TAB_BAR_SPACE } from '../ui/TabBar';
 import { colors, fonts, themed, type } from '../ui/theme';
+import { layoutNext } from '../ui/motion';
 
 const SOURCE: Record<string, string> = {
   voice: 'Said to Flo',
@@ -52,7 +53,7 @@ export function TodosScreen({ onAdd }: { onAdd: () => void }) {
   const rows: Row[] = view === 'open' ? open.map((t) => ({ kind: 'open', t })) : done.map((t) => ({ kind: 'done', t }));
 
   const toggle = (r: Row) => {
-    LayoutAnimation.configureNext(LayoutAnimation.create(220, 'easeInEaseOut', 'opacity'));
+    layoutNext(220);
     void c.act(r.kind === 'open' ? 'todo_done' : 'todo_reopen', r.t.id);
   };
 

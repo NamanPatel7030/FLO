@@ -8,6 +8,7 @@ import { GlassButton, IconButton, PrimaryButton } from '../ui/Buttons';
 import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
 import { absFill, colors, fonts, type, themed } from '../ui/theme';
+import { forever, timing } from '../ui/motion';
 
 const FRAME = 248;
 const native = Platform.OS !== 'web';
@@ -46,10 +47,10 @@ export function ScanScreen({
   const line = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const loop = Animated.loop(
+    const loop = forever(() =>
       Animated.sequence([
-        Animated.timing(line, { toValue: 1, duration: 1800, easing: Easing.inOut(Easing.quad), useNativeDriver: native }),
-        Animated.timing(line, { toValue: 0, duration: 1800, easing: Easing.inOut(Easing.quad), useNativeDriver: native }),
+        timing(line, { toValue: 1, duration: 1800, easing: Easing.inOut(Easing.quad), useNativeDriver: native }),
+        timing(line, { toValue: 0, duration: 1800, easing: Easing.inOut(Easing.quad), useNativeDriver: native }),
       ]),
     );
     loop.start();

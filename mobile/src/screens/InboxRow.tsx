@@ -8,6 +8,7 @@ import { GlassCard } from '../ui/Glass';
 import { Icon } from '../ui/Icons';
 import { KindIcon } from '../ui/KindIcon';
 import { colors, fonts, type, themed } from '../ui/theme';
+import { timing } from '../ui/motion';
 
 const native = Platform.OS !== 'web';
 
@@ -35,7 +36,7 @@ export function InboxRow({
   const rot = useRef(new Animated.Value(expanded ? 1 : 0)).current;
 
   useEffect(() => {
-    Animated.timing(enter, {
+    timing(enter, {
       toValue: 1,
       duration: 480,
       delay: Math.min(index, 8) * 55,
@@ -45,7 +46,7 @@ export function InboxRow({
   }, [enter, index]);
 
   useEffect(() => {
-    Animated.timing(rot, { toValue: expanded ? 1 : 0, duration: 220, useNativeDriver: native }).start();
+    timing(rot, { toValue: expanded ? 1 : 0, duration: 220, useNativeDriver: native }).start();
   }, [expanded, rot]);
 
   const details = expanded ? detailEntries(item.data) : [];
