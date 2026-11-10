@@ -23,7 +23,7 @@ export default function PermGuide() {
     <div className="flex h-screen w-screen items-end justify-center p-2" data-tauri-drag-region>
       <style>{css}</style>
       <div
-        className="pg-card relative flex w-full items-center gap-4 rounded-[18px] border border-black/10 bg-white/95 px-4 py-3.5 text-[#0b1220] shadow-[0_18px_40px_-14px_rgb(11_18_32/0.45)] backdrop-blur"
+        className="pg-card relative flex w-full items-center gap-4 rounded-[18px] border border-black/10 bg-[#fff]/95 px-4 py-3.5 text-[#0b1220] shadow-[0_18px_40px_-14px_rgb(11_18_32/0.45)] backdrop-blur"
         data-testid="perm-guide"
         data-tauri-drag-region
       >
@@ -36,7 +36,7 @@ export default function PermGuide() {
             <span className="flex-1 text-[13px] font-medium">Flo</span>
             <span className="relative">
               <span className="pg-track flex h-[20px] w-[36px] items-center rounded-full px-[2px]">
-                <span className="pg-knob h-[16px] w-[16px] rounded-full bg-white shadow" />
+                <span className="pg-knob h-[16px] w-[16px] rounded-full bg-[#fff] shadow" />
               </span>
               <span className="pg-hand pointer-events-none absolute -bottom-3 left-5 text-[18px]" aria-hidden>
                 👆

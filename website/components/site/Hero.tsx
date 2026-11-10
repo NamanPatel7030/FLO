@@ -160,7 +160,7 @@ export function Hero() {
         >
           Talk. It&apos;s typed,
           <br />
-          <span className="serif-i grad-text pr-2 text-[0.94em] tracking-[-0.02em] sm:text-[1.1em]">right on your computer.</span>
+          <span className="serif-i grad-text text-[0.94em] tracking-[-0.02em] sm:text-[1.1em]">right on your computer.</span>
         </motion.h1>
         <motion.p
           initial={{ opacity: 0, y: 14 }}

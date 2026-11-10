@@ -70,7 +70,7 @@ export default async function ChangelogPage() {
           Changelog
         </span>
         <h1 className="mt-6 text-[clamp(44px,7vw,80px)] font-semibold leading-[0.95] tracking-[-0.05em] ink">
-          What&apos;s <span className="serif-i grad-text pr-1">new.</span>
+          What&apos;s <span className="serif-i grad-text">new.</span>
         </h1>
         <p className="v2-lead mt-5 max-w-xl">Every Flo release, newest first. Flo updates itself: when one lands, the notch offers it, it installs in the background, and one restart later you have it.</p>
 

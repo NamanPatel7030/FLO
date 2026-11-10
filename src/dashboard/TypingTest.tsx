@@ -277,8 +277,8 @@ function Results(p: {
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
       <Card strong className="relative overflow-hidden p-7 text-center">
         <div className="pointer-events-none absolute left-1/2 top-0 h-40 w-72 -translate-x-1/2 rounded-full bg-brand-400/15 blur-3xl" />
-        <div className="relative text-[12px] font-semibold uppercase tracking-[0.16em] text-faint">Your speed</div>
-        <div className="relative mt-1 text-[64px] font-semibold leading-none tracking-tight accent-text" data-testid="typing-result" data-wpm={p.net}>
+        <div className="relative mb-1 text-[12px] font-semibold uppercase tracking-[0.16em] text-faint">Your speed</div>
+        <div className="relative text-[64px] font-semibold leading-none tracking-tight accent-text" data-testid="typing-result" data-wpm={p.net}>
           {net}
           <span className="ml-2 text-[20px] font-medium text-muted">wpm</span>
         </div>

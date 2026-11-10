@@ -45,7 +45,7 @@ export default function Home() {
               {greeting(new Date().getHours())}
               {settings?.userName ? (
                 <>
-                  , <span className="serif-accent ink-grad pr-1 text-[1.14em]">{settings.userName}.</span>
+                  , <span className="serif-accent ink-grad text-[1.14em]">{settings.userName}.</span>
                 </>
               ) : (
                 "."

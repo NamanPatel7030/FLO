@@ -48,7 +48,7 @@ export function Heading({
         {parts[0]}
         {parts.length > 1 && (
           <>
-            <span className="serif-i grad-text pr-1">{accent}</span>
+            <span className="serif-i grad-text">{accent}</span>
             {parts[1]}
           </>
         )}

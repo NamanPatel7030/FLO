@@ -382,9 +382,10 @@ export function AuthForm({ mode, next, site, notice }: { mode: "signup" | "login
         {busy === "google" ? (
           "Opening Google…"
         ) : mode === "signup" && forDownload ? (
-          <>
+          // one flex item: as two, the button's gap opened a hole between "Google" and "to download Flo"
+          <span>
             Continue with Google<span className="hidden min-[400px]:inline">&nbsp;to download Flo</span>
-          </>
+          </span>
         ) : (
           "Continue with Google"
         )}

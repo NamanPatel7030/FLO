@@ -25,7 +25,7 @@ export function LegalShell({ tag, title, accent, lead, children }: { tag: string
           {tag}
         </span>
         <h1 className="mt-6 text-[clamp(40px,7vw,76px)] font-semibold leading-[0.98] tracking-[-0.05em] text-balance ink">
-          {title} <span className="serif-i grad-text pr-1">{accent}</span>
+          {title} <span className="serif-i grad-text">{accent}</span>
         </h1>
         <p className="v2-lead mt-5 max-w-xl">{lead}</p>
         <div className="mt-12">{children}</div>

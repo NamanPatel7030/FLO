@@ -17,7 +17,8 @@ export default async function GoogleSetup() {
   const scopes = [...BASE_SCOPES, ...GOOGLE_SCOPES.calendar, ...GOOGLE_SCOPES.gmail];
   const step = "flex gap-3 text-left text-[14px] leading-relaxed text-muted";
   const num = "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-400/15 text-[12px] font-semibold text-brand-200";
-  const code = "font-mono text-[12.5px] text-ink";
+  // long URLs and paths must wrap on a phone instead of pushing the card wider than the screen
+  const code = "font-mono text-[12.5px] text-ink [overflow-wrap:anywhere]";
   const block = "mt-2 block rounded-xl bg-black/40 px-3 py-2 font-mono text-[12.5px] break-all text-brand-100";
   return (
     <AuthShell>

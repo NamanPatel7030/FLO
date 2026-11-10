@@ -101,7 +101,8 @@ const settings: Settings = {
   claudeAutoContinue: false,
   claudeContinuePrompt: "Continue where you left off.",
   typingWpm: 40,
-  userName: "Parth",
+  // ?name=… previews (and the text-clipping e2e test) the greeting with another name
+  userName: (typeof location !== "undefined" && new URLSearchParams(location.search).get("name")) || "Parth",
   // previews and tests can pick the theme up front (the real app keeps it in settings.json)
   theme: ((): ThemeMode => {
     try {

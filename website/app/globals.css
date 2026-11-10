@@ -1989,6 +1989,20 @@ h2 {
   background-clip: text;
   color: transparent;
 }
+
+/* Gradient text only paints inside the element's box, so glyph ink that hangs outside it (the swash of an
+   italic serif J or f, descenders under tight leading, the last letter's slant) is cut off. Grow the painted
+   box with padding and cancel it with an equal negative margin so nothing moves; `clone` repeats that on
+   every line when the text wraps. Unlayered on purpose: it must win over any p-* / m-* utility on the same
+   element (put spacing on a neighbour instead). Same rule as .ink-grad in the app's src/styles.css. */
+.grad-text,
+.accent-text,
+.accent-shimmer {
+  padding: 0.1em 0.2em 0.16em;
+  margin: -0.1em -0.2em -0.16em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 .ink { color: var(--v2-ink); }
 .ink-2 { color: var(--v2-ink-2); }
 .mut { color: var(--v2-muted); }

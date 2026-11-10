@@ -356,7 +356,7 @@ export function FinalCTA() {
         <h2 className="mx-auto mt-10 max-w-3xl text-[clamp(44px,7vw,96px)] font-semibold leading-[0.95] tracking-[-0.05em] ink">
           Stop typing.
           <br />
-          <span className="serif-i grad-text pr-2 text-[1.08em] tracking-[-0.02em]">Start talking.</span>
+          <span className="serif-i grad-text text-[1.08em] tracking-[-0.02em]">Start talking.</span>
         </h2>
         <p className="v2-lead mx-auto mt-6 max-w-lg">Free to download. Private by default. Ready in about a minute.</p>
         <LiveCount />

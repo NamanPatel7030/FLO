@@ -70,7 +70,8 @@ export function AuthShowcase({ title, sub }: { title: string; sub: string }) {
       <div className="px-10 pb-10">
         <p className="text-[clamp(28px,2.6vw,40px)] font-semibold leading-[1.05] tracking-[-0.04em] ink">
           {title.split(".")[0]}.
-          {title.split(".").slice(1).join(".").trim() && <span className="serif-i grad-text pl-2">{title.split(".").slice(1).join(".").trim()}</span>}
+          {title.split(".").slice(1).join(".").trim() && " "}
+          {title.split(".").slice(1).join(".").trim() && <span className="serif-i grad-text">{title.split(".").slice(1).join(".").trim()}</span>}
         </p>
         <p className="mt-3 max-w-md text-[15px] mut">{sub}</p>
         <p className="mt-5 flex items-center gap-2 text-[12.5px] font-medium fnt">

@@ -70,7 +70,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
       <div className="min-w-[240px] flex-1">
         <h1 className="text-[28px] font-semibold tracking-[-0.03em]">
           {title}
-          <span aria-hidden className="serif-accent ink-grad pl-0.5 text-[1.1em]">.</span>
+          <span aria-hidden className="serif-accent ink-grad text-[1.1em]">.</span>
         </h1>
         {subtitle && <p className="mt-1 text-[13.5px] text-muted">{subtitle}</p>}
       </div>
@@ -151,11 +151,14 @@ export function Toggle({ checked, onChange, label, hint }: { checked: boolean; o
 }
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  // full width unless the caller sets one: `w-full w-56` would let w-full win (it sorts later in the CSS)
+  const sized = /(^|\s)w-/.test(props.className ?? "");
   return (
     <input
       {...props}
       className={clsx(
-        "h-9 w-full rounded-xl border border-[var(--border)] bg-[var(--glass)] px-3 text-[13.5px] outline-none transition placeholder:text-[var(--fg-faint)] focus:border-brand-400/60 focus:ring-2 focus:ring-brand-500/20",
+        !sized && "w-full",
+        "h-9 rounded-xl border border-[var(--border)] bg-[var(--glass)] px-3 text-[13.5px] outline-none transition placeholder:text-[var(--fg-faint)] focus:border-brand-400/60 focus:ring-2 focus:ring-brand-500/20",
         props.className,
       )}
     />

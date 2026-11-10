@@ -55,7 +55,7 @@ export default async function DownloadPage() {
             You&apos;re in{first ? `, ${first}` : ""}
           </span>
           <h1 className="mt-6 text-[clamp(44px,7vw,84px)] font-semibold leading-[0.95] tracking-[-0.05em] ink">
-            Get <span className="serif-i grad-text pr-1">Flo.</span>
+            Get <span className="serif-i grad-text">Flo.</span>
           </h1>
           <p className="mt-4 text-[15px] mut">Signed in as {user.email}</p>
           {rel && (

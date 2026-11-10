@@ -203,6 +203,20 @@ html[data-theme="light"] body {
   background-image: linear-gradient(100deg, var(--accent-soft) 0%, #b9a8ff 55%, #ff9ec4 100%);
 }
 
+/* Gradient text only paints inside the element's box, so glyph ink that hangs outside it (the swash of an
+   italic serif J or f, descenders under tight leading, the last letter's slant) is cut off. Grow the painted
+   box with padding and cancel it with an equal negative margin so nothing moves; `clone` repeats that on
+   every line when the text wraps. Unlayered on purpose: it must win over any p-* / m-* utility on the same
+   element (put spacing on a neighbour instead). Guarded by tests/e2e/text-clip.spec.ts. */
+.ink-grad,
+.accent-text,
+.shimmer {
+  padding: 0.1em 0.2em 0.16em;
+  margin: -0.1em -0.2em -0.16em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 html,
 body,
 #root {
