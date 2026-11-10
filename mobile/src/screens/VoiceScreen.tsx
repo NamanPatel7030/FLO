@@ -33,6 +33,8 @@ async function waitForAnswer(
     await new Promise((r) => setTimeout(r, last?.status === 'taken' ? 1200 : 1800));
     last = await get(id);
     if (last.status === 'done' || last.status === 'failed') return last;
+    // a to-do / note kept on the server until the computer is back: that's the answer for now
+    if (last.queued) return { ...last, status: 'done', answer: last.hint ?? 'Saved.' };
     onHint(last.status === 'pending' ? last.hint ?? null : null);
   }
   if (last?.status === 'pending' && last.hint) throw new Error(last.hint);
@@ -48,6 +50,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
   const [phase, setPhase] = useState<'idle' | 'sending' | 'waiting' | 'answered' | 'failed'>('idle');
   const [hint, setHint] = useState<string | null>(null);
   const [answer, setAnswer] = useState<string>('');
+  const [fromCloud, setFromCloud] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const cancelled = useRef(false);
@@ -83,6 +86,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
     tap();
     setErr(null);
     setAnswer('');
+    setFromCloud(false);
     setPhase('sending');
     try {
       const api = flo.api;
@@ -92,6 +96,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
       setPhase('waiting');
       const done = await waitForAnswer((id) => api.getAsk(id), r.id, () => cancelled.current, setHint);
       setAnswer(done.answer ?? '');
+      setFromCloud(done.answeredBy === 'cloud');
       setPhase(done.status === 'done' ? 'answered' : 'failed');
       if (done.status !== 'done' && !done.answer) setErr("Your computer couldn't do that.");
       void flo.refresh();
@@ -188,10 +193,15 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
 
       {phase === 'answered' && !!answer && (
         <GlassCard radius={radius.lg} style={styles.answer} tint={colors.sky}>
-          <Text style={type.micro}>{mode === 'ask' ? 'Answer from your computer' : 'Your computer'}</Text>
+          <Text style={type.micro}>{mode === 'ask' ? (fromCloud ? 'Answer from Flo' : 'Answer from your computer') : 'Your computer'}</Text>
           <Text style={styles.answerText} testID="voice-answer">
             {answer}
           </Text>
+          {fromCloud && (
+            <Text style={type.micro} testID="voice-cloud">
+              Answered in the cloud (your computer is off)
+            </Text>
+          )}
           <View style={styles.row}>
             <GlassButton compact label={copied ? 'Copied' : 'Copy'} icon={<Icon name="copy" size={16} color={colors.ink} />} onPress={() => void copy(answer)} />
             <GlassButton compact label="Share" icon={<Icon name="share" size={16} color={colors.ink} />} onPress={() => void Share.share({ message: answer })} />

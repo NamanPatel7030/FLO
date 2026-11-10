@@ -19,6 +19,18 @@ describe('parseAsk', () => {
     expect(r.status).toBe('pending');
     expect(r.answer).toBeNull();
   });
+  it('says when the cloud answered (computer off)', () => {
+    const r = parseAsk({ request: { id: 3, mode: 'ask', text: 'q', status: 'done', answer: 'A', createdAt: 'x', answeredBy: 'cloud' } });
+    expect(r.answeredBy).toBe('cloud');
+    expect(parseAsk({ request: { id: 3, status: 'done', answeredBy: 'computer' } }).answeredBy).toBe('computer');
+    expect(parseAsk({ request: { id: 3, status: 'done', answeredBy: 'mars' } }).answeredBy).toBeUndefined();
+  });
+  it('marks a to-do or note saved for when the computer is back', () => {
+    const r = parseAsk({ request: { id: 4, mode: 'todo', status: 'pending' }, hint: { reason: 'queued', text: 'Saved. Your computer will add it when it\'s back online.' } });
+    expect(r.queued).toBe(true);
+    expect(r.hint).toMatch(/Saved/);
+    expect(parseAsk({ request: { id: 4, status: 'pending' }, hint: { reason: 'offline', text: 'x' } }).queued).toBeUndefined();
+  });
   it('rejects garbage', () => {
     expect(() => parseAsk({})).toThrow(ApiError);
   });
@@ -37,6 +49,18 @@ describe('ask over HTTP', () => {
     expect(calls[0].url).toBe('https://flo.hellonaman.com/api/mobile/ask');
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ mode: 'ask', text: 'hi' });
     expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+  });
+  it('waits long enough for a cloud answer while polling', async () => {
+    let signal: AbortSignal | undefined;
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      await new Promise((r) => setTimeout(r, 20));
+      return new Response(JSON.stringify({ request: { id: 1, mode: 'ask', text: 'hi', status: 'done', answer: 'A', answeredBy: 'cloud' } }), { status: 200 });
+    };
+    const api = createHttpApi('https://flo.hellonaman.com', 'tok', fetchImpl);
+    const r = await api.getAsk('1');
+    expect(r.answeredBy).toBe('cloud');
+    expect(signal?.aborted).toBe(false);
   });
 });
 

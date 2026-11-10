@@ -5,16 +5,22 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Ask Flo from the bubble: queue the question, then wait for the computer's answer (~90 s max). */
+/**
+ * Ask Flo from the bubble: queue the question (with what's on the screen, see FloScreen), then wait for
+ * the answer (~90 s max). Your computer answers; while it's off, the server answers in the cloud.
+ */
 internal class FloAsk(private val server: String, private val token: String) {
   class Failed(message: String) : Exception(message)
 
-  private fun call(method: String, path: String, body: JSONObject? = null): Pair<Int, JSONObject?> {
+  /** [cloud]: answered by the server's cloud AI because your computer was off. */
+  data class Answer(val text: String, val cloud: Boolean)
+
+  private fun call(method: String, path: String, body: JSONObject? = null, readMs: Int = 15_000): Pair<Int, JSONObject?> {
     val c = URL(server + path).openConnection() as HttpURLConnection
     try {
       c.requestMethod = method
       c.connectTimeout = 10_000
-      c.readTimeout = 15_000
+      c.readTimeout = readMs
       c.setRequestProperty("Authorization", "Bearer $token")
       c.setRequestProperty("Accept", "application/json")
       if (body != null) {
@@ -35,9 +41,11 @@ internal class FloAsk(private val server: String, private val token: String) {
    * Returns the answer. While the computer hasn't picked the question up, [waiting] gets the server's
    * reason (no computer signed in to this account, computer offline since…, busy) each time it changes.
    */
-  fun ask(question: String, waiting: (String) -> Unit, cancelled: () -> Boolean): String {
+  fun ask(question: String, screen: String?, waiting: (String) -> Unit, cancelled: () -> Boolean): Answer {
     val (code, json) = try {
-      call("POST", "/api/mobile/ask", JSONObject().put("mode", "ask").put("text", question))
+      val body = JSONObject().put("mode", "ask").put("text", question)
+      if (!screen.isNullOrBlank()) body.put("context", screen)
+      call("POST", "/api/mobile/ask", body)
     } catch (e: IOException) {
       throw Failed("Couldn't reach Flo. Check your internet connection.")
     }
@@ -49,10 +57,11 @@ internal class FloAsk(private val server: String, private val token: String) {
     while (System.currentTimeMillis() - start < 90_000) {
       if (cancelled()) throw Failed("")
       Thread.sleep(1_500)
-      val body = try { call("GET", "/api/mobile/ask/$id").second } catch (e: IOException) { null } ?: continue
+      // the server may answer in the cloud during this poll (computer off): allow its ~20 s
+      val body = try { call("GET", "/api/mobile/ask/$id", readMs = 35_000).second } catch (e: IOException) { null } ?: continue
       val r = body.optJSONObject("request") ?: continue
       when (r.optString("status")) {
-        "done" -> return r.optString("answer").ifBlank { "Done." }
+        "done" -> return Answer(r.optString("answer").ifBlank { "Done." }, r.optString("answeredBy") == "cloud")
         "failed" -> throw Failed(r.optString("answer").ifBlank { "Your computer couldn't answer that." })
         "pending" -> {
           val next = body.optJSONObject("hint")?.optString("text")?.takeIf { it.isNotBlank() }

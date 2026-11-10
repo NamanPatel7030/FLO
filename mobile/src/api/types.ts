@@ -76,6 +76,10 @@ export interface AskRequest {
   createdAt: string;
   /** While pending: why the computer hasn't picked it up yet (other account, offline, busy). */
   hint?: string;
+  /** 'cloud' when the server answered because the computer was off. */
+  answeredBy?: 'computer' | 'cloud';
+  /** A to-do / note saved on the server until the computer is back online (hint says so). */
+  queued?: boolean;
 }
 
 /** Your computer, as the paired desktop app last published it (GET /api/mobile/state). */

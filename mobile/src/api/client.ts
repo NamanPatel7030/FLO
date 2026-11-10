@@ -42,8 +42,12 @@ export function parseAsk(json: unknown): AskRequest {
   if (!r || (typeof r.id !== 'number' && typeof r.id !== 'string')) throw new ApiError('The server sent an unexpected reply.', 0);
   const mode = r.mode === 'todo' || r.mode === 'note' ? r.mode : 'ask';
   const status = ASK_STATUSES.includes(r.status as AskStatus) ? (r.status as AskStatus) : 'pending';
-  const h = (json as { hint?: { text?: unknown } }).hint;
+  const h = (json as { hint?: { text?: unknown; reason?: unknown } }).hint;
   const hint = h && typeof h.text === 'string' && h.text.trim() ? h.text.trim() : undefined;
+  // the server answered in the cloud because the computer was off
+  const answeredBy = r.answeredBy === 'cloud' || r.answeredBy === 'computer' ? r.answeredBy : undefined;
+  // a to-do / note saved on the server until the computer is back online
+  const queued = !!hint && h?.reason === 'queued';
   return {
     id: String(r.id),
     mode,
@@ -52,6 +56,8 @@ export function parseAsk(json: unknown): AskRequest {
     answer: typeof r.answer === 'string' ? r.answer : null,
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
     ...(hint ? { hint } : {}),
+    ...(answeredBy ? { answeredBy } : {}),
+    ...(queued ? { queued } : {}),
   };
 }
 
@@ -177,7 +183,7 @@ export async function claimPairing(
 /** Authenticated client for a paired device. */
 export function createHttpApi(server: string, deviceToken: string, fetchImpl: FetchLike = fetch): FloApi {
   const base = server.replace(/\/+$/, '');
-  const call = <T>(path: string, init: RequestInit = {}) =>
+  const call = <T>(path: string, init: RequestInit & { timeoutMs?: number } = {}) =>
     request<T>(fetchImpl, joinUrl(base, path), { ...init, token: deviceToken });
 
   return {
@@ -201,7 +207,8 @@ export function createHttpApi(server: string, deviceToken: string, fetchImpl: Fe
       return parseAsk(await call('/api/mobile/ask', { method: 'POST', body: JSON.stringify({ mode, text }) }));
     },
     async getAsk(id) {
-      return parseAsk(await call(`/api/mobile/ask/${encodeURIComponent(id)}`));
+      // the server may answer in the cloud during this call (computer off): up to ~20 s
+      return parseAsk(await call(`/api/mobile/ask/${encodeURIComponent(id)}`, { timeoutMs: 35000 }));
     },
     async getComputer() {
       return parseComputer(await call('/api/mobile/state'));

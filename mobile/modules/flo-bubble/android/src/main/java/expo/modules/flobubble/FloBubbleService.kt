@@ -44,6 +44,7 @@ class FloBubbleService : AccessibilityService() {
   private var listening: String? = null // "dictate" | "ask"
   private var heard: String = ""
   private var askCancel: AtomicBoolean? = null // the Ask in flight, if any
+  private var askScreen: String? = null // what was on screen when you let go of Ask (FloScreen)
 
   private val hide = Runnable { if (listening == null) dock?.hide() }
 
@@ -197,6 +198,9 @@ class FloBubbleService : AccessibilityService() {
     if (listening != mode) return
     runCatching { recognizer?.stopListening() }
     island?.working(mode)
+    // Ask only (never Dictate): read the visible screen now, so the answer fits the conversation
+    // you're in. Never password fields; sent once with this question. See FloScreen.
+    askScreen = if (mode == "ask") readScreen() else null
   }
 
   private fun stopRecognizer() {
@@ -273,9 +277,21 @@ class FloBubbleService : AccessibilityService() {
     askCancel = null
   }
 
+  /** The visible screen of the app you're typing in, for Ask. Null for Flo's own app or on any error. */
+  private fun readScreen(): String? = runCatching {
+    val root = rootInActiveWindow ?: return@runCatching null
+    val pkg = root.packageName?.toString() ?: return@runCatching null
+    if (pkg == packageName) return@runCatching null
+    val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrNull()
+    val title = runCatching { root.window?.title?.toString() }.getOrNull()
+    FloScreen.read(root, label, title, target?.also { runCatching { it.refresh() } })
+  }.getOrNull()
+
   private fun ask(question: String) {
     val server = Prefs.server(this) ?: return
     val token = Prefs.token(this) ?: return
+    val screen = askScreen ?: readScreen() // the recognizer ended before you let go
+    askScreen = null
     cancelAsk()
     val cancel = AtomicBoolean(false)
     askCancel = cancel
@@ -283,18 +299,19 @@ class FloBubbleService : AccessibilityService() {
     io.execute {
       val result = runCatching {
         // waiting: the server's reason the computer hasn't answered yet (may change while we wait)
-        FloAsk(server, token).ask(question, waiting = { msg -> main.post { if (!cancel.get()) island?.askStatus(msg) } }, cancelled = { cancel.get() })
+        FloAsk(server, token).ask(question, screen, waiting = { msg -> main.post { if (!cancel.get()) island?.askStatus(msg) } }, cancelled = { cancel.get() })
       }
       main.post {
         if (cancel.get()) return@post
-        result.onSuccess { answer ->
+        result.onSuccess { a ->
           // type the answer straight into the field you were in; show it with Insert / Copy only
           // when the field can't take it (closed, or an app that ignores typing)
-          if (insert(answer)) {
+          if (insert(a.text)) {
             askCancel = null
-            island?.done("Inserted", R.drawable.flo_ic_check, "ask")
+            island?.done(if (a.cloud) "Inserted (cloud)" else "Inserted", R.drawable.flo_ic_check, "ask")
           } else {
-            island?.askAnswer(answer)
+            island?.askAnswer(a.text)
+            if (a.cloud) toast("Answered in the cloud (your computer is off)")
           }
         }.onFailure { e ->
           island?.askError(e.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Try again.")
