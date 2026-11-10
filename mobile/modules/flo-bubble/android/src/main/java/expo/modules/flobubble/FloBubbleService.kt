@@ -288,7 +288,14 @@ class FloBubbleService : AccessibilityService() {
       main.post {
         if (cancel.get()) return@post
         result.onSuccess { answer ->
-          island?.askAnswer(answer)
+          // type the answer straight into the field you were in; show it with Insert / Copy only
+          // when the field can't take it (closed, or an app that ignores typing)
+          if (insert(answer)) {
+            askCancel = null
+            island?.done("Inserted", R.drawable.flo_ic_check, "ask")
+          } else {
+            island?.askAnswer(answer)
+          }
         }.onFailure { e ->
           island?.askError(e.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Try again.")
         }
