@@ -12,6 +12,9 @@ const step = (page: Page, s: string) => expect(page.locator('[data-testid="onboa
 /** Hold the try-out's mic button like a person would (press, talk, let go). */
 async function holdToTalk(page: Page, ms = 900) {
   const mic = page.locator('[data-testid="onboarding"]').getByTestId("try-mic");
+  // wait until the step has finished animating in and the button takes the pointer (slow CI
+  // runners were pressing while the step was still fading in)
+  await mic.hover();
   const box = (await mic.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
