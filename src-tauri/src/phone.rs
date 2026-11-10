@@ -143,10 +143,14 @@ pub fn spawn(st: Shared) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(8)).await;
         let mut wait = Duration::from_secs(10);
+        let mut last_err: Option<String> = None;
         loop {
             if crate::push::has_session(&st) && crate::account::enforced(&st) {
                 match take(&st).await {
                     Ok((list, actions)) => {
+                        if last_err.take().is_some() {
+                            log::info!("phone requests: reconnected");
+                        }
                         for a in actions {
                             log::info!("phone action {} ({})", a.id, a.kind);
                             let (ok, message) = crate::phone_state::apply(&st, &a);
@@ -165,8 +169,13 @@ pub fn spawn(st: Shared) {
                         }
                     }
                     Err(e) => {
-                        log::debug!("phone requests: {e}");
-                        wait = Duration::from_secs(60);
+                        // once per distinct error, so a broken phone link shows up in the log
+                        let msg = e.to_string();
+                        if last_err.as_deref() != Some(msg.as_str()) {
+                            log::warn!("phone requests: {msg}");
+                            last_err = Some(msg);
+                        }
+                        wait = Duration::from_secs(20);
                     }
                 }
             }

@@ -74,6 +74,8 @@ export interface AskRequest {
   status: AskStatus;
   answer: string | null;
   createdAt: string;
+  /** While pending: why the computer hasn't picked it up yet (other account, offline, busy). */
+  hint?: string;
 }
 
 /** Your computer, as the paired desktop app last published it (GET /api/mobile/state). */

@@ -55,3 +55,17 @@ describe('errors', () => {
 it('pairs with the live server by default', () => {
   expect(DEFAULT_SERVER).toBe('https://flo.hellonaman.com');
 });
+
+describe('parseAsk hint', () => {
+  it('carries the server reason while the computer has not picked the question up', () => {
+    const r = parseAsk({
+      request: { id: 3, mode: 'ask', text: 'hi', status: 'pending', answer: null, createdAt: '2026-11-10T10:00:00Z' },
+      hint: { reason: 'no_computer', text: 'No computer is signed in to Flo as a@b.c.' },
+    });
+    expect(r.hint).toBe('No computer is signed in to Flo as a@b.c.');
+  });
+  it('has no hint when the server sends none', () => {
+    const r = parseAsk({ request: { id: 3, mode: 'ask', text: 'hi', status: 'pending', answer: null, createdAt: 'x' } });
+    expect(r.hint).toBeUndefined();
+  });
+});

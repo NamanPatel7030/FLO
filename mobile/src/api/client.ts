@@ -42,6 +42,8 @@ export function parseAsk(json: unknown): AskRequest {
   if (!r || (typeof r.id !== 'number' && typeof r.id !== 'string')) throw new ApiError('The server sent an unexpected reply.', 0);
   const mode = r.mode === 'todo' || r.mode === 'note' ? r.mode : 'ask';
   const status = ASK_STATUSES.includes(r.status as AskStatus) ? (r.status as AskStatus) : 'pending';
+  const h = (json as { hint?: { text?: unknown } }).hint;
+  const hint = h && typeof h.text === 'string' && h.text.trim() ? h.text.trim() : undefined;
   return {
     id: String(r.id),
     mode,
@@ -49,6 +51,7 @@ export function parseAsk(json: unknown): AskRequest {
     status,
     answer: typeof r.answer === 'string' ? r.answer : null,
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
+    ...(hint ? { hint } : {}),
   };
 }
 

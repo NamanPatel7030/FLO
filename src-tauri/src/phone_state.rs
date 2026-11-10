@@ -333,7 +333,7 @@ pub fn spawn(st: Shared) {
             match crate::push::call(&st, "POST", "/api/app/state", Some(snap)).await.and_then(crate::push::ok_or_err) {
                 Ok(_) => last = Some((h, Instant::now())),
                 Err(e) => {
-                    log::debug!("phone state: {e}");
+                    log::warn!("phone state: {e}");
                     tokio::time::sleep(Duration::from_secs(60)).await;
                 }
             }

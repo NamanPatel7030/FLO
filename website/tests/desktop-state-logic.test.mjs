@@ -108,3 +108,31 @@ test("hotkeys are not mistaken for secrets", () => {
   const r = parseSnapshot(snap({ settings: [{ key: "hotkeyDictation", label: "Dictation key", section: "Keys", kind: "text", value: "ctrl", editable: false }] }));
   assert.deepEqual(r.state.settings.map((s) => s.key), ["hotkeyDictation"]);
 });
+
+// ── why the computer hasn't picked up a phone question yet ──────────────────
+import { waitingHint } from "../lib/desktop-state.ts";
+
+test("waiting hint: no computer signed in to this account names the account", () => {
+  const h = waitingHint("me@example.com", null, new Date("2026-11-10T10:00:00Z"));
+  assert.equal(h.reason, "no_computer");
+  assert.match(h.text, /me@example\.com/);
+  assert.match(h.text, /sign in/i);
+});
+
+test("waiting hint: computer last seen long ago says when", () => {
+  const h = waitingHint("me@example.com", "2026-11-10T07:00:00Z", new Date("2026-11-10T10:00:00Z"));
+  assert.equal(h.reason, "offline");
+  assert.match(h.text, /3 hours ago/);
+});
+
+test("waiting hint: recent heartbeat means online, just busy", () => {
+  const h = waitingHint("me@example.com", "2026-11-10T09:57:00Z", new Date("2026-11-10T10:00:00Z"));
+  assert.equal(h.reason, "busy");
+  assert.doesNotMatch(h.text, /sign in/i);
+});
+
+test("waiting hint: minutes and singular forms", () => {
+  assert.match(waitingHint("a@b.c", "2026-11-10T09:40:00Z", new Date("2026-11-10T10:00:00Z")).text, /20 minutes ago/);
+  assert.match(waitingHint("a@b.c", "2026-11-10T09:00:00Z", new Date("2026-11-10T10:00:00Z")).text, /1 hour ago/);
+  assert.match(waitingHint("a@b.c", "2026-11-08T09:00:00Z", new Date("2026-11-10T10:00:00Z")).text, /2 days ago/);
+});

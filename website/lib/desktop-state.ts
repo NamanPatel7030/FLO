@@ -199,3 +199,35 @@ export function parseAction(body: unknown): ActionIn | { error: string } {
   if (typeof v === "string" && v.length <= 300) return { kind, target, value: v };
   return { error: "Invalid value." };
 }
+
+/** The computer republishes its snapshot at least every 5 minutes while Flo is open and signed in. */
+const ONLINE_WITHIN_MS = 12 * 60_000;
+
+export type WaitingReason = "no_computer" | "offline" | "busy";
+
+function ago(ms: number): string {
+  const m = Math.max(1, Math.round(ms / 60_000));
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"} ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.round(h / 24);
+  return `${d} days ago`;
+}
+
+/**
+ * Phone question still pending: say why, precisely. The usual cause is the computer being signed in
+ * to a different Flo account than the phone, so name the phone's account.
+ */
+export function waitingHint(email: string, seenAt: string | null, now: Date = new Date()): { reason: WaitingReason; text: string } {
+  if (!seenAt) {
+    return {
+      reason: "no_computer",
+      text: `No computer is signed in to Flo as ${email}. Open Flo on your computer and sign in with ${email}.`,
+    };
+  }
+  const age = now.getTime() - new Date(seenAt).getTime();
+  if (!(age < ONLINE_WITHIN_MS)) {
+    return { reason: "offline", text: `Your computer was last online ${ago(age)}. Open Flo on it, signed in as ${email}.` };
+  }
+  return { reason: "busy", text: "Your computer is online and should pick this up in a moment." };
+}

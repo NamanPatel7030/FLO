@@ -20,16 +20,22 @@ const MODES: { id: AskMode; label: string; icon: IconName; hint: string }[] = [
   { id: 'note', label: 'Note', icon: 'note', hint: 'Saved to Notes on your computer.' },
 ];
 
-/** Poll the request until the Mac answers (or give up after ~90 s). */
-async function waitForAnswer(get: (id: string) => Promise<AskRequest>, id: string, cancelled: () => boolean): Promise<AskRequest> {
+/** Poll the request until the computer answers (or give up after ~90 s), reporting why it's waiting. */
+async function waitForAnswer(
+  get: (id: string) => Promise<AskRequest>,
+  id: string,
+  cancelled: () => boolean,
+  onHint: (hint: string | null) => void,
+): Promise<AskRequest> {
   const started = Date.now();
   let last: AskRequest | null = null;
   while (!cancelled() && Date.now() - started < 90_000) {
     await new Promise((r) => setTimeout(r, last?.status === 'taken' ? 1200 : 1800));
     last = await get(id);
     if (last.status === 'done' || last.status === 'failed') return last;
+    onHint(last.status === 'pending' ? last.hint ?? null : null);
   }
-  if (last) return last;
+  if (last?.status === 'pending' && last.hint) throw new Error(last.hint);
   throw new Error('Your computer did not answer.');
 }
 
@@ -40,6 +46,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
   const voice = useVoice(flo.mock);
   const [mode, setMode] = useState<AskMode>(initialMode);
   const [phase, setPhase] = useState<'idle' | 'sending' | 'waiting' | 'answered' | 'failed'>('idle');
+  const [hint, setHint] = useState<string | null>(null);
   const [answer, setAnswer] = useState<string>('');
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -81,8 +88,9 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
       const api = flo.api;
       if (!api) throw new Error('Pair with your computer first.');
       const r = await api.ask(mode, text);
+      setHint(null);
       setPhase('waiting');
-      const done = await waitForAnswer((id) => api.getAsk(id), r.id, () => cancelled.current);
+      const done = await waitForAnswer((id) => api.getAsk(id), r.id, () => cancelled.current, setHint);
       setAnswer(done.answer ?? '');
       setPhase(done.status === 'done' ? 'answered' : 'failed');
       if (done.status !== 'done' && !done.answer) setErr("Your computer couldn't do that.");
@@ -108,7 +116,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
     : phase === 'sending'
       ? 'Sending to your computer…'
       : phase === 'waiting'
-        ? 'Your computer is on it…'
+        ? hint ?? 'Your computer is on it…'
         : phase === 'answered'
           ? mode === 'ask'
             ? 'Flo says'

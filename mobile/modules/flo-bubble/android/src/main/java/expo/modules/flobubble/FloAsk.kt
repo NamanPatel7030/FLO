@@ -31,8 +31,11 @@ internal class FloAsk(private val server: String, private val token: String) {
     }
   }
 
-  /** Returns the answer, calling [waiting] once if the computer is slow to pick it up. */
-  fun ask(question: String, waiting: () -> Unit, cancelled: () -> Boolean): String {
+  /**
+   * Returns the answer. While the computer hasn't picked the question up, [waiting] gets the server's
+   * reason (no computer signed in to this account, computer offline since…, busy) each time it changes.
+   */
+  fun ask(question: String, waiting: (String) -> Unit, cancelled: () -> Boolean): String {
     val (code, json) = try {
       call("POST", "/api/mobile/ask", JSONObject().put("mode", "ask").put("text", question))
     } catch (e: IOException) {
@@ -42,17 +45,22 @@ internal class FloAsk(private val server: String, private val token: String) {
     if (code !in 200..299) throw Failed(json?.optString("error")?.takeIf { it.isNotBlank() } ?: "Flo had a problem ($code). Try again.")
     val id = json?.optJSONObject("request")?.opt("id")?.toString() ?: throw Failed("Flo sent an unexpected reply.")
     val start = System.currentTimeMillis()
-    var warned = false
+    var hint: String? = null
     while (System.currentTimeMillis() - start < 90_000) {
       if (cancelled()) throw Failed("")
       Thread.sleep(1_500)
-      val r = try { call("GET", "/api/mobile/ask/$id").second?.optJSONObject("request") } catch (e: IOException) { null } ?: continue
+      val body = try { call("GET", "/api/mobile/ask/$id").second } catch (e: IOException) { null } ?: continue
+      val r = body.optJSONObject("request") ?: continue
       when (r.optString("status")) {
         "done" -> return r.optString("answer").ifBlank { "Done." }
         "failed" -> throw Failed(r.optString("answer").ifBlank { "Your computer couldn't answer that." })
-        "pending" -> if (!warned && System.currentTimeMillis() - start > 15_000) { warned = true; waiting() }
+        "pending" -> {
+          val next = body.optJSONObject("hint")?.optString("text")?.takeIf { it.isNotBlank() }
+          if (next != null && next != hint) { hint = next; waiting(next) }
+        }
+        "taken" -> if (hint != null) { hint = null; waiting("Your computer is working on it.") }
       }
     }
-    throw Failed("Your computer didn't answer. Make sure Flo is open on it and signed in.")
+    throw Failed(hint ?: "Your computer didn't answer in time. Make sure Flo is open on it and signed in.")
   }
 }
