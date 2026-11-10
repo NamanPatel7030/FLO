@@ -847,6 +847,9 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
               const q = new URLSearchParams(location.search);
               const nh = Number(q.get("nh")) || 32;
               const nw = Number(q.get("nw")) || (nh >= 38 ? 200 : 185);
+              // ?notch=none: a Mac without a camera housing (external display / older MacBook) —
+              // the backend reports no notch and the island draws a fake 200x32 one
+              if (q.get("notch") === "none") return { platform: "macos" as const, hasNotch: false, notchWidth: 200, notchHeight: 24, screenWidth: 1512 };
               return { platform: "macos" as const, hasNotch: true, notchWidth: nw, notchHeight: nh, screenWidth: 1512 };
             })();
       return geo;

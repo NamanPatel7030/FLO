@@ -306,7 +306,9 @@ export function TrayTooltip({
       <div className="flex flex-col px-3 py-2.5" style={{ width: rect.w / scale, height: rect.h / scale, zoom: scale }}>
       {item.kind === "agents" && (
         <div className="flex h-full flex-col" data-testid="session-list">
-          <div className="mb-1 flex h-[26px] shrink-0 items-center gap-1.5 text-[12px] font-semibold text-white/85">
+          {/* header 26 + rows + footer 28 = exactly trayTipHeight (minus padding + hairline), so the
+              last row's descenders are never clipped by the footer */}
+          <div className="mb-0.5 flex h-[24px] shrink-0 items-center gap-1.5 text-[12px] font-semibold text-white/85">
             {item.sessions.length} session{item.sessions.length === 1 ? "" : "s"}
             <span className="ml-auto text-[10.5px] font-normal text-white/40">{item.sessions.filter((s) => s.status === "working").length} working</span>
           </div>
@@ -340,7 +342,7 @@ export function TrayTooltip({
               </div>
             ))}
           </div>
-          <div className="mt-auto flex h-[30px] shrink-0 items-center justify-end border-t border-white/[0.06] pt-1">
+          <div className="mt-auto flex h-[28px] shrink-0 items-center justify-end border-t border-white/[0.06] pt-0.5">
             <button className={btnGhost} disabled={!item.sessions.some((s) => s.status === "done")} onClick={onClearDone}>
               Clear done
             </button>

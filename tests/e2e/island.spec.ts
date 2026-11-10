@@ -527,10 +527,15 @@ test("widgets: the to-do list scrolls when it has more than fits", async ({ page
   await expect(list).toBeVisible();
   const m = await list.evaluate((el) => ({ sh: el.scrollHeight, ch: el.clientHeight }));
   expect(m.sh).toBeGreaterThan(m.ch); // more to-dos than fit → it must overflow, not be clipped
-  const lb = (await list.boundingBox())!;
-  await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2);
-  await page.mouse.wheel(0, 120);
-  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  // wheel over the list (re-aimed each try: the panel may still be settling under a loaded machine)
+  await expect
+    .poll(async () => {
+      const lb = (await list.boundingBox())!;
+      await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height / 2);
+      await page.mouse.wheel(0, 120);
+      return list.evaluate((el) => el.scrollTop);
+    })
+    .toBeGreaterThan(0);
 });
 
 test("to-do tray: hovering lists every to-do (not just three), scrollable, and ticks one off", async ({ page }) => {
@@ -696,4 +701,37 @@ test("agent mode: hands-free pill, a heard request, live steps, and a spoken yes
   await expect(pill).toBeVisible({ timeout: 8000 });
   await pill.getByRole("button", { name: "Turn off agent mode" }).click();
   await expect(pill).toHaveCount(0);
+});
+
+test("notch shape: flush with the top edge, concave shoulders when open, a fake notch on a notchless Mac", async ({ page }) => {
+  // hardware notch: closed = exactly the camera housing, no shoulders; open = shoulders at y 0
+  await openIsland(page);
+  const shape = page.locator("[data-island-root] > div").first();
+  await emit(page, "flo://state", { phase: "listening", mode: "dictation" });
+  await expect(page.locator(LISTENING)).toBeVisible();
+  // measured once the morph has settled (the shoulders grow in from the corner)
+  const edges = () =>
+    page.evaluate(() => {
+      const r = document.querySelector("[data-island-root]")!.getBoundingClientRect();
+      const b = document.querySelector("[data-island-root] > div")!.getBoundingClientRect();
+      const l = document.querySelector('[data-testid="notch-shoulder-left"]')!.getBoundingClientRect();
+      return { top: b.top - r.top, shoulderTop: l.top - r.top, shoulderW: Math.round(l.width), overlap: Math.round(l.right - b.left) };
+    });
+  // flush with the top edge; the shoulder is full size and overlaps the body by 1px (no seam)
+  await expect.poll(edges).toEqual({ top: 0, shoulderTop: 0, shoulderW: 9, overlap: 1 });
+  // pure black, no rim along the top
+  expect(await shape.evaluate((e) => getComputedStyle(e).backgroundColor)).toBe("rgb(0, 0, 0)");
+
+  // notchless Mac: the same notch shape (200x32, shoulders), not a floating capsule
+  await page.goto("/?notch=none&media=none#/island");
+  await page.locator("[data-island-root]").waitFor();
+  await page.evaluate(() => (window as any).__floMock.setSessions([]));
+  const fake = page.locator("[data-island-root] > div").first();
+  await expect(fake).toHaveCSS("background-color", "rgb(0, 0, 0)");
+  await expect(page.getByTestId("stage-hardware-notch")).toHaveCount(0);
+  const r2 = (await page.locator("[data-island-root]").boundingBox())!;
+  const f = (await fake.boundingBox())!;
+  expect(f.y).toBe(r2.y);
+  expect(Math.round(f.width)).toBeGreaterThanOrEqual(200);
+  expect(Math.round(f.height)).toBe(32);
 });

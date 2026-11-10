@@ -404,7 +404,7 @@ export function IslandContent(p: Props) {
             </>
           }
         >
-          <p className={"selectable text-[13px] leading-[18px] text-white/85 " + (notch ? "line-clamp-3" : "line-clamp-4")}>{msg}</p>
+          <p className="selectable line-clamp-4 text-[13px] leading-[18px] text-white/85">{msg}</p>
         </CardRow>
       );
     }

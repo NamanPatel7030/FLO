@@ -6,6 +6,8 @@ import { api, isTauri, on } from "../lib/api";
 import {
   formatHotkey,
   islandSize,
+  notchBox,
+  notchStyle,
   pickTip,
   TRAY_TIP_H,
   trayTipHeight,
@@ -82,10 +84,15 @@ export interface MeetingInfo {
  *  ("expo-ish") for opening; a quicker, symmetric ease for closing back into the camera. */
 export const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 const EASE_CLOSE = [0.32, 0.72, 0, 1] as const;
-const MORPH_OPEN = { type: "tween", duration: 0.32, ease: EASE_OUT } as const;
+/** Opening: a critically damped spring (velocity carries over when a new state interrupts the
+ *  morph, so chained states flow instead of restarting; zero bounce, because the window is sized
+ *  to the target and an overshoot would be clipped flat). Radii ease alongside. */
+const MORPH_OPEN = { type: "spring", visualDuration: 0.34, bounce: 0, restDelta: 0.5, restSpeed: 4, borderRadius: { type: "tween", duration: 0.3, ease: EASE_OUT } } as const;
 const MORPH_CLOSE = { type: "tween", duration: 0.22, ease: EASE_CLOSE } as const;
 /** default for every motion element under the island (motion's default for x/y/scale is a bouncy spring) */
 const CALM = { type: "tween", duration: 0.2, ease: EASE_OUT } as const;
+/** Bottom-corner radii of the notch shape (the top corners are square + concave shoulders). */
+const NOTCH_R = { closed: 12, row: 14, tall: 18, card: 24, panel: 28 } as const;
 /** the window shrinks only after the close animation has finished (content never jumps) */
 const COLLAPSE_MS = 300;
 const DONE_MS = 1500;
@@ -304,7 +311,8 @@ export default function Island() {
   useEffect(() => {
     api.getIslandGeometry().then((g) => {
       setOS(g?.platform);
-      setGeo(g);
+      // a notchless Mac draws a fake notch: normalise once so every child lays out against it
+      setGeo(g && notchStyle(g) ? { ...g, notchWidth: notchBox(g).width, notchHeight: notchBox(g).height } : g);
     });
     api.getSettings().then(setSettings).catch(() => {});
     api.listClaudeSessions().then(setSessions);
@@ -604,7 +612,9 @@ export default function Island() {
     return { left, right, all: [...left, ...right] };
   }, [sessions, todos, detected, meeting.live, ignoredDetect]);
 
-  const notch = !!geo && geo.platform === "macos" && geo.hasNotch;
+  // every Mac hangs the island from the top edge (the hardware notch, or a fake one)
+  const notch = notchStyle(geo);
+  const hwNotch = notch && !!geo?.hasNotch;
   // live music activity: media playing (or paused < 30 s) → artwork + equalizer in the wings
   const media = useMediaActivity();
   const musicLive = notch && !!media;
@@ -863,9 +873,9 @@ export default function Island() {
   const trayW = layout?.width ?? 0;
 
   // pill geometry (the black shape); tooltip / glow live outside it
-  const pill = notch
+  const rawPill = notch
     ? collapsed
-      ? { width: size.width, height: size.height }
+      ? { width: geo.notchWidth, height: geo.notchHeight }
       : shown === "collapsed" && swollen
         ? { width: geo.notchWidth + 2 * SWELL_X, height: geo.notchHeight + SWELL_Y }
         : shown === "tray"
@@ -874,18 +884,22 @@ export default function Island() {
             ? { width: trayW - 2 * EAR, height: geo.notchHeight }
             : { width: size.width - EAR * 2, height: size.height }
     : { width: size.width - 24, height: size.height - 24 };
+  // whole points at rest (crisp edges at 1x; the collapsed shape keeps the hardware notch's size)
+  const pill = collapsed ? rawPill : { width: Math.round(rawPill.width), height: Math.round(rawPill.height) };
   const bigCard = ["card", "claude", "reminder", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm", "agent"].includes(shown);
   const panelOpen = shown === "peek";
+  // one radius scale for the whole notch: the closed notch (a touch rounder than the hardware's,
+  // so its corners stay hidden behind the camera housing), the live row, cards, the open panel
   const radius = notch
     ? collapsed
-      ? "0 0 9px 9px"
+      ? `0 0 ${NOTCH_R.closed}px ${NOTCH_R.closed}px`
       : panelOpen
-        ? "0 0 30px 30px"
+        ? `0 0 ${NOTCH_R.panel}px ${NOTCH_R.panel}px`
         : bigCard
-        ? "0 0 22px 22px"
-        : compact || shown === "tray" || shown === "trayTooltip" || swollen
-          ? "0 0 13px 13px"
-          : "0 0 18px 18px"
+          ? `0 0 ${NOTCH_R.card}px ${NOTCH_R.card}px`
+          : compact || shown === "tray" || shown === "trayTooltip" || swollen || shown === "listening" || shown === "working"
+            ? `0 0 ${NOTCH_R.row}px ${NOTCH_R.row}px`
+            : `0 0 ${NOTCH_R.tall}px ${NOTCH_R.tall}px`
     : panelOpen
       ? "26px"
       : bigCard
@@ -957,9 +971,7 @@ export default function Island() {
                   ? "inset 0 -1px 0 rgba(102,206,255,0.72), 0 5px 15px -11px rgba(61,187,255,0.5)"
                   : shown === "error"
                     ? "inset 0 -1px 0 rgba(252,211,77,0.35)"
-                    : bigCard
-                      ? "inset 0 -1px 0 rgba(147,221,255,0.14)"
-                      : "none",
+                    : "none", // pure #000 otherwise: no rim, so it reads as the notch itself
               }
             : {
                 // no backdrop-filter: the window is transparent over the desktop, so a blur here
@@ -972,7 +984,7 @@ export default function Island() {
               }
         }
       >
-        {notch && !collapsed && <Ears size={EAR} />}
+        {notch && <Ears size={EAR} show={!collapsed || !hwNotch} instant={!!reduce} />}
         {/* hover: a calm accent rim along the bottom edge + a soft under-glow. Its own layer, so the
             hover only fades opacity (compositor) — nothing pops, nothing repaints */}
         {notch && (
@@ -1214,7 +1226,7 @@ export default function Island() {
   return (
     <MotionConfig reducedMotion="user" transition={CALM}>
       {stage ? (
-        <Stage notch={notch} nh={geo.notchHeight}>
+        <Stage notch={notch} nh={geo.notchHeight} hw={hwNotch ? { width: geo.notchWidth, height: geo.notchHeight } : null}>
           {island}
         </Stage>
       ) : (
@@ -1266,18 +1278,33 @@ function PanelHeader({ pillW, nh, inner, avatar, accent }: { pillW: number; nh: 
   );
 }
 
-/** Concave "ears" that blend the expanded island into the menu bar edge. */
-function Ears({ size }: { size: number }) {
+/** Concave "shoulders" where the island meets the top edge of the screen, like the hardware
+ *  notch's fillets. Vector paths (crisp at 1x and 2x), each overlapping the body by 1 px so no
+ *  hairline seam shows between the two shapes at fractional positions mid-morph. They grow in from
+ *  the corner as the island opens (a closed hardware notch shows none: its own fillets are there). */
+function Ears({ size, show, instant }: { size: number; show: boolean; instant: boolean }) {
+  const d = {
+    left: `M0 0H${size + 1}V${size}H${size}A${size} ${size} 0 0 0 0 0Z`,
+    right: `M0 0H${size + 1}A${size} ${size} 0 0 0 1 ${size}H0Z`,
+  };
   const ear = (side: "left" | "right") => (
-    <div
-      className="absolute top-0"
+    <svg
+      aria-hidden
+      data-testid={`notch-shoulder-${side}`}
+      className="pointer-events-none absolute top-0"
+      width={size + 1}
+      height={size}
+      viewBox={`0 0 ${size + 1} ${size}`}
       style={{
         [side]: -size,
-        width: size,
-        height: size,
-        background: `radial-gradient(circle at ${side === "left" ? "0 100%" : "100% 100%"}, transparent ${size - 0.5}px, #000 ${size}px)`,
+        transform: `scale(${show ? 1 : 0})`,
+        transformOrigin: side === "left" ? "100% 0" : "0 0",
+        transition: instant ? "none" : `transform ${show ? 260 : 180}ms cubic-bezier(0.22,1,0.36,1)`,
+        shapeRendering: "geometricPrecision",
       }}
-    />
+    >
+      <path d={d[side]} fill="#000" />
+    </svg>
   );
   return (
     <>
@@ -1287,25 +1314,49 @@ function Ears({ size }: { size: number }) {
   );
 }
 
-/** Browser-only preview stage: fake wallpaper + menu bar, so the island is visible. */
-function Stage({ notch, nh, children }: { notch: boolean; nh: number; children: React.ReactNode }) {
+/** Browser-only preview stage: a macOS-like wallpaper + translucent menu bar, and (on a notched
+ *  Mac) the camera housing itself, so screenshots show how the island merges with the hardware.
+ *  ?wall=dark keeps the old night backdrop. */
+function Stage({ notch, nh, hw, children }: { notch: boolean; nh: number; hw: { width: number; height: number } | null; children: React.ReactNode }) {
+  const dark = new URLSearchParams(location.search).get("wall") === "dark";
+  const menuH = hw ? nh : 24;
   return (
     <div
       className="fixed inset-0 overflow-hidden"
       style={{
-        background:
-          "radial-gradient(1100px 600px at 20% 0%, #0b3b5c 0%, transparent 60%), radial-gradient(900px 700px at 90% 85%, #0a2a44 0%, transparent 55%), linear-gradient(160deg,#04070c,#000)",
+        background: dark
+          ? "radial-gradient(1100px 600px at 20% 0%, #0b3b5c 0%, transparent 60%), radial-gradient(900px 700px at 90% 85%, #0a2a44 0%, transparent 55%), linear-gradient(160deg,#04070c,#000)"
+          : "radial-gradient(900px 520px at 18% 8%, #f6b78c 0%, transparent 62%), radial-gradient(1000px 640px at 82% 0%, #8fb7ff 0%, transparent 60%), radial-gradient(900px 700px at 50% 110%, #3b3f9e 0%, transparent 65%), linear-gradient(180deg,#c9a3d9,#5a63c9)",
       }}
     >
       {notch ? (
         <>
           <div
-            className="absolute inset-x-0 top-0 flex items-center justify-between px-4 text-[13px] text-white/85"
-            style={{ height: nh, background: "rgba(20,20,30,0.35)", backdropFilter: "blur(20px)" }}
+            className="absolute inset-x-0 top-0 flex items-center justify-between px-4 text-[13px]"
+            style={{
+              height: menuH,
+              color: dark ? "rgba(255,255,255,0.85)" : "rgba(0,0,0,0.85)",
+              background: dark ? "rgba(20,20,30,0.35)" : "rgba(255,255,255,0.28)",
+              backdropFilter: "blur(20px) saturate(180%)",
+            }}
           >
-            <span className="font-semibold"> Flo</span>
+            <span className="flex gap-5">
+              <span className="font-semibold"> Flo</span>
+              <span>File</span>
+              <span>Edit</span>
+              <span>View</span>
+            </span>
             <span>Wed 5 Nov 12:41</span>
           </div>
+          {/* the camera housing: the island must cover it exactly when closed */}
+          {hw && (
+            <div
+              aria-hidden
+              data-testid="stage-hardware-notch"
+              className="absolute left-1/2 top-0 -translate-x-1/2 bg-black"
+              style={{ width: hw.width, height: hw.height, borderRadius: "0 0 10px 10px" }}
+            />
+          )}
           <div className="absolute left-1/2 top-0 z-10 -translate-x-1/2">{children}</div>
         </>
       ) : (

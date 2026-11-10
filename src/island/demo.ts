@@ -107,8 +107,9 @@ export function runDemo(kind: string, hooks: DemoHooks): () => void {
     case "trayTooltip":
       at(600, async () => {
         const geo = (await mockInvoke("get_island_geometry")) as IslandGeometry;
-        const sessions = (await mockInvoke("list_claude_sessions")) as unknown[];
-        const s = trayLayout(geo, Math.min(5, sessions.length), 1).slots[1];
+        // all agent sessions sit behind ONE icon on the left, the to-dos chip on the right
+        // (&hold=todos opens the to-do list instead of the session list)
+        const s = trayLayout(geo, 1, 1).slots[new URLSearchParams(location.search).get("hold") === "todos" ? 1 : 0];
         // like the backend: keep re-sending the cursor relative to the *current* window width
         const tick = () => {
           const root = document.querySelector("[data-island-root]") as HTMLElement | null;

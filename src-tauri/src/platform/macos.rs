@@ -746,8 +746,33 @@ pub fn set_window_alpha(ns_window: *mut std::ffi::c_void, alpha: f64) {
     }
 }
 
+/// Top-left of the island window: centred on the notch, flush with the top edge (y = 0, above the
+/// menu bar). Under a hardware notch the centre is exact (a half point is a whole pixel at 2x and
+/// matches the camera housing); on a notchless screen (maybe 1x) it snaps to a whole point so the
+/// fake notch's edges stay crisp.
 pub fn island_position(geo: &IslandGeometry, width: f64, _height: f64) -> (f64, f64) {
-    ((geo.screen_width - width) / 2.0, 0.0)
+    let x = (geo.screen_width - width) / 2.0;
+    (if geo.has_notch { x } else { x.round() }, 0.0)
+}
+
+#[cfg(test)]
+mod island_tests {
+    use super::*;
+
+    fn geo(has_notch: bool) -> IslandGeometry {
+        IslandGeometry { platform: "macos".into(), has_notch, notch_width: 185.0, notch_height: 32.0, screen_width: 1512.0 }
+    }
+
+    #[test]
+    fn island_hangs_from_the_top_edge_centred_on_the_notch() {
+        assert_eq!(island_position(&geo(true), 185.0, 32.0), (663.5, 0.0));
+        assert_eq!(island_position(&geo(true), 400.0, 120.0), (556.0, 0.0));
+    }
+
+    #[test]
+    fn notchless_screens_snap_to_whole_points() {
+        assert_eq!(island_position(&geo(false), 217.0, 32.0), (648.0, 0.0));
+    }
 }
 
 /// Raw values of every permission probe, as seen from inside Flo's own process.

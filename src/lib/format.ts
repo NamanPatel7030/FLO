@@ -458,19 +458,39 @@ const lines = (chars: number | undefined, perLine: number, max: number) =>
 const HISTORY_ROW = 54;
 const historyRows = (c?: CardContent) => Math.min(6, Math.max(1, c?.rows ?? 6));
 
+/** Fake notch drawn on Macs without a camera housing (external display, older MacBook): same
+ *  shape and behaviour as the real one, so the island always hangs from the top edge. */
+export const FAKE_NOTCH = { width: 200, height: 32 } as const;
+
+/** Every Mac draws the island as an extension of the notch (a real one, or the fake one on a
+ *  notchless screen); Windows / Linux get the floating capsule. */
+export const notchStyle = (geo: IslandGeometry | null | undefined) => !!geo && geo.platform === "macos";
+
+/** The notch geometry to draw against: the hardware notch, or the fake one on a notchless Mac. */
+export function notchBox(geo: IslandGeometry): { width: number; height: number } {
+  if (geo.hasNotch && geo.notchWidth > 0) return { width: geo.notchWidth, height: geo.notchHeight };
+  return { width: geo.notchWidth > 0 ? geo.notchWidth : FAKE_NOTCH.width, height: Math.max(geo.notchHeight, FAKE_NOTCH.height) };
+}
+
 export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?: CardContent): { width: number; height: number } {
-  const notch = geo.platform === "macos" && geo.hasNotch;
-  const nw = notch ? geo.notchWidth : 0;
-  const nh = notch ? geo.notchHeight : 0;
+  const notch = notchStyle(geo);
+  const box = notch ? notchBox(geo) : { width: 0, height: 0 };
+  const nw = box.width;
+  const nh = box.height;
   if (notch) {
+    geo = { ...geo, notchWidth: nw, notchHeight: nh };
     const compact = nw + 2 * (ISLAND_WING + ISLAND_EAR);
     const tray = trayLayout(geo, content?.trayLeft ?? 0, content?.trayRight ?? 0, content?.music ? MUSIC_WING : 0);
     const hasTray = (content?.trayLeft ?? 0) + (content?.trayRight ?? 0) > 0;
     switch (variant) {
       case "collapsed":
+        // the hardware notch: exactly its footprint (nothing peeks out around the camera); a fake
+        // notch also draws its shoulders, so it reads as a notch
         return content?.swell
           ? { width: nw + 2 * (SWELL_X + ISLAND_EAR), height: nh + SWELL_Y + GLOW_ROOM }
-          : { width: nw, height: nh };
+          : geo.hasNotch
+            ? { width: nw, height: nh }
+            : { width: nw + 2 * ISLAND_EAR, height: nh };
       case "tray":
         return content?.swell ? { width: tray.width + 2 * SWELL_X, height: nh + SWELL_Y + GLOW_ROOM } : { width: tray.width, height: nh };
       case "trayTooltip": {
@@ -509,7 +529,7 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "error":
         return {
           width: 420,
-          height: nh + ISLAND_GAP + Math.max(28, lines(content?.textChars, 46, 3) * ISLAND_LINE) + 18,
+          height: nh + ISLAND_GAP + Math.max(28, lines(content?.textChars, 46, 4) * ISLAND_LINE) + 18,
         };
       case "history":
         // header 30 + rows + footer 34
