@@ -208,7 +208,7 @@ export async function syncPush(userId: string, items: SyncItemIn[]): Promise<{ a
   const res = await sql()<{ seq: string }[]>`
     insert into app.sync_items (user_id, kind, item_id, rev, ciphertext, nonce, deleted)
     select ${userId}::uuid, x.kind, x.item_id, x.rev, x.ciphertext, x.nonce, x.deleted
-      from jsonb_to_recordset(${rows}::jsonb) as x(kind text, item_id text, rev bigint, ciphertext text, nonce text, deleted boolean)
+      from jsonb_to_recordset(${rows}::text::jsonb) as x(kind text, item_id text, rev bigint, ciphertext text, nonce text, deleted boolean)
     on conflict (user_id, kind, item_id) do update
       set rev = excluded.rev, ciphertext = excluded.ciphertext, nonce = excluded.nonce,
           deleted = excluded.deleted, updated_at = now(), seq = default
