@@ -37,6 +37,8 @@ interface Props {
   onCloseHistory: () => void;
   onOpenHistory: () => void;
   onClaude: (seen: boolean) => void;
+  /** dismiss every queued Claude card at once (shown when more than one is waiting) */
+  onClaudeClearAll?: () => void;
   onReminder: (a: "done" | "snooze" | "open" | "dismiss") => void;
   onToggleMeeting: () => void;
   onStopMeeting: () => void;
@@ -676,6 +678,15 @@ export function IslandContent(p: Props) {
           }
           actions={
             <>
+              {p.claudeMore > 0 && p.onClaudeClearAll && (
+                <button
+                  className="rounded-full px-2 py-1 text-[11.5px] font-medium text-white/60 hover:bg-white/10 hover:text-white"
+                  onClick={p.onClaudeClearAll}
+                  title={`Dismiss all ${p.claudeMore + 1}`}
+                >
+                  Clear all
+                </button>
+              )}
               <button className="flex h-7 w-7 items-center justify-center rounded-full text-white/50 hover:bg-white/10 hover:text-white" onClick={() => p.onClaude(false)} aria-label="Dismiss" title="Dismiss">
                 <X size={13} />
               </button>

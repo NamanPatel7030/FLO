@@ -828,6 +828,12 @@ export default function Island() {
     });
   }, []);
 
+  // "Clear all": drop the whole stack and mark every Claude event seen, so none come back
+  const clearAllClaude = useCallback(() => {
+    setClaudeQueue([]);
+    api.markClaudeSeen().catch(() => {});
+  }, []);
+
   const removeSession = (id: string) => setSessions((list) => list.filter((s) => s.sessionId !== id));
   const openSession = (s: ClaudeSession) => {
     if (s.status !== "working") removeSession(s.sessionId);
@@ -1208,6 +1214,7 @@ export default function Island() {
                     })
                   }
                   onClaude={dismissClaude}
+                  onClaudeClearAll={clearAllClaude}
                   onToggleMeeting={() => setMeetingOpen((v) => !v)}
                   onStopMeeting={stopMeeting}
                   onStartMeeting={() => {

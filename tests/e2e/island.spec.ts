@@ -735,3 +735,19 @@ test("notch shape: flush with the top edge, concave shoulders when open, a fake 
   expect(Math.round(f.width)).toBeGreaterThanOrEqual(200);
   expect(Math.round(f.height)).toBe(32);
 });
+
+test("claude stack: Clear all dismisses every queued card and marks them seen", async ({ page }) => {
+  await openIsland(page);
+  const at = new Date().toISOString();
+  for (const i of [1, 2, 3, 4]) {
+    await emit(page, "flo://claude", { id: `q${i}`, kind: "notification", sessionId: `s${i}`, project: "Flo", cwd: "/Users/p/Flo", message: "Claude is waiting for your input", at, seen: false });
+  }
+  const card = page.getByTestId("claude-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("+3");
+  await card.getByRole("button", { name: "Clear all" }).click();
+  await expect(card).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__floMock.calls.some((c: any) => c.cmd === "mark_claude_seen" && !c.args?.id)))
+    .toBe(true);
+});
