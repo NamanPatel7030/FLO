@@ -231,7 +231,10 @@ html.tauri body {
 }
 html.island,
 html.island body,
-html.island #root {
+html.island #root,
+html.perm-guide,
+html.perm-guide body,
+html.perm-guide #root {
   background: transparent !important;
   overflow: hidden;
 }

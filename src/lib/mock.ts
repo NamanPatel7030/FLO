@@ -646,11 +646,18 @@ const nameFromEmail = (e: string) =>
     .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(" ");
 
-const perms = { microphone: true, accessibility: true, inputMonitoring: false, screen: false, hotkeyActive: false };
-// ?perms=none starts the preview with nothing granted (first launch on a fresh Mac)
-if (typeof location !== "undefined" && new URLSearchParams(location.search).get("perms") === "none") {
-  perms.microphone = false;
-  perms.accessibility = false;
+// Input Monitoring stays off: Flo doesn't need it (the Flo key runs on Accessibility alone)
+const perms = { microphone: true, accessibility: true, inputMonitoring: false, screen: false, hotkeyActive: true, accessibilityStale: false };
+// ?perms=none starts the preview with nothing granted (first launch on a fresh Mac);
+// ?perms=noax with only the microphone; ?perms=stale as after an update that reset Accessibility
+{
+  const q = typeof location !== "undefined" ? new URLSearchParams(location.search).get("perms") : null;
+  if (q === "none" || q === "noax" || q === "stale") {
+    perms.accessibility = false;
+    perms.hotkeyActive = false;
+  }
+  if (q === "none") perms.microphone = false;
+  if (q === "stale") perms.accessibilityStale = true;
 }
 
 // ── context library ──────────────────────────────────────────────────────────
@@ -1189,13 +1196,26 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "open_permission_settings": {
       // simulate the user granting it in System Settings a moment later
       const k = args.kind === "input" ? "inputMonitoring" : (args.kind as "microphone" | "accessibility" | "screen");
+      // a stale switch doesn't take until it's reset
+      if (k === "accessibility" && perms.accessibilityStale) return null;
       setTimeout(() => {
         perms[k] = true;
+        // the backend starts the Flo key listener on its own once Accessibility lands
+        if (k === "accessibility") perms.hotkeyActive = true;
       }, 1500);
       return null;
     }
+    case "reset_accessibility":
+      perms.accessibilityStale = false;
+      setTimeout(() => {
+        perms.accessibility = true;
+        perms.hotkeyActive = true;
+      }, 1500);
+      return null;
+    case "close_permission_guide":
+      return null;
     case "restart_app":
-      perms.hotkeyActive = perms.accessibility && perms.inputMonitoring;
+      perms.hotkeyActive = perms.accessibility;
       (window as any).__floRestarted = ((window as any).__floRestarted ?? 0) + 1;
       return null;
     case "check_update": {

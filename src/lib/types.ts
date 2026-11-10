@@ -549,11 +549,14 @@ export interface ClaudeHookStatus {
 export interface Permissions {
   microphone: boolean;
   accessibility: boolean;
-  /** Input Monitoring — required for the fn / Right-Ctrl push-to-talk listener */
+  /** Input Monitoring, raw. Not needed: the Flo key's event tap runs on Accessibility alone. */
   inputMonitoring: boolean;
   screen: boolean;
   /** true once the global hotkey listener is actually running */
   hotkeyActive: boolean;
+  /** Flo was Accessibility-trusted under an earlier build and this build isn't: an update left a
+   *  stale switch in System Settings. Fixed by resetAccessibility(). */
+  accessibilityStale?: boolean;
 }
 
 // ── Claude Code sessions (notch tray) ──────────────────────────────────────

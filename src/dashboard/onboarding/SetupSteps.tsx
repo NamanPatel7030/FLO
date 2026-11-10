@@ -1,12 +1,13 @@
 // Setup steps, part two: permissions, voice and AI, and the ready screen.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { Check, Cloud, Cpu, Download, Keyboard, Mic, MousePointerClick, ShieldCheck } from "lucide-react";
+import { Check, Cloud, Cpu, Download, Mic, MousePointerClick, ShieldCheck } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { EV, type LocalModel, type ModelProgressEvent, type Settings } from "../../lib/types";
 import type { NotchlingMood } from "../../lib/notchling";
-import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
+import { usePermissions } from "../usePermissions";
+import { SETUP_PERMS, accessibilityState, nextSetupPerm, setupDone } from "./perms";
 import { AiProviderFields, providerInfo, ProviderKey } from "../AiSetup";
 import { Select } from "../ui";
 import { Btn, Heading, Key, Rise, Stagger, rise } from "./parts";
@@ -15,91 +16,123 @@ const RECOMMENDED = "large-v3-turbo-q5_0";
 
 // ── permissions ─────────────────────────────────────────────────────────────
 
-/** Only what dictation needs. Screen Recording stays optional and lives in Settings. */
-export const SETUP_PERMS = PERMISSION_ITEMS.filter((it) => it.required);
+/** Only what dictation needs: the microphone and Accessibility (which also runs the Flo key).
+ *  Screen Recording, Automation and Calendar are asked later, when a feature first needs them. */
+export { SETUP_PERMS };
 
 const PERM_COPY: Record<string, { title: string; why: string; icon: React.ReactNode }> = {
-  microphone: { title: "Microphone", why: "So I can hear you while you hold your Flo key.", icon: <Mic size={30} /> },
-  accessibility: { title: "Accessibility", why: "So I can type the words where your cursor is.", icon: <MousePointerClick size={30} /> },
-  inputMonitoring: { title: "Input Monitoring", why: "So I notice when you hold your Flo key.", icon: <Keyboard size={30} /> },
+  microphone: { title: "Microphone", why: "So I can hear you while you hold your Flo key.", icon: <Mic size={24} /> },
+  accessibility: { title: "Accessibility", why: "So your Flo key works and I can type where your cursor is.", icon: <MousePointerClick size={24} /> },
 };
 
-export function Permissions({ title, sub, setMood, onStatus }: { title: string; sub: string; setMood: (m: NotchlingMood | null) => void; onStatus: (allOk: boolean) => void }) {
-  const perms = usePermissions(1500);
-  const [asked, setAsked] = useState<string | null>(null);
-  const [waited, setWaited] = useState(false);
-  useEffect(() => {
-    setWaited(false);
-    if (!asked) return;
-    const t = setTimeout(() => setWaited(true), 7000);
-    return () => clearTimeout(t);
-  }, [asked]);
-  const allOk = !!perms && SETUP_PERMS.every((it) => perms[it.key]);
-  const stuck = waited && !!asked && !perms?.[asked as keyof typeof perms];
+/** One step, two switches, live check marks. Polls every second; once both are on it moves on by
+ *  itself (no "I did it" button, no relaunch). */
+export function Permissions({ title, sub, setMood, onStatus, onDone }: { title: string; sub: string; setMood: (m: NotchlingMood | null) => void; onStatus: (allOk: boolean) => void; onDone?: () => void }) {
+  const perms = usePermissions(1000);
+  const [askedAx, setAskedAx] = useState<number | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const allOk = setupDone(perms);
+  const ax = accessibilityState(perms, askedAx, Date.now());
+  const offerReset = ax === "stale" || ax === "stuck";
+  const next = nextSetupPerm(perms);
   const done = SETUP_PERMS.filter((it) => perms?.[it.key]).length;
   const line = !perms
     ? "Checking what I'm allowed to do..."
     : allOk
       ? "All set, thank you. I can hear you and type for you now."
-      : stuck
-        ? "I still can't see it. Turn Flo on in System Settings, then come back here."
-        : `${done} of ${SETUP_PERMS.length} done. Click Allow, then turn Flo on.`;
-  const mood: NotchlingMood = !perms ? "think" : allOk ? "happy" : stuck ? "worried" : "listen";
+      : ax === "waiting"
+        ? "Turn on Flo in System Settings. I'll notice the moment you do."
+        : offerReset
+          ? "Still off for me. If the switch already looks on, reset it below."
+          : `${done} of ${SETUP_PERMS.length} done.`;
+  const mood: NotchlingMood = !perms ? "think" : allOk ? "happy" : offerReset ? "worried" : "listen";
   useEffect(() => setMood(mood), [mood, setMood]);
   useEffect(() => onStatus(allOk), [allOk, onStatus]);
+  // move on by itself once both land while this step is up (not when they were already on)
+  const [wasMissing, setWasMissing] = useState(false);
+  useEffect(() => {
+    if (perms && !allOk) setWasMissing(true);
+  }, [perms, allOk]);
+  const doneRef = useRef(onDone);
+  doneRef.current = onDone;
+  useEffect(() => {
+    if (!allOk || !wasMissing) return;
+    const t = setTimeout(() => doneRef.current?.(), 1100);
+    return () => clearTimeout(t);
+  }, [allOk, wasMissing]);
+
+  const allow = (key: string) => {
+    if (key === "accessibility") setAskedAx(Date.now());
+    api.openPermissionSettings(key === "accessibility" ? "accessibility" : "microphone");
+  };
+  const reset = async () => {
+    setResetting(true);
+    setAskedAx(Date.now());
+    await api.resetAccessibility().catch(() => {});
+    setResetting(false);
+  };
 
   return (
     <div className="flex w-full flex-col items-center">
       <Heading title={title} sub={sub} />
-      <Stagger className="mt-9 grid w-full max-w-[880px] grid-cols-3 gap-5">
+      <div className="onb-glass mt-9 flex w-full max-w-[640px] flex-col divide-y divide-[rgb(20_40_80/0.07)] px-6 py-2" data-testid="perm-card">
         {SETUP_PERMS.map((it) => {
           const ok = !!perms?.[it.key];
           const c = PERM_COPY[it.key];
           return (
-            <motion.div
-              key={it.key}
-              variants={rise}
-              className={clsx("onb-glass flex h-[270px] flex-col items-center px-6 pb-6 pt-7 text-center transition-shadow", ok && "!border-[#bfeedd]")}
-              data-testid="perm-row"
-              data-granted={ok ? "true" : "false"}
-            >
+            <div key={it.key} className="flex items-center gap-5 py-4" data-testid="perm-row" data-perm={it.key} data-granted={ok ? "true" : "false"}>
               <motion.span
                 animate={ok ? { background: "linear-gradient(135deg, #3fd0a4, #2fb8c9)", color: "#ffffff" } : { background: "linear-gradient(135deg, #d9efff, #e8e1ff)", color: "#3e4a8a" }}
-                className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px]"
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]"
               >
-                {ok ? <Check size={30} strokeWidth={3} /> : c?.icon ?? <ShieldCheck size={30} />}
+                {ok ? <Check size={24} strokeWidth={3} /> : c?.icon ?? <ShieldCheck size={24} />}
               </motion.span>
-              <div className="mt-5 text-[19px] font-semibold">{c?.title ?? it.label}</div>
-              <div className="onb-muted mt-2 text-[14.5px] leading-snug">{c?.why ?? it.why}</div>
-              <div className="mt-auto pt-4">
+              <div className="min-w-0 flex-1 text-left">
+                <div className="text-[17px] font-semibold">{c?.title ?? it.label}</div>
+                <div className="onb-muted mt-0.5 text-[14px] leading-snug">{c?.why ?? it.why}</div>
+              </div>
+              <div className="shrink-0">
                 {ok ? (
                   <motion.span initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex h-11 items-center gap-1.5 text-[15px] font-semibold text-[#1f9e78]">
                     <Check size={17} strokeWidth={3} /> Allowed
                   </motion.span>
                 ) : (
-                  <Btn
-                    aria-label={`Allow ${c?.title ?? it.label}`}
-                    className="!h-11 !px-7 !text-[15px]"
-                    onClick={() => {
-                      setAsked(it.key);
-                      api.openPermissionSettings(it.kind);
-                    }}
-                  >
+                  <Btn kind={next === it.key ? "primary" : "soft"} aria-label={`Allow ${c?.title ?? it.label}`} className="!h-11 !px-7 !text-[15px]" onClick={() => allow(it.key)}>
                     Allow
                   </Btn>
                 )}
               </div>
-            </motion.div>
+            </div>
           );
         })}
-      </Stagger>
+      </div>
+      <AnimatePresence>
+        {offerReset && !allOk && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="w-full max-w-[640px] overflow-hidden"
+            data-testid="ax-reset"
+          >
+            <div className="mt-4 flex items-center gap-4 rounded-[18px] border border-[#f3d9b8] bg-[#fff8ef] px-5 py-3 text-left">
+              <span className="flex-1 text-[14.5px] text-[#7a4a12]">
+                {ax === "stale" ? "An update reset Flo's switch. It may still look on in System Settings." : "Switch already on? It may belong to an older copy of Flo."}
+              </span>
+              <Btn kind="soft" className="!h-10 !px-5 !text-[14px]" disabled={resetting} onClick={reset}>
+                Reset and ask again
+              </Btn>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence mode="wait">
         <motion.p
           key={line}
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0 }}
-          className={clsx("mt-6 text-[16px] font-medium", allOk ? "text-[#1f9e78]" : stuck ? "text-[#c46a12]" : "text-[#5b6678]")}
+          className={clsx("mt-6 text-[16px] font-medium", allOk ? "text-[#1f9e78]" : offerReset ? "text-[#c46a12]" : "text-[#5b6678]")}
           data-testid="onboard-line"
         >
           {line}

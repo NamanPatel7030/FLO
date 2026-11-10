@@ -4,7 +4,8 @@
   "description": "Flo Flow windows",
   "windows": [
     "main",
-    "island"
+    "island",
+    "perm-guide"
   ],
   "permissions": [
     "core:default",

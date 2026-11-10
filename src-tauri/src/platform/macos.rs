@@ -25,7 +25,6 @@ extern "C" {
     fn CGPreflightListenEventAccess() -> bool;
     fn CGRequestListenEventAccess() -> bool;
     fn CGPreflightPostEventAccess() -> bool;
-    fn CGRequestPostEventAccess() -> bool;
     fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
 }
 #[link(name = "objc")]
@@ -512,25 +511,21 @@ pub fn send_copy_shortcut() -> Result<()> {
 }
 
 /// Global push-to-talk listener on its own CFRunLoop thread.
-/// Needs Input Monitoring; retries every 2 s until macOS lets us create the tap, so granting the
-/// permission works without restarting Flo.
+/// Needs Accessibility only: an active event tap from an Accessibility-trusted app receives key
+/// events without Input Monitoring (that one only governs listen-only taps). Polls every second and
+/// creates the tap the moment the grant appears, so turning the switch on works without restarting
+/// Flo. Never asks for Input Monitoring and never tries the tap before a grant (an attempt without
+/// one can pop macOS's "Keystroke Receiving" prompt).
 pub fn start_hotkeys(cb: HotkeyCallback) {
     let cb: Arc<HotkeyCallback> = Arc::new(cb);
     std::thread::Builder::new()
         .name("flo-hotkey".into())
-        .spawn(move || {
-            let mut asked = false;
-            loop {
-                if unsafe { CGPreflightListenEventAccess() } || asked {
-                    if run_tap(cb.clone()) {
-                        return;
-                    }
-                } else {
-                    unsafe { CGRequestListenEventAccess() };
-                    asked = true;
-                }
-                std::thread::sleep(std::time::Duration::from_secs(2));
+        .spawn(move || loop {
+            let allowed = unsafe { crate::tcc::hotkey_tap_allowed(AXIsProcessTrusted(), CGPreflightListenEventAccess()) };
+            if allowed && run_tap(cb.clone()) {
+                return;
             }
+            std::thread::sleep(std::time::Duration::from_secs(1));
         })
         .ok();
 }
@@ -606,7 +601,7 @@ fn run_tap(cb: Arc<HotkeyCallback>) -> bool {
                     true
                 },
                 Err(_) => {
-                    log::warn!("fn listener not allowed yet — waiting for Input Monitoring permission");
+                    log::warn!("fn listener not allowed yet, waiting for Accessibility");
                     false
                 }
             }
@@ -875,20 +870,54 @@ pub fn open_app_path(app: &str, path: Option<&str>) -> Result<()> {
 }
 
 pub fn permissions() -> Permissions {
-    let mic = unsafe {
-        let media = NSString::from_str("soun");
-        let st: isize = msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media];
-        st == 3
-    };
+    let mic = mic_status() == 3;
+    let ax = unsafe { AXIsProcessTrusted() };
     unsafe {
         Permissions {
             microphone: mic,
-            accessibility: AXIsProcessTrusted(),
+            accessibility: ax,
             input_monitoring: CGPreflightListenEventAccess(),
             screen: CGPreflightScreenCaptureAccess(),
             hotkey_active: HOTKEY_ACTIVE.load(Ordering::SeqCst),
+            accessibility_stale: crate::tcc::accessibility_stale(ax),
         }
     }
+}
+
+/// 0 = not determined, 1 = restricted, 2 = denied, 3 = authorized.
+fn mic_status() -> isize {
+    unsafe {
+        let media = NSString::from_str("soun");
+        msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media]
+    }
+}
+
+/// Ask macOS to trust Flo for Accessibility: shows the system dialog ("Open System Settings") and
+/// adds Flo to the list, so the person only flips one switch.
+pub fn prompt_accessibility() -> bool {
+    unsafe {
+        let key = NSString::from_str("AXTrustedCheckOptionPrompt");
+        let yes: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithBool: true];
+        let dict: Retained<AnyObject> = msg_send![class!(NSDictionary), dictionaryWithObject: &*yes, forKey: &*key];
+        AXIsProcessTrustedWithOptions(Retained::as_ptr(&dict) as *const c_void)
+    }
+}
+
+pub fn accessibility_trusted() -> bool {
+    unsafe { AXIsProcessTrusted() }
+}
+
+/// One-click fix for a stale grant (after an update the switch looks on but no longer applies):
+/// clear Flo's Accessibility record only, then ask again. No relaunch: the key listener polls and
+/// starts as soon as the new grant lands.
+pub fn reset_accessibility(bundle_id: &str) -> Result<()> {
+    let st = std::process::Command::new("/usr/bin/tccutil").args(["reset", "Accessibility", bundle_id]).status()?;
+    if !st.success() {
+        return Err(anyhow!("tccutil failed"));
+    }
+    crate::tcc::clear_marker();
+    open_permission_settings("accessibility");
+    Ok(())
 }
 
 pub fn request_microphone() {
@@ -908,13 +937,8 @@ pub fn request_microphone() {
 pub fn open_permission_settings(kind: &str) {
     let pane = match kind {
         "accessibility" => {
-            unsafe {
-                // system prompt + adds Flo to the Accessibility list
-                let key = NSString::from_str("AXTrustedCheckOptionPrompt");
-                let yes: Retained<AnyObject> = msg_send![class!(NSNumber), numberWithBool: true];
-                let dict: Retained<AnyObject> = msg_send![class!(NSDictionary), dictionaryWithObject: &*yes, forKey: &*key];
-                AXIsProcessTrustedWithOptions(Retained::as_ptr(&dict) as *const c_void);
-                CGRequestPostEventAccess();
+            if prompt_accessibility() {
+                return; // already trusted
             }
             "Privacy_Accessibility"
         }
@@ -926,10 +950,15 @@ pub fn open_permission_settings(kind: &str) {
             unsafe { CGRequestScreenCaptureAccess() };
             "Privacy_ScreenCapture"
         }
-        "microphone" => {
-            request_microphone();
-            "Privacy_Microphone"
-        }
+        "microphone" => match mic_status() {
+            // not asked yet: macOS's own one-click prompt is all it takes, no System Settings
+            0 => {
+                request_microphone();
+                return;
+            }
+            3 => return,
+            _ => "Privacy_Microphone",
+        },
         _ => "Privacy",
     };
     let _ = std::process::Command::new("open")

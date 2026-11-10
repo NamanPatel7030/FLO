@@ -704,6 +704,8 @@ pub struct Permissions {
     pub input_monitoring: bool,
     pub screen: bool,
     pub hotkey_active: bool,
+    /// trusted under an earlier build, not this one: an update left a stale Accessibility switch
+    pub accessibility_stale: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

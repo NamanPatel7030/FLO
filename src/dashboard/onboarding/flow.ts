@@ -88,7 +88,7 @@ export function headline(step: Step, name: string, hour = new Date().getHours())
   const n = name.trim();
   switch (step) {
     case "welcome": return { title: n ? `Hi ${n}, I'm Flo.` : "Hi, I'm Flo.", sub: `${hello(hour)} I live in your notch and turn your voice into words, in any app.` };
-    case "permissions": return { title: "Let me hear you and type for you", sub: "Three switches in System Settings. I'll notice the moment you flip each one." };
+    case "permissions": return { title: "Let me hear you and type for you", sub: "Two quick yeses: the microphone, and one switch for Accessibility. I'll notice the moment you flip it." };
     case "try": return { title: "Now say something", sub: "" };
     case "setup": return { title: "How should I listen and think?", sub: "Good defaults are set. Change anything, anytime." };
     case "role": return { title: n ? `So ${n}, what do you do?` : "So, what do you do?", sub: "I'll learn the words you use most." };

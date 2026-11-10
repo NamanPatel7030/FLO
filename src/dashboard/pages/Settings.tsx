@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown, Maximize2, Globe2, Plus, Search, SunMoon } from "lucide-react";
 import { api, on } from "../../lib/api";
-import { PERMISSION_ITEMS, usePermissions } from "../usePermissions";
+import { PERMISSION_ITEMS, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
 import { unusedModelMb } from "../../lib/models";
 import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type ThemeMode } from "../../lib/types";
@@ -1235,7 +1235,8 @@ function PermissionsTab() {
   const toast = useStore((x) => x.toast);
   const geo = useStore((x) => x.geo);
   const p = usePermissions(2000);
-  const needsRestart = !!p && p.accessibility && p.inputMonitoring && !p.hotkeyActive;
+  // the key listener starts on its own within a second of the grant; only a long wait means restart
+  const needsRestart = useHotkeyStuck(p);
   return (
     <div className="flex flex-col gap-4">
       {needsRestart && (
@@ -1245,7 +1246,7 @@ function PermissionsTab() {
           </span>
           <div className="flex-1">
             <div className="text-[13.5px] font-medium">Restart Flo to activate the fn key</div>
-            <div className="text-[12px] text-muted">macOS applies Accessibility and Input Monitoring after a relaunch.</div>
+            <div className="text-[12px] text-muted">Accessibility is on but the key listener hasn't started. A relaunch picks it up.</div>
           </div>
           <Button size="sm" variant="primary" onClick={() => api.restartApp()}>
             Restart Flo
@@ -1282,6 +1283,14 @@ function PermissionsTab() {
           <div className="flex-1 text-[12px] leading-relaxed text-muted">
             <span className="font-medium text-[var(--fg)]">Turned it on but still see “Grant”?</span> System Settings may be showing a switch from an
             older Flo build. Repair clears Flo’s old privacy entries (only Flo’s) and restarts. Then press Grant once for each.
+            {p?.accessibilityStale && !p.accessibility && (
+              <>
+                {" "}
+                <button className="font-medium text-brand-300 underline-offset-2 hover:underline" onClick={() => api.resetAccessibility()}>
+                  Reset just Accessibility (no restart)
+                </button>
+              </>
+            )}
           </div>
           <RepairButton />
         </div>

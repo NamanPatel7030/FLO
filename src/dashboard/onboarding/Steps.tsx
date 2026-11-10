@@ -13,6 +13,7 @@ import type { NotchlingMood } from "../../lib/notchling";
 import { Ribbon, type RibbonMode } from "../../island/Ribbon";
 import * as snd from "../../lib/onboardSounds";
 import { usePermissions } from "../usePermissions";
+import { hotkeyReady } from "./perms";
 import { Burst } from "./Aurora";
 import { Btn, ChoiceCard, Chip, Heading, Key, Rise, Stagger, rise } from "./parts";
 import { friendlyError, toggle, type SetupAnswers } from "./flow";
@@ -74,7 +75,7 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
   const done = !!text;
   const listening = mode === "listen";
   const micOk = !perms || perms.microphone;
-  const keyOk = !perms || perms.hotkeyActive || (perms.inputMonitoring && perms.accessibility);
+  const keyOk = hotkeyReady(perms);
 
   // while this step is up, dictations made in Flo's window come back here instead of being pasted
   useEffect(() => {
@@ -198,9 +199,9 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
               <div className="mt-5 flex items-center gap-4 rounded-[20px] border border-[#f3d9b8] bg-[#fff8ef] px-5 py-3.5 text-left">
                 <AlertCircle size={22} className="shrink-0 text-[#c46a12]" />
                 <span className="flex-1 text-[15px] text-[#7a4a12]">
-                  {!micOk ? "Allow the microphone first so I can hear you." : `Your ${keyLabel} key needs Accessibility and Input Monitoring. Until then, hold the mic button.`}
+                  {!micOk ? "Allow the microphone first so I can hear you." : `Your ${keyLabel} key needs Accessibility. Until then, hold the mic button.`}
                 </span>
-                <Btn kind="soft" className="!h-10 !px-5 !text-[14px]" onClick={() => api.openPermissionSettings(!micOk ? "microphone" : !perms.accessibility ? "accessibility" : "input")}>
+                <Btn kind="soft" className="!h-10 !px-5 !text-[14px]" onClick={() => api.openPermissionSettings(!micOk ? "microphone" : "accessibility")}>
                   {!micOk ? "Allow microphone" : "Allow"}
                 </Btn>
               </div>

@@ -139,6 +139,9 @@ export const api = {
   listClaudeEvents: (limit = 50) => call<ClaudeEvent[]>("list_claude_events", { limit }),
   markClaudeSeen: (id?: string) => call<void>("mark_claude_seen", { id }),
   repairPermissions: () => call<void>("repair_permissions"),
+  /** stale Accessibility switch after an update: clear Flo's record and ask again (no relaunch) */
+  resetAccessibility: () => call<void>("reset_accessibility"),
+  closePermissionGuide: () => call<void>("close_permission_guide"),
   openClaudeSession: (id: string) => call<string>("open_claude_session", { id }),
   // integrations (Claude Code, Codex, Cursor, webhook) + Slack + confirmations
   listIntegrations: () => call<Integration[]>("list_integrations").catch(() => [] as Integration[]),

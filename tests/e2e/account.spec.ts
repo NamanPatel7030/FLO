@@ -21,7 +21,7 @@ async function holdToTalk(page: Page, ms = 900) {
 
 test("sign in → hello → permissions → a real first dictation → voice & AI → about you (saved) → ready → signature finale", async ({ page }) => {
   test.slow(); // long cinematic walkthrough with animations; headroom under parallel load
-  await page.goto("/?onboard=1#/home");
+  await page.goto("/?onboard=1&perms=noax#/home");
   await mock(page);
   const gate = page.locator('[data-testid="signin"]');
   await expect(gate).toBeVisible();
@@ -48,15 +48,20 @@ test("sign in → hello → permissions → a real first dictation → voice & A
   await expect(ob.getByLabel("Your name")).toHaveValue("Priya");
   await btn("Let's begin").click();
 
-  // permissions come BEFORE the try-out: the three dictation needs, as big cards
+  // permissions come BEFORE the try-out: just two, the microphone and Accessibility, in one card
+  // (no Input Monitoring: the Flo key runs on Accessibility alone; no Screen Recording in setup)
   await step(page, "permissions");
-  await expect(ob.locator('[data-testid="perm-row"]')).toHaveCount(3);
-  await expect(btn("Continue")).toHaveCount(0); // Input Monitoring is still off in the mock
-  await btn("Allow Input Monitoring").click();
-  await expect(ob.locator('[data-testid="perm-row"][data-granted="true"]')).toHaveCount(3, { timeout: 6000 });
+  await expect(ob.locator('[data-testid="perm-row"]')).toHaveCount(2);
+  await expect(ob.getByText("Input Monitoring")).toHaveCount(0);
+  await expect(ob.getByText("Screen Recording")).toHaveCount(0);
+  await expect(ob.locator('[data-testid="perm-row"][data-perm="microphone"]')).toHaveAttribute("data-granted", "true");
+  await expect(btn("Continue")).toHaveCount(0); // Accessibility is still off in the mock
+  await btn("Allow Accessibility").click();
+  await expect(ob.locator('[data-testid="onboard-line"]')).toContainText("I'll notice");
+  await expect(ob.locator('[data-testid="perm-row"][data-granted="true"]')).toHaveCount(2, { timeout: 6000 });
   await expect(ob.locator('[data-testid="onboard-line"]')).toContainText("All set");
-  expect((await calls(page, "open_permission_settings")).map((a: any) => a.kind)).toContain("input");
-  await btn("Continue").click();
+  expect((await calls(page, "open_permission_settings")).map((a: any) => a.kind)).toEqual(["accessibility"]);
+  // no "I did it" button: setup moves on by itself the moment the switch is on
 
   // the try-out: hold the mic button, the mic level moves, the words land in the box
   await step(page, "try");
@@ -123,7 +128,7 @@ test("try-out on a fresh Mac: no mic yet → clear fix right there; silence → 
   const btn = (name: string) => ob.getByRole("button", { name, exact: true });
   await btn("Let's begin").click();
   await step(page, "permissions");
-  await expect(ob.locator('[data-testid="perm-row"][data-granted="false"]')).toHaveCount(3);
+  await expect(ob.locator('[data-testid="perm-row"][data-granted="false"]')).toHaveCount(2);
   await btn("I'll do this later").click();
 
   await step(page, "try");
@@ -135,7 +140,7 @@ test("try-out on a fresh Mac: no mic yet → clear fix right there; silence → 
   expect(await calls(page, "start_session")).toEqual([]);
   await needs.getByRole("button", { name: "Allow microphone" }).click();
   expect((await calls(page, "open_permission_settings")).at(-1)).toEqual({ kind: "microphone" });
-  await expect(needs).toContainText("Accessibility and Input Monitoring", { timeout: 6000 }); // mic granted; the key still needs its two
+  await expect(needs).toContainText("needs Accessibility", { timeout: 6000 }); // mic granted; the key still needs Accessibility
 
   // the backend heard nothing: a human error and a way to the mic settings
   await page.evaluate(() => (window as any).__floMock.emit("flo://state", { phase: "error", mode: "dictation", message: "I didn't hear anything. Check the microphone in System Settings → Sound." }));
@@ -218,6 +223,33 @@ test("Settings → Account shows the user and Sign out returns to the gate", asy
   await expect(page.locator('[data-testid="signin"]')).toBeVisible();
 });
 
+test("permissions: an update left a stale Accessibility switch → one click resets it and setup moves on", async ({ page }) => {
+  await page.goto("/?signedin=1&onboard=1&perms=stale#/home");
+  await mock(page);
+  const ob = page.locator('[data-testid="onboarding"]');
+  await ob.getByRole("button", { name: "Let's begin" }).click();
+  await step(page, "permissions");
+  const fix = ob.getByTestId("ax-reset");
+  await expect(fix).toContainText("An update reset");
+  // nothing is reset without a click
+  expect(await calls(page, "reset_accessibility")).toEqual([]);
+  await fix.getByRole("button", { name: "Reset and ask again" }).click();
+  expect((await calls(page, "reset_accessibility")).length).toBe(1);
+  await expect(ob.locator('[data-testid="perm-row"][data-granted="true"]')).toHaveCount(2, { timeout: 6000 });
+  await step(page, "try");
+  expect(await calls(page, "restart_app")).toEqual([]); // no relaunch needed
+});
+
+test("the floating helper over System Settings shows the exact switch to flip, and closes", async ({ page }) => {
+  await page.goto("/#/perm-guide");
+  await mock(page);
+  const g = page.getByTestId("perm-guide");
+  await expect(g).toContainText("Turn on Flo");
+  await expect(g).toContainText("Accessibility");
+  await g.getByRole("button", { name: "Close" }).click();
+  expect((await calls(page, "close_permission_guide")).length).toBe(1);
+});
+
 test("onboarding: no Back on step 1; Back and a progress dot jump to earlier steps", async ({ page }) => {
   await page.goto("/?signedin=1&onboard=1#/home");
   await mock(page);
@@ -230,7 +262,7 @@ test("onboarding: no Back on step 1; Back and a progress dot jump to earlier ste
   await step(page, "welcome");
   // advance past permissions and the try-out, then a progress dot jumps back to the first step
   await ob.getByRole("button", { name: "Let's begin" }).click();
-  await ob.getByRole("button", { name: "I'll do this later" }).click();
+  await ob.getByRole("button", { name: "Continue", exact: true }).click(); // both already allowed in the mock
   await step(page, "try");
   await ob.getByRole("button", { name: "I'll try it later" }).click();
   await step(page, "setup");

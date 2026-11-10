@@ -34,6 +34,7 @@ mod platform;
 mod prompts;
 mod phone;
 mod phone_state;
+mod perm_guide;
 mod push;
 mod autocontinue;
 mod secrets;
@@ -47,6 +48,7 @@ mod slack;
 mod state;
 mod stt;
 mod sync;
+mod tcc;
 mod text;
 mod updater;
 mod weather;
@@ -480,6 +482,8 @@ pub fn run() {
             commands::set_attention_paused,
             commands::check_permissions,
             commands::open_permission_settings,
+            commands::close_permission_guide,
+            commands::reset_accessibility,
             commands::fix_fn_key,
             commands::list_claude_events,
             commands::mark_claude_seen,

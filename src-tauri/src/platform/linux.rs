@@ -90,7 +90,7 @@ pub fn island_position(_g: &IslandGeometry, _w: f64, _h: f64) -> (f64, f64) {
 }
 
 pub fn permissions() -> Permissions {
-    Permissions { microphone: true, accessibility: true, input_monitoring: true, screen: true, hotkey_active: HOTKEY_ACTIVE.load(Ordering::SeqCst) }
+    Permissions { microphone: true, accessibility: true, input_monitoring: true, screen: true, hotkey_active: HOTKEY_ACTIVE.load(Ordering::SeqCst), accessibility_stale: false }
 }
 
 pub fn open_permission_settings(_kind: &str) {}

@@ -29,3 +29,11 @@ else
   echo "Ad-hoc signed — run scripts/setup-signing.sh once so permissions survive updates"
 fi
 codesign --verify --deep "$APP"
+# macOS keys every privacy grant (Accessibility, Microphone) to this requirement. With the stable
+# identity it reads `identifier "com.flo.flow" and certificate leaf = H"..."`, the same for every
+# version, so grants survive updates. An ad-hoc signature pins a cdhash that changes every build.
+DR="$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => //p')"
+echo "Designated requirement: $DR"
+case "$DR" in
+  *cdhash*) echo "WARNING: requirement pins this build's cdhash; Accessibility will reset after the next update" ;;
+esac

@@ -434,8 +434,25 @@ pub fn list_models(st: State<Shared>) -> Vec<LocalModel> {
     stt::list_models(&st.models_dir)
 }
 
+/// Models being downloaded right now. Setup starts the recommended one in the background; a second
+/// request for the same model (the Download button) joins it instead of writing the same file twice.
+static DOWNLOADING: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Vec::new());
+
 #[tauri::command]
 pub async fn download_model(st: State<'_, Shared>, id: String) -> R<()> {
+    {
+        let mut d = DOWNLOADING.lock();
+        if d.contains(&id) {
+            return Ok(());
+        }
+        d.push(id.clone());
+    }
+    let res = download_model_inner(st, id.clone()).await;
+    DOWNLOADING.lock().retain(|x| x != &id);
+    res
+}
+
+async fn download_model_inner(st: State<'_, Shared>, id: String) -> R<()> {
     let st = st.inner().clone();
     let st2 = st.clone();
     let res = stt::download_model(&st.egress, &st.models_dir, &id, move |p| st2.emit(ev::MODEL_PROGRESS, p)).await;
@@ -479,9 +496,36 @@ pub fn check_permissions() -> Permissions {
     platform::permissions()
 }
 
+/// "Allow" on a permission. Accessibility also shows the floating "flip this switch" helper and
+/// watches for the grant, bringing Flo back the moment it lands.
 #[tauri::command]
-pub fn open_permission_settings(kind: String) {
+pub fn open_permission_settings(app: tauri::AppHandle, kind: String) {
     platform::open_permission_settings(&kind);
+    #[cfg(target_os = "macos")]
+    if kind == "accessibility" {
+        crate::perm_guide::show(&app, platform::accessibility_trusted);
+    }
+    let _ = &app;
+}
+
+/// The helper's close button.
+#[tauri::command]
+pub fn close_permission_guide(app: tauri::AppHandle) {
+    crate::perm_guide::close(&app);
+}
+
+/// One-click fix when an update left a stale Accessibility switch: clears only Flo's Accessibility
+/// record and asks again (macOS dialog + System Settings + the helper). No relaunch.
+#[tauri::command]
+pub fn reset_accessibility(app: tauri::AppHandle) -> R<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let id = app.config().identifier.clone();
+        platform::reset_accessibility(&id).map_err(e)?;
+        crate::perm_guide::show(&app, platform::accessibility_trusted);
+    }
+    let _ = &app;
+    Ok(())
 }
 
 /// User clicked "Repair permissions": clear macOS privacy records for Flo only

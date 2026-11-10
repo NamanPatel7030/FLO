@@ -9,7 +9,7 @@ import type { Analytics, AttentionStatus } from "../../lib/types";
 import { assistantHotkeyLabel, hotkeyLabel, useStore } from "../store";
 import { Card, CardTitle, Empty, Kbd, ProgressRing, Skeleton, Stat, StatusPill, Button } from "../ui";
 import { ClaudeSessionsCard, TodoRow } from "../components";
-import { missingRequired, PERMISSION_ITEMS, usePermissions } from "../usePermissions";
+import { missingRequired, PERMISSION_ITEMS, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { Ocean } from "../../island/Ocean";
 
 export default function Home() {
@@ -215,7 +215,7 @@ function MicOrb() {
 function SetupCard({ onOpen }: { onOpen: () => void }) {
   const p = usePermissions(2000);
   const missing = missingRequired(p);
-  const needsRestart = !!p && missing.length === 0 && !p.hotkeyActive;
+  const needsRestart = useHotkeyStuck(p);
   if (!p || (missing.length === 0 && !needsRestart)) return null;
   const left = missing.length + (needsRestart ? 1 : 0);
   return (

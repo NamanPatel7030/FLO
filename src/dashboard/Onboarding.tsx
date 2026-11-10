@@ -3,7 +3,7 @@
 // mood. Seven steps: hello and your name, permissions, a real first dictation, voice and AI, two
 // short questions about you, the keys to remember, then a signature finale before Flo opens. Reopen from Settings → General →
 // "Run setup again". Step list and profile logic live in onboarding/flow.ts (unit-tested).
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import clsx from "clsx";
 import { ArrowRight, Check, ChevronLeft, Volume2, VolumeX } from "lucide-react";
@@ -48,6 +48,27 @@ function useLightTheme(active: boolean) {
   }, [active]);
 }
 
+/** Start the speech model download as soon as setup opens, so it's ready (or nearly) by the time the
+ *  person has allowed the mic and Accessibility and tries their first dictation. Only for the
+ *  on-device engine and only when the chosen model isn't on disk yet; the backend ignores a second
+ *  request for a download already running (the Download button on the Voice step). */
+function useBackgroundModel(settings: Settings | null) {
+  const started = useRef(false);
+  const local = settings?.sttProvider === "local";
+  const model = settings?.sttModel;
+  useEffect(() => {
+    if (started.current || !local || !model) return;
+    started.current = true;
+    api
+      .listModels()
+      .then((ms) => {
+        const m = ms.find((x) => x.id === model);
+        if (m && !m.installed) api.downloadModel(m.id).catch(() => {});
+      })
+      .catch(() => {});
+  }, [local, model]);
+}
+
 export function Onboarding() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
@@ -70,6 +91,7 @@ export function Onboarding() {
   const setMood = useCallback((m: NotchlingMood | null) => setMoodOverride(m), []);
   const onPerms = useCallback((ok: boolean) => setPermsOk(ok), []);
   const onTried = useCallback(() => setTried(true), []);
+  useBackgroundModel(settings);
 
   if (!settings) return null;
   const s = settings;
@@ -191,7 +213,7 @@ export function Onboarding() {
           >
             <div className={clsx("my-auto flex w-full flex-col items-center pb-2", step === "welcome" ? "pt-2" : "pt-1")}>
             {step === "welcome" && <Welcome title={h.title} sub={h.sub} name={answers.name} setName={(name) => patch({ name })} onStart={() => go(1)} />}
-            {step === "permissions" && <Permissions title={h.title} sub={h.sub} setMood={setMood} onStatus={onPerms} />}
+            {step === "permissions" && <Permissions title={h.title} sub={h.sub} setMood={setMood} onStatus={onPerms} onDone={() => go(1)} />}
             {step === "try" && <TryDemo keyLabel={keys.dict} keyWord={geo?.platform === "windows" ? undefined : hotkeyWords(s.hotkeyDictation)} onSuccess={onTried} setMood={setMood} />}
             {step === "setup" && <SetupStep title={h.title} sub={h.sub} s={s} set={set} />}
             {step === "role" && <RoleStep title={h.title} sub={h.sub} a={answers} set={patch} onPicked={() => go(1)} />}
