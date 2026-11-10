@@ -1402,7 +1402,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       const ac = await autoContinueMock(cmd, args, { settings, emit: mockEmit });
       if (ac !== UNHANDLED) return ac;
       // Flo Agent + Hermes live in lib/mockFloAgent.ts
-      const fa = await floAgentMock(cmd, args, { emit: mockEmit, listen: mockListen, skills: () => skills, connections: () => connections, secrets: () => keys });
+      const fa = await floAgentMock(cmd, args, { emit: mockEmit, listen: mockListen, skills: () => skills, connections: () => connections, secrets: () => keys, slackConnected: () => !!slackWho });
       if (fa !== AGENT_UNHANDLED) return fa;
       console.warn("[mock] unknown command", cmd, args);
       return null;

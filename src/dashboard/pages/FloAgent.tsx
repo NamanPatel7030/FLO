@@ -1,6 +1,6 @@
 // Flo Agent: the main face of Flo. One command box (type or talk) for anything Flo can do, plus
 // everything it works with in one place: Apps (MCP servers, Slack, coding agents), Skills (the
-// canvas), Engine (Flo built in, or Hermes Agent), the Slack gateway and Customize.
+// canvas), Engine (Flo built in, or Hermes Agent), Slack (one page for everything Slack) and Customize.
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import clsx from "clsx";
@@ -12,7 +12,8 @@ import { Integrations } from "../Integrations";
 import { SlackIcon } from "../SlackCard";
 import { ConnectionsPanel, SkillsList } from "./Skills";
 import { Overview } from "../floagent/Overview";
-import { EnginePanel, SlackGateway } from "../floagent/Engine";
+import { EnginePanel } from "../floagent/Engine";
+import { SlackPage } from "../floagent/Slack";
 import { Customize } from "../floagent/Customize";
 import { EASE } from "../floagent/parts";
 
@@ -31,18 +32,19 @@ const TABS: { id: AgentTab; label: string; icon: React.ReactNode }[] = [
 /** The agent's config, shared by every tab (one load, one save path). */
 export function useAgentConfig() {
   const [cfg, setCfg] = useState<AgentConfig | null>(null);
-  useEffect(() => {
+  const reload = useCallback(() => {
     agentApi
       .config()
       .then((c) => setCfg({ ...DEFAULT_AGENT_CONFIG, ...c }))
-      .catch(() => setCfg({ ...DEFAULT_AGENT_CONFIG }));
+      .catch(() => setCfg((x) => x ?? { ...DEFAULT_AGENT_CONFIG }));
   }, []);
+  useEffect(reload, [reload]);
   const save = useCallback(async (next: AgentConfig) => {
     const saved = await agentApi.saveConfig(next);
     setCfg({ ...DEFAULT_AGENT_CONFIG, ...saved });
     return saved;
   }, []);
-  return { cfg, save };
+  return { cfg, save, reload };
 }
 
 export default function FloAgentPage() {
@@ -77,7 +79,7 @@ export default function FloAgentPage() {
       ) : tab === "engine" ? (
         <EnginePanel cfg={agent.cfg} save={agent.save} />
       ) : tab === "slack" ? (
-        <SlackGateway cfg={agent.cfg} save={agent.save} />
+        <SlackPage cfg={agent.cfg} save={agent.save} reload={agent.reload} />
       ) : (
         <Customize cfg={agent.cfg} save={agent.save} />
       )}
@@ -85,14 +87,14 @@ export default function FloAgentPage() {
   );
 }
 
-/** Every connection in one place: MCP servers and platforms, then agents, Slack and coding tools. */
+/** Every connection in one place: MCP servers and platforms, then agents and coding tools (Slack has its own tab). */
 function AppsTab() {
   return (
     <div className="flex flex-col gap-8" data-testid="agent-apps">
       <ConnectionsPanel />
       <div>
         <Card className="mb-4 px-5 py-4">
-          <CardTitle icon={<Plug size={15} />}>Agents, Slack and coding tools</CardTitle>
+          <CardTitle icon={<Plug size={15} />}>Agents and coding tools</CardTitle>
           <p className="-mt-1.5 text-[12.5px] text-muted">Flo Agent can hand work to these, and they report back to Flo in the notch.</p>
         </Card>
         <Integrations />

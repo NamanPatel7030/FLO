@@ -10,7 +10,7 @@ const ctx = await b.newContext({
   storageState: { cookies: [], origins: [{ origin: "http://localhost:5190", localStorage: [{ name: "flo.mock.signedin", value: "1" }] }] },
 });
 const p = await ctx.newPage();
-await p.goto("http://localhost:5190/#/settings/integrations");
+await p.goto("http://localhost:5190/#/agent/slack");
 await p.waitForFunction(() => !!window.__floMock, { timeout: 15000 });
 await p.getByTestId("slack-disconnected").waitFor({ timeout: 20000 });
 const slackCard = () => p.locator('[data-testid="slack-disconnected"], [data-testid="slack-connected"]').locator("xpath=..");

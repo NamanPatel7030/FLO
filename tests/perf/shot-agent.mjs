@@ -1,5 +1,5 @@
 // Screenshot Flo Agent: Overview (idle, route preview, live run waiting for a yes), Apps, Skills,
-// Engine (Hermes missing / installed + running), Slack gateway, Customize.
+// Engine (Hermes missing / installed + running), Slack, Customize.
 // Dev server on :5190. Usage: node tests/perf/shot-agent.mjs <outDir>
 import { webkit } from "playwright";
 const out = process.argv[2] ?? ".";
@@ -45,7 +45,7 @@ await p.getByRole("tab", { name: "Engine" }).click();
 await shot("engine-missing");
 await p.evaluate(() => window.__floAgentMock.setHermes({ installed: true, version: "0.22.5", path: "/Users/you/.local/bin/hermes" }));
 await p.getByRole("button", { name: "Check again" }).click();
-await p.getByRole("button", { name: "Start Hermes" }).click();
+await p.getByRole("button", { name: "Play" }).click();
 await p.getByTestId("hermes-log").waitFor();
 await p.getByRole("radio", { name: "Hermes Agent" }).click();
 await shot("engine-running");

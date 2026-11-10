@@ -3,7 +3,7 @@
 // existing agent_confirm mock (Yes / No) carries a waiting run on.
 // Tests steer it through window.__floAgentMock (Hermes installed / running, step speed).
 import { planRoute } from "./agentRoute";
-import { AGENT_EV, DEFAULT_AGENT_CONFIG, type AgentConfig, type AgentRun, type HermesStatus, type StepKind } from "./floAgent";
+import { AGENT_EV, DEFAULT_AGENT_CONFIG, type AgentConfig, type AgentRun, type HermesPhase, type HermesStatus, type InstallState, type SlackBotCheck, type StepKind } from "./floAgent";
 import type { Connection, Skill } from "./types";
 
 export const UNHANDLED = Symbol("unhandled");
@@ -14,6 +14,8 @@ interface Ctx {
   skills: () => Skill[];
   connections: () => Connection[];
   secrets: () => Set<string>;
+  /** Flo's own Slack (user token) connection, for the allow-list autofill */
+  slackConnected?: () => boolean;
 }
 
 const iso = (minsAgo = 0) => new Date(Date.now() - minsAgo * 60_000).toISOString();
@@ -80,7 +82,17 @@ const DEFAULT_HERMES: HermesStatus = {
   slackAppToken: false,
   installCommand: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
   docsUrl: "https://hermes-agent.nousresearch.com/docs",
+  playing: false,
+  phase: "not_installed",
+  error: null,
+  restarts: 0,
+  appleSilicon: true,
+  installing: false,
+  slackError: null,
+  slackAppUrl: "https://api.slack.com/apps?new_app=1&manifest_yaml=" + encodeURIComponent('display_information:\n  name: "Flo"\nsettings:\n  socket_mode_enabled: true\n'),
 };
+
+const INSTALL_LINES = ["→ Checking prerequisites", "✓ git found", "→ Cloning hermes-agent", "→ Setting up Python 3.12 with uv", "✓ venv ready", "→ Installing Python dependencies", "✓ hermes linked into ~/.local/bin", "✓ Hermes Agent installed"];
 
 const state = {
   config: { ...DEFAULT_AGENT_CONFIG } as AgentConfig,
@@ -92,6 +104,13 @@ const state = {
   hermes: { ...DEFAULT_HERMES } as HermesStatus,
   log: [] as string[],
   wired: false,
+  install: { phase: "idle", lines: [] } as InstallState,
+  /** tests: make the next install fail with this installer line */
+  installFails: null as string | null,
+  /** ms between simulated installer lines */
+  installMs: 120,
+  /** tests: Slack says the bot token is invalid */
+  badBotToken: false,
 };
 
 function emitRun(ctx: Ctx, r: AgentRun) {
@@ -227,9 +246,88 @@ function exportNow(ctx: Ctx) {
   return sum;
 }
 
+function phaseOf(h: HermesStatus): HermesPhase {
+  if (h.installing) return "installing";
+  if (!h.installed) return "not_installed";
+  if (!h.playing) return "paused";
+  if (h.running && h.healthy) return "live";
+  return h.error ? "error" : "starting";
+}
+
 function hermesStatus(ctx: Ctx): HermesStatus {
   const sec = ctx.secrets();
-  return { ...state.hermes, slackBotToken: sec.has("hermes_slack_bot"), slackAppToken: sec.has("hermes_slack_app") };
+  const h = { ...state.hermes, playing: state.config.hermesPlaying ?? false, installing: state.install.phase === "running" };
+  return { ...h, phase: phaseOf(h), slackBotToken: sec.has("hermes_slack_bot"), slackAppToken: sec.has("hermes_slack_app") };
+}
+
+function startGateway(ctx: Ctx): HermesStatus {
+  exportNow(ctx);
+  const sec = ctx.secrets();
+  // like hermes::start: Slack joins whenever both tokens and a Member ID are set
+  const slack = sec.has("hermes_slack_bot") && sec.has("hermes_slack_app") && !!state.config.slackAllowedUsers;
+  state.config.hermesPlaying = true;
+  state.hermes = { ...state.hermes, running: true, healthy: true, startedAt: iso(), slackRunning: slack, error: null };
+  state.log = [];
+  logLine(ctx, `$ hermes gateway  (home: ${state.hermes.home})`);
+  logLine(ctx, "API server listening on http://127.0.0.1:8642");
+  logLine(ctx, `Loaded MCP servers: ${state.hermes.export?.mcpServers ?? 0} · skills: ${state.hermes.export?.skills ?? 0}`);
+  if (slack) logLine(ctx, "Slack: connected (Socket Mode)");
+  const s = hermesStatus(ctx);
+  ctx.emit(AGENT_EV.hermes, s);
+  return s;
+}
+
+function setInstall(ctx: Ctx, patch: Partial<InstallState>) {
+  state.install = { ...state.install, ...patch };
+  ctx.emit(AGENT_EV.install, structuredClone(state.install));
+}
+
+/** like hermes::install: stream the installer, then detect Hermes and press Play */
+function runInstall(ctx: Ctx): InstallState {
+  if (state.install.phase === "running") return structuredClone(state.install);
+  if (!state.hermes.appleSilicon) {
+    setInstall(ctx, { phase: "failed", lines: [], error: "Hermes runs on Apple Silicon computers only (M1 or newer). This computer has an Intel chip, so Hermes can't be installed here. Flo's built-in engine still works.", finishedAt: iso() });
+    return structuredClone(state.install);
+  }
+  setInstall(ctx, { phase: "running", lines: [], error: null, startedAt: iso(), finishedAt: null });
+  ctx.emit(AGENT_EV.hermes, hermesStatus(ctx));
+  const fail = state.installFails;
+  const lines = fail ? [...INSTALL_LINES.slice(0, 2), `✗ ${fail}`] : INSTALL_LINES;
+  lines.forEach((l, i) =>
+    state.timers.push(
+      window.setTimeout(() => {
+        if (state.install.phase !== "running") return;
+        state.install.lines.push(l);
+        ctx.emit(AGENT_EV.installLog, l);
+      }, state.installMs * (i + 1)),
+    ),
+  );
+  state.timers.push(
+    window.setTimeout(() => {
+      if (state.install.phase !== "running") return;
+      if (fail) {
+        setInstall(ctx, { phase: "failed", error: `The Hermes installer stopped: ${fail}`, finishedAt: iso() });
+        ctx.emit(AGENT_EV.hermes, hermesStatus(ctx));
+        return;
+      }
+      state.hermes = { ...state.hermes, installed: true, broken: null, version: "0.22.5", path: "/Users/you/.local/bin/hermes" };
+      setInstall(ctx, { phase: "done", version: "0.22.5", finishedAt: iso() });
+      startGateway(ctx);
+    }, state.installMs * (lines.length + 1)),
+  );
+  return structuredClone(state.install);
+}
+
+function slackCheck(ctx: Ctx): SlackBotCheck {
+  const sec = ctx.secrets();
+  if (!sec.has("hermes_slack_bot")) return { ok: false, error: "Paste the bot token (xoxb-) first." };
+  if (state.badBotToken) return { ok: false, error: "Slack says this bot token isn't valid. Copy the Bot User OAuth Token (xoxb-) again from OAuth & Permissions." };
+  const r: SlackBotCheck = { ok: true, bot: "flo", team: "Northwind", botUserId: "U0FLOBOT" };
+  if (!state.config.slackAllowedUsers && ctx.slackConnected?.()) {
+    state.config = { ...state.config, slackAllowedUsers: "U0AR547TTRS" };
+    r.autofilled = "U0AR547TTRS";
+  }
+  return r;
 }
 
 function logLine(ctx: Ctx, line: string) {
@@ -252,6 +350,7 @@ export async function floAgentMock(cmd: string, args: Record<string, any>, ctx: 
         .map((x) => x.trim().toUpperCase())
         .filter((x) => /^[UW][A-Z0-9]{2,23}$/.test(x))
         .join(",");
+      c.hermesPlaying = state.config.hermesPlaying ?? false; // only Play / Pause change it
       state.config = c;
       return { ...c };
     }
@@ -284,21 +383,24 @@ export async function floAgentMock(cmd: string, args: Record<string, any>, ctx: 
       if (!state.hermes.installed) throw "Hermes isn't installed.";
       return exportNow(ctx);
     case "hermes_start": {
-      if (!state.hermes.installed) throw "Hermes isn't installed. Copy the install command from Flo Agent → Engine and run it in Terminal.";
-      exportNow(ctx);
-      const sec = ctx.secrets();
-      const slack = state.config.slackEnabled && sec.has("hermes_slack_bot") && sec.has("hermes_slack_app") && !!state.config.slackAllowedUsers;
-      state.hermes = { ...state.hermes, running: true, healthy: true, startedAt: iso(), slackRunning: slack };
-      state.log = [];
-      logLine(ctx, `$ hermes gateway  (home: ${state.hermes.home})`);
-      logLine(ctx, "API server listening on http://127.0.0.1:8642");
-      logLine(ctx, `Loaded MCP servers: ${state.hermes.export?.mcpServers ?? 0} · skills: ${state.hermes.export?.skills ?? 0}`);
-      if (slack) logLine(ctx, "Slack: connected (Socket Mode)");
-      const s = hermesStatus(ctx);
-      ctx.emit(AGENT_EV.hermes, s);
-      return s;
+      state.config.hermesPlaying = true;
+      if (!state.hermes.installed) throw "Hermes isn't installed. Click Install Hermes in Flo Agent, Slack.";
+      return startGateway(ctx);
     }
+    case "hermes_install":
+      return runInstall(ctx);
+    case "hermes_install_cancel":
+      if (state.install.phase === "running") {
+        setInstall(ctx, { phase: "cancelled", error: "Install cancelled. Nothing else was changed; click Install Hermes to try again.", finishedAt: iso() });
+        ctx.emit(AGENT_EV.hermes, hermesStatus(ctx));
+      }
+      return null;
+    case "hermes_install_state":
+      return structuredClone(state.install);
+    case "hermes_slack_check":
+      return slackCheck(ctx);
     case "hermes_stop": {
+      state.config.hermesPlaying = false;
       state.hermes = { ...state.hermes, running: false, healthy: false, startedAt: null, slackRunning: false };
       logLine(ctx, "Stopped.");
       const s = hermesStatus(ctx);
@@ -320,6 +422,8 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     },
     resetHermes: () => {
       state.hermes = { ...DEFAULT_HERMES };
+      state.install = { phase: "idle", lines: [] };
+      state.config.hermesPlaying = false;
     },
   });
 }

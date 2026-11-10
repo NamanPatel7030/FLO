@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// One-click Connect Slack (Settings → Integrations). The mock stands in for the Rust side:
+// One-click Connect Slack (Flo Agent → Slack → Slack to-dos; the one Slack page). The mock stands in for the Rust side:
 // slack_oauth_start records the URL it would open; __floMock.slackDeepLink() is flo://slack?code=… arriving.
 const mock = (page: Page) => page.waitForFunction(() => !!(window as any).__floMock);
 const invoke = (page: Page, cmd: string, args: Record<string, unknown> = {}) =>
@@ -9,7 +9,7 @@ const opened = (page: Page) => page.evaluate(() => [...(window as any).__floMock
 const deepLink = (page: Page, code?: string) => page.evaluate((c) => (window as any).__floMock.slackDeepLink(c), code);
 
 async function open(page: Page) {
-  await page.goto("/#/settings/integrations");
+  await page.goto("/#/agent/slack");
   await mock(page);
   await expect(page.getByTestId("slack-disconnected")).toBeVisible({ timeout: 20_000 });
 }

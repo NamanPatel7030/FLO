@@ -198,6 +198,9 @@ test("integrations: 4 agent cards, webhook token hidden, Slack connect flow", as
   await expect(page.getByText("Not found on this Mac")).toBeVisible();
   await expect(page.getByText(/token=•••/)).toBeVisible();
   await expect(page.getByText(/token=TOKEN/)).toHaveCount(0);
+  // Slack has one page now: Integrations links to it
+  await page.getByTestId("slack-link").click();
+  await expect(page).toHaveURL(/#\/agent\/slack$/);
   await page.getByRole("button", { name: "Advanced: paste a token" }).click(); // one-click flow: tests/e2e/slack.spec.ts
   await page.getByLabel("Slack token").fill("xoxp-123-abc");
   await page.getByTestId("slack-disconnected").getByRole("button", { name: "Connect", exact: true }).click();

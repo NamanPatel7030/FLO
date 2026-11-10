@@ -1,4 +1,4 @@
-// Settings → Integrations → Slack. One click (OAuth through our website, token lands in the keychain via
+// Flo Agent → Slack → "Slack to-dos". One click (OAuth through our website, token lands in the keychain via
 // flo://slack), with the old paste-a-token path tucked under "Advanced". See docs/slack-setup.md.
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -143,7 +143,7 @@ export function SlackCard() {
 
   return (
     <Card className="p-5">
-      <CardTitle icon={<SlackIcon />}>Slack</CardTitle>
+      <CardTitle icon={<SlackIcon />}>Slack to-dos</CardTitle>
       {who === undefined ? (
         <Skeleton className="h-16" />
       ) : me ? (
@@ -227,7 +227,7 @@ export function SlackCard() {
         </div>
       ) : (
         <div className="flex flex-col gap-3" data-testid="slack-disconnected">
-          <p className="-mt-1.5 text-[12.5px] text-muted">See Slack messages waiting on you as to-dos, and reply by voice. Flo always asks before sending.</p>
+          <p className="-mt-1.5 text-[12.5px] text-muted">Turn Slack DMs and mentions into to-dos, and reply by voice. Flo always asks before sending.</p>
           {phase === "waiting" ? (
             <div className="flex items-center gap-3 rounded-2xl bg-[var(--glass)] p-3" data-testid="slack-waiting">
               <Loader2 size={18} className="shrink-0 animate-spin text-brand-300" />
@@ -246,7 +246,7 @@ export function SlackCard() {
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <ConnectSlackButton onClick={start} busy={phase === "starting"} />
               <span className="flex items-center gap-1.5 text-[12px] text-faint">
-                <ShieldCheck size={13} /> Opens Slack in your browser. The token stays in this Mac&apos;s keychain.
+                <ShieldCheck size={13} /> Opens Slack in your browser. The token stays in your keychain.
               </span>
             </div>
           )}

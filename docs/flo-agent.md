@@ -45,8 +45,8 @@ All facts below come from the official repo and docs. Pages were treated as data
 | **Overview** | A command box ("Ask Flo Agent to do anything…"). Type and press Enter, or press the mic to talk (Flo's hands-free agent mode). A **live route preview** under the box shows where the request will go: *On screen · Skill · Apps · Flo · Hermes*. The **live run** card has a step timeline, Stop, and an inline **Yes, do it / No** bar when the agent asks before acting. **Recent runs** (last 30) expand into their timelines. The side panel shows Apps, Skills and Engine at a glance, plus the "Always asks first" promise. |
 | **Apps** | Every connection in one place. Reuses `ConnectionsPanel` (MCP servers and custom platforms) and `Integrations` (Claude Code, Codex, Cursor and webhook hooks, Slack, coding agents). |
 | **Skills** | The existing skill list and canvas (`SkillsList` → `SkillCanvasEditor`): Build with AI, cron, MCP and Knowledge wiring. |
-| **Engine** | Choose **Flo** (built in, the default) or **Hermes Agent**. Hermes can only be chosen once it's detected. The Hermes card shows path and version (warns below v0.22.5), the **official install command to copy** (Flo never installs anything), Check again, the install guide, Start/Stop, the Flo-managed Hermes home, an export summary with Export now, "Use my AI key from Flo", and live gateway output. |
-| **Slack** | The Hermes Slack gateway in five steps: create the Slack app (link to the Hermes guide), paste the **bot token** and the **app token** (each prefix-checked and saved to the **OS keychain** through Flo's `set_api_key` path), add allowed **Member IDs**, then turn on "Connect Slack when Hermes starts". The status card shows whether Hermes is live in the workspace. This is separate from Flo's own Connect Slack, which turns Slack messages into to-dos. |
+| **Engine** | Choose **Flo** (built in, the default) or **Hermes Agent**. Hermes can only be chosen once it's detected. The Hermes card shows path and version (warns below v0.22.5), **Install Hermes** (one click, live installer output, Cancel), Check again, the install guide, **Play / Pause**, the Flo-managed Hermes home, an export summary with Export now, "Use my AI key from Flo", and live gateway output. |
+| **Slack** | **The one Slack page** (Settings → Integrations only links here). Top: one status ("Install Hermes to answer in Slack" / "Installing Hermes…" / "Paused" / "Starting…" / "Flo is live in Slack" / "Hermes stopped") with the single next action (Install / Play / Pause), the reason @Flo is silent (`slackReadiness` in `floAgent.ts`), and five live checks (Hermes installed, bot token, app token, who can talk, live). **Answer @Flo in Slack**: once the bot token passes Slack's `auth.test`, one row "Bot connected: @bot in Workspace" with Change; otherwise three steps: **Create Slack app** (opens `api.slack.com/apps?new_app=1&manifest_yaml=…` with Flo's manifest: Socket Mode, Hermes' bot scopes and events, Messages tab), paste the two tokens (keychain), and who can talk (auto-filled with your own Member ID from Flo's Slack connection when empty). **Slack to-dos**: Flo's own user-token connection (`SlackCard`, `slack.rs`). |
 | **Customize** | Persona (with presets), standing instructions, memory on/off, what the agent can use (Screen control / Connected apps / Skills), and confirmations. **"Ask before sending, posting, paying or deleting" is locked on.** "Also ask before every step" is optional. |
 
 Motion stays calm: tweens with ease `[0.2, 0.8, 0.2, 1]`, no springs or bounce, and no infinite animations. A spinner shows only while a run is working.
@@ -94,9 +94,15 @@ Switches in Customize remove routes. With screen control off, an on-screen task 
 - `API_SERVER_PORT=8642`
 - `API_SERVER_KEY=<random per start>`
 - the user's own AI key for their provider, when "Use my AI key from Flo" is on. It is read from the keychain and set as the child's environment variable, **never written to disk**.
-- the Slack tokens and `SLACK_ALLOWED_USERS`, only when Slack is enabled, both tokens are saved and at least one Member ID is set.
+- the Slack tokens and `SLACK_ALLOWED_USERS`, whenever both tokens are saved and at least one Member ID is set (Play / Pause is the switch; the old "Connect Slack when Hermes starts" toggle is gone).
 
-The process is killed on Stop and when Flo exits (`RunEvent::Exit`). Its output is redacted (`xoxb-`, `xapp-`, `sk-`, Bearer tokens become `[hidden]`), streamed as `flo://hermes-log`, and the last 400 lines are kept.
+The gateway runs in its own process group; Pause and Flo's exit (`RunEvent::Exit`) kill the whole group, so MCP servers Hermes started stop too.
+
+**Install (one click).** The user asked Flo to install Hermes for them, so the old "Flo never installs" rule is reversed, on an explicit click only. `hermes_install` runs `/bin/bash -c "set -o pipefail; curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive"` (install.sh: `--non-interactive` skips the `hermes setup` wizard and `hermes gateway install`, which Flo doesn't need) with stdin closed, `HERMES_HOME` removed (so it installs to `~/.hermes`, exactly like Terminal), its own process group, a 10 minute timeout and Cancel. Output streams as `flo://hermes-install-log`; state as `flo://hermes-install`. A failure shows the installer's own `✗` reason (or: no network, Intel, timeout, exit code + last line). On success Flo re-detects `hermes`, runs `hermes --version`, and presses Play. Intel Macs get a clear "Apple Silicon only" message instead of a button (checked with `sysctl hw.optional.arm64`, so a Rosetta build still counts as Apple Silicon).
+
+**Play / Pause.** `hermes_start` = Play, `hermes_stop` = Pause. The desired state is saved as `hermes_playing` in `flo-agent.json` (UI config saves keep it). Playing: a watcher restarts a crashed gateway after 2, 5 and 15 s, then gives up and shows "Hermes keeps stopping… Last message: …"; a minute of uptime resets the retries. At launch, if it was playing, Flo starts it again after 4 s, quietly. Status `phase`: installing | not_installed | paused | starting | live | error. Slack errors Hermes prints (invalid_auth, missing_scope…) become `slackError`.
+
+**Slack check.** `hermes_slack_check` calls `https://slack.com/api/auth.test` with the bot token (egress `Purpose::Slack`) and returns the bot's name and workspace, or a fixable sentence. When the allow-list is empty and Flo's own Slack is connected, it fills in the user's Member ID (`slack::my_user_id`). Its output is redacted (`xoxb-`, `xapp-`, `sk-`, Bearer tokens become `[hidden]`), streamed as `flo://hermes-log`, and the last 400 lines are kept.
 
 **Requests**
 - `ask()` streams `/v1/chat/completions` (SSE) from the running gateway. The URL is always `http://127.0.0.1:<port>`, and it goes through the egress allow-list, where localhost is always allowed.
@@ -107,7 +113,7 @@ The process is killed on Stop and when Flo exits (`RunEvent::Exit`). Its output 
 
 ## 6. Safety and privacy
 
-- Flo **never installs** Hermes. It shows the official command to copy.
+- Flo installs Hermes **only when the user clicks Install Hermes**, with the official installer, into the same place Terminal would. It never runs the installer on its own.
 - Flo **never creates accounts** and **never sees passwords**. Slack tokens are pasted once into the keychain (`hermes_slack_bot` and `hermes_slack_app` in `secrets::PROVIDERS`), and Flo only checks whether they exist.
 - **Confirmations:**
   - The screen agent always confirms before send, post, pay or delete (unchanged).
@@ -144,11 +150,11 @@ The process is killed on Stop and when Flo exits (`RunEvent::Exit`). Its output 
 
 ## 8. Open items / needs the user
 
-1. **Install Hermes yourself** (Apple Silicon): `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`. Then go to Flo Agent → Engine → Check again → Start Hermes.
+1. **Install Hermes** (Apple Silicon): Flo Agent → Slack (or Engine) → Install Hermes. Not yet run for real on a Mac: check that the installer finishes non-interactively from the app (no TTY), that `~/.local/bin/hermes` is found right after, and how long it takes.
 2. **First real run:**
    - check that Hermes honours `HERMES_HOME` (if it doesn't, Hermes reads `~/.hermes` and Flo's exported config is ignored; switching to `--profile` would be the fix);
    - check that `model.provider: openai-api` is right for OpenAI keys;
    - check the `--version` output.
-3. **Slack gateway:** create a Slack app with Socket Mode (Hermes' Slack guide), paste the xoxb- and xapp- tokens and your Member ID, turn it on, and restart Hermes.
+3. **Slack round trip:** with Hermes playing, `/invite @Flo` in a channel and mention it; DM it. If the existing Slack app was made by hand, it may lack Socket Mode, the `message.*` events or the Messages tab: recreate it with Create Slack app (manifest) and paste the new tokens.
 4. **Gemini, Groq and other providers** aren't mapped to Hermes yet. Hermes then uses its own setup (`hermes model`).
 5. **Routing is keyword based**, so it is fast and free. A model-based router could replace `plan` later, keeping the same `RoutePlan` contract.

@@ -1,9 +1,9 @@
-// Settings → Integrations: agent tools (Claude Code, Codex, Cursor, webhook) + Slack.
+// Settings → Integrations: agent tools (Claude Code, Codex, Cursor, webhook). Slack has one page: Flo Agent → Slack.
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Asterisk, Check, CodeXml, Copy, MousePointer2, Plug, Terminal, Unplug, Webhook } from "lucide-react";
+import { ArrowRight, Asterisk, Check, CodeXml, Copy, MousePointer2, Plug, Terminal, Unplug, Webhook } from "lucide-react";
 import { CodingAgents } from "./CodingAgents";
-import { SlackCard } from "./SlackCard";
+import { SlackIcon } from "./SlackCard";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import type { Integration } from "../lib/types";
@@ -19,6 +19,7 @@ const LOOK: Record<string, { icon: React.ReactNode; bg: string }> = {
 
 export function Integrations() {
   const toast = useStore((x) => x.toast);
+  const go = useStore((x) => x.go);
   const [list, setList] = useState<Integration[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
@@ -47,7 +48,19 @@ export function Integrations() {
           ))}
         </div>
       )}
-      <SlackCard />
+      {/* Slack lives on one page (Flo Agent → Slack); this is just the way there */}
+      <Card className="flex items-center gap-3 p-4" onClick={() => go("agent", "slack")}>
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#fff]" data-testid="slack-link">
+          <SlackIcon size={20} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-semibold">Slack</div>
+          <p className="text-[12px] text-muted">Answer @Flo in Slack and turn messages into to-dos. All in Flo Agent, Slack.</p>
+        </div>
+        <span className="flex items-center gap-1 text-[12.5px] font-medium text-brand-300">
+          Open <ArrowRight size={13} />
+        </span>
+      </Card>
       <Card className="p-5">
         <CardTitle icon={<CodeXml size={15} />}>Coding agents</CardTitle>
         <p className="-mt-1.5 mb-3.5 text-[12.5px] text-muted">Connect your AI coding account. Projects → Code → Edit with AI hands your task to it, in your repo, on this Mac.</p>

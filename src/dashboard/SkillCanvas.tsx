@@ -270,7 +270,7 @@ function SlackShortcut() {
   const connected = useSlackConnected();
   if (connected !== false) return null;
   return (
-    <a href="#/settings/integrations" className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-brand-300 hover:text-brand-200" data-testid="connect-slack-shortcut">
+    <a href="#/agent/slack" className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-brand-300 hover:text-brand-200" data-testid="connect-slack-shortcut">
       <SlackIcon size={12} /> Connect Slack →
     </a>
   );
