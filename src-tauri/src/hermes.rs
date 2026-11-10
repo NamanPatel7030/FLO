@@ -1,7 +1,14 @@
 //! Hermes Agent (Nous Research, MIT) as an optional engine for Flo Agent.
 //!
-//! Flo never installs Hermes: it detects the user's own `hermes` CLI (the official installer puts
-//! it in ~/.local/bin) and shows the official install command to copy when it's missing.
+//! Install: when the user clicks "Install Hermes" (and only then), Flo runs the official installer
+//! (`curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive`)
+//! as a child process, streams its output into the UI, and can cancel it. It installs exactly what
+//! the user would get in Terminal (CLI in ~/.local/bin, code in ~/.hermes/hermes-agent). Flo then
+//! detects the user's `hermes` CLI the same way as before.
+//!
+//! Play / Pause: the gateway's desired state is saved (`AgentConfig::hermes_playing`). Playing,
+//! Flo keeps `hermes gateway` running (started again at launch, restarted with backoff if it
+//! crashes). Paused, the gateway process group is killed, so nothing answers in Slack.
 //!
 //! When the user starts it, Flo runs `hermes gateway` with a Flo-managed home
 //! (`<Flo data>/hermes`, passed as HERMES_HOME) that Flo writes on every start:
@@ -29,8 +36,17 @@ use std::time::Duration;
 use tauri::State;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-/// the official installer (Linux / macOS / WSL2). Shown to copy; Flo never runs it.
+/// the official installer (Linux / macOS / WSL2). Flo runs it on an explicit "Install Hermes" click.
 pub const INSTALL_COMMAND: &str = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash";
+pub const INSTALL_SCRIPT_URL: &str = "https://hermes-agent.nousresearch.com/install.sh";
+/// install.sh: "--non-interactive  skip stages that need input" (the `hermes setup` wizard and
+/// `hermes gateway install`; Flo configures and runs the gateway itself)
+pub const INSTALL_FLAGS: &[&str] = &["--non-interactive"];
+pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
+/// install progress: `InstallState`
+pub const EV_INSTALL: &str = "flo://hermes-install";
+/// one installer output line: string
+pub const EV_INSTALL_LOG: &str = "flo://hermes-install-log";
 pub const DOCS_URL: &str = "https://hermes-agent.nousresearch.com/docs";
 /// the release Flo was tested against (the newest one at least two weeks old when it was built)
 pub const TESTED_VERSION: &str = "0.22.5";
@@ -437,7 +453,7 @@ pub async fn start(st: &Shared) -> Result<HermesStatus> {
     if running() {
         return Ok(status(st).await);
     }
-    let bin = find_hermes().ok_or_else(|| anyhow!("Hermes isn't installed. Copy the install command from Flo Agent → Engine and run it in Terminal."))?;
+    let bin = find_hermes().ok_or_else(|| anyhow!("Hermes isn't installed. Click Install Hermes in Flo Agent, Slack."))?;
     let cfg = load_config(&st.data_dir);
     export(st)?;
     let key = random_key();
@@ -449,8 +465,9 @@ pub async fn start(st: &Shared) -> Result<HermesStatus> {
         ("API_SERVER_HOST".to_string(), "127.0.0.1".to_string()),
         ("API_SERVER_PORT".to_string(), port.to_string()),
     ]);
+    // Slack joins whenever it's set up: both tokens and at least one Member ID. Pause turns it off.
     let mut slack = false;
-    if cfg.slack_enabled {
+    {
         let bot = crate::secrets::get_api_key_async(SLACK_BOT_KEY).await.ok().flatten();
         let app = crate::secrets::get_api_key_async(SLACK_APP_KEY).await.ok().flatten();
         let users = clean_member_ids(&cfg.slack_allowed_users);
@@ -462,18 +479,16 @@ pub async fn start(st: &Shared) -> Result<HermesStatus> {
                 slack = true;
             }
             (Some(_), Some(_)) => push_log(st, "Slack: add at least one allowed Slack Member ID; starting without Slack.".into()),
-            _ => push_log(st, "Slack: paste both tokens in Flo Agent → Slack; starting without Slack.".into()),
+            (None, None) => {}
+            _ => push_log(st, "Slack: paste both tokens in Flo Agent, Slack; starting without Slack.".into()),
         }
     }
-    let mut child = tokio::process::Command::new(&bin)
-        .arg("gateway")
-        .envs(env)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| format!("couldn't start {}", bin.display()))?;
+    let mut cmd = tokio::process::Command::new(&bin);
+    cmd.arg("gateway").envs(env).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    // its own process group, so Pause also stops the MCP servers and helpers Hermes started
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let mut child = cmd.spawn().with_context(|| format!("couldn't start {}", bin.display()))?;
     LOG.lock().clear();
     push_log(st, format!("$ hermes gateway  (home: {})", home_dir(&st.data_dir).display()));
     let out = child.stdout.take();
@@ -502,6 +517,9 @@ pub async fn start(st: &Shared) -> Result<HermesStatus> {
 
 pub fn shutdown() {
     if let Some(mut p) = PROC.lock().take() {
+        if let Some(pid) = p.child.id() {
+            kill_group(pid, "-TERM");
+        }
         let _ = p.child.start_kill();
     }
 }
@@ -620,6 +638,576 @@ async fn ask_api(st: &Shared, port: u16, key: &str, prompt: &str, on_line: &mut 
     Ok(if full.trim().is_empty() { "Done.".into() } else { full.trim().to_string() })
 }
 
+// ── one-click install ──────────────────────────────────────────────────────
+/// The installer is Apple Silicon only (install.sh fails with `unsupported_platform` elsewhere).
+/// A Rosetta (x86_64) build of Flo still runs on Apple Silicon, so ask the kernel too.
+pub fn is_apple_silicon() -> bool {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        return true;
+    }
+    if !cfg!(target_os = "macos") {
+        return false;
+    }
+    std::process::Command::new("/usr/sbin/sysctl")
+        .args(["-n", "hw.optional.arm64"])
+        .output()
+        .map(|o| arm64_from_sysctl(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or(false)
+}
+
+/// `sysctl -n hw.optional.arm64` prints "1" on Apple Silicon (and nothing / "0" on Intel).
+pub fn arm64_from_sysctl(out: &str) -> bool {
+    out.trim() == "1"
+}
+
+pub const INTEL_MESSAGE: &str = "Hermes runs on Apple Silicon computers only (M1 or newer). This computer has an Intel chip, so Hermes can't be installed here. Flo's built-in engine still works.";
+
+/// The shell line Flo runs: the official installer, piped from curl, without prompts.
+/// `pipefail` so a failed download (no network) fails the run instead of piping nothing into bash.
+pub fn installer_script(url: &str) -> String {
+    format!("set -o pipefail; curl -fsSL --retry 2 --connect-timeout 20 {url} | bash -s -- {}", INSTALL_FLAGS.join(" "))
+}
+
+/// "\x1b[0;32m✓\x1b[0m done" → "✓ done" (the installer only colours a terminal, but be safe).
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\x1b' {
+            if it.peek() == Some(&'[') {
+                it.next();
+                for d in it.by_ref() {
+                    if d.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if c == '\r' || (c.is_control() && c != '\t') {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InstallRun {
+    pub ok: bool,
+    pub code: Option<i32>,
+    pub cancelled: bool,
+    pub timed_out: bool,
+    /// the last output lines (cleaned), newest last
+    pub tail: Vec<String>,
+}
+
+/// Kill a whole process group (curl + bash + the installer's own children, or Hermes and the MCP
+/// servers it started). The group id is the leader's pid (we spawn with `process_group(0)`).
+#[cfg(unix)]
+fn kill_group(pid: u32, signal: &str) {
+    let _ = std::process::Command::new("/bin/kill").args([signal, "--", &format!("-{pid}")]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+#[cfg(not(unix))]
+fn kill_group(_pid: u32, _signal: &str) {}
+
+/// Run an installer program, streaming every output line (stdout and stderr) to `on_line`.
+/// Stops it on `cancel` or after `timeout`. Generic so tests can drive it with a fake script.
+pub async fn run_installer(program: &Path, args: &[String], env: &[(String, String)], timeout: Duration, cancel: &AtomicBool, mut on_line: impl FnMut(String) + Send) -> Result<InstallRun> {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args)
+        // the installer must install to the user's default place, not Flo's managed home
+        .env_remove("HERMES_HOME")
+        .env_remove("HERMES_INSTALL_DIR")
+        .envs(env.iter().cloned())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let mut child = cmd.spawn().with_context(|| format!("couldn't start {}", program.display()))?;
+    let pid = child.id().unwrap_or(0);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    for pipe in [child.stdout.take().map(|o| Box::new(o) as Box<dyn tokio::io::AsyncRead + Unpin + Send>), child.stderr.take().map(|o| Box::new(o) as Box<dyn tokio::io::AsyncRead + Unpin + Send>)].into_iter().flatten() {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(pipe).lines();
+            while let Ok(Some(l)) = lines.next_line().await {
+                let _ = tx.send(l);
+            }
+        });
+    }
+    drop(tx);
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut run = InstallRun::default();
+    let mut push = |run: &mut InstallRun, l: String| {
+        let l = crate::text::truncate_chars(&redact(&strip_ansi(&l)), 400);
+        if l.trim().is_empty() {
+            return;
+        }
+        run.tail.push(l.clone());
+        if run.tail.len() > 40 {
+            run.tail.remove(0);
+        }
+        on_line(l);
+    };
+    let status = loop {
+        tokio::select! {
+            l = rx.recv() => match l {
+                Some(l) => push(&mut run, l),
+                None => break child.wait().await.ok(),
+            },
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                let stop = if cancel.load(Ordering::SeqCst) { Some(false) } else if tokio::time::Instant::now() >= deadline { Some(true) } else { None };
+                if let Some(timed_out) = stop {
+                    run.cancelled = !timed_out;
+                    run.timed_out = timed_out;
+                    kill_group(pid, "-TERM");
+                    if tokio::time::timeout(Duration::from_secs(3), child.wait()).await.is_err() {
+                        kill_group(pid, "-KILL");
+                        let _ = child.start_kill();
+                        let _ = child.wait().await;
+                    }
+                    // whatever was printed on the way out
+                    while let Ok(Some(l)) = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
+                        push(&mut run, l);
+                    }
+                    return Ok(run);
+                }
+            }
+        }
+    };
+    run.code = status.and_then(|s| s.code());
+    run.ok = status.map(|s| s.success()).unwrap_or(false);
+    Ok(run)
+}
+
+/// One precise sentence for a failed install, from the installer's own last lines.
+pub fn install_error(run: &InstallRun) -> String {
+    let all = run.tail.join("\n");
+    let low = all.to_lowercase();
+    let last = run.tail.iter().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or_default();
+    // install.sh's fail() prints "✗ <reason>": the most precise thing there is
+    let reason = run.tail.iter().rev().find_map(|l| l.trim().strip_prefix('✗').map(|r| r.trim().to_string())).filter(|r| !r.is_empty());
+    if run.cancelled {
+        return "Install cancelled. Nothing else was changed; click Install Hermes to try again.".into();
+    }
+    if run.timed_out {
+        return format!("The installer didn't finish within {} minutes, so Flo stopped it. Last step: {}", INSTALL_TIMEOUT.as_secs() / 60, if last.is_empty() { "no output" } else { &last });
+    }
+    if ["could not resolve host", "curl: (6)", "curl: (7)", "curl: (28)", "failed to connect", "network is unreachable", "connection timed out"].iter().any(|p| low.contains(p)) {
+        return "Flo couldn't reach hermes-agent.nousresearch.com. Check your internet connection, then click Install Hermes again.".into();
+    }
+    if low.contains("unsupported_platform") || low.contains("does not support this host") {
+        return INTEL_MESSAGE.into();
+    }
+    if let Some(r) = reason {
+        return format!("The Hermes installer stopped: {r}");
+    }
+    if low.contains("python") && (low.contains("not found") || low.contains("no such file") || low.contains("missing")) {
+        return format!("The installer couldn't set up Python: {last}");
+    }
+    match run.code {
+        Some(c) if !last.is_empty() => format!("The Hermes installer stopped (exit {c}): {last}"),
+        Some(c) => format!("The Hermes installer stopped (exit {c}) without saying why."),
+        None => format!("The Hermes installer was stopped. {last}").trim().to_string(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallState {
+    /// idle | running | done | failed | cancelled
+    pub phase: String,
+    pub lines: Vec<String>,
+    pub error: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub version: Option<String>,
+}
+
+static INSTALL: Mutex<Option<InstallState>> = Mutex::new(None);
+static INSTALL_CANCEL: AtomicBool = AtomicBool::new(false);
+
+pub fn install_state() -> InstallState {
+    INSTALL.lock().clone().unwrap_or_else(|| InstallState { phase: "idle".into(), ..Default::default() })
+}
+
+fn installing() -> bool {
+    INSTALL.lock().as_ref().is_some_and(|s| s.phase == "running")
+}
+
+fn set_install(st: &Shared, f: impl FnOnce(&mut InstallState)) {
+    let snap = {
+        let mut g = INSTALL.lock();
+        let s = g.get_or_insert_with(|| InstallState { phase: "idle".into(), ..Default::default() });
+        f(s);
+        s.clone()
+    };
+    st.emit(EV_INSTALL, snap);
+}
+
+/// Start the official installer in the background (explicit click only). Progress arrives as
+/// `EV_INSTALL` / `EV_INSTALL_LOG`; when it succeeds Flo detects Hermes and presses Play.
+pub fn install(st: &Shared) -> Result<InstallState> {
+    if installing() {
+        return Ok(install_state());
+    }
+    if !is_apple_silicon() {
+        set_install(st, |s| {
+            *s = InstallState { phase: "failed".into(), error: Some(INTEL_MESSAGE.into()), finished_at: Some(chrono::Local::now().to_rfc3339()), ..Default::default() };
+        });
+        return Ok(install_state());
+    }
+    INSTALL_CANCEL.store(false, Ordering::SeqCst);
+    set_install(st, |s| {
+        *s = InstallState { phase: "running".into(), started_at: Some(chrono::Local::now().to_rfc3339()), ..Default::default() };
+    });
+    st.emit(EV_STATUS, serde_json::json!({ "installing": true }));
+    let st2 = st.clone();
+    tauri::async_runtime::spawn(async move {
+        let script = installer_script(INSTALL_SCRIPT_URL);
+        let env = vec![("PATH".to_string(), crate::code::child_path()), ("NO_COLOR".to_string(), "1".to_string())];
+        let st3 = st2.clone();
+        let res = run_installer(Path::new("/bin/bash"), &["-c".to_string(), script], &env, INSTALL_TIMEOUT, &INSTALL_CANCEL, move |l| {
+            {
+                let mut g = INSTALL.lock();
+                if let Some(s) = g.as_mut() {
+                    s.lines.push(l.clone());
+                    if s.lines.len() > 300 {
+                        s.lines.remove(0);
+                    }
+                }
+            }
+            st3.emit(EV_INSTALL_LOG, l);
+        })
+        .await;
+        finish_install(&st2, res).await;
+    });
+    Ok(install_state())
+}
+
+async fn finish_install(st: &Shared, res: Result<InstallRun>) {
+    let now = chrono::Local::now().to_rfc3339();
+    let run = match res {
+        Ok(r) => r,
+        Err(err) => {
+            set_install(st, |s| {
+                s.phase = "failed".into();
+                s.error = Some(format!("Flo couldn't start the installer: {err:#}"));
+                s.finished_at = Some(now);
+            });
+            return;
+        }
+    };
+    if !run.ok {
+        let phase = if run.cancelled { "cancelled" } else { "failed" };
+        let why = install_error(&run);
+        set_install(st, |s| {
+                s.phase = phase.into();
+                s.error = Some(why);
+                s.finished_at = Some(now);
+            });
+        let s = status(st).await;
+        st.emit(EV_STATUS, s);
+        return;
+    }
+    // re-detect and make sure it really runs
+    let checked = match find_hermes() {
+        None => Err("The installer finished, but Flo can't find the hermes command in ~/.local/bin. Open a new Terminal and run `hermes --version`, then click Check again.".to_string()),
+        Some(p) => version_of(&p).await.map_err(|why| format!("Hermes was installed but doesn't run yet ({why}). Click Install Hermes again to repair it.")),
+    };
+    match checked {
+        Err(why) => set_install(st, |s| {
+                s.phase = "failed".into();
+                s.error = Some(why);
+                s.finished_at = Some(now);
+            }),
+        Ok(v) => {
+            set_install(st, |s| {
+                s.phase = "done".into();
+                s.error = None;
+                s.version = v.clone();
+                s.finished_at = Some(now);
+            });
+            // the user asked for Hermes to just work: press Play
+            if let Err(err) = play(st).await {
+                log::warn!("hermes: play after install: {err:#}");
+            }
+        }
+    }
+    let s = status(st).await;
+    st.emit(EV_STATUS, s);
+}
+
+pub fn cancel_install() {
+    INSTALL_CANCEL.store(true, Ordering::SeqCst);
+}
+
+// ── Play / Pause (the gateway supervisor) ──────────────────────────────────
+/// Wait before restart attempt `n` after a crash; None = give up and show the error.
+pub fn backoff(attempt: u32) -> Option<Duration> {
+    match attempt {
+        0 => Some(Duration::from_secs(2)),
+        1 => Some(Duration::from_secs(5)),
+        2 => Some(Duration::from_secs(15)),
+        _ => None,
+    }
+}
+
+/// The one word the UI shows for the gateway.
+pub fn gateway_phase(installing: bool, installed: bool, playing: bool, running: bool, healthy: bool, error: bool) -> &'static str {
+    if installing {
+        "installing"
+    } else if !installed {
+        "not_installed"
+    } else if !playing {
+        "paused"
+    } else if running && healthy {
+        "live"
+    } else if error && !running {
+        "error"
+    } else {
+        "starting"
+    }
+}
+
+/// Slack problems Hermes prints (auth.test / Socket Mode errors), as one fixable sentence.
+pub fn slack_problem(lines: &[String]) -> Option<String> {
+    for l in lines.iter().rev() {
+        let low = l.to_lowercase();
+        if !low.contains("slack") && !low.contains("socket") && !low.contains("_auth") && !low.contains("scope") {
+            continue;
+        }
+        if low.contains("invalid_auth") || low.contains("not_authed") || low.contains("token_revoked") || low.contains("account_inactive") {
+            return Some("Slack rejected a token. Copy fresh bot and app tokens from your Slack app and paste them again.".into());
+        }
+        if low.contains("missing_scope") {
+            return Some("The Slack app is missing a permission. Recreate it from Flo's manifest (Create Slack app), or add the scope and reinstall the app.".into());
+        }
+        if low.contains("not_allowed_token_type") || low.contains("connections:write") {
+            return Some("The app token needs the connections:write scope (Basic Information, App-Level Tokens).".into());
+        }
+    }
+    None
+}
+
+#[derive(Default)]
+struct Sup {
+    error: Option<String>,
+    restarts: u32,
+}
+static SUP: Mutex<Sup> = Mutex::new(Sup { error: None, restarts: 0 });
+/// bumped on every Play / Pause: a watcher from an older generation stops by itself
+static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn set_playing(st: &Shared, on: bool) {
+    let mut cfg = load_config(&st.data_dir);
+    if cfg.hermes_playing != on {
+        cfg.hermes_playing = on;
+        if let Err(err) = crate::floagent::save_config(&st.data_dir, &cfg) {
+            log::warn!("hermes: save play state: {err:#}");
+        }
+    }
+}
+
+/// Play: remember it, start the gateway, and keep it running.
+pub async fn play(st: &Shared) -> Result<HermesStatus> {
+    set_playing(st, true);
+    let g = GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    *SUP.lock() = Sup::default();
+    let res = start(st).await;
+    if let Err(err) = &res {
+        SUP.lock().error = Some(format!("{err:#}"));
+        let s = status(st).await;
+        st.emit(EV_STATUS, s);
+    }
+    // keep it running from here on (a failed first start is shown to the user instead)
+    if res.is_ok() {
+        let st2 = st.clone();
+        tauri::async_runtime::spawn(async move { watch(st2, g).await });
+    }
+    res
+}
+
+/// Pause: remember it and stop the gateway (and everything it started). Nothing answers in Slack.
+pub async fn pause(st: &Shared) -> HermesStatus {
+    set_playing(st, false);
+    GEN.fetch_add(1, Ordering::SeqCst);
+    *SUP.lock() = Sup::default();
+    stop(st).await
+}
+
+/// Restart the gateway with backoff while the user wants it playing.
+async fn watch(st: Shared, g: u64) {
+    let mut attempt = 0u32;
+    let mut up_since = tokio::time::Instant::now();
+    loop {
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        if GEN.load(Ordering::SeqCst) != g {
+            return;
+        }
+        if running() {
+            // a minute of uptime earns a fresh set of retries
+            if attempt > 0 && up_since.elapsed() > Duration::from_secs(60) {
+                attempt = 0;
+            }
+            continue;
+        }
+        let why = LOG.lock().iter().rev().find(|l| !l.trim().is_empty() && !l.starts_with("Hermes stopped")).cloned().unwrap_or_else(|| "it exited".into());
+        match backoff(attempt) {
+            None => {
+                SUP.lock().error = Some(format!("Hermes keeps stopping, so Flo stopped restarting it. Last message: {why}"));
+                let s = status(&st).await;
+                st.emit(EV_STATUS, s);
+                return;
+            }
+            Some(wait) => {
+                push_log(&st, format!("Hermes stopped ({why}). Restarting in {} s.", wait.as_secs()));
+                let s = status(&st).await;
+                st.emit(EV_STATUS, s);
+                tokio::time::sleep(wait).await;
+                if GEN.load(Ordering::SeqCst) != g {
+                    return;
+                }
+                attempt += 1;
+                SUP.lock().restarts += 1;
+                up_since = tokio::time::Instant::now();
+                if let Err(err) = start(&st).await {
+                    SUP.lock().error = Some(format!("{err:#}"));
+                } else {
+                    SUP.lock().error = None;
+                }
+            }
+        }
+    }
+}
+
+/// At launch: if the user left Hermes playing, start it again, quietly, after a short delay.
+pub fn spawn_autostart(st: Shared) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        if load_config(&st.data_dir).hermes_playing && find_hermes().is_some() && !running() {
+            if let Err(err) = play(&st).await {
+                log::warn!("hermes: autostart: {err:#}");
+            }
+        }
+    });
+}
+
+// ── Slack bot setup ────────────────────────────────────────────────────────
+/// Bot scopes from Hermes' Slack guide (Step 2), plus reactions:write so the bot can react.
+pub const SLACK_BOT_SCOPES: &[&str] = &[
+    "app_mentions:read",
+    "chat:write",
+    "channels:history",
+    "channels:read",
+    "groups:history",
+    "im:history",
+    "im:read",
+    "im:write",
+    "mpim:history",
+    "mpim:read",
+    "users:read",
+    "files:read",
+    "files:write",
+    "reactions:write",
+];
+/// Bot events from Hermes' Slack guide (Step 4).
+pub const SLACK_BOT_EVENTS: &[&str] = &["app_mention", "message.channels", "message.groups", "message.im", "message.mpim"];
+
+/// A Slack app manifest for the Hermes bot: Socket Mode, the scopes and events Hermes needs,
+/// and the Messages tab (without it, DMs to the bot are blocked).
+pub fn slack_manifest_yaml(name: &str) -> String {
+    let name = {
+        let n = name.trim();
+        let n = if n.is_empty() { "Flo" } else { n };
+        crate::text::truncate_chars(n, 35)
+    };
+    let list = |xs: &[&str], indent: &str| xs.iter().map(|x| format!("{indent}- {x}\n")).collect::<String>();
+    format!(
+        "display_information:\n  name: {n}\n  description: {d}\nfeatures:\n  app_home:\n    home_tab_enabled: false\n    messages_tab_enabled: true\n    messages_tab_read_only_enabled: false\n  bot_user:\n    display_name: {n}\n    always_online: true\noauth_config:\n  scopes:\n    bot:\n{scopes}settings:\n  event_subscriptions:\n    bot_events:\n{events}  interactivity:\n    is_enabled: true\n  org_deploy_enabled: false\n  socket_mode_enabled: true\n  token_rotation_enabled: false\n",
+        n = q(&name),
+        d = q("Your Flo agent, powered by Hermes, running on your computer."),
+        scopes = list(SLACK_BOT_SCOPES, "      "),
+        events = list(SLACK_BOT_EVENTS, "      "),
+    )
+}
+
+/// "Create Slack app" opens this: Slack's new-app dialog with the manifest filled in.
+pub fn slack_create_app_url(name: &str) -> String {
+    let enc: String = url::form_urlencoded::byte_serialize(slack_manifest_yaml(name).as_bytes()).collect();
+    format!("https://api.slack.com/apps?new_app=1&manifest_yaml={enc}")
+}
+
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SlackBotCheck {
+    pub ok: bool,
+    pub bot: Option<String>,
+    pub team: Option<String>,
+    pub bot_user_id: Option<String>,
+    pub error: Option<String>,
+    /// the Member ID Flo put into the allow-list (from Flo's own Slack connection)
+    pub autofilled: Option<String>,
+}
+
+/// Slack's auth.test answer for the bot token → who the bot is, or a fixable sentence.
+pub fn parse_auth_test(v: &serde_json::Value) -> SlackBotCheck {
+    if v["ok"].as_bool() == Some(true) {
+        return SlackBotCheck {
+            ok: true,
+            bot: v["user"].as_str().map(String::from),
+            team: v["team"].as_str().map(String::from),
+            bot_user_id: v["user_id"].as_str().map(String::from),
+            ..Default::default()
+        };
+    }
+    let code = v["error"].as_str().unwrap_or("unknown_error");
+    let why = match code {
+        "invalid_auth" | "not_authed" => "Slack says this bot token isn't valid. Copy the Bot User OAuth Token (xoxb-) again from OAuth & Permissions.".to_string(),
+        "token_revoked" | "token_expired" => "This bot token was revoked. Reinstall the Slack app to your workspace and paste the new token.".to_string(),
+        "account_inactive" => "The Slack app was removed from the workspace. Reinstall it and paste the new token.".to_string(),
+        other => format!("Slack couldn't check the bot token ({other})."),
+    };
+    SlackBotCheck { ok: false, error: Some(why), ..Default::default() }
+}
+
+async fn slack_check(st: &Shared) -> SlackBotCheck {
+    let Some(token) = crate::secrets::get_api_key_async(SLACK_BOT_KEY).await.ok().flatten() else {
+        return SlackBotCheck { error: Some("Paste the bot token (xoxb-) first.".into()), ..Default::default() };
+    };
+    let url = "https://slack.com/api/auth.test";
+    if let Err(err) = st.egress.check(url, Purpose::Slack, true) {
+        return SlackBotCheck { error: Some(format!("{err:#}")), ..Default::default() };
+    }
+    let resp = st.egress.client(Purpose::Slack, true).post(url).bearer_auth(&token).timeout(Duration::from_secs(15)).send().await;
+    let mut check = match resp {
+        Err(_) => SlackBotCheck { error: Some("Flo couldn't reach Slack. Check your internet connection.".into()), ..Default::default() },
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(v) => {
+                st.egress.record(url, Purpose::Slack, v.to_string().len() as u64);
+                parse_auth_test(&v)
+            }
+            Err(_) => SlackBotCheck { error: Some("Slack sent an answer Flo couldn't read.".into()), ..Default::default() },
+        },
+    };
+    // an empty allow-list means Hermes ignores everyone: fill in the user's own Member ID
+    let mut cfg = load_config(&st.data_dir);
+    if check.ok && clean_member_ids(&cfg.slack_allowed_users).is_empty() {
+        if let Ok(id) = crate::slack::my_user_id(st).await {
+            if !clean_member_ids(&id).is_empty() {
+                cfg.slack_allowed_users = id.clone();
+                if crate::floagent::save_config(&st.data_dir, &cfg).is_ok() {
+                    check.autofilled = Some(id);
+                }
+            }
+        }
+    }
+    check
+}
+
 // ── status ─────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -644,6 +1232,19 @@ pub struct HermesStatus {
     pub slack_app_token: bool,
     pub install_command: String,
     pub docs_url: String,
+    /// the user wants Hermes running (Play) or not (Pause); saved across launches
+    pub playing: bool,
+    /// installing | not_installed | paused | starting | live | error
+    pub phase: String,
+    /// why it isn't running (start failed, or it kept crashing)
+    pub error: Option<String>,
+    pub restarts: u32,
+    pub apple_silicon: bool,
+    pub installing: bool,
+    /// a Slack error from Hermes' output (bad token, missing scope)
+    pub slack_error: Option<String>,
+    /// Slack's new-app dialog with Flo's manifest filled in
+    pub slack_app_url: String,
 }
 
 async fn healthy(st: &Shared, port: u16) -> bool {
@@ -664,15 +1265,32 @@ pub async fn status(st: &Shared) -> HermesStatus {
     let is_running = running();
     let (port, started_at, slack) = PROC.lock().as_ref().map(|p| (p.port, Some(p.started_at.clone()), p.slack)).unwrap_or((DEFAULT_PORT, None, false));
     let has = |k: &str| crate::secrets::get_api_key(k).is_some();
+    let installed = path.is_some() && broken.is_none();
+    let playing = load_config(&st.data_dir).hermes_playing;
+    let is_healthy = is_running && healthy(st, port).await;
+    let (error, restarts) = {
+        let s = SUP.lock();
+        (s.error.clone(), s.restarts)
+    };
+    let inst = installing();
+    let slack_error = if is_running && slack { slack_problem(&LOG.lock()) } else { None };
     HermesStatus {
-        installed: path.is_some() && broken.is_none(),
+        playing,
+        phase: gateway_phase(inst, installed, playing, is_running, is_healthy, error.is_some()).into(),
+        error: if is_running { None } else { error },
+        restarts,
+        apple_silicon: is_apple_silicon(),
+        installing: inst,
+        slack_error,
+        slack_app_url: slack_create_app_url("Flo"),
+        installed,
         broken,
         path: path.map(|p| p.display().to_string()),
         outdated: version.as_deref().map(|v| !version_at_least(v, TESTED_VERSION)).unwrap_or(false),
         version,
         tested_version: TESTED_VERSION.into(),
         running: is_running,
-        healthy: is_running && healthy(st, port).await,
+        healthy: is_healthy,
         port,
         started_at,
         home: home_dir(&st.data_dir).display().to_string(),
@@ -696,14 +1314,38 @@ pub fn hermes_export(st: State<Shared>) -> R<ExportSummary> {
     export(st.inner()).map_err(e)
 }
 
+/// Play: start the gateway and keep it running (also after a crash and at the next launch).
 #[tauri::command]
 pub async fn hermes_start(st: State<'_, Shared>) -> R<HermesStatus> {
-    start(st.inner()).await.map_err(e)
+    play(st.inner()).await.map_err(e)
+}
+
+/// Pause: stop the gateway; Hermes stops answering everywhere until Play.
+#[tauri::command]
+pub async fn hermes_stop(st: State<'_, Shared>) -> R<HermesStatus> {
+    Ok(pause(st.inner()).await)
+}
+
+/// Run the official installer (explicit click only). Progress: EV_INSTALL / EV_INSTALL_LOG.
+#[tauri::command]
+pub fn hermes_install(st: State<Shared>) -> R<InstallState> {
+    install(st.inner()).map_err(e)
 }
 
 #[tauri::command]
-pub async fn hermes_stop(st: State<'_, Shared>) -> R<HermesStatus> {
-    Ok(stop(st.inner()).await)
+pub fn hermes_install_cancel() {
+    cancel_install();
+}
+
+#[tauri::command]
+pub fn hermes_install_state() -> InstallState {
+    install_state()
+}
+
+/// Check the bot token with Slack (auth.test) and fill an empty allow-list with the user's own ID.
+#[tauri::command]
+pub async fn hermes_slack_check(st: State<'_, Shared>) -> R<SlackBotCheck> {
+    Ok(slack_check(st.inner()).await)
 }
 
 #[tauri::command]
@@ -867,5 +1509,150 @@ mod tests {
     fn tokens_never_reach_the_log() {
         let l = redact("connected with xoxb-123456789012-abcdef and Bearer and sk-ant-abcdefghijklmnop ok");
         assert!(!l.contains("xoxb-1") && !l.contains("sk-ant-a") && l.contains("ok") && l.contains("[hidden]"));
+    }
+
+    // ── one-click install, Play / Pause, Slack setup ──
+    #[cfg(unix)]
+    fn fake(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, format!("#!/bin/bash\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
+    #[test]
+    fn the_installer_runs_the_official_script_without_prompts() {
+        let s = installer_script(INSTALL_SCRIPT_URL);
+        assert!(s.starts_with("set -o pipefail; curl -fsSL "));
+        assert!(s.contains("https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive"));
+        assert!(INSTALL_COMMAND.contains(INSTALL_SCRIPT_URL));
+        assert_eq!(INSTALL_TIMEOUT, Duration::from_secs(600));
+        assert!(arm64_from_sysctl("1\n") && !arm64_from_sysctl("0") && !arm64_from_sysctl(""));
+        assert_eq!(strip_ansi("\x1b[0;32m✓\x1b[0m venv ready\r"), "✓ venv ready");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fake_installer_streams_its_output_and_succeeds() {
+        let dir = std::env::temp_dir().join(format!("flo-hermes-inst-ok-{}", std::process::id()));
+        // it must not see Flo's managed HERMES_HOME (it would install into Flo's folder)
+        std::env::set_var("HERMES_HOME", "/flo/managed");
+        let bin = fake(&dir, "install.sh", "echo \"→ Installing Hermes\"\necho \"home=${HERMES_HOME:-default}\"\necho 'warn on stderr' >&2\nprintf '\\033[0;32m✓\\033[0m done\\n'\nexit 0");
+        let cancel = AtomicBool::new(false);
+        let mut seen = vec![];
+        let run = rt().block_on(run_installer(&bin, &[], &[], Duration::from_secs(20), &cancel, |l| seen.push(l))).unwrap();
+        std::env::remove_var("HERMES_HOME");
+        assert!(run.ok && !run.cancelled && !run.timed_out && run.code == Some(0));
+        assert!(seen.contains(&"→ Installing Hermes".to_string()) && seen.contains(&"home=default".to_string()));
+        assert!(seen.contains(&"warn on stderr".to_string()) && seen.contains(&"✓ done".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_install_says_exactly_why() {
+        let dir = std::env::temp_dir().join(format!("flo-hermes-inst-fail-{}", std::process::id()));
+        let bin = fake(&dir, "install.sh", "echo '→ Checking prerequisites'\necho \"✗ git needs Apple's Command Line Tools. Install Apple's Command Line Tools (run: xcode-select --install), then re-run this installer.\" >&2\nexit 1");
+        let cancel = AtomicBool::new(false);
+        let run = rt().block_on(run_installer(&bin, &[], &[], Duration::from_secs(20), &cancel, |_| {})).unwrap();
+        assert!(!run.ok && run.code == Some(1));
+        let why = install_error(&run);
+        assert!(why.starts_with("The Hermes installer stopped: git needs Apple's Command Line Tools"), "{why}");
+
+        let net = InstallRun { code: Some(6), tail: vec!["curl: (6) Could not resolve host: hermes-agent.nousresearch.com".into()], ..Default::default() };
+        assert!(install_error(&net).contains("couldn't reach hermes-agent.nousresearch.com"));
+        let intel = InstallRun { code: Some(1), tail: vec!["✗ no pinned uv build for this platform (Darwin x86_64); Hermes does not support this host".into()], ..Default::default() };
+        assert_eq!(install_error(&intel), INTEL_MESSAGE);
+        let plain = InstallRun { code: Some(2), tail: vec!["something odd".into()], ..Default::default() };
+        assert_eq!(install_error(&plain), "The Hermes installer stopped (exit 2): something odd");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancel_and_timeout_stop_the_whole_installer() {
+        let dir = std::env::temp_dir().join(format!("flo-hermes-inst-slow-{}", std::process::id()));
+        let marker = dir.join("child-still-alive");
+        // a child process in the same group must die too (curl | bash)
+        let bin = fake(&dir, "install.sh", &format!("echo started\n(sleep 3; touch {}) &\nsleep 30", marker.display()));
+        let cancel = AtomicBool::new(false);
+        let r = rt();
+        let t0 = std::time::Instant::now();
+        let run = r.block_on(async {
+            let c = &cancel;
+            let fut = run_installer(&bin, &[], &[], Duration::from_secs(60), c, |_| {});
+            let stopper = async {
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                c.store(true, Ordering::SeqCst);
+            };
+            let (run, _) = tokio::join!(fut, stopper);
+            run
+        });
+        let run = run.unwrap();
+        assert!(run.cancelled && !run.ok && t0.elapsed() < Duration::from_secs(10));
+        assert!(install_error(&run).starts_with("Install cancelled"));
+        let cancel2 = AtomicBool::new(false);
+        let run = r.block_on(run_installer(&bin, &[], &[], Duration::from_millis(500), &cancel2, |_| {})).unwrap();
+        assert!(run.timed_out && run.tail == vec!["started".to_string()]);
+        assert!(install_error(&run).contains("didn't finish within 10 minutes"));
+        std::thread::sleep(Duration::from_secs(4));
+        assert!(!marker.exists(), "the installer's children must be stopped too");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_gateway_restarts_a_few_times_then_shows_the_error() {
+        assert_eq!(backoff(0), Some(Duration::from_secs(2)));
+        assert!(backoff(1).unwrap() < backoff(2).unwrap());
+        assert_eq!(backoff(3), None);
+        assert_eq!(gateway_phase(true, false, false, false, false, false), "installing");
+        assert_eq!(gateway_phase(false, false, true, false, false, false), "not_installed");
+        assert_eq!(gateway_phase(false, true, false, true, true, false), "paused");
+        assert_eq!(gateway_phase(false, true, true, false, false, false), "starting");
+        assert_eq!(gateway_phase(false, true, true, true, false, false), "starting");
+        assert_eq!(gateway_phase(false, true, true, true, true, false), "live");
+        assert_eq!(gateway_phase(false, true, true, false, false, true), "error");
+    }
+
+    #[test]
+    fn slack_errors_in_hermes_output_become_one_fix() {
+        let l = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(slack_problem(&l(&["Slack: auth.test failed: invalid_auth"])).unwrap().contains("rejected a token"));
+        assert!(slack_problem(&l(&["slack_bolt error: missing_scope (needed: channels:history)"])).unwrap().contains("missing a permission"));
+        assert_eq!(slack_problem(&l(&["API server listening", "Slack: connected (Socket Mode)"])), None);
+    }
+
+    #[test]
+    fn the_slack_manifest_has_socket_mode_and_hermes_scopes() {
+        let y = slack_manifest_yaml("Flo");
+        assert!(y.contains("socket_mode_enabled: true") && y.contains("messages_tab_enabled: true"));
+        for scope in ["app_mentions:read", "chat:write", "channels:history", "groups:history", "im:history", "mpim:history", "im:read", "im:write", "users:read", "reactions:write"] {
+            assert!(y.contains(&format!("      - {scope}\n")), "{scope}");
+        }
+        for ev in ["app_mention", "message.channels", "message.groups", "message.im", "message.mpim"] {
+            assert!(y.contains(&format!("      - {ev}\n")), "{ev}");
+        }
+        assert!(y.contains("  name: \"Flo\"\n") && y.contains("display_name: \"Flo\""));
+        assert!(slack_manifest_yaml("a\"b: c").contains("name: \"a\\\"b: c\""));
+        let url = slack_create_app_url("Flo");
+        assert!(url.starts_with("https://api.slack.com/apps?new_app=1&manifest_yaml="));
+        let parsed = url::Url::parse(&url).unwrap();
+        let back = parsed.query_pairs().find(|(k, _)| k == "manifest_yaml").unwrap().1.to_string();
+        assert_eq!(back, y);
+    }
+
+    #[test]
+    fn auth_test_answers_become_a_name_or_a_fix() {
+        let ok = parse_auth_test(&serde_json::json!({"ok": true, "user": "flo", "team": "Northwind", "user_id": "U0BOT"}));
+        assert_eq!((ok.ok, ok.bot.as_deref(), ok.team.as_deref(), ok.bot_user_id.as_deref()), (true, Some("flo"), Some("Northwind"), Some("U0BOT")));
+        let bad = parse_auth_test(&serde_json::json!({"ok": false, "error": "invalid_auth"}));
+        assert!(!bad.ok && bad.error.unwrap().contains("isn't valid"));
+        assert!(parse_auth_test(&serde_json::json!({"ok": false, "error": "ratelimited"})).error.unwrap().contains("ratelimited"));
     }
 }

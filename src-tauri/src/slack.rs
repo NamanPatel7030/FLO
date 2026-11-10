@@ -65,6 +65,11 @@ async fn me(st: &Shared) -> Result<String> {
     CACHE.lock().as_ref().and_then(|c| c.me.clone()).ok_or_else(|| anyhow!("Slack auth failed"))
 }
 
+/// The connected user's own Slack Member ID (auth.test `user_id`), e.g. for Hermes' allow-list.
+pub async fn my_user_id(st: &Shared) -> Result<String> {
+    me(st).await
+}
+
 async fn name_of(st: &Shared, user: &str) -> String {
     if let Some(n) = CACHE.lock().as_ref().and_then(|c| c.names.get(user).cloned()) {
         return n;

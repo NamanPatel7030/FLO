@@ -52,10 +52,14 @@ pub struct AgentConfig {
     pub confirm_every_step: bool,
     /// Hermes: hand Flo's AI key to the local Hermes process (in memory, never written to disk)
     pub hermes_use_flo_key: bool,
-    /// Hermes: also connect the Slack gateway when Hermes starts (tokens live in the keychain)
+    /// Older builds: "connect Slack when Hermes starts". Slack now joins whenever both tokens and a
+    /// Member ID are set, and Play / Pause is the switch. Kept so old files still load.
     pub slack_enabled: bool,
     /// Slack Member IDs allowed to talk to the bot ("U01ABC2DEF3, U04…"); empty = nobody
     pub slack_allowed_users: String,
+    /// Hermes Play / Pause: keep the gateway running (and start it at launch). Only
+    /// hermes::play / hermes::pause change it; a config save from the UI keeps the saved value.
+    pub hermes_playing: bool,
 }
 
 impl Default for AgentConfig {
@@ -72,6 +76,7 @@ impl Default for AgentConfig {
             hermes_use_flo_key: true,
             slack_enabled: false,
             slack_allowed_users: String::new(),
+            hermes_playing: false,
         }
     }
 }
@@ -582,6 +587,8 @@ fn on_agent_event(st: &Shared, kind: &str, text: &str) {
 pub fn spawn(st: Shared) {
     use tauri::Listener;
     ensure_loaded(&st.data_dir);
+    // Hermes was left playing: start it again, quietly
+    crate::hermes::spawn_autostart(st.clone());
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
     st.app.listen_any(ev::AGENT, move |event| {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(event.payload()) {
@@ -603,6 +610,7 @@ pub fn flo_agent_config(st: State<Shared>) -> AgentConfig {
 
 #[tauri::command]
 pub fn flo_agent_save_config(st: State<Shared>, config: AgentConfig) -> R<AgentConfig> {
+    let config = AgentConfig { hermes_playing: load_config(&st.data_dir).hermes_playing, ..config };
     save_config(&st.data_dir, &config).map_err(e)?;
     Ok(load_config(&st.data_dir))
 }
@@ -736,5 +744,19 @@ mod tests {
         let back = load_config(&dir);
         assert_eq!((back.engine.as_str(), back.persona.as_str(), back.memory), ("flo", "calm", false));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hermes_play_state_is_saved_and_old_files_still_load() {
+        let dir = std::env::temp_dir().join(format!("flo-agent-play-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // a file written before Play / Pause existed
+        std::fs::write(dir.join("flo-agent.json"), r#"{"engine":"hermes","slackEnabled":true,"slackAllowedUsers":"U0AR547TTRS"}"#).unwrap();
+        let c = load_config(&dir);
+        assert!(!c.hermes_playing && c.engine == "hermes" && c.slack_allowed_users == "U0AR547TTRS");
+        save_config(&dir, &AgentConfig { hermes_playing: true, ..c }).unwrap();
+        assert!(load_config(&dir).hermes_playing);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
