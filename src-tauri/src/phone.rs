@@ -124,7 +124,11 @@ async fn handle(st: &Shared, r: &PhoneRequest) -> (bool, String) {
             Err(e) => (false, format!("Couldn't save the note: {e}")),
         },
         Plan::Ask(q, screen) => match direct_answer(st, &q, screen.as_deref()).await {
-            Ok(answer) => (true, answer),
+            Ok(answer) => {
+                // shows in Assistant (labelled Phone), without popping the notch
+                crate::assistant::log_phone_ask(st, &q, &answer);
+                (true, answer)
+            }
             Err(e) => (false, format!("Flo couldn't answer: {e}")),
         },
     }

@@ -182,7 +182,6 @@ pub fn log_exchange(st: &Shared, resp: &mut AssistantResponse, source: &str) {
 
 /// A phone Ask the computer answered (phone.rs), shown on the Assistant page labelled "Phone".
 /// Not shown in the notch: the user is away from the Mac.
-#[allow(dead_code)] // wired from phone.rs `handle` (Plan::Ask) by its owner
 pub fn log_phone_ask(st: &Shared, question: &str, answer: &str) {
     let mut resp = AssistantResponse {
         id: db::new_id(),
