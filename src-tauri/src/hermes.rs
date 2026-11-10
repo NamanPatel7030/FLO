@@ -449,10 +449,58 @@ async fn base_env(st: &Shared, cfg: &AgentConfig) -> Vec<(String, String)> {
     env
 }
 
+
+/// The pid of a Hermes gateway recorded in `<home>/gateway.pid`, when that file describes a gateway
+/// for THIS Hermes home. Hermes writes `{"pid":…, "kind":"hermes-gateway", "hermes_home":…}`.
+pub fn recorded_gateway_pid(pid_json: &str, home: &Path) -> Option<u32> {
+    let v: serde_json::Value = serde_json::from_str(pid_json.trim()).ok()?;
+    if v["kind"].as_str() != Some("hermes-gateway") {
+        return None;
+    }
+    let same_home = v["hermes_home"].as_str().map(|h| Path::new(h.trim_end_matches('/')) == home).unwrap_or(false);
+    if !same_home {
+        return None;
+    }
+    v["pid"].as_u64().and_then(|p| u32::try_from(p).ok()).filter(|p| *p > 1)
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("/bin/kill").args(["-0", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+}
+#[cfg(not(unix))]
+fn pid_alive(_pid: u32) -> bool {
+    false
+}
+
+/// A gateway left behind by an earlier Flo (an update restart, a crash) keeps the Slack socket and
+/// port 8642 but nobody reads it: @Flo goes unanswered and the new gateway can't start. Stop it
+/// (TERM, then KILL after 10 s) before starting ours.
+async fn reap_orphan_gateway(st: &Shared) {
+    let home = home_dir(&st.data_dir);
+    let Ok(raw) = std::fs::read_to_string(home.join("gateway.pid")) else { return };
+    let Some(pid) = recorded_gateway_pid(&raw, &home) else { return };
+    if !pid_alive(pid) {
+        return;
+    }
+    push_log(st, format!("Stopping a Hermes gateway left over from an earlier Flo (pid {pid})."));
+    kill_group(pid, "-TERM");
+    let _ = std::process::Command::new("/bin/kill").args(["-TERM", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if !pid_alive(pid) {
+            return;
+        }
+    }
+    kill_group(pid, "-KILL");
+    let _ = std::process::Command::new("/bin/kill").args(["-KILL", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+
 pub async fn start(st: &Shared) -> Result<HermesStatus> {
     if running() {
         return Ok(status(st).await);
     }
+    reap_orphan_gateway(st).await;
     let bin = find_hermes().ok_or_else(|| anyhow!("Hermes isn't installed. Click Install Hermes in Flo Agent, Slack."))?;
     let cfg = load_config(&st.data_dir);
     export(st)?;
@@ -1369,6 +1417,27 @@ pub async fn hermes_slack_check(st: State<'_, Shared>) -> R<SlackBotCheck> {
 #[tauri::command]
 pub fn hermes_log() -> Vec<String> {
     LOG.lock().clone()
+}
+
+#[cfg(test)]
+mod orphan_tests {
+    use super::*;
+
+    #[test]
+    fn a_leftover_gateway_for_our_home_is_recognised() {
+        let home = Path::new("/Users/p/Library/Application Support/com.flo.flow/hermes");
+        let raw = r#"{"pid": 93310, "kind": "hermes-gateway", "argv": ["main.py", "gateway"], "hermes_home": "/Users/p/Library/Application Support/com.flo.flow/hermes"}"#;
+        assert_eq!(recorded_gateway_pid(raw, home), Some(93310));
+    }
+
+    #[test]
+    fn other_homes_other_kinds_and_junk_are_left_alone() {
+        let home = Path::new("/Users/p/Library/Application Support/com.flo.flow/hermes");
+        assert_eq!(recorded_gateway_pid(r#"{"pid": 5, "kind": "hermes-gateway", "hermes_home": "/Users/p/.hermes"}"#, home), None);
+        assert_eq!(recorded_gateway_pid(r#"{"pid": 5, "kind": "dashboard", "hermes_home": "/Users/p/Library/Application Support/com.flo.flow/hermes"}"#, home), None);
+        assert_eq!(recorded_gateway_pid(r#"{"pid": 1, "kind": "hermes-gateway", "hermes_home": "/Users/p/Library/Application Support/com.flo.flow/hermes"}"#, home), None);
+        assert_eq!(recorded_gateway_pid("12345", home), None);
+    }
 }
 
 #[cfg(test)]

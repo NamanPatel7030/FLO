@@ -582,6 +582,7 @@ pub fn repair_permissions(app: tauri::AppHandle) -> R<()> {
             return Err("tccutil failed".into());
         }
     }
+    crate::hermes::shutdown();
     app.restart();
 }
 
@@ -659,6 +660,8 @@ pub async fn sync_delete_remote(st: State<'_, Shared>) -> R<()> {
 
 #[tauri::command]
 pub fn restart_app(app: tauri::AppHandle) {
+    // restart() skips RunEvent::Exit: stop Hermes here or its gateway outlives Flo
+    crate::hermes::shutdown();
     app.restart();
 }
 
