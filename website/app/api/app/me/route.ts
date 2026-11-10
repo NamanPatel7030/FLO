@@ -1,5 +1,6 @@
 import { findUserById, touchAppUsage } from "@/lib/db";
 import { bearer, verifyAppToken } from "@/lib/tokens";
+import { bumpUsage } from "@/lib/usage";
 
 export const runtime = "nodejs";
 
@@ -10,5 +11,6 @@ export async function GET(req: Request) {
   const user = claims ? await findUserById(claims.sub) : null;
   if (!user) return Response.json({ error: "Not signed in." }, { status: 401 });
   await touchAppUsage(user.id);
+  await bumpUsage(user.id, "desktop");
   return Response.json({ user });
 }

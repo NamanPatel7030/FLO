@@ -30,7 +30,7 @@ import { EASE, GlassWindow, Heading, Reveal, Section, Wave } from "./ui";
 const FACTS = [
   { icon: Cpu, tint: "text-[#2f8cff]", title: "On-device speech model", body: "Whisper large-v3-turbo turns your voice into text locally." },
   { icon: WifiOff, tint: "text-[#7a6cff]", title: "Dictation works offline", body: "No connection needed to talk and type." },
-  { icon: ListChecks, tint: "text-[#ff7eb0]", title: "No telemetry", body: "Every request the app makes is listed in its network log." },
+  { icon: ListChecks, tint: "text-[#ff7eb0]", title: "No telemetry by default", body: "Usage counts only if you turn them on. Every request is in the app's network log." },
   { icon: Trash2, tint: "text-[#3fbf98]", title: "Delete any time", body: "Uninstall to remove local data. Email us to delete your account." },
 ];
 

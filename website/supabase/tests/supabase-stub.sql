@@ -21,6 +21,11 @@ create table if not exists auth.users (
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now()
 );
+-- columns the server reads for counts and the admin panel (real Supabase has many more)
+alter table auth.users add column if not exists raw_app_meta_data jsonb default '{}'::jsonb;
+alter table auth.users add column if not exists email_confirmed_at timestamptz default now();
+alter table auth.users add column if not exists last_sign_in_at timestamptz;
+alter table auth.users add column if not exists deleted_at timestamptz;
 
 -- Supabase's auth.uid(): the `sub` claim of the request JWT.
 create or replace function auth.uid() returns uuid

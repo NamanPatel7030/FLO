@@ -126,6 +126,8 @@ export interface Settings {
   sttKeepWarmMins?: number;
   /** answer an identical question from a 10-minute cache */
   reuseAnswers?: boolean;
+  /** Settings → Privacy: send daily usage totals (numbers only) to the Flo account. Off by default. */
+  shareUsage?: boolean;
 }
 
 // ── sync your data (src-tauri/src/sync.rs, website/app/api/sync) ────────────

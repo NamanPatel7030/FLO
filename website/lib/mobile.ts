@@ -4,6 +4,7 @@ import type postgres from "postgres";
 import { findUserById, isUuid, sql, toIso, type User } from "./db";
 import type { ActionIn, ActionKind, ComputerState } from "./desktop-state";
 import { bearer, verifyAppToken } from "./tokens";
+import { bumpUsage, countPhoneRequest } from "./usage";
 
 /**
  * Presence (active / away), paired phones, pairing codes and the notification inbox.
@@ -54,7 +55,10 @@ export async function desktopCaller(req: Request): Promise<Caller | null> {
   if (!t || t.startsWith(DEVICE_PREFIX)) return null;
   const claims = await verifyAppToken(t);
   const user = claims ? await findUserById(claims.sub) : null;
-  return user ? { user, deviceId: null } : null;
+  if (!user) return null;
+  // the desktop polls while open and signed in: that traffic is what "active" means (lib/usage.ts)
+  await bumpUsage(user.id, "desktop");
+  return { user, deviceId: null };
 }
 
 /** Phone device token → user (+ bumps last_seen). */
@@ -68,7 +72,9 @@ export async function mobileCaller(req: Request): Promise<Caller | null> {
   const r = rows[0];
   if (!r) return null;
   const user = await findUserById(String(r.user_id));
-  return user ? { user, deviceId: String(r.id) } : null;
+  if (!user) return null;
+  await bumpUsage(user.id, "phone");
+  return { user, deviceId: String(r.id) };
 }
 
 export async function anyCaller(req: Request): Promise<Caller | null> {
@@ -308,6 +314,7 @@ export async function queueRequest(userId: string, deviceId: string | null, mode
   const [r] = await db<RequestRow[]>`
     insert into app.mobile_requests (user_id, device_id, mode, text, context) values (${userId}, ${deviceId}, ${mode}, ${text}, ${mode === "ask" ? context : null})
     returning id, mode, text, status, answer, created_at, answered_by`;
+  await countPhoneRequest(userId);
   return toRequest(r);
 }
 

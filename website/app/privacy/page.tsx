@@ -14,13 +14,13 @@ const AT_A_GLANCE = [
     icon: Cloud,
     tint: "text-[#7a6cff]",
     title: "Only if you turn it on",
-    items: ["Sync: an end-to-end encrypted backup", "Text to the AI provider you set up, with your own key"],
+    items: ["Sync: an end-to-end encrypted backup", "Text to the AI provider you set up, with your own key", "Usage counts: numbers only, never what you say or type"],
   },
   {
     icon: Server,
     tint: "text-[#2f8cff]",
     title: "On our server",
-    items: ["Name and email, or your Google id and picture", "A hashed password, if you use one", "When your app first and last signed in"],
+    items: ["Name and email, or your Google id and picture", "A hashed password, if you use one", "When your apps check in, counted as active time per day"],
   },
 ];
 
@@ -30,7 +30,7 @@ export default function PrivacyPage() {
       tag="Privacy policy"
       title="Privacy, in"
       accent="plain words."
-      lead="Flo is local-first. Your voice is turned into text on your computer, and what you say stays there unless you choose otherwise. There is no telemetry."
+      lead="Flo is local-first. Your voice is turned into text on your computer, and what you say stays there unless you choose otherwise. No telemetry by default."
     >
       <div className="grid gap-3 md:grid-cols-3" data-testid="privacy-glance">
         {AT_A_GLANCE.map((g) => (
@@ -56,13 +56,17 @@ export default function PrivacyPage() {
           <p>Flo is local-first. Your dictation, transcripts, meeting notes, to-dos, screen text, context documents and API keys stay on your computer, in an encrypted database and your system keychain, unless you turn on Sync (below).</p>
         </LegalBlock>
         <LegalBlock title="What this website stores">
-          <p>Your account: name, email and a securely hashed password (or your Google account id and picture), held by our sign-in provider Supabase, plus short-lived one-time sign-in codes and the first and last time your Flo app signed in (used only for our total user counts). If you turn on Sync, it also stores your encrypted sync data, described next.</p>
+          <p>Your account: name, email and a securely hashed password (or your Google account id and picture), held by our sign-in provider Supabase, plus short-lived one-time sign-in codes. If you turn on Sync, it also stores your encrypted sync data, described next.</p>
+        </LegalBlock>
+        <LegalBlock title="Activity and usage counts">
+          <p>Your signed-in apps already check in with our server, to keep you signed in and to deliver requests from your phone. We use those check-ins to record which days, and roughly how many minutes, your computer app and phone were in use, and which platform and app version your computer runs. That is how we count active users. It contains no words, screens or files, and is kept for about 13 months.</p>
+          <p>Usage counts are shared only if you turn them on (Settings, Privacy, Share usage counts with Flo): daily totals such as how many dictations and assistant questions, never what you said or typed. Turn it off and the counts we hold are deleted.</p>
         </LegalBlock>
         <LegalBlock title="Sync (off unless you turn it on)">
           <p>Sync backs up your to-dos, notes and meetings, dictionary, skills, projects and dictation history, and keeps your Macs in step. Everything is encrypted on your Mac before it is sent, with a key that stays in your keychain and is shown to you once as a recovery key. We store only ciphertext we cannot read, and we cannot recover your key. Delete your synced copy any time in Settings, Privacy; deleting your account deletes it too.</p>
         </LegalBlock>
         <LegalBlock title="What the app sends">
-          <p>Only what you choose: text to the AI provider you configure, with your own key, and sign-in requests to this website. Every request, including Sync, is listed in the app&apos;s network log. There is no telemetry.</p>
+          <p>Only what you choose: text to the AI provider you configure, with your own key, and account requests to this website (sign-in, your phone, Sync, and usage counts if you turn them on). Every request is listed in the app&apos;s network log. No telemetry by default.</p>
         </LegalBlock>
         <LegalBlock title="Deleting your account">
           <p>

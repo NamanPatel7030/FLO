@@ -120,6 +120,7 @@ const settings: Settings = {
   sync: { enabled: false, categories: ["todos", "notes", "settings", "history"] },
   sttKeepWarmMins: 10,
   reuseAnswers: true,
+  shareUsage: false,
 };
 
 // ── sync your data (mock): ?syncjoin=1 pretends another Mac already set Sync up ──

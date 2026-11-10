@@ -1125,7 +1125,7 @@ function Privacy({ s, set }: P) {
       <Card className="flex items-start gap-3 p-4">
         <ShieldCheck size={20} className="mt-0.5 shrink-0 text-emerald-500" />
         <div className="text-[13px] text-muted">
-          <span className="font-medium text-[var(--fg)]">Local-first by design.</span> Your history, notes, to-dos and screen text are stored encrypted on this device. No account, no telemetry. Every network request
+          <span className="font-medium text-[var(--fg)]">Local-first by design.</span> Your history, notes, to-dos and screen text are stored encrypted on this device. No telemetry by default. Every network request
           goes through one gate, see it below.
         </div>
       </Card>
@@ -1140,6 +1140,12 @@ function Privacy({ s, set }: P) {
           onChange={(v) => set({ reuseAnswers: v })}
         />
         <ClearCacheRow />
+        <Toggle
+          label="Share usage counts with Flo"
+          hint="Only numbers, like how many dictations and assistant questions per day. Never what you say or type. Sent once an hour while you're signed in; turning it off deletes the counts Flo holds."
+          checked={s.shareUsage ?? false}
+          onChange={(v) => set({ shareUsage: v })}
+        />
         <Toggle label="Attention" hint="On: Flo quietly reads what is on screen to spot things you should do, and turns them into to-dos. Off: it never watches your screen." checked={s.attentionEnabled} onChange={(v) => set({ attentionEnabled: v })} />
         {s.attentionEnabled && (
           <>

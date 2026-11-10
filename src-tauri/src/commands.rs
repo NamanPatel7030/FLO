@@ -45,7 +45,9 @@ pub(crate) fn store_settings(st: &Shared, settings: Settings) -> anyhow::Result<
         crate::cache::ANSWERS.lock().clear();
     }
     let approvals_changed = st.settings().claude_approvals != settings.claude_approvals;
+    let (share_was, share_now) = (st.settings().share_usage, settings.share_usage);
     *st.settings.write() = settings;
+    crate::usage_share::on_settings_changed(st, share_was, share_now);
     // turning "Allow / Deny from the notch" on or off adds / removes the PermissionRequest hook
     if approvals_changed {
         crate::claude::refresh_if_installed(st);

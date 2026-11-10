@@ -14,7 +14,8 @@ Lives in the **MacBook notch** (bottom-right corner on Windows). Bring your own 
 
 ## Privacy model
 - Everything is stored locally in an **encrypted SQLite (SQLCipher)** DB; the key lives in the macOS Keychain / Windows Credential Manager.
-- **No account, no telemetry, no sync.** Every network call goes through one egress guard
+- **Account optional, no telemetry by default, sync off by default.** Usage counts (numbers only) are sent only if you
+  turn on Settings → Privacy → Share usage counts (see docs/admin.md). Every network call goes through one egress guard
   (`src-tauri/src/egress.rs`) and shows up in Settings → Privacy → Network log.
 - Localhost (Ollama / LM Studio) is always allowed. Cloud providers are used **only** with your key and only
   for the features you allow (Assistant cloud toggle, Attention cloud toggle — off by default).

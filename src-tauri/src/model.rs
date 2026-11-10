@@ -121,6 +121,9 @@ pub struct Settings {
     pub stt_keep_warm_mins: u32,
     /// answer an identical question (same model, context and screen) from a 10-minute cache
     pub reuse_answers: bool,
+    /// Settings → Privacy → "Share usage counts with Flo": daily totals only, never content
+    /// (usage_share.rs). Off by default.
+    pub share_usage: bool,
 }
 
 /// End-to-end encrypted sync. Off by default; categories are what the user chose to sync.
@@ -221,6 +224,7 @@ impl Default for Settings {
             sync: SyncSettings::default(),
             stt_keep_warm_mins: 10,
             reuse_answers: true,
+            share_usage: false,
         }
     }
 }

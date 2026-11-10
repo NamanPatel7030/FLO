@@ -53,6 +53,7 @@ mod sync;
 mod tcc;
 mod text;
 mod updater;
+mod usage_share;
 mod weather;
 
 use hotkey::HotkeyEvent;
@@ -700,6 +701,7 @@ pub fn run() {
             phone::spawn(st.clone());
             phone_state::spawn(st.clone());
             sync::spawn(st.clone());
+            usage_share::spawn(st.clone());
             autocontinue::spawn(st.clone());
             attention::spawn(st.clone());
             // both read the hook token from the keychain, which can wait on a macOS permission
