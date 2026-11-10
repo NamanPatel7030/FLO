@@ -247,6 +247,99 @@ pub fn parse_attention(raw: &str, min_confidence: f64) -> Vec<ExtractedTodo> {
         .collect()
 }
 
+/// System prompt for "Ask" from the paired phone (phone.rs). The answer is typed straight into the
+/// field the user is in on the phone, so it must BE the deliverable: the drafted message itself, never
+/// a description of it ("Drafted a Diwali message."). Plain text, no JSON, no actions: phone requests
+/// never act on the computer. Keep in sync with PHONE_ANSWER_RULES in website/lib/phone-ask.ts (the
+/// cloud fallback that answers while the computer is off).
+pub const PHONE_ANSWER_RULES: &str = r#"You are Flo, answering from the user's phone. Your reply is inserted directly into the text field they are typing in, exactly as you write it.
+
+Rules:
+- When asked to write, draft, compose, reply, rewrite, translate or make text (a message, wish, email, caption, comment, answer), output only the finished text, ready to send. No preamble ("Here's a draft:"), no quotes around it, no explanations, no notes, no options, no sign-off offers ("Let me know if...").
+- Never describe what you wrote. "draft a message: happy Diwali" means you output the Diwali message itself, not "Message drafted".
+- If the screen of the user's phone is given, read it: who they are talking to, what was said last, the app. Reply to what is actually there, using real names and details. Never use placeholders like [Name].
+- Match the language, script and tone requested. If the user asks for Hindi, Hinglish or Gujarati, or the conversation on screen is in that language, write in it.
+- Fit the app: chat messages are short and natural; an email gets a greeting and a sign-off with the user's name.
+- Sound like a person, not an AI: no filler, no em dashes, emoji only if the conversation uses them or the request suits them (a festival wish may have one).
+- For questions, answer in 1-3 sentences, plain text, to the point.
+- You cannot act on the user's computer or phone from here. If asked to do something (open an app, send, add a to-do), say in one short sentence that you can only answer, and give the most useful text you can."#;
+
+pub fn phone_answer_system(context: &str) -> String {
+    format!("{PHONE_ANSWER_RULES}\n\nWhat Flo knows about the user (use only when relevant):\n{context}")
+}
+
+/// The user message for a phone Ask: the visible phone screen (from the bubble, only when the user
+/// held Ask; never password fields) followed by the request.
+pub fn phone_answer_user(question: &str, screen: Option<&str>) -> String {
+    let Some(screen) = screen.map(str::trim).filter(|s| !s.is_empty()) else {
+        return question.to_string();
+    };
+    let app = screen.lines().next().and_then(|l| l.strip_prefix("App:")).map(str::trim).filter(|a| !a.is_empty());
+    let head = match app {
+        Some(a) => format!("What's on the user's phone screen (app: {a}):"),
+        None => "What's on the user's phone screen:".to_string(),
+    };
+    format!("{head}\n\"\"\"\n{}\n\"\"\"\n\nThe user's request: {question}", crate::text::truncate_chars(screen, 6000))
+}
+
+fn is_preamble(line: &str) -> bool {
+    let l = line.trim().to_lowercase();
+    if !l.ends_with(':') || l.chars().count() > 80 {
+        return false;
+    }
+    ["here", "sure", "okay", "ok,", "ok!", "of course", "certainly", "absolutely", "draft", "message", "reply", "below"]
+        .iter()
+        .any(|p| l.starts_with(p))
+}
+
+fn strip_wrapping_quotes(s: &str) -> &str {
+    for (open, close) in [('"', '"'), ('\u{201c}', '\u{201d}'), ('\'', '\''), ('\u{2018}', '\u{2019}'), ('«', '»')] {
+        if let Some(inner) = s.strip_prefix(open).and_then(|t| t.strip_suffix(close)) {
+            // only when the quotes wrap the whole text, not "a" and "b"
+            if !inner.contains(open) && !inner.contains(close) && !inner.trim().is_empty() {
+                return inner.trim();
+            }
+        }
+    }
+    s
+}
+
+/// Safety net on a phone answer: drop a "Here's a draft:" line, code fences, quotes around the whole
+/// text and a trailing "Let me know if..." so only the deliverable is inserted.
+pub fn clean_phone_answer(raw: &str) -> String {
+    let mut s = raw.trim().to_string();
+    if s.starts_with("```") && s.ends_with("```") && s.len() >= 6 {
+        let inner = &s[3..s.len() - 3];
+        let inner = inner.split_once('\n').map(|(first, rest)| if first.trim().chars().all(|c| c.is_ascii_alphanumeric()) { rest } else { inner }).unwrap_or(inner);
+        s = inner.trim().to_string();
+    }
+    // "Draft: text" on one line, or a preamble line followed by the text
+    let lower = s.to_lowercase();
+    for p in ["draft:", "message:", "reply:"] {
+        if lower.starts_with(p) && s.len() > p.len() && !s[p.len()..].trim().is_empty() {
+            s = s[p.len()..].trim().to_string();
+            break;
+        }
+    }
+    if let Some((first, rest)) = s.split_once('\n') {
+        if is_preamble(first) && !rest.trim().is_empty() {
+            s = rest.trim().to_string();
+        }
+    }
+    let mut lines: Vec<&str> = s.lines().collect();
+    while let Some(last) = lines.last() {
+        let l = last.trim().to_lowercase();
+        let filler = ["let me know", "feel free", "hope this helps", "i hope this", "would you like", "want me to"].iter().any(|p| l.starts_with(p));
+        if (l.is_empty() || filler) && lines.len() > 1 {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    let s = lines.join("\n");
+    strip_wrapping_quotes(s.trim()).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +395,51 @@ mod tests {
         // bounded: a huge dictionary doesn't blow up every cleanup request
         let many: Vec<(String, String)> = (0..500).map(|i| (format!("w{i}"), format!("W{i}x"))).collect();
         assert!(cleanup_system("Notes", &[], &many).len() < 2000);
+    }
+
+    #[test]
+    fn phone_prompt_asks_for_the_deliverable_only() {
+        let p = phone_answer_system("Today: 2026-11-10 09:00 (Tuesday)\nUser: Parth\n");
+        let l = p.to_lowercase();
+        // the reply is inserted straight into the field the user is typing in
+        assert!(l.contains("inserted directly into the text field"), "{p}");
+        assert!(l.contains("output only the finished text"));
+        assert!(l.contains("no preamble") && l.contains("no quotes"));
+        assert!(l.contains("hinglish") && l.contains("gujarati"));
+        assert!(l.contains("1-3 sentences"));
+        // JSON / actions belong to the computer assistant, never to phone answers
+        assert!(!l.contains("insert_text") && !l.contains("json"));
+        assert!(p.contains("User: Parth"));
+    }
+
+    #[test]
+    fn phone_user_message_carries_the_screen() {
+        let ctx = "App: WhatsApp (com.whatsapp)\nWindow: Priya\n\nPriya: Are you coming tonight?";
+        let u = phone_answer_user("how should I reply to her?", Some(ctx));
+        assert!(u.contains("What's on the user's phone screen (app: WhatsApp (com.whatsapp))"), "{u}");
+        assert!(u.contains("Priya: Are you coming tonight?"));
+        assert!(u.trim_end().ends_with("how should I reply to her?"));
+        // no screen: just the request
+        assert_eq!(phone_answer_user("draft a message: happy Diwali", None), "draft a message: happy Diwali");
+        assert_eq!(phone_answer_user("x", Some("   ")), "x");
+        // a screen without an App: line still works
+        assert!(phone_answer_user("x", Some("hello")).contains("What's on the user's phone screen:"));
+    }
+
+    #[test]
+    fn phone_answer_cleanup_strips_preambles_quotes_and_sign_offs() {
+        assert_eq!(clean_phone_answer("Here's a draft:\n\nHappy Diwali! Wishing you light and joy."), "Happy Diwali! Wishing you light and joy.");
+        assert_eq!(clean_phone_answer("Sure! Here is the message:\n\"Happy Diwali to you and your family!\""), "Happy Diwali to you and your family!");
+        assert_eq!(clean_phone_answer("\u{201c}Happy Diwali!\u{201d}"), "Happy Diwali!");
+        assert_eq!(clean_phone_answer("Draft: Happy Diwali, Priya!"), "Happy Diwali, Priya!");
+        assert_eq!(clean_phone_answer("```\nHappy Diwali!\n```"), "Happy Diwali!");
+        assert_eq!(clean_phone_answer("Happy Diwali!\n\nLet me know if you'd like any changes."), "Happy Diwali!");
+        // real content is kept as is, including inner quotes and a colon in the text itself
+        assert_eq!(clean_phone_answer("Meeting at 5: see you there"), "Meeting at 5: see you there");
+        assert_eq!(clean_phone_answer("She said \"yes\" and left."), "She said \"yes\" and left.");
+        assert_eq!(clean_phone_answer("Line one\nLine two"), "Line one\nLine two");
+        // a lone preamble is not stripped to nothing
+        assert_eq!(clean_phone_answer("Here you go:"), "Here you go:");
+        assert_eq!(clean_phone_answer("  "), "");
     }
 }

@@ -96,7 +96,9 @@ tokio::task_local! {
 }
 
 /// Run the assistant for a request from the phone. Data actions (to-dos, projects, meetings,
-/// media) work as usual; anything that would act on the Mac's screen is skipped.
+/// media) work as usual; anything that would act on the Mac's screen is skipped. Phone Asks now use
+/// phone.rs `direct_answer` (plain text to insert on the phone); kept for data requests later.
+#[allow(dead_code)]
 pub async fn run_for_phone(st: &Shared, query: &str) -> Result<AssistantResponse> {
     let front = FrontApp { name: "your phone".into(), pid: 0 };
     FROM_PHONE.scope(true, run_mode(st, query, None, &front, None, "quick")).await
