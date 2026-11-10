@@ -1,26 +1,29 @@
 package expo.modules.flobubble
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Point
 import android.graphics.Rect
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -32,13 +35,21 @@ import kotlin.math.roundToInt
  * island only shows status, and tapping it while an Ask is pending opens the card.
  *
  * Its window never takes focus (the keyboard stays up) but is touchable so the card's buttons work.
+ *
+ * How it stays smooth: resizing an overlay window is expensive (a WindowManager round trip and a
+ * new surface), so the window is resized at most twice per morph: grown to fit the larger of the
+ * two shapes when a morph starts, and trimmed to the final shape when it ends. In between, the
+ * black shape is the capsule's *outline* (a rounded rect that clips the capsule), and the compact
+ * row's two halves ride its edges with translationX. Each frame only invalidates the outline and
+ * moves two views: no measure or layout pass. Widths keep the screen's parity so the shape is
+ * centered to the exact pixel and never shifts sideways. Text and indicator swaps cross-fade.
  */
 internal class FloIsland(private val ctx: Context, private val wm: WindowManager) {
   var onClose: () -> Unit = {}
   var onInsert: (String) -> Unit = {}
   var onCopy: (String) -> Unit = {}
 
-  private enum class Indicator { BARS, DOT, ICON }
+  private enum class Indicator { BARS, DOTS, ICON }
 
   private val main = Handler(Looper.getMainLooper())
   private val autoHide = Runnable { dismiss() }
@@ -46,8 +57,8 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
   private var root: FrameLayout? = null
   private var params: WindowManager.LayoutParams? = null
   private lateinit var capsule: FrameLayout
-  private lateinit var shape: GradientDrawable
   private lateinit var compact: LinearLayout
+  private lateinit var slot: FrameLayout
   private lateinit var wave: FloWave
   private lateinit var badge: ImageView
   private lateinit var label: TextView
@@ -58,13 +69,20 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
   private lateinit var actions: LinearLayout
 
   private var morph: ValueAnimator? = null
-  private var radius = 0f
+  // the shape being drawn right now (px); the window is always at least this big
+  private var curW = 0f
+  private var curH = 0f
+  private var curR = 0f
   private var compactH = 0
   private var topY = 0
   private var centerGap = 0
   private var expanded = false
   private var asking = false // an Ask is pending or answered: the card belongs to it
   private var answer: String? = null
+  // what the compact row shows (or is fading to)
+  private var shownText = ""
+  private var shownKey = ""
+  private var swapSeq = 0
 
   // ── what the dock and the service call ─────────────────────────────────────
 
@@ -79,7 +97,7 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
 
   /** After you let go: "Typing" for Dictate, "Thinking" for Ask. */
   fun working(mode: String) {
-    setCompact(if (mode == "ask") "Thinking" else "Typing", FloColors.forMode(mode), Indicator.DOT)
+    setCompact(if (mode == "ask") "Thinking" else "Typing", FloColors.forMode(mode), Indicator.DOTS)
   }
 
   /** A short confirmation ("Typed", "Copied", "Inserted") that then tucks away. */
@@ -103,7 +121,7 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
   }
 
   fun askPending(q: String) {
-    setCompact("Thinking", FloColors.ASK, Indicator.DOT)
+    setCompact("Thinking", FloColors.ASK, Indicator.DOTS)
     if (root == null) return
     asking = true; answer = null
     question.text = q
@@ -134,24 +152,20 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     expand()
   }
 
+  /** Fade and settle away (the window is removed when the fade ends). */
   fun dismiss() {
-    main.removeCallbacks(autoHide)
-    morph?.cancel(); morph = null
-    val r = root ?: return
-    root = null; params = null
-    expanded = false; asking = false; answer = null
-    wave.stop()
-    capsule.animate().alpha(0f).scaleX(0.85f).scaleY(0.85f).setStartDelay(0).setDuration(160)
+    val r = detach() ?: return
+    val c = capsule
+    if (!animationsOn()) { runCatching { wm.removeView(r) }; return }
+    c.pivotX = c.width / 2f
+    c.pivotY = compactH / 2f
+    c.animate().alpha(0f).scaleX(0.92f).scaleY(0.92f).setStartDelay(0).setDuration(FloMotion.DISMISS)
+      .setInterpolator(floEase()).withLayer()
       .withEndAction { runCatching { wm.removeView(r) } }.start()
   }
 
   fun dismissNow() {
-    main.removeCallbacks(autoHide)
-    morph?.cancel(); morph = null
-    val r = root ?: return
-    root = null; params = null
-    expanded = false; asking = false; answer = null
-    wave.stop()
+    val r = detach() ?: return
     runCatching { wm.removeView(r) }
   }
 
@@ -164,33 +178,77 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     p.y = topY
     runCatching { wm.updateViewLayout(r, p) }
     compact.layoutParams = compact.layoutParams.apply { height = compactH }
-    if (expanded) expand() else morphTo(compactWidth(label.text.toString()), compactH, compactH / 2f)
+    if (expanded) expand() else morphTo(compactWidth(shownText), compactH, compactH / 2f)
+  }
+
+  private fun detach(): FrameLayout? {
+    main.removeCallbacks(autoHide)
+    morph?.cancel(); morph = null
+    val r = root ?: return null
+    root = null; params = null
+    expanded = false; asking = false; answer = null
+    swapSeq++
+    wave.stop()
+    return r
   }
 
   // ── states ─────────────────────────────────────────────────────────────────
 
   private fun setCompact(text: String, color: Int, indicator: Indicator, icon: Int = 0) {
+    val fresh = root == null
     if (!ensure()) return
     main.removeCallbacks(autoHide)
-    label.text = text
     capsule.contentDescription = text
-    when (indicator) {
-      Indicator.BARS -> { badge.visibility = View.GONE; wave.visibility = View.VISIBLE; wave.bars(color) }
-      Indicator.DOT -> { badge.visibility = View.GONE; wave.visibility = View.VISIBLE; wave.pulse(color) }
-      Indicator.ICON -> {
-        wave.stop(); wave.visibility = View.GONE
-        badge.visibility = View.VISIBLE
-        badge.setImageResource(icon)
-        badge.imageTintList = ColorStateList.valueOf(color)
-      }
-    }
+    val wasExpanded = expanded
     if (expanded) {
       expanded = false
-      card.animate().alpha(0f).setStartDelay(0).setDuration(90).withEndAction { if (!expanded) card.visibility = View.GONE }.start()
+      card.animate().cancel()
+      card.animate().alpha(0f).setStartDelay(0).setDuration(FloMotion.FADE_OUT).withLayer()
+        .withEndAction { if (!expanded) card.visibility = View.GONE }.start()
       compact.visibility = View.VISIBLE
-      compact.animate().alpha(1f).setStartDelay(90).setDuration(140).start()
+      compact.animate().cancel()
+      compact.animate().alpha(1f).setStartDelay(FloMotion.FADE_OUT).setDuration(FloMotion.FADE_IN).start()
+    }
+    swapContent(text, "$indicator:$color:$icon", instant = fresh || wasExpanded) {
+      when (indicator) {
+        Indicator.BARS -> { badge.visibility = View.GONE; wave.visibility = View.VISIBLE; wave.bars(color) }
+        Indicator.DOTS -> { badge.visibility = View.GONE; wave.visibility = View.VISIBLE; wave.dots(color) }
+        Indicator.ICON -> {
+          wave.stop(); wave.visibility = View.GONE
+          badge.visibility = View.VISIBLE
+          badge.setImageResource(icon)
+          badge.imageTintList = ColorStateList.valueOf(color)
+        }
+      }
     }
     morphTo(compactWidth(text), compactH, compactH / 2f)
+  }
+
+  /**
+   * Change the label and the indicator with a quick cross-fade (out, swap, in) instead of an
+   * instant swap. Nothing changes if both are already showing; a newer swap supersedes an older one.
+   */
+  private fun swapContent(text: String, key: String, instant: Boolean, apply: () -> Unit) {
+    val sameText = text == shownText
+    val sameKey = key == shownKey
+    shownText = text; shownKey = key
+    if (sameText && sameKey) return
+    val seq = ++swapSeq
+    val parts = listOfNotNull(if (sameText) null else label, if (sameKey) null else slot)
+    if (instant || !animationsOn()) {
+      label.text = text; apply()
+      parts.forEach { it.animate().cancel(); it.alpha = 1f }
+      return
+    }
+    parts.forEachIndexed { i, v ->
+      v.animate().cancel()
+      v.animate().alpha(0f).setStartDelay(0).setDuration(FloMotion.FADE_OUT).setInterpolator(floEase())
+        .withEndAction {
+          if (seq != swapSeq) return@withEndAction
+          if (i == 0) { label.text = text; apply() }
+          v.animate().alpha(1f).setStartDelay(0).setDuration(FloMotion.FADE_IN).setInterpolator(floEase()).start()
+        }.start()
+    }
   }
 
   private fun expand() {
@@ -200,10 +258,14 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     if (!expanded) {
       expanded = true
       wave.stop()
-      compact.animate().alpha(0f).setStartDelay(0).setDuration(90).withEndAction { if (expanded) compact.visibility = View.INVISIBLE }.start()
+      shownKey = "" // the indicator is off now: the next compact state must switch it back on
+      compact.animate().cancel()
+      compact.animate().alpha(0f).setStartDelay(0).setDuration(FloMotion.FADE_OUT)
+        .withEndAction { if (expanded) compact.visibility = View.INVISIBLE }.start()
+      card.animate().cancel()
       card.visibility = View.VISIBLE
       card.alpha = 0f
-      card.animate().alpha(1f).setStartDelay(80).setDuration(160).start()
+      card.animate().alpha(1f).setStartDelay(FloMotion.FADE_OUT).setDuration(FloMotion.FADE_IN + 40).withLayer().start()
     }
     morphTo(w, h, ctx.dp(28).toFloat())
   }
@@ -213,27 +275,98 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     body.setTextColor(color)
   }
 
-  /** Animate the capsule's size and corner radius (the island "morph"). */
-  private fun morphTo(w: Int, h: Int, r: Float) {
-    val lp = capsule.layoutParams
-    val w0 = lp.width
-    val h0 = lp.height
-    val r0 = radius
-    morph?.cancel()
+  // ── the morph ──────────────────────────────────────────────────────────────
+
+  /**
+   * Animate the black shape to [w] x [h] with corner radius [r]: grow the window once (if needed),
+   * animate the outline inside it, trim the window when done.
+   */
+  private fun morphTo(w0: Int, h: Int, r: Float) {
+    val r0 = root ?: return
+    val w = evenWithScreen(w0)
+    morph?.cancel(); morph = null
+    if (!animationsOn()) {
+      curW = w.toFloat(); curH = h.toFloat(); curR = r
+      sizeWindow(r0, w, h)
+      applyFrame()
+      return
+    }
+    if (abs(curW - w) < 0.5f && abs(curH - h) < 0.5f && abs(curR - r) < 0.5f) {
+      sizeWindow(r0, w, h)
+      return
+    }
+    // the window must hold every frame of the morph: the larger of where we are and where we go
+    val p = params ?: return
+    val needW = evenWithScreen(max(ceil(curW).toInt(), w))
+    val needH = max(ceil(curH).toInt(), h)
+    if (p.width < needW || p.height < needH) sizeWindow(r0, max(p.width, needW), max(p.height, needH))
+
+    val fw = curW; val fh = curH; val fr = curR
+    var cancelled = false
     morph = ValueAnimator.ofFloat(0f, 1f).apply {
-      duration = 220
-      interpolator = DecelerateInterpolator(1.6f)
+      duration = FloMotion.MORPH
+      interpolator = floEase()
       addUpdateListener { a ->
         val t = a.animatedValue as Float
-        lp.width = (w0 + (w - w0) * t).roundToInt()
-        lp.height = (h0 + (h - h0) * t).roundToInt()
-        radius = r0 + (r - r0) * t
-        shape.cornerRadius = radius
-        capsule.layoutParams = lp
-        capsule.invalidateOutline()
+        curW = fw + (w - fw) * t
+        curH = fh + (h - fh) * t
+        curR = fr + (r - fr) * t
+        applyFrame()
       }
+      addListener(object : AnimatorListenerAdapter() {
+        override fun onAnimationCancel(animation: Animator) { cancelled = true }
+        override fun onAnimationEnd(animation: Animator) {
+          if (cancelled || root !== r0) return
+          morph = null
+          curW = w.toFloat(); curH = h.toFloat(); curR = r
+          sizeWindow(r0, w, h)
+          applyFrame()
+        }
+      })
       start()
     }
+  }
+
+  /** Resize the overlay window (only at the start or end of a morph, never per frame). */
+  private fun sizeWindow(r: FrameLayout, w: Int, h: Int) {
+    val p = params ?: return
+    if (p.width == w && p.height == h) return
+    p.width = w; p.height = h
+    runCatching { wm.updateViewLayout(r, p) }
+  }
+
+  /** Push the current shape to the screen: the outline, and the compact row's halves to its edges. */
+  private fun applyFrame() {
+    if (root == null) return
+    capsule.invalidateOutline()
+    val inset = shapeLeft(capsule.width.takeIf { it > 0 } ?: (params?.width ?: 0)).toFloat()
+    slot.translationX = inset
+    label.translationX = -inset
+  }
+
+  /** The shape's left edge inside a capsule [cw] px wide, centered to the pixel. */
+  private fun shapeLeft(cw: Int): Int = max(0, (cw - shapeW(cw)) / 2)
+
+  private fun shapeW(cw: Int): Int {
+    var wi = curW.roundToInt().coerceAtMost(cw)
+    if ((cw - wi) % 2 != 0) wi -= 1
+    return max(0, wi)
+  }
+
+  private val outline = object : ViewOutlineProvider() {
+    override fun getOutline(view: View, o: Outline) {
+      val cw = view.width
+      val wi = shapeW(cw)
+      val hi = curH.roundToInt().coerceAtMost(max(1, view.height))
+      val left = (cw - wi) / 2
+      o.setRoundRect(left, 0, left + wi, hi, min(curR, min(wi, hi) / 2f))
+    }
+  }
+
+  /** Same parity as the screen width, so (screen - w) / 2 is exact and the shape never shifts by half a pixel. */
+  private fun evenWithScreen(w: Int): Int {
+    val sx = screenSize(wm).x
+    return if ((sx - w) % 2 != 0) w + 1 else w
   }
 
   // ── geometry ───────────────────────────────────────────────────────────────
@@ -259,10 +392,15 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     }
   }
 
-  /** Content on both sides of the camera, so the hole falls in the empty middle. */
+  /**
+   * Content on both sides of the camera, so the hole falls in the empty middle. The label side is
+   * at least as wide as "Listening", so Listening, Thinking and Typing share one width and the
+   * island doesn't twitch between them.
+   */
   private fun compactWidth(text: String): Int {
     val left = ctx.dp(14) + ctx.dp(24)
-    val right = label.paint.measureText(text).roundToInt() + ctx.dp(16)
+    val textW = max(label.paint.measureText(text), label.paint.measureText(MIN_LABEL))
+    val right = textW.roundToInt() + ctx.dp(16)
     val w = 2 * max(left, right) + centerGap
     return w.coerceIn(ctx.dp(110), screenSize(wm).x - ctx.dp(24))
   }
@@ -270,7 +408,7 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
   /** Measure the card at its final width, capping the answer's scroll so the card stays under 42%. */
   private fun fitCard(): Pair<Int, Int> {
     val screen = screenSize(wm)
-    val w = min(screen.x - ctx.dp(16), ctx.dp(440))
+    val w = evenWithScreen(min(screen.x - ctx.dp(16), ctx.dp(440)))
     val maxH = (screen.y * 0.42f).roundToInt()
     val exactW = View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY)
     val any = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
@@ -293,29 +431,38 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     if (root != null) return true
     geometry()
     val r = FrameLayout(ctx)
-    radius = compactH / 2f
-    shape = roundRect(Color.BLACK, radius)
     capsule = FrameLayout(ctx)
-    capsule.background = shape
+    capsule.setBackgroundColor(Color.BLACK)
+    capsule.outlineProvider = outline
     capsule.clipToOutline = true
     capsule.setOnClickListener { if (asking && !expanded) expand() }
+    // a window resize re-lays the capsule out: put the shape back on the new size before drawing
+    capsule.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyFrame() }
 
     compact = buildCompact()
     card = buildCard()
     card.visibility = View.GONE
     capsule.addView(compact, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, compactH, Gravity.TOP))
     capsule.addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-    r.addView(capsule, FrameLayout.LayoutParams(ctx.dp(110), compactH))
+    r.addView(capsule, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
-    val p = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT).apply {
+    // start as a dot over the camera, then grow sideways out of it
+    val start = evenWithScreen(compactH)
+    curW = start.toFloat(); curH = compactH.toFloat(); curR = compactH / 2f
+    shownText = ""; shownKey = ""
+    val p = overlayParams(start, compactH).apply {
       gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
       y = topY
     }
     if (runCatching { wm.addView(r, p) }.isFailure) return false
     root = r; params = p
     expanded = false
-    capsule.alpha = 0f; capsule.scaleX = 0.7f; capsule.scaleY = 0.7f
-    capsule.animate().alpha(1f).scaleX(1f).scaleY(1f).setStartDelay(0).setDuration(200).setInterpolator(DecelerateInterpolator()).start()
+    if (animationsOn()) {
+      capsule.alpha = 0f
+      capsule.animate().alpha(1f).setStartDelay(0).setDuration(FloMotion.APPEAR / 2).setInterpolator(floEase()).start()
+      compact.alpha = 0f
+      compact.animate().alpha(1f).setStartDelay(FloMotion.APPEAR / 3).setDuration(FloMotion.APPEAR).setInterpolator(floEase()).start()
+    }
     return true
   }
 
@@ -324,7 +471,7 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     row.orientation = LinearLayout.HORIZONTAL
     row.gravity = Gravity.CENTER_VERTICAL
     row.setPadding(ctx.dp(14), 0, ctx.dp(16), 0)
-    val slot = FrameLayout(ctx)
+    slot = FrameLayout(ctx)
     wave = FloWave(ctx)
     badge = ctx.iconView(R.drawable.flo_ic_check, Color.WHITE, null)
     badge.visibility = View.GONE
@@ -416,5 +563,10 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
 
     c.addView(actions, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = ctx.dp(14) })
     return c
+  }
+
+  private companion object {
+    /** The label side is never narrower than this word, so the working states share one width. */
+    const val MIN_LABEL = "Listening"
   }
 }

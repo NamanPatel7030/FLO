@@ -13,7 +13,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -62,7 +61,7 @@ internal class FloDock(
       pill = pl
       pl.alpha = 0f
       pl.translationX = (if (Prefs.dockRight(ctx)) 1 else -1) * ctx.dp(24).toFloat()
-      pl.animate().alpha(1f).translationX(0f).setStartDelay(0).setDuration(180).start()
+      pl.animate().alpha(1f).translationX(0f).setStartDelay(0).setDuration(FloMotion.APPEAR).setInterpolator(floEase()).start()
     }
   }
 
@@ -102,8 +101,10 @@ internal class FloDock(
   private fun moveTo(x: Int, y: Int, screen: Point) {
     val r = root ?: return
     val p = params ?: return
-    p.x = x.coerceIn(0, max(0, screen.x - r.width))
-    p.y = y.coerceIn(0, max(0, screen.y - r.height))
+    val nx = x.coerceIn(0, max(0, screen.x - r.width))
+    val ny = y.coerceIn(0, max(0, screen.y - r.height))
+    if (nx == p.x && ny == p.y) return // same pixel: skip the window round trip
+    p.x = nx; p.y = ny
     runCatching { wm.updateViewLayout(r, p) }
   }
 
@@ -120,15 +121,22 @@ internal class FloDock(
     Prefs.setDock(ctx, right, y1.toFloat() / screen.y)
     r.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     glide?.cancel()
+    if (!animationsOn() || (x0 == x1 && y0 == y1)) {
+      if (p.x != x1 || p.y != y1) { p.x = x1; p.y = y1; runCatching { wm.updateViewLayout(r, p) } }
+      return
+    }
+    // one animator for the whole glide; a frame that lands on the same pixel skips the window update
     glide = ValueAnimator.ofFloat(0f, 1f).apply {
-      duration = 240
-      interpolator = DecelerateInterpolator(1.8f)
+      duration = FloMotion.GLIDE
+      interpolator = floEase()
       addUpdateListener { a ->
         val t = a.animatedValue as Float
         val rr = root ?: return@addUpdateListener
         val pp = params ?: return@addUpdateListener
-        pp.x = (x0 + (x1 - x0) * t).roundToInt()
-        pp.y = (y0 + (y1 - y0) * t).roundToInt()
+        val nx = (x0 + (x1 - x0) * t).roundToInt()
+        val ny = (y0 + (y1 - y0) * t).roundToInt()
+        if (nx == pp.x && ny == pp.y) return@addUpdateListener
+        pp.x = nx; pp.y = ny
         runCatching { wm.updateViewLayout(rr, pp) }
       }
       start()
@@ -139,8 +147,9 @@ internal class FloDock(
   private fun lift(up: Boolean) {
     val pl = pill ?: return
     val s = if (up) 1.06f else 1f
-    pl.animate().scaleX(s).scaleY(s).setStartDelay(0).setDuration(120).start()
-    pl.elevation = ctx.dp(if (up) 18 else 8).toFloat()
+    // scale and shadow together, both render-thread properties (the elevation no longer jumps)
+    pl.animate().scaleX(s).scaleY(s).translationZ(if (up) ctx.dp(10).toFloat() else 0f)
+      .setStartDelay(0).setDuration(140).setInterpolator(floEase()).start()
   }
 
   // ── views ──────────────────────────────────────────────────────────────────
@@ -272,7 +281,7 @@ internal class FloDock(
     }
 
     private fun scale(s: Float) {
-      button?.animate()?.scaleX(s)?.scaleY(s)?.setStartDelay(0)?.setDuration(110)?.start()
+      button?.animate()?.scaleX(s)?.scaleY(s)?.setStartDelay(0)?.setDuration(120)?.setInterpolator(floEase())?.start()
     }
   }
 

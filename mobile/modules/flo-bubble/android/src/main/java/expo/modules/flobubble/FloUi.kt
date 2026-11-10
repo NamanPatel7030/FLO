@@ -13,6 +13,8 @@ import android.os.Build
 import android.util.TypedValue
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.PathInterpolator
+import android.animation.ValueAnimator
 import android.widget.ImageView
 import kotlin.math.roundToInt
 
@@ -31,6 +33,23 @@ internal object FloColors {
 
   fun forMode(mode: String): Int = if (mode == "ask") ASK else DICTATE
 }
+
+/** One easing for every island and dock motion: fast out, long gentle settle (no overshoot). */
+internal fun floEase(): PathInterpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+
+/** Island and dock durations, in ms. Morphs and glides share one length so they feel related. */
+internal object FloMotion {
+  const val MORPH = 240L
+  const val FADE_OUT = 90L
+  const val FADE_IN = 150L
+  const val APPEAR = 220L
+  const val DISMISS = 180L
+  const val GLIDE = 260L
+}
+
+/** False when the system's animator duration scale is 0 ("Remove animations" / battery saver). */
+internal fun animationsOn(): Boolean =
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ValueAnimator.areAnimatorsEnabled() else true
 
 internal val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
 
