@@ -6,7 +6,7 @@
 // subscribe via onWidgetsChange so the panel reflects edits live.
 import { loadZones, ZONES_EVENT, ZONES_KEY } from "./timezones";
 
-export type WidgetId = "nowPlaying" | "today" | "timer" | "pomodoro" | "clock" | "weather" | "agents" | "note" | "agenda";
+export type WidgetId = "nowPlaying" | "today" | "timer" | "pomodoro" | "clock" | "weather" | "agents" | "note" | "agenda" | "saved";
 
 export interface WidgetMeta {
   id: WidgetId;
@@ -20,6 +20,7 @@ export interface WidgetMeta {
 
 /** Every widget Flo offers, in the order they appear in the Settings picker. */
 export const WIDGETS: WidgetMeta[] = [
+  { id: "saved", label: "Time saved", hint: "Say it. Save hours. How much time Flo saved you today and this week", span: 2, h: 72 },
   { id: "nowPlaying", label: "Now Playing", hint: "Artwork, progress, transport controls and volume", span: 2, h: 148 },
   { id: "agents", label: "Claude sessions", hint: "Live Claude Code sessions — scroll, hover to expand", span: 2, h: 132 },
   { id: "note", label: "Quick note", hint: "A scratch note, saved on this device", span: 2, h: 92 },
@@ -51,7 +52,7 @@ export function widgetHeight(id: WidgetId, zoneCount = id === "clock" ? loadZone
 }
 
 /** What a fresh install shows until the user customises it. */
-export const DEFAULT_WIDGETS: WidgetId[] = ["nowPlaying", "today", "timer", "clock"];
+export const DEFAULT_WIDGETS: WidgetId[] = ["saved", "nowPlaying", "today", "timer", "clock"];
 
 const KEY = "flo.widgets";
 

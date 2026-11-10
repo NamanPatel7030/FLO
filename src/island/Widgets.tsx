@@ -18,6 +18,7 @@ import type { ClaudeSession, Todo, Weather } from "../lib/types";
 import { EMPTY_WIDGETS_H, GAP, PANEL_COLS, packPanelRows, panelGridHeight, panelGridMax, widgetHeight, ZONE_ROW_H, type WidgetId } from "../lib/widgets";
 import { NowPlayingCard } from "./NowPlaying";
 import { AgendaWidget } from "./AgendaWidget";
+import { TAGLINE, savedSummary } from "../lib/timeSaved";
 import { dayOffset, dayOffsetLabel, formatZoneTime, hourDiffLabel, isDaytime, loadZones, onZonesChange, type ClockZone } from "../lib/timezones";
 
 export type WidgetAction = "dictate" | "ask" | "meeting" | "dashboard" | "todos" | "customize";
@@ -104,6 +105,8 @@ function WidgetTile({ id, sessions, onAction }: { id: WidgetId; sessions: Claude
       return <NoteWidget />;
     case "agenda":
       return <AgendaWidget />;
+    case "saved":
+      return <TimeSavedWidget />;
   }
 }
 
@@ -187,6 +190,33 @@ function PomodoroWidget() {
         >
           <RotateCcw size={13} />
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** Flo's tagline and the time dictation saved today and this week (local analytics only). */
+function TimeSavedWidget() {
+  const [mins, setMins] = useState<{ today: number; week: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([api.getAnalytics(1), api.getAnalytics(7)])
+      .then(([d, w]) => alive && setMins({ today: d.minutesSaved, week: w.minutesSaved }))
+      .catch(() => alive && setMins({ today: 0, week: 0 }));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return (
+    <div className="flex h-full items-center gap-3 rounded-xl bg-white/[0.04] px-3" data-testid="saved-widget">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[rgb(var(--accent-rgb)/0.16)] text-[var(--accent)]">
+        <Clock size={17} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-serif text-[19px] italic leading-tight text-white/95">{TAGLINE}</div>
+        <div className="truncate text-[12px] tabular-nums text-white/60" data-testid="saved-summary">
+          {mins ? savedSummary(mins.today, mins.week) : "\u00a0"}
+        </div>
       </div>
     </div>
   );

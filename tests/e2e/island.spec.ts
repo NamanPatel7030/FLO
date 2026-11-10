@@ -179,7 +179,7 @@ test("ONE hover opens everything: quick actions + widgets in one large panel, no
   for (const name of ["Dictate", "Ask", "Agent", "Meeting", "History", "Open", "Customize"]) await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   // nothing was clicked to get here
   const clicks = await page.evaluate((n) => (window as any).__floMock.calls.slice(n).map((c: any) => c.cmd), calls0);
-  expect(clicks.filter((c: string) => c !== "island_resize" && c !== "now_playing" && c !== "get_volume" && c !== "list_todos" && c !== "weather" && !c.startsWith("get_presence"))).toEqual([]);
+  expect(clicks.filter((c: string) => c !== "island_resize" && c !== "now_playing" && c !== "get_volume" && c !== "list_todos" && c !== "weather" && c !== "get_analytics" && !c.startsWith("get_presence"))).toEqual([]);
   // a big panel (≥ 640 wide at the default size)
   const w = (await page.locator("[data-island-root]").boundingBox())!.width;
   expect(w).toBeGreaterThanOrEqual(640);
