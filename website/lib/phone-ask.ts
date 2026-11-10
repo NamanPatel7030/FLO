@@ -148,6 +148,10 @@ function normalizeLines(v: unknown): string | null {
 
 /** A computer that hasn't taken a phone ask after this long (and looks offline) gets the cloud fallback. */
 export const CLOUD_AFTER_MS = 8_000;
+/** The computer polls for phone requests every 10 s (3 s while one waits). An ask nobody has taken
+ *  after this long means the computer isn't there (lid shut, asleep, Flo quit) even if its last
+ *  snapshot is recent, so the cloud answers instead of the phone waiting up to 12 minutes. */
+export const UNTAKEN_AFTER_MS = 25_000;
 /** Same as ONLINE_WITHIN_MS in desktop-state.ts: the computer republishes at least every 5 minutes. */
 const ONLINE_WITHIN_MS = 12 * 60_000;
 
@@ -160,14 +164,20 @@ export function computerOffline(desktopSeenAt: string | null, now: Date = new Da
   return !(age < ONLINE_WITHIN_MS);
 }
 
-function waitedLongEnough(r: AskState, now: Date): boolean {
+function waitedAtLeast(r: AskState, now: Date, ms: number): boolean {
   const age = now.getTime() - new Date(r.createdAt).getTime();
-  return Number.isFinite(age) && age >= CLOUD_AFTER_MS;
+  return Number.isFinite(age) && age >= ms;
+}
+
+function waitedLongEnough(r: AskState, now: Date): boolean {
+  return waitedAtLeast(r, now, CLOUD_AFTER_MS);
 }
 
 /** Answer this phone ask with cloud AI? Only asks (to-dos and notes need the computer), once. */
 export function shouldAnswerInCloud(r: AskState, desktopSeenAt: string | null, now: Date = new Date()): boolean {
-  return r.mode === "ask" && r.status === "pending" && !r.cloudTriedAt && waitedLongEnough(r, now) && computerOffline(desktopSeenAt, now);
+  if (r.mode !== "ask" || r.status !== "pending" || r.cloudTriedAt) return false;
+  // off for a while: answer fast; looks online but never picked it up: answer after 25 s
+  return (waitedLongEnough(r, now) && computerOffline(desktopSeenAt, now)) || waitedAtLeast(r, now, UNTAKEN_AFTER_MS);
 }
 
 /** A to-do / note waiting for a computer that is off: tell the phone it is saved and will be added later. */

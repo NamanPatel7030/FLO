@@ -15,6 +15,7 @@ import {
   phoneAnswerUser,
   queuedOffline,
   shouldAnswerInCloud,
+  UNTAKEN_AFTER_MS,
 } from "../lib/phone-ask.ts";
 import { root } from "./helpers.mjs";
 
@@ -26,6 +27,14 @@ test("cloud answers a pending ask after 8 s when the computer is off", () => {
   assert.equal(CLOUD_AFTER_MS, 8000);
   assert.equal(shouldAnswerInCloud(req(), null, now), true, "no computer ever signed in");
   assert.equal(shouldAnswerInCloud(req(), ago(13 * 60_000), now), true, "computer last seen 13 minutes ago");
+});
+
+test("cloud answers when an online-looking computer never picks the ask up (lid shut, asleep)", () => {
+  // the computer polls every 10 s; untouched after 25 s means it's not there, whatever its last snapshot says
+  assert.equal(UNTAKEN_AFTER_MS, 25_000);
+  assert.equal(shouldAnswerInCloud(req({ createdAt: ago(26_000) }), ago(60_000), now), true, "seen 1 min ago, ask untouched 26 s");
+  assert.equal(shouldAnswerInCloud(req({ createdAt: ago(20_000) }), ago(60_000), now), false, "seen 1 min ago, only 20 s");
+  assert.equal(shouldAnswerInCloud(req({ createdAt: ago(60_000), status: "taken" }), ago(60_000), now), false, "the computer is working on it");
 });
 
 test("cloud leaves it to the computer when it is online, too early, or already handled", () => {
