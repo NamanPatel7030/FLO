@@ -310,8 +310,7 @@ class FloBubbleService : AccessibilityService() {
             askCancel = null
             island?.done(if (a.cloud) "Inserted (cloud)" else "Inserted", R.drawable.flo_ic_check, "ask")
           } else {
-            island?.askAnswer(a.text)
-            if (a.cloud) toast("Answered in the cloud (your computer is off)")
+            island?.askAnswer(a.text, fromCloud = a.cloud)
           }
         }.onFailure { e ->
           island?.askError(e.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Try again.")

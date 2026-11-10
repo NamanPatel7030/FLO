@@ -66,6 +66,7 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
   private lateinit var question: TextView
   private lateinit var body: TextView
   private lateinit var scroll: ScrollView
+  private lateinit var caption: TextView
   private lateinit var actions: LinearLayout
 
   private var morph: ValueAnimator? = null
@@ -126,6 +127,7 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     asking = true; answer = null
     question.text = q
     setBody("Thinking", FloColors.MUTED)
+    caption.visibility = View.GONE
     actions.visibility = View.GONE
   }
 
@@ -136,10 +138,12 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     expand()
   }
 
-  fun askAnswer(text: String) {
+  /** [fromCloud]: the server answered because your computer is off; say so under the answer. */
+  fun askAnswer(text: String, fromCloud: Boolean = false) {
     if (!asking || root == null) return
     answer = text
     setBody(text, Color.WHITE)
+    caption.visibility = if (fromCloud) View.VISIBLE else View.GONE
     actions.visibility = View.VISIBLE
     expand()
   }
@@ -148,6 +152,7 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     if (!asking || root == null) return
     answer = null
     setBody(text, FloColors.WARN)
+    caption.visibility = View.GONE
     actions.visibility = View.GONE
     expand()
   }
@@ -530,6 +535,15 @@ internal class FloIsland(private val ctx: Context, private val wm: WindowManager
     scroll.addView(body)
     c.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
       topMargin = ctx.dp(10); marginEnd = ctx.dp(10)
+    })
+
+    caption = TextView(ctx)
+    caption.text = "Answered in the cloud. Your computer is off."
+    caption.textSize = 12f
+    caption.setTextColor(FloColors.MUTED)
+    caption.visibility = View.GONE
+    c.addView(caption, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+      topMargin = ctx.dp(8); marginEnd = ctx.dp(10)
     })
 
     actions = LinearLayout(ctx)
