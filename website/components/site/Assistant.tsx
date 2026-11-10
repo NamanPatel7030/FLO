@@ -27,7 +27,7 @@ export function AssistantSection() {
   return (
     <Section id="assistant">
       <Heading
-        tag="03 · Assistant that reads your screen"
+        tag="05 · Assistant that reads your screen"
         title="Ask for a draft. It reads the room first."
         accent="reads the room"
         lead="Hold fn and say what you need. Flo reads the conversation on screen and types the draft into the box you're in, in the thread's language and tone, with people's real names."
@@ -128,7 +128,7 @@ export function SkillsSection() {
         <div className="lg:sticky lg:top-28">
           <Heading
             align="left"
-            tag="04 · Skills & MCP tools"
+            tag="06 · Skills & MCP tools"
             title="Teach it once. Then just ask."
             accent="just ask."
             lead="Draw a skill on a canvas: the phrases that start it, the steps, the apps it works in, the MCP tools it may call and the docs it can read. The way you like things done stops living in your head."
@@ -214,7 +214,7 @@ export function AgentSection() {
   return (
     <Section id="agent">
       <Heading
-        tag="05 · Hands-free agent"
+        tag="07 · Hands-free agent"
         title="Double-tap. Say it. Watch it happen."
         accent="Watch it happen."
         lead="Double-tap fn and Flo keeps listening, no key held. It opens apps, searches, clicks and types, and the notch shows every move. It never sends, posts, buys or deletes until you say “yes” out loud."

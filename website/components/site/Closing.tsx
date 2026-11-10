@@ -35,7 +35,7 @@ import { EASE, Heading, Reveal, Section, useLoop } from "./ui";
 import { NotchEyes } from "./Mascot";
 import { LiveCount } from "./LiveCount";
 
-/* ── 14 Privacy: a live network log next to three promises ─────────────────────────────── */
+/* ── 14 Network log: every request, visible ─────────────────────────────── */
 
 const LOG = [
   { host: "api.anthropic.com", why: "Assistant · your key", ok: true },
@@ -55,16 +55,16 @@ export function PrivacySection() {
         <div>
           <Heading
             align="left"
-            tag="14 · Private by design"
+            tag="14 · Every request, visible"
             title="Local first. Enforced, not promised."
             accent="Enforced,"
-            lead="Your voice, notes and to-dos stay on your Mac in an encrypted database. Bring your own AI key, or run fully local with Ollama. Turn on Sync and they're backed up end-to-end encrypted, with a key only you hold."
+            lead="Your voice, notes and to-dos stay on your computer in an encrypted database. Bring your own AI key, or run fully local with Ollama. Turn on Sync and they're backed up end-to-end encrypted, with a key only you hold."
           />
           <div className="mt-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
             {[
-              [KeyRound, "Keys in Keychain", "Your keys live in the macOS Keychain."],
+              [KeyRound, "Keys in your keychain", "API keys live in your system keychain."],
               [WifiOff, "Fully offline", "Run everything with local models."],
-              [Lock, "We see nothing", "Even with Sync on: it's end-to-end encrypted."],
+              [Lock, "We can't read it", "Even with Sync on: it's end-to-end encrypted."],
             ].map(([I, k, v], n) => {
               const Icon = I as typeof Lock;
               return (
@@ -125,20 +125,23 @@ const MORE: { cat: Cat; icon: typeof Lock; title: string; body: string }[] = [
   { cat: "Voice", icon: Activity, title: "Choose your speech engine", body: "On-device Whisper by default, or Groq or OpenAI Whisper with your own key." },
   { cat: "Voice", icon: Keyboard, title: "Typing test", body: "Measure your real typing speed. Flo uses it to show how much time speaking saves you." },
   { cat: "Work", icon: BarChart3, title: "Analytics", body: "Words dictated, time saved, streaks and speaking pace over 7, 30 or 60 days." },
-  { cat: "Work", icon: History, title: "Searchable history", body: "Every dictation and every answer, kept on your Mac and one search away." },
+  { cat: "Work", icon: History, title: "Searchable history", body: "Every dictation and every answer, kept on your computer and one search away." },
   { cat: "Work", icon: NotebookPen, title: "Meeting library", body: "Every meeting with its summary, action items and transcript. Rename a speaker once and Flo knows the voice." },
   { cat: "Work", icon: ScanEye, title: "Spots to-dos on screen", body: "On-device OCR reads the window you're in for things you've promised. Screenshots are never saved." },
   { cat: "Setup", icon: RefreshCw, title: "One-click updates", body: "Downloads in the background, checks the signature against the key built into the app, then one restart." },
   { cat: "Setup", icon: Database, title: "Encrypted on disk", body: "History, notes and to-dos live in an encrypted database. Its key and your API keys stay in the Keychain." },
   { cat: "Setup", icon: ShieldCheck, title: "Permissions, fixed for you", body: "Flo checks microphone, accessibility and screen access, and repairs them in one click." },
   { cat: "Setup", icon: LayoutGrid, title: "Mac, Windows and Linux", body: "Off the Mac, the island sits bottom-right. Hold Right Ctrl to dictate and Right Alt for the assistant." },
-  { cat: "Setup", icon: UserRound, title: "An account that holds nothing", body: "Sign in to download. Your data stays on your Mac unless you turn on Sync, and then it's end-to-end encrypted: we can't read it." },
+  { cat: "Setup", icon: UserRound, title: "An account that holds nothing", body: "Sign in to download. Your data stays on your computer unless you turn on Sync, and then it's end-to-end encrypted: we can't read it." },
 ];
 const CATS: ("All" | Cat)[] = ["All", "Voice", "Assistant", "Work", "Setup"];
 
 export function MoreSection() {
   const [cat, setCat] = useState<"All" | Cat>("All");
+  const [all, setAll] = useState(false);
   const list = MORE.filter((m) => cat === "All" || m.cat === cat);
+  // on phones, a long grid is a long scroll: show six, then a button for the rest
+  const folded = !all && list.length > 6;
   return (
     <Section id="features">
       <Heading tag="And everything else" title="Small things, done properly." accent="done properly." />
@@ -152,7 +155,7 @@ export function MoreSection() {
       </div>
       <motion.div layout className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <AnimatePresence mode="popLayout">
-          {list.map((m) => {
+          {list.map((m, n) => {
             const Icon = m.icon;
             return (
               <motion.article
@@ -162,7 +165,7 @@ export function MoreSection() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.35, ease: EASE }}
-                className="g group rounded-[26px] p-6 transition-transform duration-300 hover:-translate-y-1"
+                className={`g group rounded-[26px] p-6 transition-transform duration-300 hover:-translate-y-1 ${folded && n >= 6 ? "hidden sm:block" : ""}`}
               >
                 <span className="grid h-10 w-10 place-items-center rounded-xl bg-[rgba(255,255,255,0.8)] text-[#7a6cff] shadow-sm transition group-hover:bg-[#0b1220] group-hover:text-[#fff]">
                   <Icon size={18} />
@@ -174,6 +177,13 @@ export function MoreSection() {
           })}
         </AnimatePresence>
       </motion.div>
+      {folded && (
+        <div className="mt-6 flex justify-center sm:hidden">
+          <button type="button" onClick={() => setAll(true)} className="btn btn-glass h-12 px-6 text-[14px] ink">
+            Show all {list.length} <Plus size={15} />
+          </button>
+        </div>
+      )}
     </Section>
   );
 }
@@ -223,10 +233,10 @@ export function CompareSection() {
         lead="Everything they do, plus the things they don't, without sending your life to someone else's server."
       />
       <Reveal className="g mx-auto mt-12 max-w-4xl overflow-x-auto rounded-[30px]">
-        <table className="w-full min-w-[560px] text-left text-[14px]" data-testid="compare-table">
+        <table className="w-full min-w-[520px] text-left text-[14px]" data-testid="compare-table">
           <thead>
             <tr className="border-b border-[rgba(255,255,255,0.8)]">
-              <th className="px-5 py-4" scope="col">
+              <th className="sticky left-0 z-10 bg-[rgb(248,249,253)] px-4 py-4 sm:static sm:bg-transparent sm:px-5" scope="col">
                 <span className="sr-only">Feature</span>
               </th>
               <th className="bg-[rgba(255,255,255,0.5)] px-5 py-4" scope="col">
@@ -241,7 +251,7 @@ export function CompareSection() {
           <tbody>
             {COMPARE.map((r) => (
               <tr key={r.row} className="border-b border-[rgba(255,255,255,0.6)] last:border-0">
-                <th scope="row" className="px-5 py-3.5 font-medium ink-2">{r.row}</th>
+                <th scope="row" className="sticky left-0 z-10 max-w-[170px] bg-[rgb(248,249,253)] px-4 py-3.5 font-medium ink-2 sm:static sm:max-w-none sm:bg-transparent sm:px-5">{r.row}</th>
                 <td className="bg-[rgba(255,255,255,0.5)] px-5 py-3.5"><Mark v={r.flo} /></td>
                 <td className="px-5 py-3.5"><Mark v={r.wispr} /></td>
                 <td className="px-5 py-3.5"><Mark v={r.lemon} /></td>
@@ -250,6 +260,7 @@ export function CompareSection() {
           </tbody>
         </table>
       </Reveal>
+      <p className="mx-auto mt-3 max-w-4xl px-1 text-[12px] font-medium fnt sm:hidden">Swipe the table to see Wispr Flow and Lemon.</p>
       <p className="mx-auto mt-4 max-w-4xl px-1 text-[12px] fnt">Based on our review of the public Wispr Flow and Lemon Mac apps in November 2026. Products change; tell us if something is out of date.</p>
     </Section>
   );
@@ -282,8 +293,10 @@ export function MakerSection() {
 /* ── FAQ ────────────────────────────────────────────────────────────────────────────────── */
 
 const FAQ = [
-  { q: "Does my voice leave my Mac?", a: "Not by default. Speech is transcribed on device with Whisper. If you choose a cloud speech or AI provider, Flo sends text straight to that provider with your own key. Every request appears in the network log." },
-  { q: "Why do I need an account?", a: "To download Flo and sign in on your devices. Your dictation, notes and to-dos stay on your Mac unless you turn on Sync. Sync is end-to-end encrypted with a key only you hold, so our servers store data they can't read. Your API keys never leave your Mac." },
+  { q: "Does my voice leave my computer?", a: "Not by default. Speech is transcribed on your computer with Whisper large-v3-turbo, and dictation works offline. If you choose a cloud speech or AI provider, Flo sends text straight to that provider with your own key. Every request appears in the network log." },
+  { q: "Why do I need an account?", a: "To download Flo and sign in on your devices. Your dictation, notes and to-dos stay on your computer unless you turn on Sync. Sync is end-to-end encrypted with a key only you hold, so our servers store data they can't read. Your API keys stay in your keychain." },
+  { q: "How accurate is it?", a: "Flo runs Whisper large-v3-turbo, one of the most accurate open speech models, and cleans up fillers and punctuation. No speech engine is perfect, so when Flo mishears a word, fix it once: the correction is saved on your computer and Flo gets that word right from then on." },
+  { q: "Is my data used to train AI?", a: "No. Flo doesn't collect your recordings, transcripts or corrections, so there is nothing to train on. If you turn on a cloud AI provider, the text you send it is covered by that provider's own terms." },
   { q: "What does Sync do?", a: "It backs up your to-dos, notes and meetings, dictionary, skills, projects and history, and keeps your Macs in step. It's off until you turn it on, end-to-end encrypted, and you can delete your synced copy any time in Settings." },
   { q: "Which AI models can I use?", a: "Claude, OpenAI, Gemini, Groq, OpenRouter, MiniMax, Qwen and Ollama Cloud with your own key, or local models through Ollama and LM Studio." },
   { q: "Does it work on Windows and Linux?", a: "Yes. The island sits in the bottom-right corner. Hold Right Ctrl to dictate and Right Alt for the assistant." },
@@ -368,7 +381,7 @@ export function SiteFooter() {
               <Logo size={30} />
               <span className="text-[17px] font-semibold ink">Flo</span>
             </div>
-            <p className="mt-3 text-[14px] leading-relaxed mut">Private voice dictation, a screen-aware assistant and live meeting notes. Your data stays on your Mac.</p>
+            <p className="mt-3 text-[14px] leading-relaxed mut">Private, precise voice dictation, a screen-aware assistant and live meeting notes. Your data stays on your computer.</p>
           </div>
           <div className="grid grid-cols-2 gap-10 text-[14px] sm:grid-cols-3">
             <div className="flex flex-col gap-2.5">

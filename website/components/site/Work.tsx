@@ -47,7 +47,7 @@ export function TodosSection() {
   return (
     <Section id="work">
       <Heading
-        tag="07 · To-dos from everywhere"
+        tag="08 · To-dos from everywhere"
         title="The promises you make get written down."
         accent="written down."
         lead="Flo catches what you commit to in meetings, in Slack and on screen, and keeps it behind a tray icon in your notch. Every item says why it's there."
@@ -62,7 +62,7 @@ export function TodosSection() {
         </Reveal>
         <Reveal delay={0.06} className="g relative overflow-hidden rounded-[32px] p-6 sm:p-7 md:col-span-3">
           <div className="absolute inset-0 -z-10 bg-[radial-gradient(70%_90%_at_100%_0%,rgba(200,185,255,0.55),transparent_70%)]" />
-          <p className="text-[12px] font-semibold uppercase tracking-wider text-[#7a6cff]">08 · Deadlines become reminders</p>
+          <p className="text-[12px] font-semibold uppercase tracking-wider text-[#7a6cff]">Deadlines become reminders</p>
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <AnimatePresence mode="wait">
               <motion.span key={d.say} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.35 }} className="serif-i text-[34px] leading-none ink">
@@ -193,7 +193,7 @@ export function MeetingsSection() {
         tag="10 · Meeting notes"
         title="Listen. Flo takes the notes."
         accent="takes the notes."
-        lead="When a Zoom, Meet or Teams call starts, the notch offers to take notes. Flo transcribes live on your Mac, then hands you a summary and the action items when the call ends."
+        lead="When a Zoom, Meet or Teams call starts, the notch offers to take notes. Flo transcribes live on your computer, then hands you a summary and the action items when the call ends."
       />
       <div ref={ref} className="mt-14">
         <Reveal className="g rounded-[32px] p-5 sm:p-7">

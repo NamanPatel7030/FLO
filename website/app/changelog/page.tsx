@@ -82,7 +82,7 @@ export default async function ChangelogPage() {
           )}
           {list.map((r, i) => (
             <li key={r.tag_name} className="relative">
-              <span className={`absolute -left-[41px] top-7 grid h-5 w-5 place-items-center rounded-full ${i === 0 ? "bg-[#0b1220] text-[#fff]" : "bg-[#fff] ring-1 ring-[rgba(20,30,60,0.15)]"}`}>
+              <span className={`absolute -left-[43px] top-7 grid h-5 w-5 place-items-center rounded-full ${i === 0 ? "bg-[#0b1220] text-[#fff]" : "bg-[#fff] ring-1 ring-[rgba(20,30,60,0.15)]"}`}>
                 {i === 0 && <Sparkles size={11} />}
               </span>
               <article className="g rounded-[28px] p-7">

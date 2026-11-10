@@ -32,7 +32,7 @@ export function SlackHandoff({ code, team }: { code: string; team: string }) {
       <a href={link} className="btn btn-glass mt-7 w-full py-3 text-[14.5px]" data-testid="open-flo">
         <ExternalLink size={16} /> {tried ? "Flo didn't open? Open Flo" : "Open Flo"}
       </a>
-      <p className="mt-4 text-[12px] text-faint">Your Slack token goes straight to your Mac&apos;s keychain. Flo&apos;s servers don&apos;t keep it.</p>
+      <p className="mt-4 text-[12px] text-faint">Your Slack token goes straight to your computer&apos;s keychain. Flo&apos;s servers don&apos;t keep it.</p>
     </div>
   );
 }

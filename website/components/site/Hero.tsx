@@ -156,11 +156,11 @@ export function Hero() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.9, delay: 0.1, ease: EASE }}
-          className="mx-auto mt-7 max-w-5xl text-[clamp(48px,8.4vw,120px)] font-semibold leading-[0.92] tracking-[-0.055em] ink"
+          className="mx-auto mt-7 max-w-6xl text-[clamp(40px,7.6vw,108px)] font-semibold leading-[0.95] tracking-[-0.055em] ink"
         >
-          Your Mac, at the
+          Talk. It&apos;s typed,
           <br />
-          <span className="serif-i grad-text pr-2 text-[1.1em] tracking-[-0.02em]">speed of speech.</span>
+          <span className="serif-i grad-text pr-2 text-[0.94em] tracking-[-0.02em] sm:text-[1.1em]">right on your computer.</span>
         </motion.h1>
         <motion.p
           initial={{ opacity: 0, y: 14 }}
@@ -168,7 +168,7 @@ export function Hero() {
           transition={{ duration: 0.8, delay: 0.25, ease: EASE }}
           className="v2-lead mx-auto mt-7 max-w-xl"
         >
-          Hold a key and talk. Flo types, drafts, remembers and reminds you, right from the notch you already have. It all runs on your Mac.
+          Hold a key and speak. Flo writes clean, accurate text wherever your cursor is, learns every word you correct, and keeps it all on your computer.
         </motion.p>
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -191,13 +191,13 @@ export function Hero() {
             <Check size={15} className="text-[#2f8cff]" /> Free to download
           </li>
           <li className="flex items-center gap-1.5">
-            <Cpu size={15} className="text-[#7a6cff]" /> On-device Whisper
+            <Cpu size={15} className="text-[#7a6cff]" /> Speech-to-text on device
           </li>
           <li className="flex items-center gap-1.5">
-            <Languages size={15} className="text-[#ff7eb0]" /> English, हिन्दी, ગુજરાતી
+            <Languages size={15} className="text-[#ff7eb0]" /> English, हिन्दी, Hinglish
           </li>
           <li className="flex items-center gap-1.5">
-            <ShieldCheck size={15} className="text-[#3fbf98]" /> Your own key, or fully offline
+            <ShieldCheck size={15} className="text-[#3fbf98]" /> Dictation works offline
           </li>
         </motion.ul>
         <HeroStage />

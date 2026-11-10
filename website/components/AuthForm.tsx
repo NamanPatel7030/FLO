@@ -282,13 +282,13 @@ export function AuthForm({ mode, next, site, notice }: { mode: "signup" | "login
   const title = mode === "signup" ? (forDownload ? "Create your free account to download Flo" : "Create your free Flo account") : "Welcome back";
   const sub =
     mode === "signup"
-      ? "Then sign in on your Mac with the same account. That's it."
+      ? "Then sign in on your computer with the same account. That's it."
       : returning
         ? "Good to see you again. Let's pick up where you left off."
         : forDownload
           ? "Sign in and your download starts right after."
           : forConnect
-            ? "Sign in to connect the Flo app on your Mac."
+            ? "Sign in to connect the Flo app on your computer."
             : "Let's pick up where you left off.";
 
   if (sentTo) {
@@ -358,7 +358,7 @@ export function AuthForm({ mode, next, site, notice }: { mode: "signup" | "login
 
       {mode === "signup" && forDownload && (
         <ol className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-2 text-[12.5px] text-faint" aria-label="Three steps">
-          {["Create account", "Download", "Sign in on your Mac"].map((s, i) => (i === 2 ? "Sign in on Mac" : s)).map((s, i) => (
+          {["Create account", "Download", "Sign in to the app"].map((s, i) => (
             <li key={s} className="flex items-center gap-2 whitespace-nowrap">
               <span className={`grid h-5 w-5 place-items-center rounded-full text-[10.5px] font-bold ${i === 0 ? "bg-brand-400 text-[#001522]" : "border border-white/15 text-muted"}`}>{i + 1}</span>
               <span className={i === 0 ? "font-medium text-ink" : ""}>{s}</span>
@@ -379,7 +379,15 @@ export function AuthForm({ mode, next, site, notice }: { mode: "signup" | "login
         <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#fff] shadow-[0_1px_2px_rgb(0_0_0/0.18)]" aria-hidden>
           {busy === "google" ? <Loader2 size={15} className="animate-spin text-[#5f6368]" /> : <GoogleIcon size={16} />}
         </span>
-        {busy === "google" ? "Opening Google…" : mode === "signup" && forDownload ? "Continue with Google to download Flo" : "Continue with Google"}
+        {busy === "google" ? (
+          "Opening Google…"
+        ) : mode === "signup" && forDownload ? (
+          <>
+            Continue with Google<span className="hidden min-[400px]:inline">&nbsp;to download Flo</span>
+          </>
+        ) : (
+          "Continue with Google"
+        )}
       </button>
       <p className="mt-2.5 text-center text-[12.5px] text-faint">{mode === "signup" ? "One click. No new password to remember." : "The fastest way in."}</p>
 
@@ -585,7 +593,7 @@ export function AuthForm({ mode, next, site, notice }: { mode: "signup" | "login
         </Link>
       </p>
       <p className="mt-6 text-center text-[12.5px] leading-relaxed text-faint text-balance">
-        <Lock size={12} className="mr-1.5 inline-block -translate-y-px align-middle" aria-hidden />Your words stay on your Mac. The account only signs you in.
+        <Lock size={12} className="mr-1.5 inline-block -translate-y-px align-middle" aria-hidden />Your words stay on your computer. The account only signs you in.
       </p>
       {mode === "signup" && (
         <p className="mt-2 text-center text-[12px] text-faint">

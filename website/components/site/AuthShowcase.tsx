@@ -74,7 +74,7 @@ export function AuthShowcase({ title, sub }: { title: string; sub: string }) {
         </p>
         <p className="mt-3 max-w-md text-[15px] mut">{sub}</p>
         <p className="mt-5 flex items-center gap-2 text-[12.5px] font-medium fnt">
-          <Lock size={13} /> Your words stay on your Mac. The account only signs you in.
+          <Lock size={13} /> Your words stay on your computer. The account only signs you in.
         </p>
       </div>
     </div>

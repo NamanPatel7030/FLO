@@ -22,7 +22,7 @@ function detect(ua: string): DownloadOS {
 // file locations stay on the server; the page only links to the signed-in /api/download/<os> route
 const BUILDS: { os: DownloadOS; label: string; sub: string; icon: typeof Apple; tint: string }[] = [
   { os: "mac", label: "macOS", sub: "Apple silicon (M1 or later) · macOS 13+", icon: Apple, tint: "from-[#a9dcff] to-[#d8ccff]" },
-  { os: "android", label: "Android", sub: "Pair with your Mac by QR · alerts while you're away", icon: Smartphone, tint: "from-[#c4f0e2] to-[#a9dcff]" },
+  { os: "android", label: "Android", sub: "Pair with your computer by QR · alerts while you're away", icon: Smartphone, tint: "from-[#c4f0e2] to-[#a9dcff]" },
   { os: "windows", label: "Windows", sub: "Windows 10 and 11 · beta", icon: MonitorDown, tint: "from-[#ffd6c4] to-[#ffc6dc]" },
   { os: "linux", label: "Linux", sub: ".deb and AppImage · beta", icon: Terminal, tint: "from-[#e8dcff] to-[#ffd6c4]" },
 ];
