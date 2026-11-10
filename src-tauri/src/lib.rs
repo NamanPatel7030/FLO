@@ -94,6 +94,34 @@ pub(crate) fn island_geometry(app: &AppHandle) -> anyhow::Result<IslandGeometry>
     Ok(rx.recv_timeout(std::time::Duration::from_secs(2))?)
 }
 
+/// Re-measure the menu-bar screen every couple of seconds. Geometry used to be read once at launch,
+/// so switching the display to "More Space", plugging in a bigger monitor or changing the main
+/// display left the island centred for the old width (off to one side). On a change: store it,
+/// re-place the island at its current size and tell the island UI to re-lay out.
+fn watch_geometry(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let before = GEOMETRY.lock().clone();
+        let Ok(now) = island_geometry(&app) else { continue };
+        if !geometry_changed(before.as_ref(), &now) {
+            continue;
+        }
+        log::info!("display changed: screen {} pt wide, notch {}x{}", now.screen_width, now.notch_width, now.notch_height);
+        if let Some((_, _, w, h)) = *ISLAND_RECT.lock() {
+            let _ = place_island(&app, w, h);
+        }
+        use tauri::Emitter;
+        let _ = app.emit(model::ev::ISLAND_GEOMETRY, &now);
+    });
+}
+
+fn geometry_changed(before: Option<&IslandGeometry>, now: &IslandGeometry) -> bool {
+    match before {
+        None => true,
+        Some(b) => b != now,
+    }
+}
+
 pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::Result<()> {
     let w = app.get_webview_window("island").ok_or_else(|| anyhow::anyhow!("island window missing"))?;
     #[cfg(target_os = "macos")]
@@ -152,6 +180,29 @@ fn island_rect_on(scale: f64, origin: (i32, i32), area: (u32, u32), width: f64, 
     let x = origin.0 as f64 + ((area.0 as f64 - w) / 2.0).max(0.0);
     let y = origin.1 as f64 + TOP_GAP * scale;
     ((x.round() as i32, y.round() as i32), (w as u32, h as u32))
+}
+
+#[cfg(test)]
+mod geometry_watch_tests {
+    use super::*;
+
+    fn g(w: f64) -> IslandGeometry {
+        IslandGeometry { platform: "macos".into(), has_notch: true, notch_width: 185.0, notch_height: 32.0, screen_width: w }
+    }
+
+    #[test]
+    fn a_wider_display_counts_as_a_change() {
+        // 14" MacBook switched from Default (1512) to More Space (1800)
+        assert!(geometry_changed(Some(&g(1512.0)), &g(1800.0)));
+        assert!(geometry_changed(None, &g(1512.0)));
+        assert!(!geometry_changed(Some(&g(1800.0)), &g(1800.0)));
+    }
+
+    #[test]
+    fn the_island_recentres_for_the_new_width() {
+        let (x, _) = platform::island_position(&g(1800.0), 185.0, 32.0);
+        assert_eq!(x + 185.0 / 2.0, 900.0);
+    }
 }
 
 #[cfg(test)]
@@ -710,6 +761,7 @@ pub fn run() {
                 });
             }
             create_island(&handle)?;
+            watch_geometry(handle.clone());
             build_tray(&handle, st.clone())?;
             {
                 let s = st.settings();

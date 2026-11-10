@@ -137,6 +137,11 @@ function notifyChime() {
 
 export default function Island() {
   const [geo, setGeo] = useState<IslandGeometry | null>(null);
+  // a notchless Mac draws a fake notch: normalise so every child lays out against it
+  const applyGeometry = useCallback((g: IslandGeometry | null) => {
+    setOS(g?.platform);
+    setGeo(g && notchStyle(g) ? { ...g, notchWidth: notchBox(g).width, notchHeight: notchBox(g).height } : g);
+  }, []);
   const [phase, setPhase] = useState<Phase>("idle");
   const lastStateAt = useRef(Date.now());
   const lastLevelAt = useRef(0);
@@ -316,11 +321,7 @@ export default function Island() {
   );
 
   useEffect(() => {
-    api.getIslandGeometry().then((g) => {
-      setOS(g?.platform);
-      // a notchless Mac draws a fake notch: normalise once so every child lays out against it
-      setGeo(g && notchStyle(g) ? { ...g, notchWidth: notchBox(g).width, notchHeight: notchBox(g).height } : g);
-    });
+    api.getIslandGeometry().then(applyGeometry);
     api.getSettings().then(setSettings).catch(() => {});
     api.listClaudeSessions().then(setSessions);
     api.listTodos().then(setTodos).catch(() => {});
@@ -405,6 +406,8 @@ export default function Island() {
         if (c.kind === "claude") notifyChime();
       }),
       on<{ id: string }>(EV.confirmDone, (d) => d && d.id && setConfirms((q) => q.filter((x) => x.id !== d.id))),
+      // display resolution / monitor changed: the backend re-centred the window, re-lay out to match
+      on<IslandGeometry>(EV.islandGeometry, (g) => g && applyGeometry(g)),
       on<CorrectionEvent>(EV.correction, (c) => c && setCorrections((q) => (q.some((x) => x.id === c.id) ? q : [...q, c]))),
       on<MeetingDetectedEvent>(EV.meetingDetected, (e) => {
         if (e.active) {

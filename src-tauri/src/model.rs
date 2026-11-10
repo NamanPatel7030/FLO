@@ -256,7 +256,7 @@ impl Default for Settings {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IslandGeometry {
     pub platform: String,
@@ -887,6 +887,9 @@ pub mod ev {
     pub const CORRECTION: &str = "flo://correction";
     pub const MEETING_DETECTED: &str = "flo://meeting-detected";
     pub const ACCOUNT: &str = "flo://account";
+    /// payload: IslandGeometry. The display changed (resolution / "More Space", monitor plugged in,
+    /// main display switched): the island re-centred itself, children re-lay out against the new size.
+    pub const ISLAND_GEOMETRY: &str = "flo://island-geometry";
 }
 
 #[cfg(test)]

@@ -744,6 +744,8 @@ export const EV = {
   /** payload: ClaudeSession[] (full current list, not dismissed) */
   claudeSessions: "flo://claude-sessions",
   correction: "flo://correction",
+  /** payload: IslandGeometry: the display changed (resolution, monitor, main display); re-lay out */
+  islandGeometry: "flo://island-geometry",
   meetingDetected: "flo://meeting-detected",
   /** payload: ConfirmEvent — show Send / Cancel; answer with confirm_action */
   confirm: "flo://confirm",
