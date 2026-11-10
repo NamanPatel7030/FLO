@@ -156,7 +156,8 @@ export const type = themed(
       title: { fontFamily: fonts.semibold, fontSize: 22, lineHeight: 28, letterSpacing: -0.4, color: colors.ink },
       heading: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22, letterSpacing: -0.2, color: colors.ink },
       body: { fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, color: colors.inkSoft },
-      small: { fontFamily: fonts.medium, fontSize: 13, lineHeight: 18, color: colors.inkMuted },
+      // 19 (not 18): Devanagari / Gujarati matras need ~1.45x the font size or Android clips them
+      small: { fontFamily: fonts.medium, fontSize: 13, lineHeight: 19, color: colors.inkMuted },
       micro: {
         fontFamily: fonts.semibold,
         fontSize: 11,

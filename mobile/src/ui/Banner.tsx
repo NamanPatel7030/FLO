@@ -44,8 +44,10 @@ export function InAppBanner({
           <View style={[styles.accent, { backgroundColor: m.color }]} />
           <KindIcon kind={banner.kind} size={38} />
           <View style={{ flex: 1 }}>
-            <Text style={[type.micro, { color: m.color }]}>{kindLabel(banner.kind)} · now</Text>
-            <Text style={styles.title} numberOfLines={1}>
+            <Text style={[type.micro, { color: m.color }]} numberOfLines={1}>
+              {kindLabel(banner.kind)} · now
+            </Text>
+            <Text style={styles.title} numberOfLines={2}>
               {banner.title}
             </Text>
             {!!banner.body && (
@@ -76,6 +78,6 @@ const styles = themed(() => StyleSheet.create({
     elevation: 16,
   },
   accent: { position: 'absolute', left: 0, top: 18, bottom: 18, width: 3, borderRadius: 2 },
-  title: { fontFamily: fonts.semibold, fontSize: 15, color: colors.ink, marginTop: 2 },
-  body: { fontFamily: fonts.regular, fontSize: 13.5, lineHeight: 19, color: colors.inkSoft, marginTop: 1 },
+  title: { fontFamily: fonts.semibold, fontSize: 15, lineHeight: 22, color: colors.ink, marginTop: 2 },
+  body: { fontFamily: fonts.regular, fontSize: 13.5, lineHeight: 20, color: colors.inkSoft, marginTop: 1 },
 }));

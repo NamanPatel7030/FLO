@@ -57,7 +57,7 @@ function ApprovalButtons({ a, onAnswer }: { a: Approval; onAnswer: (allow: boole
       {a.sending ? (
         <View style={styles.sending}>
           <ActivityIndicator size="small" color={colors.sky} />
-          <Text style={type.small}>{a.sending === 'approve' ? 'Allowing' : 'Denying'} on your computer...</Text>
+          <Text style={[type.small, { flex: 1 }]}>{a.sending === 'approve' ? 'Allowing' : 'Denying'} on your computer...</Text>
         </View>
       ) : (
         <View style={styles.buttons}>
@@ -79,7 +79,7 @@ function ApprovalCard({ a, now, onAnswer }: { a: Approval; now: number; onAnswer
           <Icon name="claude" size={20} color={colors.amber} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.project} numberOfLines={1}>
+          <Text style={styles.project} numberOfLines={2}>
             Claude Code · {a.project}
           </Text>
           <Text style={type.small}>{a.tool ? `Wants to use ${a.tool}` : 'Wants permission'}</Text>
@@ -225,6 +225,9 @@ function SessionCard({
   const name = s.folder || s.project;
   const sub = s.project && s.project !== name ? s.project : 'Claude Code';
   const remaining = approval ? left(approval.expiresAt, now) : '';
+  // Claude's message is clamped to keep the list scannable; tapping it shows all of it
+  const [full, setFull] = useState(false);
+  const clamp = approval || s.question ? 3 : 5;
   return (
     <GlassCard style={styles.card} radius={24} tint={needsYou ? colors.amber : undefined} strong={needsYou}>
       <View style={styles.cardTop} testID={`session-${s.id}`}>
@@ -232,7 +235,7 @@ function SessionCard({
           <Icon name={needsYou ? 'claude' : 'terminal'} size={19} color={needsYou ? colors.amber : colors.sky} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.project} numberOfLines={1}>
+          <Text style={styles.project} numberOfLines={2}>
             {name}
           </Text>
           <Text style={type.small} numberOfLines={1}>
@@ -253,7 +256,13 @@ function SessionCard({
       </View>
 
       {!!s.message && (
-        <Text style={styles.message} numberOfLines={approval || s.question ? 2 : 4}>
+        <Text
+          style={styles.message}
+          numberOfLines={full ? undefined : clamp}
+          onPress={() => setFull((f) => !f)}
+          accessibilityHint={full ? undefined : 'Shows the whole message'}
+          testID={`message-${s.id}`}
+        >
           {s.message}
         </Text>
       )}
@@ -420,7 +429,7 @@ export function NeedsYouScreen() {
                       <Icon name="terminal" size={18} color={colors.sky} />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.project} numberOfLines={1}>
+                      <Text style={styles.project} numberOfLines={2}>
                         {w.project}
                       </Text>
                       <Text style={type.small} numberOfLines={2}>
@@ -444,18 +453,20 @@ const styles = themed(() =>
   StyleSheet.create({
     card: { padding: 18, gap: 14 },
     cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    // lines are ~1.45x the font size throughout: Hindi / Gujarati matras get clipped on Android otherwise
     cardIcon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
     amberIcon: { backgroundColor: colors.dark ? 'rgba(245,181,68,0.14)' : 'rgba(196,122,0,0.1)' },
     skyIcon: { backgroundColor: colors.dark ? 'rgba(102,206,255,0.1)' : 'rgba(47,140,255,0.08)' },
-    project: { fontFamily: fonts.semibold, fontSize: 15.5, color: colors.ink, letterSpacing: -0.2 },
+    project: { fontFamily: fonts.semibold, fontSize: 15.5, lineHeight: 21, color: colors.ink, letterSpacing: -0.2 },
     badge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 10, borderWidth: 1 },
     badgeText: { fontFamily: fonts.semibold, fontSize: 12 },
     timer: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 10, backgroundColor: colors.dark ? 'rgba(255,255,255,0.07)' : 'rgba(20,30,60,0.06)' },
     timerText: { fontFamily: fonts.semibold, fontSize: 12.5, color: colors.inkSoft, fontVariant: ['tabular-nums'] },
-    message: { fontFamily: fonts.medium, fontSize: 14.5, lineHeight: 20, color: colors.inkSoft },
-    question: { fontFamily: fonts.semibold, fontSize: 15.5, lineHeight: 21, color: colors.ink },
+    message: { fontFamily: fonts.medium, fontSize: 14.5, lineHeight: 21, color: colors.inkSoft },
+    question: { fontFamily: fonts.semibold, fontSize: 15.5, lineHeight: 23, color: colors.ink },
     chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     chip: {
+      maxWidth: '100%',
       paddingHorizontal: 14,
       paddingVertical: 9,
       borderRadius: 14,
@@ -464,13 +475,13 @@ const styles = themed(() =>
       backgroundColor: colors.dark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.7)',
     },
     chipOn: { backgroundColor: colors.sky, borderColor: colors.sky },
-    chipText: { fontFamily: fonts.medium, fontSize: 14.5, color: colors.ink },
+    chipText: { fontFamily: fonts.medium, fontSize: 14.5, lineHeight: 21, color: colors.ink },
     chipTextOn: { color: colors.onPrimary },
     code: { padding: 12, borderRadius: 14, backgroundColor: colors.dark ? 'rgba(0,0,0,0.35)' : 'rgba(11,18,32,0.9)' },
     codeText: { fontFamily: 'monospace', fontSize: 13.5, lineHeight: 19, color: '#e8f3ff' },
-    summary: { fontFamily: fonts.medium, fontSize: 15.5, lineHeight: 21, color: colors.ink },
+    summary: { fontFamily: fonts.medium, fontSize: 15.5, lineHeight: 23, color: colors.ink },
     buttons: { flexDirection: 'row', gap: 10 },
-    sending: { flexDirection: 'row', alignItems: 'center', gap: 10, height: 44 },
+    sending: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 },
     status: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 36 },
     replyRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
     input: {
@@ -501,7 +512,7 @@ const styles = themed(() =>
       marginBottom: 12,
       backgroundColor: colors.dark ? 'rgba(31,157,107,0.16)' : 'rgba(31,157,107,0.1)',
     },
-    finishedText: { fontFamily: fonts.semibold, fontSize: 13.5, color: colors.ink },
+    finishedText: { fontFamily: fonts.semibold, fontSize: 13.5, color: colors.ink, flexShrink: 1 },
     section: { ...type.micro, marginTop: 26, marginBottom: 10, marginLeft: 6 },
     waitRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 13 },
     divider: { borderTopWidth: 1, borderTopColor: colors.hairline },

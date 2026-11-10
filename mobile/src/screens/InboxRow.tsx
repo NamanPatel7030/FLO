@@ -79,7 +79,7 @@ export function InboxRow({
                   </Text>
                   <Text style={styles.time}>{relativeTime(item.createdAt)}</Text>
                 </View>
-                <Text style={styles.title} numberOfLines={expanded ? undefined : 1}>
+                <Text style={styles.title} numberOfLines={expanded ? undefined : 2}>
                   {item.title}
                 </Text>
                 {!!item.body && (
@@ -125,11 +125,13 @@ const styles = themed(() => StyleSheet.create({
   meta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   kind: { fontFamily: fonts.semibold, fontSize: 12, letterSpacing: 0.2, flexShrink: 1 },
   time: { fontFamily: fonts.medium, fontSize: 12, color: colors.inkFaint },
-  title: { fontFamily: fonts.semibold, fontSize: 15.5, lineHeight: 21, color: colors.ink, marginTop: 3, letterSpacing: -0.2 },
-  body: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: colors.inkSoft, marginTop: 3 },
+  // ~1.45x line heights: Hindi / Gujarati matras are clipped on Android below that
+  title: { fontFamily: fonts.semibold, fontSize: 15.5, lineHeight: 23, color: colors.ink, marginTop: 3, letterSpacing: -0.2 },
+  body: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 21, color: colors.inkSoft, marginTop: 3 },
   details: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   detail: {
     flexDirection: 'row',
+    maxWidth: '100%',
     gap: 6,
     paddingHorizontal: 9,
     paddingVertical: 5,
@@ -138,6 +140,6 @@ const styles = themed(() => StyleSheet.create({
     backgroundColor: colors.dark ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.5)',
   },
   detailKey: { ...type.small, fontSize: 12, color: colors.inkFaint },
-  detailVal: { ...type.small, fontSize: 12, color: colors.inkSoft, maxWidth: 160 },
+  detailVal: { ...type.small, fontSize: 12, color: colors.inkSoft, maxWidth: 160, flexShrink: 1 },
   stamp: { ...type.small, fontSize: 12, marginTop: 10, color: colors.inkFaint },
 }));

@@ -20,7 +20,7 @@ export function ComputerLine() {
   return (
     <View style={styles.line}>
       <View style={[styles.dot, { backgroundColor: f.offline ? colors.amber : colors.green }]} />
-      <Text style={type.small} numberOfLines={1}>
+      <Text style={[type.small, { flexShrink: 1 }]} numberOfLines={2}>
         {f.offline ? `Your computer looks offline${when ? ` · last seen ${when}` : ''}` : `On your computer · updated ${when}`}
       </Text>
     </View>
@@ -56,7 +56,9 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
             }}
             style={[styles.segItem, on && styles.segOn]}
           >
-            <Text style={[styles.segText, on && { color: colors.ink, fontFamily: fonts.semibold }]}>{o.label}</Text>
+            <Text style={[styles.segText, on && { color: colors.ink, fontFamily: fonts.semibold }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {o.label}
+            </Text>
           </Pressable>
         );
       })}
@@ -114,7 +116,7 @@ const styles = themed(() =>
   StyleSheet.create({
     header: { flexDirection: 'row', alignItems: 'center', marginBottom: 18, paddingHorizontal: 4, gap: 12 },
     title: { fontFamily: fonts.bold, fontSize: 28, lineHeight: 34, letterSpacing: -0.8, color: colors.ink },
-    line: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
+    line: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3, minWidth: 0 },
     dot: { width: 7, height: 7, borderRadius: 4 },
     seg: {
       flexDirection: 'row',
@@ -123,7 +125,7 @@ const styles = themed(() =>
       backgroundColor: colors.dark ? 'rgba(255,255,255,0.05)' : 'rgba(20,30,60,0.06)',
       marginBottom: 14,
     },
-    segItem: { flex: 1, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    segItem: { flex: 1, minHeight: 36, paddingVertical: 6, paddingHorizontal: 6, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
     segOn: {
       backgroundColor: colors.dark ? 'rgba(255,255,255,0.1)' : '#ffffff',
       shadowColor: '#2b2370',
@@ -132,7 +134,7 @@ const styles = themed(() =>
       shadowOffset: { width: 0, height: 2 },
       elevation: 2,
     },
-    segText: { fontFamily: fonts.medium, fontSize: 14, color: colors.inkMuted },
+    segText: { fontFamily: fonts.medium, fontSize: 14, color: colors.inkMuted, textAlign: 'center' },
     empty: { alignItems: 'center', gap: 8, paddingVertical: 30, paddingHorizontal: 26 },
     emptyIcon: {
       width: 56,
@@ -142,7 +144,7 @@ const styles = themed(() =>
       justifyContent: 'center',
       backgroundColor: colors.dark ? 'rgba(102,206,255,0.1)' : 'rgba(47,140,255,0.1)',
     },
-    emptyTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.ink, textAlign: 'center', marginTop: 4 },
+    emptyTitle: { fontFamily: fonts.semibold, fontSize: 17, lineHeight: 23, color: colors.ink, textAlign: 'center', marginTop: 4 },
     notice: {
       marginBottom: 14,
       padding: 14,

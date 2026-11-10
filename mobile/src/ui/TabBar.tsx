@@ -38,7 +38,7 @@ function TabButton({ tab, active, badge, onPress }: { tab: (typeof TABS)[number]
       }}
       style={styles.tab}
     >
-      <Animated.View style={{ alignItems: 'center', transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -1.5] }) }] }}>
+      <Animated.View style={{ alignItems: 'center', maxWidth: '100%', transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -1.5] }) }] }}>
         <View>
           <Icon name={tab.icon} size={22} color={color} strokeWidth={active ? 2.1 : 1.8} />
           {!!badge && (
@@ -47,7 +47,13 @@ function TabButton({ tab, active, badge, onPress }: { tab: (typeof TABS)[number]
             </View>
           )}
         </View>
-        <Text style={[styles.label, { color, fontFamily: active ? fonts.semibold : fonts.medium }]} numberOfLines={1}>
+        <Text
+          style={[styles.label, { color, fontFamily: active ? fonts.semibold : fonts.medium }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.75}
+          maxFontSizeMultiplier={1.3}
+        >
           {tab.label}
         </Text>
         <Animated.View style={[styles.dot, { opacity: v, backgroundColor: colors.sky }]} />
@@ -122,8 +128,8 @@ const styles = themed(() =>
       ...(Platform.OS === 'web' ? ({ backdropFilter: 'blur(18px)' } as object) : {}),
     },
     specular: { position: 'absolute', top: 0, left: 26, right: 26, height: 1 },
-    tab: { flex: 1, height: '100%', alignItems: 'center', justifyContent: 'center' },
-    label: { fontSize: 10.5, marginTop: 3, letterSpacing: 0.1 },
+    tab: { flex: 1, minWidth: 0, height: '100%', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 1 },
+    label: { fontSize: 10.5, marginTop: 3, letterSpacing: 0.1, maxWidth: '100%', textAlign: 'center' },
     dot: { width: 4, height: 4, borderRadius: 2, marginTop: 3 },
     askSlot: { width: 72 },
     ask: {

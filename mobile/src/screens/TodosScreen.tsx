@@ -132,7 +132,7 @@ export function TodosScreen({ onAdd }: { onAdd: () => void }) {
                     </View>
                   )}
                   {!!meta && (
-                    <Text style={[type.small, { flexShrink: 1 }]} numberOfLines={1}>
+                    <Text style={[type.small, { flexShrink: 1 }]} numberOfLines={2}>
                       {meta}
                     </Text>
                   )}
@@ -152,12 +152,13 @@ const styles = themed(() =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      height: 38,
+      minHeight: 38,
       paddingHorizontal: 14,
       borderRadius: 19,
       backgroundColor: colors.primary,
     },
     addText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.onPrimary },
+    // a to-do title is shown in full; 1.45x line height keeps Hindi / Gujarati matras from clipping
     row: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, paddingHorizontal: 16, paddingVertical: 15 },
     check: {
       width: 26,
@@ -169,9 +170,9 @@ const styles = themed(() =>
       justifyContent: 'center',
       marginTop: 1,
     },
-    title: { fontFamily: fonts.medium, fontSize: 15.5, lineHeight: 21, color: colors.ink, letterSpacing: -0.15 },
+    title: { fontFamily: fonts.medium, fontSize: 15.5, lineHeight: 23, color: colors.ink, letterSpacing: -0.15 },
     titleDone: { color: colors.inkMuted, textDecorationLine: 'line-through' },
-    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
+    metaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 6 },
     due: {
       paddingHorizontal: 8,
       paddingVertical: 3,

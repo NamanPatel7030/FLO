@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import type { FloApi } from './client';
 import { parseComputer } from '../lib/computer';
 import type { AskRequest, ComputerSnapshot, InboxItem, PairClaimResponse, PhoneAction, Presence, Session } from './types';
+import { STRESS_USER, stressInbox, stressState } from './mockStress';
 
 function query(): URLSearchParams | null {
   if (Platform.OS !== 'web') return null;
@@ -32,16 +33,19 @@ export function mockEmptyInbox(): boolean {
   return query()?.has('empty') === true;
 }
 
+/** `?mock&stress`: long names and titles plus Hindi / Gujarati copy, for layout review. */
+const stress = (): boolean => query()?.has('stress') === true;
+
 export const MOCK_SESSION: Session = {
   server: 'https://flo.hellonaman.com',
   deviceToken: 'mock-device-token',
-  user: { name: 'Parth Gundaniya', email: 'parth@flo.app' },
+  user: stress() ? STRESS_USER : { name: 'Parth Gundaniya', email: 'parth@flo.app' },
 };
 
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 
 export function mockInbox(): InboxItem[] {
-  return [
+  const items: InboxItem[] = [
     {
       id: '108',
       kind: 'claude_done',
@@ -99,6 +103,7 @@ export function mockInbox(): InboxItem[] {
       createdAt: ago(60 * 26),
     },
   ];
+  return stress() ? stressInbox(items) : items;
 }
 
 const ahead = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
@@ -113,7 +118,7 @@ export function mockComputer(): ComputerSnapshot {
     return d.toISOString();
   };
   const opts = (...o: [string, string][]) => o.map(([value, label]) => ({ value, label }));
-  return parseComputer({
+  const snap = parseComputer({
     state: {
       v: 1,
       computer: { platform: 'macos', appVersion: '0.9.1' },
@@ -170,6 +175,8 @@ export function mockComputer(): ComputerSnapshot {
     updatedAt: ago(0.5),
     actions: [],
   });
+  if (stress() && snap.state) snap.state = stressState(snap.state);
+  return snap;
 }
 
 export function createMockApi(): FloApi & { claim(): Promise<PairClaimResponse> } {

@@ -61,7 +61,9 @@ function Segmented({
             style={styles.segBtn}
           >
             <Icon name={o.icon} size={17} color={on ? (colors.dark ? '#03263d' : '#ffffff') : colors.inkSoft} strokeWidth={2} />
-            <Text style={[styles.segText, on && { color: colors.dark ? '#03263d' : '#ffffff' }]}>{o.label}</Text>
+            <Text style={[styles.segText, on && { color: colors.dark ? '#03263d' : '#ffffff' }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {o.label}
+            </Text>
           </Pressable>
         );
       })}
@@ -148,7 +150,7 @@ export function PresenceCard({
             />
             <View style={[styles.dot, { backgroundColor: accent }]} />
           </View>
-          <Text style={[type.micro, { color: away ? onAway : colors.inkMuted }]}>
+          <Text style={[type.micro, styles.statusText, { color: away ? onAway : colors.inkMuted }]}>
             {presence ? (away ? 'Away from your computer' : 'At your computer') : 'Checking…'}
           </Text>
         </View>
@@ -188,7 +190,9 @@ const styles = themed(() => StyleSheet.create({
   activeBg: { backgroundColor: colors.glass },
   specular: { position: 'absolute', top: 0, left: 28, right: 28, height: 1 },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  // shrinks (and wraps) so a long status or a big system font never pushes the Notchling out of the card
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, marginRight: 10 },
+  statusText: { flexShrink: 1 },
   dotWrap: { width: 10, height: 10, alignItems: 'center', justifyContent: 'center' },
   dot: { width: 8, height: 8, borderRadius: 4 },
   dotRing: { position: 'absolute', width: 8, height: 8, borderRadius: 4 },
@@ -206,6 +210,6 @@ const styles = themed(() => StyleSheet.create({
   },
   segThumb: { position: 'absolute', top: 4, left: 4, bottom: 4, borderRadius: 14, overflow: 'hidden' },
   segThumbFill: { flex: 1 },
-  segBtn: { flex: 1, height: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  segText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.inkSoft },
+  segBtn: { flex: 1, minHeight: 44, paddingVertical: 8, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  segText: { fontFamily: fonts.semibold, fontSize: 15, color: colors.inkSoft, flexShrink: 1 },
 }));

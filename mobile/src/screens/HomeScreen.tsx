@@ -113,13 +113,13 @@ export function HomeScreen({ onSettings, onVoice, onNeedsYou, onTodos }: { onSet
                 tap();
                 onVoice('ask');
               }}
-              style={{ flex: 1.3 }}
+              style={{ flex: 1.15 }}
             >
               <View style={styles.askBtn}>
                 <Icon name="sparkle" size={20} color={colors.onPrimary} />
-                <View>
-                  <Text style={styles.askTitle}>Ask Flo</Text>
-                  <Text style={styles.askSub}>Your computer answers</Text>
+                <View style={styles.btnText}>
+                  <Text style={styles.askTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Ask Flo</Text>
+                  <Text style={styles.askSub} numberOfLines={3}>Your computer answers</Text>
                 </View>
               </View>
             </Pressable>
@@ -134,9 +134,9 @@ export function HomeScreen({ onSettings, onVoice, onNeedsYou, onTodos }: { onSet
             >
               <GlassCard radius={22} style={styles.dictBtn}>
                 <Icon name="mic" size={20} color={colors.sky} />
-                <View>
-                  <Text style={styles.dictTitle}>Dictate</Text>
-                  <Text style={type.small}>To-do or note</Text>
+                <View style={styles.btnText}>
+                  <Text style={styles.dictTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>Dictate</Text>
+                  <Text style={type.small} numberOfLines={3}>To-do or note</Text>
                 </View>
               </GlassCard>
             </Pressable>
@@ -207,15 +207,17 @@ export function HomeScreen({ onSettings, onVoice, onNeedsYou, onTodos }: { onSet
 
 const styles = themed(() => StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 18, paddingHorizontal: 2 },
-  actions: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  actions: { flexDirection: 'row', alignItems: 'stretch', gap: 10, marginBottom: 14 },
   askBtn: {
-    height: 74,
+    flex: 1,
+    minHeight: 74,
+    paddingVertical: 12,
     borderRadius: 22,
     backgroundColor: colors.primary,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 18,
+    gap: 10,
+    paddingHorizontal: 16,
     shadowColor: '#2b2370',
     shadowOpacity: 0.25,
     shadowRadius: 18,
@@ -223,7 +225,9 @@ const styles = themed(() => StyleSheet.create({
     elevation: 8,
   },
   askTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.onPrimary },
-  askSub: { fontFamily: fonts.medium, fontSize: 12.5, color: colors.onPrimary, opacity: 0.7 },
+  askSub: { fontFamily: fonts.medium, fontSize: 12.5, lineHeight: 17, color: colors.onPrimary, opacity: 0.7 },
+  /** the label beside the icon shrinks and wraps instead of pushing the icon out of the button */
+  btnText: { flex: 1, minWidth: 0 },
   needs: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
   needsIcon: {
     width: 40,
@@ -234,7 +238,7 @@ const styles = themed(() => StyleSheet.create({
     backgroundColor: colors.dark ? 'rgba(245,181,68,0.14)' : 'rgba(196,122,0,0.1)',
   },
   needsTitle: { fontFamily: fonts.semibold, fontSize: 15.5, color: colors.ink, letterSpacing: -0.2 },
-  dictBtn: { height: 74, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16 },
+  dictBtn: { flex: 1, minHeight: 74, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
   dictTitle: { fontFamily: fonts.semibold, fontSize: 17, color: colors.ink },
   name: { fontFamily: fonts.semibold, fontSize: 21, color: colors.ink, letterSpacing: -0.4 },
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 28, marginBottom: 12, paddingHorizontal: 4 },

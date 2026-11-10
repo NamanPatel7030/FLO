@@ -67,7 +67,9 @@ function ThemePicker({ value, onChange }: { value: ThemeMode; onChange: (t: Them
             }}
             style={[styles.segItem, on && styles.segOn]}
           >
-            <Text style={[styles.segText, on && styles.segTextOn]}>{themeLabel(t)}</Text>
+            <Text style={[styles.segText, on && styles.segTextOn]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+              {themeLabel(t)}
+            </Text>
           </Pressable>
         );
       })}
@@ -121,16 +123,17 @@ export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: (
           <Text style={styles.avatarText}>{initials(user.name, user.email)}</Text>
         </LinearGradient>
         <View style={{ flex: 1 }}>
-          <Text style={styles.accName} numberOfLines={1}>
+          <Text style={styles.accName} numberOfLines={2}>
             {user.name || 'Flo account'}
           </Text>
-          <Text style={type.small} numberOfLines={1}>
+          <Text style={type.small} numberOfLines={1} ellipsizeMode="middle">
             {user.email}
           </Text>
-        </View>
-        <View style={styles.pairedPill}>
-          <View style={styles.pairedDot} />
-          <Text style={styles.pairedText}>Paired</Text>
+          {/* under the email, not beside it, so a long name gets the card's full width */}
+          <View style={styles.pairedPill}>
+            <View style={styles.pairedDot} />
+            <Text style={styles.pairedText}>Paired</Text>
+          </View>
         </View>
       </GlassCard>
 
@@ -258,7 +261,7 @@ export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: (
           <Icon name="server" size={19} color={colors.sky} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.rowTitle} numberOfLines={1}>
+          <Text style={styles.rowTitle} numberOfLines={1} ellipsizeMode="middle">
             {flo.session?.server.replace(/^https?:\/\//, '')}
           </Text>
           <Text style={type.small}>{flo.session?.server.startsWith('https') ? 'Secure connection' : 'Local network (http)'}</Text>
@@ -353,13 +356,15 @@ const styles = themed(() => StyleSheet.create({
   account: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18 },
   avatar: { width: 54, height: 54, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontFamily: fonts.bold, fontSize: 19, color: '#0b1220' },
-  accName: { fontFamily: fonts.semibold, fontSize: 17.5, color: colors.ink, letterSpacing: -0.3 },
+  accName: { fontFamily: fonts.semibold, fontSize: 17.5, lineHeight: 23, color: colors.ink, letterSpacing: -0.3 },
   pairedPill: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 4,
     borderRadius: 999,
     backgroundColor: 'rgba(74,222,128,0.1)',
   },
@@ -375,7 +380,7 @@ const styles = themed(() => StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(102,206,255,0.1)',
   },
-  rowTitle: { fontFamily: fonts.semibold, fontSize: 15.5, color: colors.ink, letterSpacing: -0.2 },
+  rowTitle: { fontFamily: fonts.semibold, fontSize: 15.5, lineHeight: 21, color: colors.ink, letterSpacing: -0.2 },
   permCard: { padding: 16 },
   permTop: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   kindRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 13 },
@@ -388,7 +393,7 @@ const styles = themed(() => StyleSheet.create({
     borderRadius: 14,
     backgroundColor: colors.dark ? 'rgba(255,255,255,0.06)' : 'rgba(20,30,60,0.06)',
   },
-  segItem: { flex: 1, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  segItem: { flex: 1, minHeight: 34, paddingVertical: 6, paddingHorizontal: 4, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   segOn: {
     backgroundColor: colors.dark ? 'rgba(255,255,255,0.12)' : '#ffffff',
     shadowColor: '#2b2370',

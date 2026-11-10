@@ -219,7 +219,8 @@ export function OnboardingScreen({ onScan, onEnterCode, error }: { onScan: () =>
 const styles = themed(() =>
   StyleSheet.create({
     root: { flexGrow: 1, paddingHorizontal: 24 },
-    headline: { fontSize: 36, lineHeight: 42, marginTop: 6 },
+    // the nested serif is 42px: a 42px line clips its descenders ("y", "p") on Android
+    headline: { fontSize: 36, lineHeight: 46, marginTop: 6 },
     serif: { fontFamily: fonts.serif, fontSize: 42, color: colors.sky, letterSpacing: -0.5 },
     feature: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
     featureIcon: {
@@ -230,7 +231,7 @@ const styles = themed(() =>
       justifyContent: 'center',
       backgroundColor: colors.dark ? 'rgba(102,206,255,0.12)' : 'rgba(47,140,255,0.1)',
     },
-    allow: { paddingHorizontal: 14, height: 34, borderRadius: radius.pill, backgroundColor: colors.primary, justifyContent: 'center' },
+    allow: { paddingHorizontal: 14, minHeight: 34, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.primary, justifyContent: 'center' },
     allowText: { fontFamily: fonts.semibold, fontSize: 13.5, color: colors.onPrimary },
     okBadge: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' },
     dots: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 18 },

@@ -65,7 +65,7 @@ function SettingRow({
   const editable = s.editable;
   const right = !editable ? (
     <View style={styles.readOnly}>
-      <Text style={styles.value} numberOfLines={1}>
+      <Text style={styles.value} numberOfLines={2}>
         {settingText(s)}
       </Text>
       <Icon name="lock" size={14} color={colors.inkFaint} />
@@ -85,7 +85,9 @@ function SettingRow({
       }}
       style={styles.selectBtn}
     >
-      <Text style={styles.selectText}>{settingText(s)}</Text>
+      <Text style={styles.selectText} numberOfLines={1}>
+        {settingText(s)}
+      </Text>
       <View style={{ transform: [{ rotate: open ? '-90deg' : '90deg' }] }}>
         <Icon name="chevron" size={14} color={colors.inkMuted} strokeWidth={2.2} />
       </View>
@@ -164,7 +166,7 @@ export function ComputerSettingsScreen({ onBack }: { onBack: () => void }) {
           <Icon name="back" color={colors.ink} />
         </IconButton>
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={styles.headerTitle}>Flo on your {name}</Text>
+          <Text style={[styles.headerTitle, { textAlign: 'center' }]}>Flo on your {name}</Text>
           <ComputerLine />
         </View>
         <View style={{ width: 44 }} />
@@ -228,24 +230,28 @@ const styles = themed(() =>
     row: { paddingHorizontal: 16, paddingVertical: 13 },
     rowTop: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 32 },
     divider: { borderTopWidth: 1, borderTopColor: colors.hairline },
-    label: { fontFamily: fonts.medium, fontSize: 15, color: colors.ink, letterSpacing: -0.15 },
+    label: { fontFamily: fonts.medium, fontSize: 15, lineHeight: 21, color: colors.ink, letterSpacing: -0.15 },
     hint: { ...type.small, fontSize: 12, color: colors.inkFaint, marginTop: 2 },
     readOnly: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '48%' },
-    value: { fontFamily: fonts.medium, fontSize: 14, color: colors.inkMuted, flexShrink: 1 },
+    value: { fontFamily: fonts.medium, fontSize: 14, lineHeight: 19, color: colors.inkMuted, flexShrink: 1, textAlign: 'right' },
     selectBtn: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      height: 34,
+      maxWidth: '48%',
+      minHeight: 34,
+      paddingVertical: 6,
       paddingHorizontal: 12,
       borderRadius: 12,
       backgroundColor: colors.dark ? 'rgba(255,255,255,0.07)' : 'rgba(20,30,60,0.05)',
     },
-    selectText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.ink },
+    selectText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.ink, flexShrink: 1 },
     chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
     chip: {
+      maxWidth: '100%',
       paddingHorizontal: 14,
-      height: 34,
+      minHeight: 34,
+      paddingVertical: 6,
       borderRadius: 17,
       justifyContent: 'center',
       borderWidth: 1,

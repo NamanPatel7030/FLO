@@ -74,7 +74,9 @@ export function PrimaryButton({ label, onPress, icon, loading, disabled, style, 
           ) : (
             <View style={styles.row}>
               {icon}
-              <Text style={styles.primaryLabel}>{label}</Text>
+              <Text style={styles.primaryLabel} numberOfLines={2}>
+                {label}
+              </Text>
             </View>
           )}
         </LinearGradient>
@@ -117,7 +119,7 @@ export function GlassButton({
       >
         <View style={styles.row}>
           {icon}
-          <Text style={[styles.glassLabel, compact && { fontSize: 14 }, danger && { color: colors.danger }]}>
+          <Text style={[styles.glassLabel, compact && { fontSize: 14 }, danger && { color: colors.danger }]} numberOfLines={2}>
             {label}
           </Text>
         </View>
@@ -160,7 +162,8 @@ export function IconButton({
 }
 
 const styles = themed(() => StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  // the label shrinks and wraps (2 lines max) inside a button that grows, instead of spilling out of it
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, maxWidth: '100%' },
   primaryShadow: {
     borderRadius: radius.md,
     shadowColor: colors.dark ? colors.sky : '#2b2370',
@@ -170,16 +173,18 @@ const styles = themed(() => StyleSheet.create({
     elevation: 10,
   },
   primary: {
-    height: 58,
+    minHeight: 58,
+    paddingVertical: 10,
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
     overflow: 'hidden',
   },
-  primaryLabel: { fontFamily: fonts.semibold, fontSize: 16.5, color: colors.dark ? '#03263d' : '#ffffff', letterSpacing: -0.2 },
+  primaryLabel: { fontFamily: fonts.semibold, fontSize: 16.5, lineHeight: 22, color: colors.dark ? '#03263d' : '#ffffff', letterSpacing: -0.2, flexShrink: 1, textAlign: 'center' },
   glass: {
-    height: 56,
+    minHeight: 56,
+    paddingVertical: 8,
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
@@ -188,9 +193,9 @@ const styles = themed(() => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.glassBorder,
   },
-  compact: { height: 40, borderRadius: radius.sm, paddingHorizontal: 14 },
+  compact: { minHeight: 40, paddingVertical: 6, borderRadius: radius.sm, paddingHorizontal: 14 },
   danger: { borderColor: colors.errorBorder, backgroundColor: colors.errorBg },
-  glassLabel: { fontFamily: fonts.semibold, fontSize: 16, color: colors.ink, letterSpacing: -0.2 },
+  glassLabel: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 21, color: colors.ink, letterSpacing: -0.2, flexShrink: 1, textAlign: 'center' },
   icon: {
     width: 44,
     height: 44,

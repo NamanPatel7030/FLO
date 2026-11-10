@@ -165,7 +165,9 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
               style={[styles.mode, on && styles.modeOn]}
             >
               <Icon name={m.icon} size={16} color={on ? colors.onPrimary : colors.inkSoft} />
-              <Text style={[styles.modeText, on && { color: colors.onPrimary }]}>{m.label}</Text>
+              <Text style={[styles.modeText, on && { color: colors.onPrimary }]} numberOfLines={1}>
+                {m.label}
+              </Text>
             </Pressable>
           );
         })}
@@ -259,13 +261,14 @@ const styles = themed(() =>
     root: { flexGrow: 1, paddingHorizontal: 22 },
     header: { flexDirection: 'row' },
     hero: { alignItems: 'center', marginTop: 4 },
-    modes: { flexDirection: 'row', gap: 8, marginTop: 22, justifyContent: 'center' },
+    modes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 22, justifyContent: 'center' },
     mode: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 7,
       paddingHorizontal: 14,
-      height: 40,
+      minHeight: 40,
+      paddingVertical: 6,
       borderRadius: radius.pill,
       backgroundColor: colors.glass,
       borderWidth: 1,
@@ -274,7 +277,7 @@ const styles = themed(() =>
     modeOn: { backgroundColor: colors.primary, borderColor: colors.primary },
     modeText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.inkSoft },
     textCard: { marginTop: 18, padding: 16, minHeight: 110 },
-    text: { fontFamily: fonts.medium, fontSize: 18, lineHeight: 26, color: colors.ink, minHeight: 78, textAlignVertical: 'top' },
+    text: { fontFamily: fonts.medium, fontSize: 18, lineHeight: 27, color: colors.ink, minHeight: 78, textAlignVertical: 'top' },
     answer: { marginTop: 14, padding: 16, gap: 8 },
     answerText: { fontFamily: fonts.regular, fontSize: 16, lineHeight: 24, color: colors.ink },
     row: { flexDirection: 'row', gap: 10, alignItems: 'center' },

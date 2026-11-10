@@ -58,7 +58,7 @@ const styles = themed(() =>
   StyleSheet.create({
     card: { padding: 16, marginBottom: 14 },
     row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    notes: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: colors.inkSoft, marginTop: 10 },
+    notes: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 21, color: colors.inkSoft, marginTop: 10 },
     bar: { height: 6, borderRadius: 3, backgroundColor: colors.hairline, marginTop: 12, overflow: 'hidden' },
     fill: { height: 6, borderRadius: 3, backgroundColor: colors.sky },
     error: { ...type.small, color: colors.errorText, marginTop: 8 },
