@@ -17,6 +17,10 @@ export interface UpdateState {
   total?: number | null;
   error?: string;
   checkedAt?: number;
+  /** Windows / Linux: "Download" opens this installer instead of updating in place */
+  downloadUrl?: string;
+  /** the installer download was opened in the browser */
+  opened?: boolean;
 }
 
 let state: UpdateState = { phase: "idle" };
@@ -41,7 +45,7 @@ function wire() {
 
 function fromInfo(i: UpdateInfo): Partial<UpdateState> {
   if (i.ready) return { phase: "ready", current: i.current, version: i.version ?? undefined, notes: i.notes ?? undefined };
-  if (i.available) return { phase: "available", current: i.current, version: i.version ?? undefined, notes: i.notes ?? undefined };
+  if (i.available) return { phase: "available", current: i.current, version: i.version ?? undefined, notes: i.notes ?? undefined, downloadUrl: i.downloadUrl };
   return { phase: "uptodate", current: i.current };
 }
 
@@ -60,6 +64,15 @@ export async function checkForUpdate(): Promise<UpdateState> {
 export async function installUpdate(): Promise<void> {
   wire();
   if (state.phase === "downloading" || state.phase === "ready") return;
+  if (state.downloadUrl) {
+    // Windows / Linux: the backend opens the installer download in the browser
+    try {
+      set({ ...fromInfo(await api.installUpdate()), opened: true });
+    } catch (e) {
+      set({ phase: "error", error: String(e) });
+    }
+    return;
+  }
   set({ phase: "downloading", downloaded: 0, total: null, error: undefined });
   try {
     set(fromInfo(await api.installUpdate()));

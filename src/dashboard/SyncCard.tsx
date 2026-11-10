@@ -1,4 +1,5 @@
 // Settings → Privacy → "Sync your data": end-to-end encrypted backup and multi-Mac sync.
+import { deviceWord } from "../lib/os";
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, Cloud, Copy, KeyRound, Laptop, Loader2, Lock, RefreshCw, Trash2 } from "lucide-react";
@@ -107,13 +108,13 @@ export function SyncCard() {
         Sync your data
       </CardTitle>
       <p className="-mt-1 text-[12.5px] text-muted">
-        Back up Flo and keep your Macs in step. End-to-end encrypted: everything is locked on this Mac with a key only you hold, so the server stores data it can't read.
+        Back up Flo and keep your {deviceWord()}s in step. End-to-end encrypted: everything is locked on this {deviceWord()} with a key only you hold, so the server stores data it can't read.
       </p>
 
       <div className="mt-2 divide-y divide-[var(--border)]">
         <Toggle
           label="Sync your data"
-          hint={st.enabled ? (st.lastSync ? `Last synced ${relativeTime(st.lastSync)} · ${st.syncedItems} items` : "Syncing for the first time…") : "Off. Nothing leaves this Mac."}
+          hint={st.enabled ? (st.lastSync ? `Last synced ${relativeTime(st.lastSync)} · ${st.syncedItems} items` : "Syncing for the first time…") : `Off. Nothing leaves this ${deviceWord()}.`}
           checked={st.enabled}
           onChange={(v) => (v ? turnOn() : act("disable", syncApi.disable))}
         />
@@ -187,7 +188,7 @@ export function SyncCard() {
       {confirmDelete && (
         <div className="mt-3 rounded-2xl border border-red-400/30 bg-red-500/5 p-4" role="alertdialog" aria-label="Delete synced data">
           <p className="text-[13px] font-medium">Delete everything you've synced?</p>
-          <p className="mt-1 text-[12px] text-muted">This removes your encrypted copy from the server and turns Sync off. Data on this Mac stays. Your other Macs keep their copies too.</p>
+          <p className="mt-1 text-[12px] text-muted">This removes your encrypted copy from the server and turns Sync off. Data on this {deviceWord()} stays. Your other {deviceWord()}s keep their copies too.</p>
           <div className="mt-3 flex gap-2">
             <Button size="sm" variant="danger" onClick={() => act("delete", async () => { await syncApi.deleteRemote(); setConfirmDelete(false); })}>
               Delete synced data

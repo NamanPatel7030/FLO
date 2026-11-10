@@ -1,5 +1,7 @@
 // First-run setup: the step list, the chapters shown in the progress rail, and the pure bits that
 // turn the playful answers into a profile. No React here, so it is unit-tested (flow.test.ts).
+import type { Platform } from "../../lib/types";
+import { os, settingsApp } from "../../lib/os";
 import { buildProfile, type Answers, type App, type Lang, type Role, type Use } from "../../lib/profile";
 import type { NotchlingMood } from "../../lib/notchling";
 
@@ -84,11 +86,14 @@ export function toggle<T>(list: T[], v: T): T[] {
 const hello = (h: number) => (h < 5 ? "Up late?" : h < 12 ? "Good morning." : h < 17 ? "Good afternoon." : h < 22 ? "Good evening." : "Up late?");
 
 /** The big line Notchling says at the top of each step. */
-export function headline(step: Step, name: string, hour = new Date().getHours()): { title: string; sub: string } {
+export function headline(step: Step, name: string, hour = new Date().getHours(), platform: Platform = os()): { title: string; sub: string } {
   const n = name.trim();
   switch (step) {
-    case "welcome": return { title: n ? `Hi ${n}, I'm Flo.` : "Hi, I'm Flo.", sub: `${hello(hour)} I live in your notch and turn your voice into words, in any app.` };
-    case "permissions": return { title: "Let me hear you and type for you", sub: "Two quick yeses: the microphone, and one switch for Accessibility. I'll notice the moment you flip it." };
+    case "welcome": return { title: n ? `Hi ${n}, I'm Flo.` : "Hi, I'm Flo.", sub: `${hello(hour)} I live ${platform === "macos" ? "in your notch" : "at the top of your screen"} and turn your voice into words, in any app.` };
+    case "permissions":
+      return platform === "macos"
+        ? { title: "Let me hear you and type for you", sub: "Two quick yeses: the microphone, and one switch for Accessibility. I'll notice the moment you flip it." }
+        : { title: "Let me hear you", sub: "One quick yes: the microphone. I'll notice the moment it's on." };
     case "try": return { title: "Now say something", sub: "" };
     case "setup": return { title: "How should I listen and think?", sub: "Good defaults are set. Change anything, anytime." };
     case "role": return { title: n ? `So ${n}, what do you do?` : "So, what do you do?", sub: "I'll learn the words you use most." };
@@ -98,11 +103,11 @@ export function headline(step: Step, name: string, hour = new Date().getHours())
 }
 
 /** Turn a backend error into something a person can act on. */
-export function friendlyError(msg: string): { text: string; fixMic?: boolean } {
+export function friendlyError(msg: string, platform: Platform = os()): { text: string; fixMic?: boolean } {
   const m = msg.toLowerCase();
   if (m.includes("microphone unavailable") || m.includes("privacy → microphone") || m.includes("not authorized"))
     return { text: "Allow the microphone first, then try again.", fixMic: true };
-  if (m.includes("didn't hear")) return { text: "I couldn't hear you. Check your mic is on and picked in System Settings, Sound, then try again.", fixMic: true };
+  if (m.includes("didn't hear")) return { text: `I couldn't hear you. Check your mic is on and picked in ${settingsApp(platform)}, Sound, then try again.`, fixMic: true };
   if (m.includes("didn't catch")) return { text: "That was a bit short. Hold a little longer and say the whole line." };
   return { text: msg.replace(/[—–]/g, ",") };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PERMISSION_ITEMS, missingRequired } from "../usePermissions";
-import { SETUP_PERMS, STUCK_AFTER_MS, accessibilityState, hotkeyReady, nextSetupPerm, setupDone } from "./perms";
+import { PERMISSION_ITEMS, missingRequired, permissionItems } from "../usePermissions";
+import { SETUP_PERMS, STUCK_AFTER_MS, accessibilityState, hotkeyReady, nextSetupPerm, setupDone, setupPerms } from "./perms";
 import type { Permissions } from "../../lib/types";
 
 const P = (p: Partial<Permissions> = {}): Permissions => ({
@@ -65,5 +65,23 @@ describe("accessibility state", () => {
   it("stale right away when Flo was trusted under an earlier build (an update reset the grant)", () => {
     expect(accessibilityState(P({ accessibilityStale: true }), null, now)).toBe("stale");
     expect(accessibilityState(P({ accessibilityStale: true }), now - 1000, now)).toBe("stale");
+  });
+});
+
+describe("Windows and Linux setup", () => {
+  it("asks for the microphone only (there is no Accessibility switch)", () => {
+    for (const os of ["windows", "linux"] as const) {
+      expect(setupPerms(os).map((x) => x.key)).toEqual(["microphone"]);
+      expect(permissionItems(os).map((x) => x.key)).toEqual(["microphone"]);
+      expect(setupDone(P({ microphone: true, accessibility: false }), os)).toBe(true);
+      expect(nextSetupPerm(P({ microphone: true }), os)).toBeNull();
+      expect(missingRequired(P({ microphone: true }), os)).toEqual([]);
+    }
+    expect(setupPerms("macos").map((x) => x.key)).toEqual(["microphone", "accessibility"]);
+  });
+
+  it("the Flo key is ready only once the hook runs (Accessibility means nothing there)", () => {
+    expect(hotkeyReady(P({ accessibility: true }), "linux")).toBe(false);
+    expect(hotkeyReady(P({ hotkeyActive: true }), "linux")).toBe(true);
   });
 });

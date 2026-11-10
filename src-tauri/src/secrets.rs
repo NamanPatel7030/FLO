@@ -1,4 +1,5 @@
-//! BYOK API keys + database key, stored in macOS Keychain / Windows Credential Manager.
+//! BYOK API keys + database key, stored in macOS Keychain / Windows Credential Manager / the
+//! Linux Secret Service (GNOME Keyring, KWallet) via the `keyring` crate.
 use anyhow::{bail, Result};
 
 const SERVICE: &str = "com.flo.flow";
@@ -157,9 +158,10 @@ pub async fn get_api_key_async(provider: &str) -> anyhow::Result<Option<String>>
     match tokio::time::timeout(std::time::Duration::from_secs(25), tokio::task::spawn_blocking(move || get_api_key(&p))).await {
         Ok(Ok(k)) => Ok(k),
         Ok(Err(e)) => Err(e.into()),
-        Err(_) => anyhow::bail!(
+        Err(_) if cfg!(target_os = "macos") => anyhow::bail!(
             "macOS is asking whether Flo may use your saved {provider} key. Click “Always Allow” in the Keychain prompt (it may be behind other windows)."
         ),
+        Err(_) => anyhow::bail!("Your system keyring didn't answer for the saved {provider} key. If it asked to be unlocked, unlock it and try again."),
     }
 }
 

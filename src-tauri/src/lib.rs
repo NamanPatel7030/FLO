@@ -233,7 +233,14 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
     let maker = MenuItem::with_id(app, "maker", "Made by Naman ↗", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&open, &meeting, &pause, &sep, &maker, &sep2, &quit])?;
+    // Windows / Linux: click-to-talk from the tray, for desktops where the Flo key can't be read
+    // (Wayland without access to the keyboard devices)
+    let dictate = MenuItem::with_id(app, "dictate", "Start / stop dictation", true, None::<&str>)?;
+    let menu = if cfg!(target_os = "macos") {
+        Menu::with_items(app, &[&open, &meeting, &pause, &sep, &maker, &sep2, &quit])?
+    } else {
+        Menu::with_items(app, &[&open, &dictate, &meeting, &pause, &sep, &maker, &sep2, &quit])?
+    };
     let mut tray = TrayIconBuilder::with_id("flo").menu(&menu).tooltip("Flo · your assistant").show_menu_on_left_click(true);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
@@ -258,6 +265,18 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
         }
         "maker" => {
             let _ = tauri_plugin_opener::open_url("https://hellonaman.com", None::<&str>);
+        }
+        "dictate" => {
+            let st = st.clone();
+            if st.session.lock().is_some() {
+                tauri::async_runtime::spawn(session::stop(st));
+            } else {
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(e) = session::start(&st, Mode::Dictation, false) {
+                        st.state(model::Phase::Error, Mode::Dictation, Some(e.to_string()));
+                    }
+                });
+            }
         }
         "quit" => app.exit(0),
         _ => {}

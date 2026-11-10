@@ -1,5 +1,6 @@
 // Projects → Code: clone a GitHub repo or link a folder, see its git state, and "Edit with AI" —
 // hand a task to Claude Code / Codex / Gemini CLI in Terminal (or headless, in the background).
+import { deviceWord, modKey } from "../lib/os";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
@@ -477,7 +478,7 @@ function EditWithAI({ p, onClose }: { p: Project; onClose: () => void }) {
 
         {none || showAgents ? (
           <div data-testid="connect-inline">
-            <div className="mb-2 text-[12.5px] text-muted">{none ? "Connect an AI coding account first. Flo hands your task to it on this Mac." : "Your coding agents"}</div>
+            <div className="mb-2 text-[12.5px] text-muted">{none ? `Connect an AI coding account first. Flo hands your task to it on this ${deviceWord()}.` : "Your coding agents"}</div>
             <CodingAgents compact state={agentsState} />
             {!none && (
               <button className="mt-2 text-[11.5px] font-medium text-brand-300 hover:text-brand-200" onClick={() => setShowAgents(false)}>
@@ -578,7 +579,7 @@ function EditWithAI({ p, onClose }: { p: Project; onClose: () => void }) {
             </div>
 
             <div className="mt-3 flex items-center justify-between gap-2">
-              <span className="text-[10.5px] text-faint">⌘↩ to send</span>
+              <span className="text-[10.5px] text-faint">{modKey()}↩ to send</span>
               <Button
                 variant="primary"
                 size="sm"

@@ -1,4 +1,5 @@
-import type { ClaudeSession, ClaudeStatus, HotkeyCombo, IslandGeometry, Todo, NotchSize } from "./types";
+import type { ClaudeSession, ClaudeStatus, HotkeyCombo, IslandGeometry, Platform, Todo, NotchSize } from "./types";
+import { os } from "./os";
 import { PANEL_W } from "./widgets";
 
 const URGENCY: Record<ClaudeStatus, number> = { needs_approval: 0, waiting_reply: 1, done: 2, working: 3 };
@@ -140,12 +141,30 @@ export type IslandVariant =
 
 // ── hotkeys + statuses ───────────────────────────────────────────────────────
 export const HOTKEY_OPTIONS: HotkeyCombo[] = ["fn", "ctrl", "alt", "fn+ctrl", "ctrl+alt", "cmd+alt", "fn+shift"];
+/** Windows / Linux: no readable fn key; "cmd" is the Windows / Super key. */
+export const HOTKEY_OPTIONS_PC: HotkeyCombo[] = ["ctrl", "ctrl+cmd", "alt", "ctrl+alt", "ctrl+shift", "alt+shift"];
+export const hotkeyOptions = (p: Platform = os()) => (p === "macos" ? HOTKEY_OPTIONS : HOTKEY_OPTIONS_PC);
 const KEY_SYM: Record<string, string> = { fn: "fn", ctrl: "⌃", alt: "⌥", cmd: "⌘", shift: "⇧" };
 const KEY_WORD: Record<string, string> = { fn: "fn", ctrl: "control", alt: "option", cmd: "command", shift: "shift" };
-/** "fn+ctrl" → "fn + ⌃" (keycap symbols) */
-export const formatHotkey = (c: string) => c.split("+").map((k) => KEY_SYM[k] ?? k).join(" + ");
+const PC_ORDER = ["ctrl", "alt", "shift", "cmd"];
+
+/** A combo as a Windows / Linux keyboard has it: `fn` (macOS) means Ctrl + Win / Super there,
+ *  exactly as the backend maps it. "fn" → "ctrl+cmd". */
+export function pcCombo(c: string): string {
+  const keys = new Set(c.split("+").flatMap((k) => (k === "fn" ? ["ctrl", "cmd"] : [k])));
+  return PC_ORDER.filter((k) => keys.has(k)).join("+");
+}
+
+/** Do two stored combos mean the same keys on this OS? */
+export const sameHotkey = (a: string, b: string, p: Platform = os()) => (p === "macos" ? a === b : pcCombo(a) === pcCombo(b));
+
+const pcKey = (k: string, p: Platform) => ({ ctrl: "Ctrl", alt: "Alt", shift: "Shift", cmd: p === "windows" ? "Win" : "Super" })[k] ?? k;
+
+/** "fn+ctrl" → "fn + ⌃" (keycap symbols) on a Mac; "ctrl+cmd" → "Ctrl + Win" on Windows. */
+export const formatHotkey = (c: string, p: Platform = os()) =>
+  p === "macos" ? c.split("+").map((k) => KEY_SYM[k] ?? k).join(" + ") : pcCombo(c).split("+").map((k) => pcKey(k, p)).join(" + ");
 /** "fn+ctrl" → "fn + control" (spoken / hint copy) */
-export const hotkeyWords = (c: string) => c.split("+").map((k) => KEY_WORD[k] ?? k).join(" + ");
+export const hotkeyWords = (c: string, p: Platform = os()) => (p === "macos" ? c.split("+").map((k) => KEY_WORD[k] ?? k).join(" + ") : formatHotkey(c, p));
 
 export function claudeStatusLabel(s: ClaudeStatus): string {
   switch (s) {

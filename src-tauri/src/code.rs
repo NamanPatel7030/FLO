@@ -219,9 +219,66 @@ pub fn terminal_script(cmd: &str) -> Vec<String> {
     ]
 }
 
+/// Windows `cmd /K` line: `cd /d "<dir>" && "<bin>" "<arg>" …`. Double quotes and `%` can't be
+/// escaped inside a quoted cmd argument, so they're dropped (`"` becomes `'`) from user text.
+pub fn win_cmdline(dir: Option<&str>, bin: &str, args: &[String]) -> String {
+    let q = |s: &str| format!("\"{}\"", s.replace('"', "'").replace(['%', '\r', '\n'], " "));
+    let mut line = String::new();
+    if let Some(d) = dir {
+        line.push_str(&format!("cd /d {} && ", q(d)));
+    }
+    line.push_str(&q(bin));
+    for a in args {
+        line.push(' ');
+        line.push_str(&q(a));
+    }
+    line
+}
+
+/// Open a terminal running `bin args` in `dir` (Terminal on macOS, a console window on Windows,
+/// the desktop's terminal on Linux). It stays open afterwards so the agent can keep going.
+fn open_terminal_at(dir: Option<&str>, bin: &str, args: &[String]) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // `start` opens a new console window; raw_arg keeps cmd's own quoting intact
+        let line = win_cmdline(dir, bin, args);
+        std::process::Command::new("cmd").raw_arg(format!("/C start \"Flo\" cmd /K \"{line}\"")).spawn().context("couldn't open a terminal")?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        open_terminal(&terminal_command(dir, bin, args))
+    }
+}
+
+/// Linux: the first terminal emulator found, running `cmd` in sh and then an interactive shell.
+#[cfg(target_os = "linux")]
+fn open_terminal(cmd: &str) -> Result<()> {
+    let script = format!("{cmd}; exec \"${{SHELL:-sh}}\"");
+    let sh = ["sh", "-c", script.as_str()];
+    let candidates: [(&str, &[&str]); 8] = [
+        ("x-terminal-emulator", &["-e"]),
+        ("gnome-terminal", &["--"]),
+        ("konsole", &["-e"]),
+        ("xfce4-terminal", &["-x"]),
+        ("kitty", &[]),
+        ("alacritty", &["-e"]),
+        ("wezterm", &["start", "--"]),
+        ("xterm", &["-e"]),
+    ];
+    for (bin, pre) in candidates {
+        if std::process::Command::new(bin).args(pre).args(sh).stdin(Stdio::null()).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+    bail!("Couldn't find a terminal app (tried gnome-terminal, konsole, kitty, alacritty, xterm…)")
+}
+
+#[cfg(not(target_os = "linux"))]
 fn open_terminal(cmd: &str) -> Result<()> {
     if !cfg!(target_os = "macos") {
-        bail!("Opening a terminal is only supported on macOS for now");
+        bail!("Opening a terminal isn't supported on this OS");
     }
     let mut c = std::process::Command::new("osascript");
     for line in terminal_script(cmd) {
@@ -794,10 +851,10 @@ fn project_dir(st: &Shared, id: &str) -> Result<(Project, PathBuf)> {
 /// Native folder picker (null when cancelled).
 #[tauri::command]
 pub async fn choose_folder(prompt: Option<String>) -> R<Option<String>> {
-    if !cfg!(target_os = "macos") {
-        return Err("Folder picking is only supported on macOS for now".into());
-    }
     let prompt = prompt.unwrap_or_else(|| "Choose a folder".into());
+    if !cfg!(target_os = "macos") {
+        return pick_folder_pc(&clean_prompt(&prompt)).await;
+    }
     let script = format!("POSIX path of (choose folder with prompt {})", applescript_str(&clean_prompt(&prompt)));
     let out = tokio::process::Command::new("osascript").arg("-e").arg(script).stdin(Stdio::null()).output().await.map_err(e)?;
     if !out.status.success() {
@@ -805,6 +862,37 @@ pub async fn choose_folder(prompt: Option<String>) -> R<Option<String>> {
     }
     let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let p = if p.len() > 1 { p.trim_end_matches('/').to_string() } else { p };
+    Ok((!p.is_empty()).then_some(p))
+}
+
+/// Windows: the system folder dialog via PowerShell. Linux: zenity (GNOME) or kdialog (KDE).
+async fn pick_folder_pc(prompt: &str) -> R<Option<String>> {
+    let one_line = prompt.replace(['\n', '\r'], " ");
+    let out = if cfg!(target_os = "windows") {
+        let ps = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{}'; if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}",
+            one_line.replace('\'', "''")
+        );
+        let mut c = tokio::process::Command::new("powershell");
+        c.args(["-NoProfile", "-STA", "-Command", &ps]);
+        #[cfg(target_os = "windows")]
+        c.creation_flags(0x0800_0000);
+        c.stdin(Stdio::null()).output().await.map_err(e)?
+    } else {
+        match tokio::process::Command::new("zenity").args(["--file-selection", "--directory", &format!("--title={one_line}")]).stdin(Stdio::null()).output().await {
+            Ok(o) => o,
+            Err(_) => tokio::process::Command::new("kdialog")
+                .args(["--getexistingdirectory", "~", "--title", &one_line])
+                .stdin(Stdio::null())
+                .output()
+                .await
+                .map_err(|_| "Install zenity or kdialog to pick a folder, or paste the folder path instead.".to_string())?,
+        }
+    };
+    if !out.status.success() {
+        return Ok(None); // cancelled
+    }
+    let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
     Ok((!p.is_empty()).then_some(p))
 }
 
@@ -904,7 +992,7 @@ pub async fn coding_agents() -> Vec<AgentStatus> {
 pub fn agent_sign_in(agent: Agent) -> R<()> {
     let bin = find_bin(agent.bin()).ok_or_else(|| format!("{} isn't installed. Install it first: {}", agent.name(), agent.install_command()))?;
     let home = dirs::home_dir().map(|h| h.display().to_string());
-    open_terminal(&terminal_command(home.as_deref(), &bin.display().to_string(), &agent.sign_in_args())).map_err(e)
+    open_terminal_at(home.as_deref(), &bin.display().to_string(), &agent.sign_in_args()).map_err(e)
 }
 
 #[derive(Debug, Deserialize)]
@@ -958,8 +1046,7 @@ pub fn edit_with_ai(st: State<Shared>, req: EditRequest) -> R<CodeRun> {
             return Err(err.to_string());
         }
     } else {
-        let cmd = terminal_command(Some(&dir.display().to_string()), &bin.display().to_string(), &req.agent.interactive_args(&full));
-        open_terminal(&cmd).map_err(e)?;
+        open_terminal_at(Some(&dir.display().to_string()), &bin.display().to_string(), &req.agent.interactive_args(&full)).map_err(e)?;
         st.db.insert_code_run(&run).map_err(e)?;
     }
     Ok(run)
@@ -1053,6 +1140,12 @@ mod tests {
     ];
 
     /// The shell layer: what `sh -c` sees as each argument is exactly the original text.
+    #[test]
+    fn windows_terminal_line_quotes_everything_and_drops_what_cmd_cant_escape() {
+        let l = win_cmdline(Some(r"C:\Users\me\My Repo"), r"C:\bin\claude.exe", &["fix \"it\" at 100% & ship".into()]);
+        assert_eq!(l, r#"cd /d "C:\Users\me\My Repo" && "C:\bin\claude.exe" "fix 'it' at 100  & ship""#);
+    }
+
     #[cfg(unix)]
     #[test]
     fn sh_quote_roundtrips_through_a_real_shell() {

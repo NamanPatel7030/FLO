@@ -3,8 +3,9 @@ import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown, Maximize2, Globe2, Plus, Search, SunMoon } from "lucide-react";
 import { api, on } from "../../lib/api";
-import { PERMISSION_ITEMS, useHotkeyStuck, usePermissions } from "../usePermissions";
-import { formatHotkey, formatNumber, hotkeyWords, HOTKEY_OPTIONS, relativeTime } from "../../lib/format";
+import { permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
+import { formatHotkey, formatNumber, hotkeyOptions, hotkeyWords, relativeTime, sameHotkey } from "../../lib/format";
+import { deviceWord, keyStoreName, os, settingsApp } from "../../lib/os";
 import { unusedModelMb } from "../../lib/models";
 import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
@@ -114,9 +115,9 @@ function Section({ title, hint, children, first }: { title: string; hint?: strin
 function KeyPicker({ value, other, onChange }: { value: HotkeyCombo; other: HotkeyCombo; onChange: (v: HotkeyCombo) => void }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      {HOTKEY_OPTIONS.map((k) => {
-        const active = k === value;
-        const taken = k === other;
+      {hotkeyOptions().map((k) => {
+        const active = sameHotkey(k, value);
+        const taken = sameHotkey(k, other);
         return (
           <button
             key={k}
@@ -134,12 +135,15 @@ function KeyPicker({ value, other, onChange }: { value: HotkeyCombo; other: Hotk
 }
 
 function Shortcuts({ s, set }: P) {
-  const clash = s.hotkeyDictation === s.hotkeyAssistant;
+  const clash = sameHotkey(s.hotkeyDictation, s.hotkeyAssistant);
   return (
     <div className="flex flex-col gap-4">
       <Card className="p-5">
         <CardTitle>Push-to-talk keys</CardTitle>
-        <p className="-mt-1 mb-4 text-[12px] text-muted">Hold the key, speak, release. Pressing any other key while holding cancels, so your normal shortcuts keep working.</p>
+        <p className="-mt-1 mb-4 text-[12px] text-muted">
+          Hold the key, speak, release. Pressing any other key while holding cancels, so your normal shortcuts keep working.
+          {os() === "linux" && " On Wayland, Flo reads the keyboard directly: your user must be in the input group."}
+        </p>
         <div className="flex flex-col gap-5">
           <div>
             <div className="mb-2 flex items-baseline justify-between">
@@ -156,7 +160,7 @@ function Shortcuts({ s, set }: P) {
             <KeyPicker value={s.hotkeyAssistant} other={s.hotkeyDictation} onChange={(v) => set({ hotkeyAssistant: v })} />
           </div>
           {clash && <p className="text-[12px] text-amber-300">Dictation and Assistant can't use the same key. Pick a different one.</p>}
-          {(s.hotkeyDictation === "fn" || s.hotkeyAssistant === "fn") && (
+          {os() === "macos" && (s.hotkeyDictation === "fn" || s.hotkeyAssistant === "fn") && (
             <p className="text-[12px] text-faint">Using fn? Settings → Permissions → “Free the fn key” stops it from opening the emoji picker.</p>
           )}
         </div>
@@ -297,7 +301,7 @@ function Appearance({ s, set }: P) {
 const THEMES: { id: ThemeMode; label: string; hint: string }[] = [
   { id: "light", label: "Light", hint: "Frosted glass" },
   { id: "dark", label: "Dark", hint: "Deep ocean" },
-  { id: "system", label: "System", hint: "Follows macOS" },
+  { id: "system", label: "System", hint: os() === "macos" ? "Follows macOS" : "Follows your system" },
 ];
 
 /** A tiny window drawn in the given look, so each option previews itself. */
@@ -534,8 +538,8 @@ function Notch({ s, set }: P) {
         <Card className="p-4">
           <CardTitle icon={<Bell size={15} />}>Notifications</CardTitle>
           <Toggle
-            label="macOS notification banners"
-            hint="Reminders also appear in Notification Centre. Off: only the notch shows them (with Done and Snooze)."
+            label={os() === "macos" ? "macOS notification banners" : "Notification banners"}
+            hint={`Reminders also appear in ${os() === "macos" ? "Notification Centre" : "your system notifications"}. Off: only the ${os() === "macos" ? "notch" : "island"} shows them (with Done and Snooze).`}
             checked={s.systemNotifications ?? true}
             onChange={(v) => set({ systemNotifications: v })}
           />
@@ -766,7 +770,7 @@ function WidgetsCard() {
 function General({ s, set }: P) {
   return (
     <div className="space-y-6">
-      <Section first title="Account" hint="Who's signed in on this Mac.">
+      <Section first title="Account" hint={`Who's signed in on this ${deviceWord()}.`}>
         <AccountTab />
       </Section>
       <Section title="Presence & phone" hint="Active means you're at your Mac. Away sends short notifications to your phone.">
@@ -827,7 +831,7 @@ function Voice({ s, set }: P) {
         <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
             <div className="mb-1 text-[12.5px] font-semibold">On-device (Whisper)</div>
-            <p className="text-[12px] leading-relaxed text-muted">Private and free, works offline. Your audio never leaves this Mac. Needs a one-time model download and can be a touch slower on older machines.</p>
+            <p className="text-[12px] leading-relaxed text-muted">Private and free, works offline. Your audio never leaves this {deviceWord()}. Needs a one-time model download and can be a touch slower on older machines.</p>
           </div>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
             <div className="mb-1 text-[12.5px] font-semibold">Cloud (OpenAI / Groq / Sarvam)</div>
@@ -1030,9 +1034,9 @@ function AI({ s, set }: P) {
       <Card className="p-5">
         <CardTitle icon={<KeyRound size={15} />}>
           API keys
-          <InfoDot text="Keys are stored in your OS keychain and never leave your Mac, except the request you make directly to that provider. Flo has no server in between." />
+          <InfoDot text={`Keys are stored in your OS keychain and never leave your ${deviceWord()}, except the request you make directly to that provider. Flo has no server in between.`} />
         </CardTitle>
-        <p className="-mt-1 mb-3 text-[12px] text-muted">Stored in your {navigator.platform.includes("Win") ? "Windows Credential Manager" : "macOS Keychain"}. Never written to disk in plain text.</p>
+        <p className="-mt-1 mb-3 text-[12px] text-muted">Stored in your {keyStoreName()}. Never written to disk in plain text.</p>
         <div className="flex flex-col gap-2">
           {PROVIDERS.filter((p) => p.key).map((p) => (
             <KeyRow key={p.key} provider={p.key!} label={p.label} />
@@ -1251,8 +1255,10 @@ function PermissionsTab() {
             <RotateCcw size={15} />
           </span>
           <div className="flex-1">
-            <div className="text-[13.5px] font-medium">Restart Flo to activate the fn key</div>
-            <div className="text-[12px] text-muted">Accessibility is on but the key listener hasn't started. A relaunch picks it up.</div>
+            <div className="text-[13.5px] font-medium">Restart Flo to activate your Flo key</div>
+            <div className="text-[12px] text-muted">
+              {os() === "macos" ? "Accessibility is on but the key listener hasn't started. A relaunch picks it up." : p?.hotkeyProblem ?? "The key listener hasn't started. A relaunch usually picks it up."}
+            </div>
           </div>
           <Button size="sm" variant="primary" onClick={() => api.restartApp()}>
             Restart Flo
@@ -1262,7 +1268,7 @@ function PermissionsTab() {
       <Card className="flex flex-col gap-2 p-4">
         {!p && <Skeleton className="h-44" />}
         {p &&
-          PERMISSION_ITEMS.map((it) => (
+          permissionItems().map((it) => (
             <div key={it.key} className="flex items-center gap-4 rounded-xl bg-[var(--glass)] p-3">
               <span className={clsx("flex h-8 w-8 items-center justify-center rounded-full", p[it.key] ? "bg-brand-400/15 text-brand-300" : "bg-amber-500/15 text-amber-400")}>
                 {p[it.key] ? <Check size={15} /> : <Lock size={14} />}
@@ -1285,9 +1291,15 @@ function PermissionsTab() {
               )}
             </div>
           ))}
+        {os() !== "macos" && p?.hotkeyProblem && (
+          <div className="rounded-xl border border-amber-400/25 bg-amber-500/[0.06] p-3 text-[12px] leading-relaxed text-muted">
+            <span className="font-medium text-[var(--fg)]">Your Flo key can't be read.</span> {p.hotkeyProblem}
+          </div>
+        )}
+        {os() === "macos" && (
         <div className="mt-1 flex items-center gap-3 rounded-xl border border-brand-300/15 bg-brand-300/[0.05] p-3">
           <div className="flex-1 text-[12px] leading-relaxed text-muted">
-            <span className="font-medium text-[var(--fg)]">Turned it on but still see “Grant”?</span> System Settings may be showing a switch from an
+            <span className="font-medium text-[var(--fg)]">Turned it on but still see “Grant”?</span> {settingsApp()} may be showing a switch from an
             older Flo build. Repair clears Flo’s old privacy entries (only Flo’s) and restarts. Then press Grant once for each.
             {p?.accessibilityStale && !p.accessibility && (
               <>
@@ -1300,8 +1312,9 @@ function PermissionsTab() {
           </div>
           <RepairButton />
         </div>
+        )}
       </Card>
-      {geo?.platform !== "windows" && (
+      {(geo?.platform ?? os()) === "macos" && (
         <Card className="flex items-center gap-4 p-4">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-500/15 text-brand-500">
             <Keyboard size={15} />

@@ -8,6 +8,12 @@
 //!
 //! The flow the UI drives: `check_update` → "Update" button → `install_update` (progress events on
 //! `flo://update`) → "Restart" button → `restart_app` → the new version starts.
+//!
+//! Windows / Linux: the signed updater bundles are only built on the release Mac (the signing key
+//! never leaves it), so there's nothing to install in place. `check_update` asks the same endpoint
+//! which version is newest (versions are shared across platforms) and returns the installer's
+//! download URL; "Download" opens it in the browser. Full in-place updates there need
+//! TAURI_SIGNING_PRIVATE_KEY as a GitHub Actions secret so desktop.yml can sign its bundles.
 use crate::egress::Purpose;
 use crate::state::Shared;
 use serde::Serialize;
@@ -40,6 +46,48 @@ pub struct UpdateInfo {
     pub date: Option<String>,
     /// downloaded and installed, waiting for a restart
     pub ready: bool,
+    /// Windows / Linux: the new installer to download (no in-place update there)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
+}
+
+const RELEASES: &str = "https://github.com/NamanPatel7030/FLO/releases/latest/download";
+
+/// The installer a Windows / Linux user should download (asset names from .github/workflows/desktop.yml).
+/// `appimage`: running from an AppImage (the APPIMAGE env var is set), else the .deb.
+pub fn installer_url(os: &str, appimage: bool) -> Option<String> {
+    let file = match os {
+        "windows" => "Flo-windows-x64-setup.exe",
+        "linux" if appimage => "Flo-linux-x86_64.AppImage",
+        "linux" => "Flo-linux-amd64.deb",
+        _ => return None,
+    };
+    Some(format!("{RELEASES}/{file}"))
+}
+
+/// Windows / Linux: is a newer version out? Asks the update endpoint as a Mac would (one version
+/// for every platform) and answers with the installer to download.
+async fn check_installer(app: &AppHandle, base: &str) -> Result<UpdateInfo, String> {
+    let cur = current(app);
+    let url = format!("{}/api/updates/darwin/aarch64/{cur}", base.trim_end_matches('/'));
+    let res = reqwest::Client::new().get(&url).timeout(Duration::from_secs(30)).send().await.map_err(|e| format!("Couldn't check for updates: {e}"))?;
+    if res.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(UpdateInfo { current: cur, ..Default::default() });
+    }
+    if !res.status().is_success() {
+        return Err(format!("Couldn't check for updates: {}", res.status()));
+    }
+    let j: serde_json::Value = res.json().await.map_err(|e| format!("Couldn't check for updates: {e}"))?;
+    let version = j["version"].as_str().map(String::from);
+    Ok(UpdateInfo {
+        available: version.is_some(),
+        current: cur,
+        version,
+        notes: j["notes"].as_str().map(String::from).filter(|s| !s.trim().is_empty()),
+        date: j["pub_date"].as_str().map(String::from),
+        ready: false,
+        download_url: installer_url(std::env::consts::OS, std::env::var_os("APPIMAGE").is_some()),
+    })
 }
 
 /// Progress pushed to every window while an update downloads and installs.
@@ -69,6 +117,7 @@ fn info_from(app: &AppHandle, u: Option<&Update>) -> UpdateInfo {
         notes: u.and_then(|u| u.body.clone()).filter(|s| !s.trim().is_empty()),
         date: u.and_then(|u| u.date).map(|d| d.to_string()),
         ready: READY.load(Ordering::SeqCst),
+        download_url: None,
     }
 }
 
@@ -83,6 +132,9 @@ pub async fn check(app: &AppHandle) -> Result<UpdateInfo, String> {
     let url = endpoint(&base);
     // the update server is the same host the app already uses for the account (allow-listed)
     st.egress.check(&base, Purpose::Account, true).map_err(|e| e.to_string())?;
+    if !cfg!(target_os = "macos") {
+        return check_installer(app, &base).await;
+    }
     let parsed = url::Url::parse(&url).map_err(|e| format!("Bad update server address: {e}"))?;
     let updater = app
         .updater_builder()
@@ -116,6 +168,16 @@ pub async fn install(app: &AppHandle) -> Result<UpdateInfo, String> {
 }
 
 async fn install_inner(app: &AppHandle) -> Result<UpdateInfo, String> {
+    if !cfg!(target_os = "macos") {
+        // Windows / Linux: open the new installer's download in the browser
+        let info = check(app).await?;
+        let url = info.download_url.clone().ok_or("No installer for this system")?;
+        if !info.available {
+            return Err("Flo is already up to date".into());
+        }
+        tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| format!("Couldn't open the download: {e}"))?;
+        return Ok(info);
+    }
     let mut pending = PENDING.lock().unwrap().clone();
     if pending.is_none() {
         check(app).await?;
@@ -179,6 +241,19 @@ mod tests {
     fn endpoint_keeps_the_updater_placeholders() {
         assert_eq!(endpoint("https://flo.app/"), "https://flo.app/api/updates/{{target}}/{{arch}}/{{current_version}}");
         assert_eq!(endpoint("http://localhost:3000"), "http://localhost:3000/api/updates/{{target}}/{{arch}}/{{current_version}}");
+    }
+
+    #[test]
+    fn installers_match_the_release_assets() {
+        assert_eq!(installer_url("windows", false).unwrap(), "https://github.com/NamanPatel7030/FLO/releases/latest/download/Flo-windows-x64-setup.exe");
+        assert!(installer_url("linux", true).unwrap().ends_with("/Flo-linux-x86_64.AppImage"));
+        assert!(installer_url("linux", false).unwrap().ends_with("/Flo-linux-amd64.deb"));
+        assert_eq!(installer_url("macos", false), None);
+        // the names desktop.yml publishes
+        let wf = include_str!("../../.github/workflows/desktop.yml");
+        for f in ["Flo-windows-x64-setup.exe", "Flo-linux-x86_64.AppImage", "Flo-linux-amd64.deb"] {
+            assert!(wf.contains(f), "{f} isn't produced by desktop.yml");
+        }
     }
 
     #[test]

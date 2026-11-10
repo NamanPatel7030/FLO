@@ -1,5 +1,6 @@
 // Context library: a custom system prompt + local docs (.md / .txt / pasted) the assistant can use.
 // Backend sends only pinned docs (trimmed) + the most relevant chunks per request, so tokens stay low.
+import { deviceWord } from "../../lib/os";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
@@ -51,7 +52,7 @@ export default function ContextPage() {
 
   return (
     <div className="mx-auto max-w-[1100px]">
-      <PageHeader title="Context" subtitle="Teach Flo who you are and what you're working on. Stays on this Mac; only relevant bits are sent with each request." />
+      <PageHeader title="Context" subtitle={`Teach Flo who you are and what you're working on. Stays on this ${deviceWord()}; only relevant bits are sent with each request.`} />
       <div className="flex flex-col gap-4">
         <SystemPromptCard />
         <UploadCard onFiles={addFiles} onPasted={refresh} />

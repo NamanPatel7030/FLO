@@ -1,5 +1,6 @@
 // "Connect your AI coding account": Claude Code / Codex / Gemini CLI, signed in with the user's own
 // subscription. Flo only detects the CLIs and opens their own sign-in flow; it never sees credentials.
+import { deviceWord } from "../lib/os";
 import { useCallback, useEffect, useState } from "react";
 import clsx from "clsx";
 import { Asterisk, Check, Copy, LogIn, RefreshCw, ShieldCheck, Terminal } from "lucide-react";
@@ -136,7 +137,7 @@ export function AgentCard({ a, onRecheck, checking, compact }: { a: AgentStatus;
               Connected as <span className="font-medium text-[var(--fg)]">{a.account}</span>
             </>
           ) : (
-            "Signed in on this Mac."
+            `Signed in on this ${deviceWord()}.`
           )
         ) : s === "signed-out" ? (
           `Installed. Sign in with your ${a.provider} account in its own window.`

@@ -388,8 +388,18 @@ pub fn system_offset(tz: &str, epoch: i64) -> Option<i32> {
         let out = std::process::Command::new("/bin/date").env_clear().env("TZ", tz).arg("-r").arg(epoch.to_string()).arg("+%z").output().ok()?;
         out.status.success().then(|| parse_z(&String::from_utf8_lossy(&out.stdout))).flatten()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
+        // GNU date: -d @epoch (BSD's -r means a file there)
+        if !Path::new("/usr/share/zoneinfo").join(tz).is_file() {
+            return None;
+        }
+        let out = std::process::Command::new("date").env_clear().env("TZ", tz).arg("-d").arg(format!("@{epoch}")).arg("+%z").output().ok()?;
+        out.status.success().then(|| parse_z(&String::from_utf8_lossy(&out.stdout))).flatten()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        // Windows: no tz database; the caller assumes local time
         None
     }
 }

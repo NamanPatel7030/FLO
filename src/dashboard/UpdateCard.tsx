@@ -77,7 +77,7 @@ export function UpdateSidebarCard() {
                 </div>
                 {s.notes && <div className="relative mb-2.5 line-clamp-2 text-muted">{s.notes}</div>}
                 <Button size="sm" variant="primary" className="relative w-full justify-center" icon={<ArrowDownToLine size={13} />} onClick={installUpdate}>
-                  Update
+                  {s.downloadUrl ? "Download" : "Update"}
                 </Button>
               </>
             )}
@@ -97,7 +97,9 @@ export function UpdateSettingsRow() {
       : s.phase === "uptodate"
         ? `You're on the latest version${s.current ? ` (${s.current})` : ""}.`
         : s.phase === "available"
-          ? `Flo ${s.version} is available.`
+          ? s.opened
+            ? `Flo ${s.version}: the installer is downloading in your browser. Run it to update.`
+            : `Flo ${s.version} is available.`
           : s.phase === "downloading"
             ? `Downloading Flo ${s.version ?? ""}…`
             : s.phase === "ready"
@@ -122,7 +124,7 @@ export function UpdateSettingsRow() {
       <div className="shrink-0">
         {s.phase === "available" ? (
           <Button size="sm" variant="primary" icon={<ArrowDownToLine size={13} />} onClick={installUpdate}>
-            Update
+            {s.downloadUrl ? "Download" : "Update"}
           </Button>
         ) : s.phase === "ready" ? (
           <Button size="sm" variant="primary" icon={<RotateCw size={13} />} onClick={restartToUpdate}>
@@ -180,7 +182,7 @@ export function UpdateBanner() {
       {s.phase === "available" && (
         <>
           <button type="button" onClick={() => void installUpdate()} className="shrink-0 rounded-full bg-white px-4 py-1.5 text-[13px] font-semibold text-[#0b1220] transition hover:bg-white/90" data-testid="update-now">
-            Update now
+            {s.downloadUrl ? "Download" : "Update now"}
           </button>
           <button
             type="button"

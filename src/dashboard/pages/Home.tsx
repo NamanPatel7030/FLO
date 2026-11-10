@@ -9,7 +9,8 @@ import type { Analytics, AttentionStatus } from "../../lib/types";
 import { assistantHotkeyLabel, hotkeyLabel, useStore } from "../store";
 import { Card, CardTitle, Empty, Kbd, ProgressRing, Skeleton, Stat, StatusPill, Button } from "../ui";
 import { ClaudeSessionsCard, TodoRow } from "../components";
-import { missingRequired, PERMISSION_ITEMS, useHotkeyStuck, usePermissions } from "../usePermissions";
+import { missingRequired, permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
+import { deviceWord, os } from "../../lib/os";
 import { Ocean } from "../../island/Ocean";
 
 export default function Home() {
@@ -119,7 +120,7 @@ export default function Home() {
               ) : (
                 <>
                   Attention is {att.enabled ? (att.paused ? "paused" : "on") : "off"} · {att.capturesToday} looks today
-                  {att.lastApp ? ` · last in ${att.lastApp}` : ""} · stays on this Mac
+                  {att.lastApp ? ` · last in ${att.lastApp}` : ""} · stays on this {deviceWord()}
                 </>
               )}
             </div>
@@ -226,10 +227,10 @@ function SetupCard({ onOpen }: { onOpen: () => void }) {
           <div className="text-[16px] font-semibold tracking-tight">
             Finish setup · {left} step{left === 1 ? "" : "s"} left
           </div>
-          <p className="mt-1 text-[13px] text-muted">Flo needs these so holding fn can hear you and type where your cursor is.</p>
+          <p className="mt-1 text-[13px] text-muted">{os() === "macos" ? "Flo needs these so holding your Flo key can hear you and type where your cursor is." : "Flo needs the microphone to hear you while you hold your Flo key."}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {PERMISSION_ITEMS.filter((i) => i.required).map((i) => (
+          {permissionItems().filter((i) => i.required).map((i) => (
             <span
               key={i.key}
               className={

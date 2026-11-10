@@ -3,28 +3,33 @@
 // (one switch). Accessibility covers typing the words AND the Flo key: the hotkey is an active
 // CGEventTap, which macOS allows for Accessibility-trusted apps, so Input Monitoring is never asked.
 // Screen Recording, Automation and Calendar are asked later, only when a feature first needs them.
-import type { Permissions } from "../../lib/types";
-import { PERMISSION_ITEMS, type PermissionItem } from "../usePermissions";
+// Windows and Linux ask for the microphone only (no Accessibility switch exists there).
+import type { Permissions, Platform } from "../../lib/types";
+import { os } from "../../lib/os";
+import { PERMISSION_ITEMS, permissionItems, type PermissionItem } from "../usePermissions";
 
 export type SetupPermKey = "microphone" | "accessibility";
 
-/** What setup asks for, in order. */
+/** What setup asks for on a Mac, in order. */
 export const SETUP_PERMS: PermissionItem[] = PERMISSION_ITEMS.filter((it) => it.required);
 
-export const setupDone = (p: Permissions | null) => !!p && SETUP_PERMS.every((it) => p[it.key]);
+/** What setup asks for on this OS, in order. */
+export const setupPerms = (platform: Platform = os()): PermissionItem[] => permissionItems(platform).filter((it) => it.required);
+
+export const setupDone = (p: Permissions | null, platform: Platform = os()) => !!p && setupPerms(platform).every((it) => p[it.key]);
 
 /** The next permission to ask for: the microphone first (a single click on macOS's own prompt),
  *  then Accessibility. */
-export function nextSetupPerm(p: Permissions | null): SetupPermKey | null {
+export function nextSetupPerm(p: Permissions | null, platform: Platform = os()): SetupPermKey | null {
   if (!p) return null;
   if (!p.microphone) return "microphone";
-  if (!p.accessibility) return "accessibility";
+  if (!p.accessibility && platform === "macos") return "accessibility";
   return null;
 }
 
 /** May the Flo key work? Accessibility is enough; the backend starts the key listener the moment
  *  it is granted (no relaunch). Unknown status counts as ready so nothing nags before the first check. */
-export const hotkeyReady = (p: Permissions | null) => !p || p.hotkeyActive || p.accessibility;
+export const hotkeyReady = (p: Permissions | null, platform: Platform = os()) => !p || p.hotkeyActive || (platform === "macos" && p.accessibility);
 
 /** After this long with no grant, offer the one-click reset (the switch may belong to an old build). */
 export const STUCK_AFTER_MS = 20_000;

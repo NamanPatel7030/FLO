@@ -1,5 +1,6 @@
 // Full-window sign-in gate (shown while account_status().signedIn is false).
 // Split layout: the form on the left, a living notch illustration on the right (stacks when narrow).
+import { deviceWord } from "../lib/os";
 import { useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AlertCircle, ArrowLeft, ArrowRight, Check, CloudOff, Eye, EyeOff, Globe, Loader2, Lock } from "lucide-react";
@@ -327,7 +328,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
                       <span className="grid h-[18px] w-[18px] place-items-center rounded-[6px] border border-[var(--border-strong)] bg-[var(--glass)] transition peer-checked:border-transparent peer-checked:bg-brand-500 peer-focus-visible:ring-2 peer-focus-visible:ring-brand-400 [&>svg]:opacity-0 peer-checked:[&>svg]:opacity-100">
                         <Check size={12} strokeWidth={3} className="text-white" />
                       </span>
-                      Remember me on this Mac
+                      Remember me on this {deviceWord()}
                     </label>
 
                     <AnimatePresence initial={false}>

@@ -7,7 +7,8 @@ import { api, on } from "../../lib/api";
 import { EV, type LocalModel, type ModelProgressEvent, type Settings } from "../../lib/types";
 import type { NotchlingMood } from "../../lib/notchling";
 import { usePermissions } from "../usePermissions";
-import { SETUP_PERMS, accessibilityState, nextSetupPerm, setupDone } from "./perms";
+import { SETUP_PERMS, accessibilityState, nextSetupPerm, setupDone, setupPerms } from "./perms";
+import { deviceWord, os, settingsApp } from "../../lib/os";
 import { AiProviderFields, providerInfo, ProviderKey } from "../AiSetup";
 import { Select } from "../ui";
 import { Btn, Heading, Key, Rise, Stagger, rise } from "./parts";
@@ -35,16 +36,21 @@ export function Permissions({ title, sub, setMood, onStatus, onDone }: { title: 
   const ax = accessibilityState(perms, askedAx, Date.now());
   const offerReset = ax === "stale" || ax === "stuck";
   const next = nextSetupPerm(perms);
-  const done = SETUP_PERMS.filter((it) => perms?.[it.key]).length;
+  const asked = setupPerms();
+  const done = asked.filter((it) => perms?.[it.key]).length;
   const line = !perms
     ? "Checking what I'm allowed to do..."
     : allOk
       ? "All set, thank you. I can hear you and type for you now."
       : ax === "waiting"
-        ? "Turn on Flo in System Settings. I'll notice the moment you do."
+        ? `Turn on Flo in ${settingsApp()}. I'll notice the moment you do.`
         : offerReset
           ? "Still off for me. If the switch already looks on, reset it below."
-          : `${done} of ${SETUP_PERMS.length} done.`;
+          : asked.length === 1
+            ? os() === "windows"
+              ? "Turn on microphone access for desktop apps in Settings. I'll notice the moment you do."
+              : "Plug in or pick a microphone in your sound settings. I'll notice the moment it's there."
+            : `${done} of ${asked.length} done.`;
   const mood: NotchlingMood = !perms ? "think" : allOk ? "happy" : offerReset ? "worried" : "listen";
   useEffect(() => setMood(mood), [mood, setMood]);
   useEffect(() => onStatus(allOk), [allOk, onStatus]);
@@ -76,7 +82,7 @@ export function Permissions({ title, sub, setMood, onStatus, onDone }: { title: 
     <div className="flex w-full flex-col items-center">
       <Heading title={title} sub={sub} />
       <div className="onb-glass mt-9 flex w-full max-w-[640px] flex-col divide-y divide-[rgb(20_40_80/0.07)] px-6 py-2" data-testid="perm-card">
-        {SETUP_PERMS.map((it) => {
+        {asked.map((it) => {
           const ok = !!perms?.[it.key];
           const c = PERM_COPY[it.key];
           return (
@@ -106,6 +112,11 @@ export function Permissions({ title, sub, setMood, onStatus, onDone }: { title: 
           );
         })}
       </div>
+      {perms?.hotkeyProblem && (
+        <div className="mt-4 w-full max-w-[640px] rounded-[18px] border border-[#f3d9b8] bg-[#fff8ef] px-5 py-3 text-left text-[14.5px] text-[#7a4a12]" data-testid="hotkey-problem">
+          Your Flo key can't be read yet. {perms.hotkeyProblem}
+        </div>
+      )}
       <AnimatePresence>
         {offerReset && !allOk && (
           <motion.div
@@ -192,7 +203,7 @@ export function SetupStep({ title, sub, s, set }: { title: string; sub: string; 
       <Stagger className="mt-6 w-full">
         <Rise className="onb-label mb-3">I listen</Rise>
         <div className="grid grid-cols-2 gap-4" role="radiogroup" aria-label="Voice engine">
-          {engine(local, <Cpu size={28} />, "On this Mac", "Recommended. Audio never leaves.", () => set({ sttProvider: "local", sttModel: rec?.id ?? RECOMMENDED }))}
+          {engine(local, <Cpu size={28} />, `On this ${deviceWord()}`, "Recommended. Audio never leaves.", () => set({ sttProvider: "local", sttModel: rec?.id ?? RECOMMENDED }))}
           {engine(!local, <Cloud size={28} />, "In the cloud", "Groq or OpenAI, with your key.", () => set({ sttProvider: "groq", sttModel: "whisper-large-v3-turbo" }))}
         </div>
         <Rise className="onb-glass mt-3 px-6 py-1">

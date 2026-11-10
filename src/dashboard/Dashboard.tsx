@@ -24,6 +24,7 @@ import { PresenceSidebarCard } from "./Presence";
 import { checkForUpdate } from "../lib/updates";
 import { Logo } from "./Logo";
 import { missingRequired, usePermissions } from "./usePermissions";
+import { os } from "../lib/os";
 import { Onboarding } from "./Onboarding";
 import { SignIn } from "./SignIn";
 import { useAccount } from "../lib/account";
@@ -88,7 +89,7 @@ export default function Dashboard() {
     // the typing test listens to every key, so it never stays alive in the background
     setVisited((v) => [...v.filter((p) => p !== "typing" || p === page), ...(v.includes(page) ? [] : [page])]);
   }, [page]);
-  const mac = geo?.platform !== "windows";
+  const mac = (geo?.platform ?? os()) === "macos";
   const perms = usePermissions(5000);
   const missing = missingRequired(perms);
   const ready = !perms || (missing.length === 0 && perms.hotkeyActive);

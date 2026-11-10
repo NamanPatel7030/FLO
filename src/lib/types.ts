@@ -34,8 +34,9 @@ export type LlmProvider =
 /** Providers whose API key lives in the OS keychain. */
 export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrouter" | "slack" | "minimax" | "qwen" | "ollama_cloud" | "hermes_slack_bot" | "hermes_slack_app" | "sarvam";
 
-/** Modifier combo for push-to-talk (macOS). Any other key pressed while holding cancels. */
-export type HotkeyCombo = "fn" | "ctrl" | "alt" | "fn+ctrl" | "ctrl+alt" | "cmd+alt" | "fn+shift";
+/** Modifier combo for push-to-talk. Any other key pressed while holding cancels. On Windows /
+ *  Linux "cmd" is the Win / Super key and "fn" means Ctrl + Win (there's no readable fn key). */
+export type HotkeyCombo = "fn" | "ctrl" | "alt" | "fn+ctrl" | "ctrl+alt" | "cmd+alt" | "fn+shift" | "ctrl+cmd" | "ctrl+shift" | "alt+shift";
 
 export interface Settings {
   /** hold to dictate (default "ctrl") */
@@ -573,6 +574,8 @@ export interface Permissions {
   /** Flo was Accessibility-trusted under an earlier build and this build isn't: an update left a
    *  stale switch in System Settings. Fixed by resetAccessibility(). */
   accessibilityStale?: boolean;
+  /** Linux: why the Flo key can't be read (e.g. "add yourself to the input group") */
+  hotkeyProblem?: string;
 }
 
 // ── Claude Code sessions (notch tray) ──────────────────────────────────────
@@ -836,6 +839,8 @@ export interface UpdateInfo {
   date: string | null;
   /** downloaded and installed; a restart switches to it */
   ready: boolean;
+  /** Windows / Linux: the new installer to download (no in-place update there) */
+  downloadUrl?: string;
 }
 
 export type UpdateEvent =

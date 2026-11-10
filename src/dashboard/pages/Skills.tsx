@@ -2,6 +2,7 @@
 // Each skill has the phrases that invoke it, your instructions, the platforms it works on, and a
 // mode: Write (compose from what's on screen and type it into the field) or Do (operate the screen).
 // The old Context page lives on as the Knowledge tab: documents Flo can draw on for any answer.
+import { deviceWord } from "../../lib/os";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
@@ -427,7 +428,7 @@ function ConnectionEditor({ initial, onClose, onSaved }: { initial: Connection; 
                   value={envText}
                   onChange={(e) => setEnvText(e.target.value)}
                 />
-                <span className="mt-1 block text-[11px] text-faint">Stored encrypted on this Mac. Only sent to this server.</span>
+                <span className="mt-1 block text-[11px] text-faint">Stored encrypted on this {deviceWord()}. Only sent to this server.</span>
               </label>
               <div className="rounded-2xl bg-white/[0.03] p-3 ring-1 ring-white/10" data-testid="connection-test">
                 <div className="flex items-center gap-2">

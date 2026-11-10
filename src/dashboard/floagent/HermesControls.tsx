@@ -1,5 +1,6 @@
 // Hermes, one click at a time: Install (the official installer, run by Flo on click, with live
 // progress and Cancel) and Play / Pause (the gateway that answers in Slack). Shared by Engine and Slack.
+import { os } from "../../lib/os";
 import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { Download, Loader2, Pause, Play, X } from "lucide-react";
@@ -101,7 +102,9 @@ export function InstallProgress({ h }: { h: HermesHook }) {
   if (st && !st.installed && !st.appleSilicon)
     return (
       <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-[12.5px] text-amber-700 dark:text-amber-100" data-testid="hermes-intel">
-        Hermes runs on Apple Silicon computers only (M1 or newer). Flo's built-in engine still works here.
+        {os() === "windows"
+          ? "On Windows, Hermes only runs inside WSL2, so Flo can't install it here. Flo's built-in engine still works."
+          : "Hermes runs on Apple Silicon computers only (M1 or newer). Flo's built-in engine still works here."}
       </p>
     );
   if (install.phase === "idle" || install.phase === "done") return null;

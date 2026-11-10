@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, on } from "../lib/api";
 import { formatHotkey } from "../lib/format";
+import { os, setOS } from "../lib/os";
 import { applyTheme, broadcastSettings, onSettingsBroadcast, watchSystemTheme } from "../lib/theme";
 import { EV, type ClaudeEvent, type Note, type Project, type Settings, type ToastEvent, type Todo, type IslandGeometry } from "../lib/types";
 
@@ -82,7 +83,10 @@ export function bootStore(): () => void {
     useStore.setState({ settings });
     applyTheme(settings);
   });
-  api.getIslandGeometry().then((geo) => useStore.setState({ geo }));
+  api.getIslandGeometry().then((geo) => {
+    setOS(geo?.platform);
+    useStore.setState({ geo });
+  });
   const offs = [
     on(EV.todos, () => {
       useStore.getState().refreshTodos();
@@ -107,9 +111,7 @@ export function bootStore(): () => void {
   };
 }
 
-/** Configured dictation key as keycaps ("⌃"), or Right Ctrl on Windows. */
-export const hotkeyLabel = (geo: IslandGeometry | null, s?: Settings | null) =>
-  geo?.platform === "windows" ? "Right Ctrl" : formatHotkey(s?.hotkeyDictation ?? "ctrl");
-/** Configured assistant key as keycaps ("fn"), or Right Alt on Windows. */
-export const assistantHotkeyLabel = (geo: IslandGeometry | null, s?: Settings | null) =>
-  geo?.platform === "windows" ? "Right Alt" : formatHotkey(s?.hotkeyAssistant ?? "fn");
+/** Configured dictation key as keycaps ("⌃" on a Mac, "Ctrl" on Windows / Linux). */
+export const hotkeyLabel = (geo: IslandGeometry | null, s?: Settings | null) => formatHotkey(s?.hotkeyDictation ?? "ctrl", geo?.platform ?? os());
+/** Configured assistant key as keycaps ("fn" on a Mac, "Ctrl + Win" on Windows). */
+export const assistantHotkeyLabel = (geo: IslandGeometry | null, s?: Settings | null) => formatHotkey(s?.hotkeyAssistant ?? "fn", geo?.platform ?? os());

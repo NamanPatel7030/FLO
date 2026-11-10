@@ -840,8 +840,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "get_island_geometry": {
       const p = new URLSearchParams(location.search).get("platform");
       const geo: IslandGeometry =
-        p === "windows"
-          ? { platform: "windows", hasNotch: false, notchWidth: 0, notchHeight: 0, screenWidth: 1920 }
+        p === "windows" || p === "linux"
+          ? { platform: p, hasNotch: false, notchWidth: 0, notchHeight: 0, screenWidth: 1920 }
           : (() => {
               // ?nh=38 previews the taller notch of 14"/16" MacBook Pros
               const q = new URLSearchParams(location.search);
@@ -1258,8 +1258,11 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     }
     case "set_attention_paused":
       return null;
-    case "check_permissions":
-      return { ...perms };
+    case "check_permissions": {
+      // Windows / Linux have no Accessibility / Screen Recording grants: always on
+      const pc = ["windows", "linux"].includes(new URLSearchParams(location.search).get("platform") ?? "");
+      return pc ? { ...perms, accessibility: true, screen: true, hotkeyActive: perms.microphone || perms.hotkeyActive } : { ...perms };
+    }
     case "open_permission_settings": {
       // simulate the user granting it in System Settings a moment later
       const k = args.kind === "input" ? "inputMonitoring" : (args.kind as "microphone" | "accessibility" | "screen");

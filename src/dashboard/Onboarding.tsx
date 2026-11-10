@@ -10,6 +10,7 @@ import { ArrowRight, Check, ChevronLeft, Volume2, VolumeX } from "lucide-react";
 import { api } from "../lib/api";
 import type { Settings } from "../lib/types";
 import { formatHotkey, hotkeyWords } from "../lib/format";
+import { os } from "../lib/os";
 import { applyTheme } from "../lib/theme";
 import { useAccount } from "../lib/account";
 import type { NotchlingMood } from "../lib/notchling";
@@ -98,11 +99,11 @@ export function Onboarding() {
   const set = (p: Partial<Settings>) => setSettings({ ...s, ...p });
   const step: Step = STEPS[i];
   const keys = {
-    dict: geo?.platform === "windows" ? "Right Ctrl" : formatHotkey(s.hotkeyDictation),
-    asst: geo?.platform === "windows" ? "Right Alt" : formatHotkey(s.hotkeyAssistant),
+    dict: formatHotkey(s.hotkeyDictation, geo?.platform ?? os()),
+    asst: formatHotkey(s.hotkeyAssistant, geo?.platform ?? os()),
   };
   const patch = (p: Partial<SetupAnswers>) => setAnswers((a) => ({ ...a, ...p }));
-  const h = headline(step, answers.name);
+  const h = headline(step, answers.name, undefined, geo?.platform ?? os());
   const mood: NotchlingMood = (step === "welcome" && wake) || moodOverride || STEP_MOOD[step];
   const chapter = CHAPTERS.findIndex((c) => c.steps.includes(step));
 
@@ -214,7 +215,7 @@ export function Onboarding() {
             <div className={clsx("my-auto flex w-full flex-col items-center pb-2", step === "welcome" ? "pt-2" : "pt-1")}>
             {step === "welcome" && <Welcome title={h.title} sub={h.sub} name={answers.name} setName={(name) => patch({ name })} onStart={() => go(1)} />}
             {step === "permissions" && <Permissions title={h.title} sub={h.sub} setMood={setMood} onStatus={onPerms} onDone={() => go(1)} />}
-            {step === "try" && <TryDemo keyLabel={keys.dict} keyWord={geo?.platform === "windows" ? undefined : hotkeyWords(s.hotkeyDictation)} onSuccess={onTried} setMood={setMood} />}
+            {step === "try" && <TryDemo keyLabel={keys.dict} keyWord={hotkeyWords(s.hotkeyDictation, geo?.platform ?? os())} onSuccess={onTried} setMood={setMood} />}
             {step === "setup" && <SetupStep title={h.title} sub={h.sub} s={s} set={set} />}
             {step === "role" && <RoleStep title={h.title} sub={h.sub} a={answers} set={patch} onPicked={() => go(1)} />}
             {step === "uses" && <UsesStep title={h.title} sub={h.sub} a={answers} set={patch} />}

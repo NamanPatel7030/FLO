@@ -1,6 +1,7 @@
 // The skill editor as a canvas: drop nodes, connect them, and see the skill they generate.
 // Triggers start it, Steps run in arrow order, Platforms / MCP servers / Knowledge docs attach to
 // steps, and the Output says how it ends (write into the field, or do it on screen).
+import { modKey } from "../lib/os";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   addEdge,
@@ -513,7 +514,7 @@ function AiComposer({ refine, busy, error, onSubmit, onClose }: { refine: boolea
           </div>
         )}
         <div className="mt-3 flex items-center gap-2">
-          <span className="flex-1 text-[11px] text-white/35">Type or dictate · ⌘↵ to {refine ? "refine" : "build"}</span>
+          <span className="flex-1 text-[11px] text-white/35">Type or dictate · {modKey()}↵ to {refine ? "refine" : "build"}</span>
           {refine && (
             <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} disabled={busy || !text.trim()} onClick={() => go("build")}>
               Start over

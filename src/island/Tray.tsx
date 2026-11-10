@@ -1,6 +1,7 @@
 // Notch tray: live items in the wings beside the camera (Claude sessions, to-dos, meeting) +
 // tooltips, the correction card and the meeting-detected prompt. Pure presentation; state lives
 // in Island.tsx.
+import { deviceWord, modKey } from "../lib/os";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { ArrowUpRight, Asterisk, Check, CheckCircle2, ChevronLeft, ChevronRight, Folder, Trash2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
@@ -394,7 +395,7 @@ export function TrayTooltip({
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500 shadow-[0_0_10px_#ef4444]" />
             <span className="text-[13px] font-semibold">{callTitle(item.app)}</span>
           </div>
-          <p className="mt-1 text-[12px] text-white/65">Take notes? Flo will transcribe and summarize it on this Mac.</p>
+          <p className="mt-1 text-[12px] text-white/65">Take notes? Flo will transcribe and summarize it on this {deviceWord()}.</p>
           <div className="mt-auto flex justify-end gap-1">
             <button className={btnGhost} onClick={() => onIgnoreMeeting(item.app)}>
               Ignore
@@ -646,8 +647,8 @@ function ClaudePermissionCard({
             <button className={btnGhost + " flex items-center gap-1"} onClick={() => answer(false)} aria-label="Deny" title="Deny (esc)">
               <X size={12} /> Deny
             </button>
-            <button className={btnPrimary + " flex items-center gap-1.5"} onClick={() => answer(true)} aria-label="Allow" title="Allow (⌘↩)">
-              <Check size={12} strokeWidth={3} /> Allow <span className="text-[10px] font-medium opacity-60">⌘↩</span>
+            <button className={btnPrimary + " flex items-center gap-1.5"} onClick={() => answer(true)} aria-label="Allow" title={`Allow (${modKey()}↩)`}>
+              <Check size={12} strokeWidth={3} /> Allow <span className="text-[10px] font-medium opacity-60">{modKey()}↩</span>
             </button>
           </>
         )}
@@ -786,7 +787,7 @@ export function MeetingPromptCard({
       }
     >
       <div className="truncate text-[13px] font-semibold">{callTitle(app)}</div>
-      <p className="truncate text-[12px] text-white/60">Take notes on this Mac?</p>
+      <p className="truncate text-[12px] text-white/60">Take notes on this {deviceWord()}?</p>
     </CardRow>
   );
 }

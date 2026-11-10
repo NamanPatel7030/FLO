@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type PermissionKind, type Permissions } from "../lib/api";
+import type { Platform } from "../lib/types";
+import { os } from "../lib/os";
 
 /** Live permission status: polls every 2s (pass a shorter interval while a permission step is up) and re-checks whenever the window regains focus. */
 export function usePermissions(intervalMs = 2000): Permissions | null {
@@ -37,6 +39,14 @@ export const PERMISSION_ITEMS: PermissionItem[] = [
   { key: "screen", kind: "screen", label: "Screen Recording", why: "Optional: screen-aware answers and Attention. Images stay on this device.", required: false },
 ];
 
+/** What this OS asks for. macOS: the microphone, Accessibility (types the words and runs the Flo
+ *  key) and optional Screen Recording. Windows / Linux have no such grants for desktop apps: only
+ *  the microphone (Windows' privacy switch; on Linux, a working input device). */
+export function permissionItems(p: Platform = os()): PermissionItem[] {
+  if (p === "macos") return PERMISSION_ITEMS;
+  return [{ key: "microphone", kind: "microphone", label: "Microphone", why: p === "windows" ? "To hear you. Windows asks under Settings → Privacy → Microphone." : "To hear you while you hold your Flo key or record a meeting.", required: true }];
+}
+
 /** Accessibility is on but the key listener still isn't running after a grace period. The backend
  *  starts it within about a second of the grant, so this only shows when something is really off
  *  (then a relaunch helps). */
@@ -56,7 +66,7 @@ export function useHotkeyStuck(p: Permissions | null, graceMs = 6000): boolean {
 }
 
 /** Required permissions that are still missing. */
-export function missingRequired(p: Permissions | null): PermissionItem[] {
+export function missingRequired(p: Permissions | null, platform: Platform = os()): PermissionItem[] {
   if (!p) return [];
-  return PERMISSION_ITEMS.filter((i) => i.required && !p[i.key]);
+  return permissionItems(platform).filter((i) => i.required && !p[i.key]);
 }

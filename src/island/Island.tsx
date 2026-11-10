@@ -1,3 +1,4 @@
+import { setOS } from "../lib/os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { settleConfirmedCard } from "./confirmCard";
 import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react";
@@ -301,7 +302,10 @@ export default function Island() {
   );
 
   useEffect(() => {
-    api.getIslandGeometry().then(setGeo);
+    api.getIslandGeometry().then((g) => {
+      setOS(g?.platform);
+      setGeo(g);
+    });
     api.getSettings().then(setSettings).catch(() => {});
     api.listClaudeSessions().then(setSessions);
     api.listTodos().then(setTodos).catch(() => {});
@@ -906,8 +910,8 @@ export default function Island() {
     },
   };
   const keys = {
-    dict: geo.platform === "windows" ? "Right Ctrl" : formatHotkey(settings?.hotkeyDictation ?? "ctrl"),
-    asst: geo.platform === "windows" ? "Right Alt" : formatHotkey(settings?.hotkeyAssistant ?? "fn"),
+    dict: formatHotkey(settings?.hotkeyDictation ?? "ctrl", geo.platform),
+    asst: formatHotkey(settings?.hotkeyAssistant ?? "fn", geo.platform),
   };
 
   const glow = notch && (swollen || shown === "listening" || shown === "agentMode");
@@ -1052,7 +1056,7 @@ export default function Island() {
                   hf={handsfree}
                   notch={notch}
                   geo={geo}
-                  exitHint={geo.platform === "macos" ? `double-tap ${keys.asst} or say “stop”` : "say “stop” to exit"}
+                  exitHint={`double-tap ${keys.asst} or say “stop”`}
                   onExit={() => api.toggleAgentMode().catch(() => setHandsfree(null))}
                 />
               ) : shown === "confirm" && headConfirm ? (

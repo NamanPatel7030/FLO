@@ -1,5 +1,6 @@
 // Flo Agent: one command box for everything Flo can do, with an optional Hermes engine.
 // Typed wrappers over floagent::* and hermes::* (src-tauri/src/floagent.rs, hermes.rs).
+import { os } from "./os";
 import { invokeRaw as call } from "./api";
 
 export type AgentRoute = "skill" | "screen" | "tools" | "answer" | "hermes";
@@ -193,7 +194,7 @@ export function slackReadiness(st: HermesStatus | null, cfg: AgentConfig | null,
   if (installing || st?.installing) blocker = "Hermes is installing. Flo answers in Slack as soon as it's done.";
   else if (!st) blocker = null;
   else if (st.broken) blocker = "Hermes isn't fully installed, so nothing answers in Slack. Install it again.";
-  else if (!installed) blocker = st.appleSilicon === false ? "Hermes needs an Apple Silicon computer, so Flo can't answer in Slack here." : "Hermes isn't installed, so nothing is listening for @Flo in Slack.";
+  else if (!installed) blocker = st.appleSilicon === false ? (os() === "windows" ? "Hermes only runs inside WSL2 on Windows, so Flo can't answer in Slack here." : "Hermes needs an Apple Silicon computer, so Flo can't answer in Slack here.") : "Hermes isn't installed, so nothing is listening for @Flo in Slack.";
   else if (!st.slackBotToken) blocker = "The bot token is missing, so Hermes can't join Slack.";
   else if (bot && !bot.ok) blocker = bot.error ?? "Slack rejected the bot token.";
   else if (!appOk) blocker = "The app token is missing, so Hermes can't connect to Slack.";

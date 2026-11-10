@@ -661,6 +661,23 @@ pub fn arm64_from_sysctl(out: &str) -> bool {
 }
 
 pub const INTEL_MESSAGE: &str = "Hermes runs on Apple Silicon computers only (M1 or newer). This computer has an Intel chip, so Hermes can't be installed here. Flo's built-in engine still works.";
+/// Hermes' official installer supports Windows only inside WSL2, which Flo can't drive.
+pub const WINDOWS_MESSAGE: &str = "On Windows, Hermes only runs inside WSL2 (Windows Subsystem for Linux), so Flo can't install it here. Install it in WSL2 yourself if you like; Flo's built-in engine works without it.";
+
+/// Can Flo install and run Hermes on this computer? Apple Silicon Macs and Linux (the official
+/// installer supports both); not Intel Macs, not Windows (WSL2 only).
+pub fn host_supported() -> bool {
+    cfg!(target_os = "linux") || is_apple_silicon()
+}
+
+/// Why Hermes can't be installed here.
+pub fn unsupported_message() -> &'static str {
+    if cfg!(target_os = "windows") {
+        WINDOWS_MESSAGE
+    } else {
+        INTEL_MESSAGE
+    }
+}
 
 /// The shell line Flo runs: the official installer, piped from curl, without prompts.
 /// `pipefail` so a failed download (no network) fails the run instead of piping nothing into bash.
@@ -854,9 +871,9 @@ pub fn install(st: &Shared) -> Result<InstallState> {
     if installing() {
         return Ok(install_state());
     }
-    if !is_apple_silicon() {
+    if !host_supported() {
         set_install(st, |s| {
-            *s = InstallState { phase: "failed".into(), error: Some(INTEL_MESSAGE.into()), finished_at: Some(chrono::Local::now().to_rfc3339()), ..Default::default() };
+            *s = InstallState { phase: "failed".into(), error: Some(unsupported_message().into()), finished_at: Some(chrono::Local::now().to_rfc3339()), ..Default::default() };
         });
         return Ok(install_state());
     }
@@ -1279,7 +1296,8 @@ pub async fn status(st: &Shared) -> HermesStatus {
         phase: gateway_phase(inst, installed, playing, is_running, is_healthy, error.is_some()).into(),
         error: if is_running { None } else { error },
         restarts,
-        apple_silicon: is_apple_silicon(),
+        // "can run Hermes here" (the field predates Linux support)
+        apple_silicon: host_supported(),
         installing: inst,
         slack_error,
         slack_app_url: slack_create_app_url("Flo"),

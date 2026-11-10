@@ -1,4 +1,5 @@
 // Settings → Integrations: agent tools (Claude Code, Codex, Cursor, webhook). Slack has one page: Flo Agent → Slack.
+import { deviceWord } from "../lib/os";
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { ArrowRight, Asterisk, Check, CodeXml, Copy, MousePointer2, Plug, Terminal, Unplug, Webhook } from "lucide-react";
@@ -63,7 +64,7 @@ export function Integrations() {
       </Card>
       <Card className="p-5">
         <CardTitle icon={<CodeXml size={15} />}>Coding agents</CardTitle>
-        <p className="-mt-1.5 mb-3.5 text-[12.5px] text-muted">Connect your AI coding account. Projects → Code → Edit with AI hands your task to it, in your repo, on this Mac.</p>
+        <p className="-mt-1.5 mb-3.5 text-[12.5px] text-muted">Connect your AI coding account. Projects → Code → Edit with AI hands your task to it, in your repo, on this {deviceWord()}.</p>
         <CodingAgents />
       </Card>
     </div>
@@ -72,7 +73,7 @@ export function Integrations() {
 
 function StatusPill({ it }: { it: Integration }) {
   const [label, cls] = !it.available
-    ? ["Not found on this Mac", "bg-[var(--glass-strong)] text-faint"]
+    ? [`Not found on this ${deviceWord()}`, "bg-[var(--glass-strong)] text-faint"]
     : it.installed
       ? ["Connected", "bg-emerald-400/15 text-emerald-300"]
       : ["Not installed", "bg-[var(--glass-strong)] text-muted"];
