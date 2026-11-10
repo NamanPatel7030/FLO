@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { settleConfirmedCard } from "./confirmCard";
 import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react";
 import { api, isTauri, on } from "../lib/api";
 import {
@@ -553,7 +554,11 @@ export default function Island() {
       return q.filter((x) => x.id !== c.id);
     });
     if (c.kind === "claude") api.answerClaudePermission(c.id, approve === "terminal" ? "terminal" : approve ? "allow" : "deny").catch(() => {});
-    else api.confirmAction(c.id, approve === true).catch(() => {});
+    else
+      api
+        .confirmAction(c.id, approve === true)
+        .then((outcome) => setCard((card) => settleConfirmedCard(card, outcome)))
+        .catch((err) => setCard((card) => settleConfirmedCard(card, err instanceof Error ? err.message : String(err))));
   }, []);
   useEffect(() => {
     if (!oldestConfirm) return;
