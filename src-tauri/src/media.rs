@@ -363,8 +363,6 @@ return out"#
     Some(format!("https://i.ytimg.com/vi/{vid}/hqdefault.jpg"))
 }
 
-/// Download a small image through the egress allow-list and return it as a data: URL.
-#[cfg(target_os = "macos")]
 /// Recently shown thumbnails, so switching back to a track (or re-opening the notch) needs no fetch.
 static ART_MEM: std::sync::LazyLock<parking_lot::Mutex<crate::cache::TtlCache<String, String>>> =
     std::sync::LazyLock::new(|| parking_lot::Mutex::new(crate::cache::TtlCache::new(std::time::Duration::from_secs(24 * 60 * 60), 24)));
@@ -384,6 +382,7 @@ async fn fetch_image(st: &crate::state::Shared, url: &str) -> Option<String> {
     Some(d)
 }
 
+/// Download a small image through the egress allow-list and return it as a data: URL.
 async fn fetch_image_net(st: &crate::state::Shared, url: &str) -> Option<String> {
     use base64::Engine;
     use crate::egress::Purpose;
