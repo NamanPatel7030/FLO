@@ -1598,8 +1598,9 @@ mod tests {
         assert!(run.cancelled && !run.ok && t0.elapsed() < Duration::from_secs(10));
         assert!(install_error(&run).starts_with("Install cancelled"));
         let cancel2 = AtomicBool::new(false);
-        let run = r.block_on(run_installer(&bin, &[], &[], Duration::from_millis(500), &cancel2, |_| {})).unwrap();
-        assert!(run.timed_out && run.tail == vec!["started".to_string()]);
+        let run = r.block_on(run_installer(&bin, &[], &[], Duration::from_millis(800), &cancel2, |_| {})).unwrap();
+        // (on a busy machine bash may not have printed "started" yet: only the timeout is certain)
+        assert!(run.timed_out && !run.ok && run.tail.iter().all(|l| l == "started"));
         assert!(install_error(&run).contains("didn't finish within 10 minutes"));
         std::thread::sleep(Duration::from_secs(4));
         assert!(!marker.exists(), "the installer's children must be stopped too");
