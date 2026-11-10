@@ -116,6 +116,33 @@ export interface WaitingSession {
   status: 'waiting_reply' | 'needs_approval';
   at: string;
 }
+/** working | waiting for a reply or a choice | waiting for Allow / Deny | finished in the last 30 minutes | quiet */
+export type SessionState = 'working' | 'waiting_reply' | 'needs_approval' | 'done' | 'idle';
+/** How a reply reaches the session right now (none: replyHint says why). */
+export type SessionReply = 'instant' | 'queued' | 'answer' | 'resume' | 'none';
+export interface SessionQuestion {
+  question: string;
+  header?: string;
+  multiSelect: boolean;
+  options: string[];
+}
+/** One Claude Code session on the computer. */
+export interface ClaudeSessionView {
+  id: string;
+  project: string;
+  folder: string;
+  state: SessionState;
+  message: string;
+  updatedAt: string;
+  reply: SessionReply;
+  replyHint?: string;
+  /** its Allow / Deny question (an id in `approvals`) */
+  approvalId?: string;
+  /** a multiple-choice question Claude is asking */
+  question?: { id: string; questions: SessionQuestion[] };
+  /** set on the phone while a reply or choice is on the way */
+  sending?: { kind: 'reply' | 'choose'; text: string; since: number };
+}
 export type SettingKind = 'toggle' | 'select' | 'number' | 'text' | 'list';
 export type SettingValue = boolean | number | string | string[];
 export interface ComputerSetting {
@@ -137,14 +164,21 @@ export interface ComputerState {
   todos: { open: TodoOpen[]; done: TodoDone[] };
   approvals: Approval[];
   waiting: WaitingSession[];
+  sessions: ClaudeSessionView[];
   settings: ComputerSetting[];
 }
-export type ActionKind = 'todo_done' | 'todo_reopen' | 'approve' | 'reject' | 'setting';
+export type ActionKind = 'todo_done' | 'todo_reopen' | 'approve' | 'reject' | 'setting' | 'reply' | 'choose';
+/** `choose`: option labels for each question, in order (`id` = the question's id). */
+export interface ChooseValue {
+  id?: string;
+  answers: string[][];
+}
+export type ActionValue = boolean | number | string | ChooseValue;
 export interface PhoneAction {
   id: string;
   kind: ActionKind;
   target: string;
-  value: boolean | number | string | null;
+  value: ActionValue | null;
   status: AskStatus;
   message: string | null;
   createdAt: string;

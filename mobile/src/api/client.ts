@@ -1,5 +1,5 @@
 // HTTP client for the Flo mobile API (docs/mobile-api.md).
-import type { ActionKind, AskMode, AskRequest, AskStatus, ComputerSnapshot, InboxItem, PairClaimRequest, PairClaimResponse, PhoneAction, Presence, PresenceStatus } from './types';
+import type { ActionKind, ActionValue, AskMode, AskRequest, AskStatus, ComputerSnapshot, InboxItem, PairClaimRequest, PairClaimResponse, PhoneAction, Presence, PresenceStatus } from './types';
 import { parseAction, parseComputer } from '../lib/computer';
 import { normalizeItem } from '../lib/inbox';
 import { normalizeServerUrl } from '../lib/pairing';
@@ -31,7 +31,7 @@ export interface FloApi {
   /** What the computer last published: to-dos, Claude Code questions, settings. */
   getComputer(): Promise<ComputerSnapshot>;
   /** Ask the computer to do something with it (it applies it on its next poll). */
-  sendAction(kind: ActionKind, target: string, value?: boolean | number | string): Promise<PhoneAction>;
+  sendAction(kind: ActionKind, target: string, value?: ActionValue): Promise<PhoneAction>;
 }
 
 const ASK_STATUSES: readonly AskStatus[] = ['pending', 'taken', 'done', 'failed'];

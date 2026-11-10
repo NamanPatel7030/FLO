@@ -6,6 +6,7 @@ mod assistant;
 mod attention;
 mod audio;
 mod claude;
+mod claude_reply;
 mod code;
 mod commands;
 #[cfg(test)]

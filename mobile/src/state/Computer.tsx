@@ -1,13 +1,14 @@
 // Your computer's to-dos, Claude Code questions and settings, as the desktop app last published them.
 //
 // Polls only while the app is in the foreground (nothing runs in the background): every 20 s,
+// every 10 s while a Claude Code session is working (so "api-server finished" shows promptly),
 // every 5 s while a Claude Code question waits (they time out on the computer after 2 minutes),
 // and every 2.5 s while one of the phone's own changes is on the way.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { ApiError, describeError } from '../api/client';
-import type { ActionKind, ComputerState } from '../api/types';
-import { liveApprovals, overlay, pendingKey, reconcile, type Pending } from '../lib/computer';
+import type { ActionKind, ActionValue, ClaudeSessionView, ComputerState } from '../api/types';
+import { finishedSince, finishedText, liveApprovals, needsYouCount as countNeedsYou, overlay, pendingKey, reconcile, type Pending } from '../lib/computer';
 import { useFlo } from './FloContext';
 
 interface ComputerCtx {
@@ -20,13 +21,20 @@ interface ComputerCtx {
   error: string | null;
   /** the latest failure message for one of the phone's actions */
   notice: string | null;
-  /** questions waiting for Allow / Deny right now */
+  /** questions waiting for Allow / Deny or a choice right now */
   needsYouCount: number;
+  /** what the computer said about the last reply to each session ("Sent to api-server."), shown briefly */
+  sent: Record<string, { message: string; at: number }>;
+  /** "api-server finished" when a session went from working to done since the last look */
+  finished: string | null;
+  /** phone clock, ticking while something is on the way (for "hasn't picked this up yet") */
+  now: number;
   /** the phone's own changes still on the way (read-only; the settings screen shows their progress) */
   pending: readonly Pending[];
   refresh(): Promise<void>;
-  act(kind: ActionKind, target: string, value?: boolean | number | string): Promise<void>;
+  act(kind: ActionKind, target: string, value?: ActionValue): Promise<void>;
   clearNotice(): void;
+  clearFinished(): void;
 }
 
 const Ctx = createContext<ComputerCtx | null>(null);
@@ -38,8 +46,10 @@ export function useComputer(): ComputerCtx {
 }
 
 const SLOW_MS = 20_000;
+const WORKING_MS = 10_000;
 const QUESTION_MS = 5_000;
 const PENDING_MS = 2_500;
+const SENT_SHOW_MS = 8_000;
 
 export function ComputerProvider({ children }: { children: React.ReactNode }) {
   const flo = useFlo();
@@ -53,8 +63,11 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [active, setActive] = useState(AppState.currentState === 'active' || AppState.currentState == null);
   const [now, setNow] = useState(Date.now());
+  const [sent, setSent] = useState<Record<string, { message: string; at: number }>>({});
+  const [finished, setFinished] = useState<string | null>(null);
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
+  const sessionsRef = useRef<ClaudeSessionView[] | null>(null);
 
   const refresh = useCallback(async () => {
     if (!api) return;
@@ -63,9 +76,23 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
       const snap = await api.getComputer();
       setRaw(snap.state);
       setUpdatedAt(snap.updatedAt);
-      const r = reconcile(pendingRef.current, snap, Date.now());
+      const at = Date.now();
+      const r = reconcile(pendingRef.current, snap, at);
       setPending(r.pending);
       if (r.failures.length) setNotice(r.failures[r.failures.length - 1]);
+      if (r.confirmations.length) {
+        setSent((cur) => {
+          const next = { ...cur };
+          for (const c of r.confirmations) next[c.key.slice('session:'.length)] = { message: c.message, at };
+          return next;
+        });
+      }
+      const sessions = snap.state?.sessions ?? [];
+      if (sessionsRef.current) {
+        const text = finishedText(finishedSince(sessionsRef.current, sessions));
+        if (text) setFinished(text);
+      }
+      sessionsRef.current = sessions;
       setError(null);
     } catch (e) {
       // an unpaired phone is handled by the inbox poll (FloContext signs out)
@@ -83,6 +110,9 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
     setUpdatedAt(null);
     setPending([]);
     setLoaded(false);
+    setSent({});
+    setFinished(null);
+    sessionsRef.current = null;
   }, [api]);
 
   useEffect(() => {
@@ -90,8 +120,9 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, []);
 
-  const waitingQuestions = raw ? liveApprovals(raw, now).length : 0;
-  const every = pending.length ? PENDING_MS : waitingQuestions ? QUESTION_MS : SLOW_MS;
+  const waitingQuestions = raw ? liveApprovals(raw, now).length + raw.sessions.filter((x) => x.question).length : 0;
+  const working = raw ? raw.sessions.some((x) => x.state === 'working') : false;
+  const every = pending.length ? PENDING_MS : waitingQuestions ? QUESTION_MS : working ? WORKING_MS : SLOW_MS;
 
   // foreground-only polling
   useEffect(() => {
@@ -108,19 +139,37 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newest]);
 
-  // keep "expires in" and expired questions current while a question waits
+  // keep "expires in", expired questions and "hasn't picked this up yet" current
+  const ticking = waitingQuestions > 0 || pending.some((p) => p.key.startsWith('session:')) || Object.keys(sent).length > 0;
   useEffect(() => {
-    if (!waitingQuestions || !active) return;
+    if (!ticking || !active) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [waitingQuestions, active]);
+  }, [ticking, active]);
+
+  // confirmations ("Sent to api-server.") fade after a few seconds
+  useEffect(() => {
+    const stale = Object.entries(sent).filter(([, v]) => now - v.at > SENT_SHOW_MS);
+    if (!stale.length) return;
+    setSent((cur) => {
+      const next = { ...cur };
+      for (const [k] of stale) delete next[k];
+      return next;
+    });
+  }, [now, sent]);
 
   const act = useCallback(
-    async (kind: ActionKind, target: string, value?: boolean | number | string) => {
+    async (kind: ActionKind, target: string, value?: ActionValue) => {
       if (!api) return;
       const key = pendingKey(kind, target);
       const p: Pending = { key, kind, target, value: value ?? null, createdAt: Date.now() };
       setPending((cur) => [...cur.filter((x) => x.key !== key), p]);
+      setSent((cur) => {
+        if (!(target in cur)) return cur;
+        const next = { ...cur };
+        delete next[target];
+        return next;
+      });
       try {
         const a = await api.sendAction(kind, target, value);
         setPending((cur) => cur.map((x) => (x === p || (x.key === key && x.createdAt === p.createdAt) ? { ...x, actionId: a.id } : x)));
@@ -133,7 +182,7 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const state = useMemo(() => (raw ? overlay(raw, pending, now) : null), [raw, pending, now]);
-  const needsYouCount = state ? liveApprovals(state, now).filter((a) => !a.sending).length : 0;
+  const needsYouCount = state ? countNeedsYou(state, now) : 0;
 
   const value: ComputerCtx = {
     state,
@@ -144,9 +193,13 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
     notice,
     needsYouCount,
     pending,
+    sent,
+    finished,
+    now,
     refresh,
     act,
     clearNotice: () => setNotice(null),
+    clearFinished: () => setFinished(null),
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

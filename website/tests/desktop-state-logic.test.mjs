@@ -78,7 +78,7 @@ test("never stores anything that looks like a secret setting", () => {
 });
 
 test("actions: valid kinds, targets and values", () => {
-  assert.deepEqual(ACTION_KINDS, ["todo_done", "todo_reopen", "approve", "reject", "setting"]);
+  assert.deepEqual(ACTION_KINDS, ["todo_done", "todo_reopen", "approve", "reject", "setting", "reply", "choose"]);
   assert.deepEqual(parseAction({ kind: "todo_done", target: "t1" }), { kind: "todo_done", target: "t1", value: null });
   assert.deepEqual(parseAction({ kind: "approve", target: "q-1", value: "ignored" }), { kind: "approve", target: "q-1", value: null });
   assert.deepEqual(parseAction({ kind: "setting", target: "playSounds", value: false }), { kind: "setting", target: "playSounds", value: false });
@@ -135,4 +135,109 @@ test("waiting hint: minutes and singular forms", () => {
   assert.match(waitingHint("a@b.c", "2026-11-10T09:40:00Z", new Date("2026-11-10T10:00:00Z")).text, /20 minutes ago/);
   assert.match(waitingHint("a@b.c", "2026-11-10T09:00:00Z", new Date("2026-11-10T10:00:00Z")).text, /1 hour ago/);
   assert.match(waitingHint("a@b.c", "2026-11-08T09:00:00Z", new Date("2026-11-10T10:00:00Z")).text, /2 days ago/);
+});
+
+// ── Claude Code sessions: list in the snapshot, reply / choose from the phone ─
+import { readFileSync } from "node:fs";
+
+const session = (o = {}) => ({
+  id: "0b9f6a52-3c1e-4d7a-9e55-1f2a3b4c5d6e",
+  project: "api-server",
+  folder: "api-server",
+  state: "waiting_reply",
+  message: "Which database should I use?",
+  updatedAt: "2026-11-10T08:00:00Z",
+  reply: "answer",
+  question: {
+    id: "q7",
+    questions: [{ question: "Which database?", header: "DB", multiSelect: false, options: ["Postgres", "SQLite"] }],
+  },
+  ...o,
+});
+
+test("sessions: kept with known fields, states and question options", () => {
+  const r = parseSnapshot(snap({ sessions: [session({ junk: 1 }), session({ id: "s2", state: "working", question: undefined, reply: "queued" })] }));
+  assert.ok("state" in r, JSON.stringify(r));
+  const [a, b] = r.state.sessions;
+  assert.equal(a.junk, undefined);
+  assert.equal(a.state, "waiting_reply");
+  assert.deepEqual(a.question.questions[0].options, ["Postgres", "SQLite"]);
+  assert.equal(a.question.id, "q7");
+  assert.equal(b.state, "working");
+  assert.equal(b.question, undefined);
+  assert.equal(b.reply, "queued");
+});
+
+test("sessions: unknown state becomes idle, unknown delivery becomes none, bad ids dropped", () => {
+  const r = parseSnapshot(snap({ sessions: [session({ state: "exploded", reply: "shell" }), session({ id: "bad id!" })] }));
+  assert.ok("state" in r);
+  assert.equal(r.state.sessions.length, 1);
+  assert.equal(r.state.sessions[0].state, "idle");
+  assert.equal(r.state.sessions[0].reply, "none");
+});
+
+test("sessions: capped in count, message length and question size", () => {
+  const many = Array.from({ length: 20 }, (_, i) => session({
+    id: `s${i}`,
+    message: "m".repeat(900),
+    question: { id: "q", questions: Array.from({ length: 6 }, () => ({ question: "q".repeat(320), options: Array.from({ length: 12 }, (_, j) => `opt ${j}`) })) },
+  }));
+  const r = parseSnapshot(snap({ sessions: many }));
+  assert.ok("state" in r);
+  assert.equal(r.state.sessions.length, STATE_LIMITS.sessions);
+  const s = r.state.sessions[0];
+  assert.ok(s.message.length <= 400);
+  assert.equal(s.question.questions.length, STATE_LIMITS.questions);
+  assert.equal(s.question.questions[0].options.length, STATE_LIMITS.questionOptions);
+  assert.ok(s.question.questions[0].question.length <= 300);
+  // worst case still fits the request limit with room for to-dos and settings
+  const worst = Array.from({ length: STATE_LIMITS.sessions }, (_, i) => session({
+    id: `w${i}`, message: "m".repeat(400), replyHint: "h".repeat(200),
+    question: { id: "q", questions: Array.from({ length: 4 }, () => ({ question: "q".repeat(300), header: "h".repeat(40), options: Array.from({ length: 8 }, () => "o".repeat(80)) })) },
+  }));
+  assert.ok(JSON.stringify(worst).length < STATE_LIMITS.maxBytes / 2);
+});
+
+test("sessions: missing list becomes empty (older desktops)", () => {
+  const r = parseSnapshot({ v: 1 });
+  assert.deepEqual(r.state.sessions, []);
+});
+
+test("actions: reply carries the text (newlines kept, max 4000)", () => {
+  const sid = "0b9f6a52-3c1e-4d7a-9e55-1f2a3b4c5d6e";
+  assert.deepEqual(parseAction({ kind: "reply", target: sid, value: "  use postgres\nand add an index  " }), { kind: "reply", target: sid, value: "use postgres\nand add an index" });
+  assert.equal(parseAction({ kind: "reply", target: sid, value: "x".repeat(4000) }).value.length, 4000);
+  for (const value of [undefined, "", "   ", "x".repeat(4001), 5, { t: "x" }]) {
+    assert.ok("error" in parseAction({ kind: "reply", target: sid, value }), JSON.stringify(value));
+  }
+  // control characters are stripped
+  assert.equal(parseAction({ kind: "reply", target: sid, value: "a\u0007b\u001bc" }).value, "abc");
+});
+
+test("actions: choose carries option labels per question", () => {
+  const sid = "s1";
+  assert.deepEqual(parseAction({ kind: "choose", target: sid, value: { id: "q7", answers: [["Postgres"]] } }), { kind: "choose", target: sid, value: { id: "q7", answers: [["Postgres"]] } });
+  assert.deepEqual(parseAction({ kind: "choose", target: sid, value: { answers: [["A", "B"], ["Yes"]] } }), { kind: "choose", target: sid, value: { answers: [["A", "B"], ["Yes"]] } });
+  for (const value of [
+    undefined,
+    "Postgres",
+    { answers: [] },
+    { answers: [[]] },
+    { answers: [[""]] },
+    { answers: [["x".repeat(201)]] },
+    { answers: Array.from({ length: 5 }, () => ["a"]) },
+    { answers: [Array.from({ length: 11 }, () => "a")] },
+    { answers: [[1]] },
+    { id: "bad id!", answers: [["a"]] },
+  ]) {
+    assert.ok("error" in parseAction({ kind: "choose", target: sid, value }), JSON.stringify(value));
+  }
+});
+
+test("migration 0008 allows every action kind and bounds the value", () => {
+  const sql = readFileSync(new URL("../supabase/migrations/0008_session_actions.sql", import.meta.url), "utf8");
+  assert.match(sql, /drop constraint if exists mobile_actions_kind_check/);
+  assert.match(sql, /add constraint mobile_actions_kind_check/);
+  for (const k of ACTION_KINDS) assert.match(sql, new RegExp(`'${k}'`), k);
+  assert.match(sql, /mobile_actions_value_size/);
 });

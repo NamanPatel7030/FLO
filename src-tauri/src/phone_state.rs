@@ -1,10 +1,11 @@
-//! The paired phone's view of this computer: to-dos, Claude Code approvals and settings.
+//! The paired phone's view of this computer: to-dos, Claude Code sessions and approvals, settings.
 //!
 //! While signed in, Flo publishes a small snapshot to the user's own account server
 //! (`POST /api/app/state`) whenever it changes (debounced), plus a heartbeat every few minutes. The
 //! server keeps it only while a phone is paired. The phone sends actions back (complete a to-do,
-//! Allow / Deny a permission prompt, change a simple setting); `phone.rs` picks them up on its
-//! existing poll and applies them here.
+//! Allow / Deny a permission prompt, reply to a Claude Code session or pick its options, change a
+//! simple setting); `phone.rs` picks them up on its existing poll and applies them here (session
+//! replies are delivered by `claude_reply.rs`).
 //!
 //! Never in the snapshot: API keys, tokens, the account URL, the system prompt, local server URLs.
 //! Settings come from an explicit allow-list (`CATALOG`); only the entries marked editable can be
@@ -167,7 +168,8 @@ pub fn platform_name() -> &'static str {
 }
 
 /// The whole snapshot, built without touching the network (unit-tested).
-pub fn snapshot(todos: &[Todo], approvals: &[crate::claude::PendingPermission], sessions: &[ClaudeSession], s: &Settings, now: chrono::DateTime<chrono::Local>) -> Value {
+/// `views` is every Claude Code session as the phone shows it (claude_reply::session_views).
+pub fn snapshot(todos: &[Todo], approvals: &[crate::claude::PendingPermission], sessions: &[ClaudeSession], views: &[Value], s: &Settings, now: chrono::DateTime<chrono::Local>) -> Value {
     let week_ago = (now - chrono::Duration::days(7)).to_rfc3339();
     let open: Vec<Value> = todos
         .iter()
@@ -188,7 +190,8 @@ pub fn snapshot(todos: &[Todo], approvals: &[crate::claude::PendingPermission], 
     done.sort_by(|a, b| b.completed_at.cmp(&a.completed_at));
     let done: Vec<Value> = done.into_iter().take(DONE_TODOS).map(|t| json!({ "id": t.id, "title": t.title, "completedAt": t.completed_at })).collect();
     let now_s = now.to_rfc3339();
-    let approvals: Vec<Value> = approvals.iter().filter(|a| a.expires_at.as_str() > now_s.as_str()).map(|a| json!(a)).collect();
+    // multiple-choice questions are answered on their session card (Allow alone can't answer them)
+    let approvals: Vec<Value> = approvals.iter().filter(|a| a.expires_at.as_str() > now_s.as_str() && a.tool != crate::claude::ASK_TOOL).map(|a| json!(a)).collect();
     // sessions waiting on you that the phone can't answer (a question in the terminal)
     let waiting: Vec<Value> = sessions
         .iter()
@@ -202,6 +205,7 @@ pub fn snapshot(todos: &[Todo], approvals: &[crate::claude::PendingPermission], 
         "todos": { "open": open, "done": done },
         "approvals": approvals,
         "waiting": waiting,
+        "sessions": views,
         "settings": settings_entries(s),
     })
 }
@@ -209,7 +213,9 @@ pub fn snapshot(todos: &[Todo], approvals: &[crate::claude::PendingPermission], 
 fn build(st: &Shared) -> Value {
     let todos = st.db.list_todos().unwrap_or_default();
     let sessions = st.db.list_claude_sessions().unwrap_or_default();
-    snapshot(&todos, &crate::claude::pending_permissions(), &sessions, &st.settings(), chrono::Local::now())
+    let now = chrono::Local::now();
+    let views = crate::claude_reply::session_views(&sessions, now);
+    snapshot(&todos, &crate::claude::pending_permissions(), &sessions, &views, &st.settings(), now)
 }
 
 // ── actions from the phone ───────────────────────────────────────────────────
@@ -228,6 +234,10 @@ pub enum Plan {
     Todo { id: String, status: &'static str },
     Permission { id: String, decision: &'static str },
     Setting { key: String, value: Value },
+    /// text for a Claude Code session (an answer, or its next prompt)
+    Reply { session: String, text: String },
+    /// option labels for the multiple-choice question a session is asking
+    Choose { session: String, value: Value },
     Reject(&'static str),
 }
 
@@ -242,6 +252,17 @@ pub fn plan(a: &PhoneAction) -> Plan {
         "approve" => Plan::Permission { id: target, decision: "allow" },
         "reject" => Plan::Permission { id: target, decision: "deny" },
         "setting" => Plan::Setting { key: target, value: a.value.clone() },
+        "reply" => match a.value.as_str().map(crate::claude_reply::clean_reply) {
+            Some(t) if !t.is_empty() && a.value.as_str().map(|v| v.trim().chars().count() <= crate::claude_reply::REPLY_CHARS).unwrap_or(false) => Plan::Reply { session: target, text: t },
+            _ => Plan::Reject("There was nothing to send, or it was too long (4000 characters at most)."),
+        },
+        "choose" => {
+            if a.value["answers"].is_array() {
+                Plan::Choose { session: target, value: a.value.clone() }
+            } else {
+                Plan::Reject("Pick an option first.")
+            }
+        }
         _ => Plan::Reject("Flo on your computer doesn't know that action yet. Update Flo."),
     }
 }
@@ -268,6 +289,8 @@ pub fn apply(st: &Shared, a: &PhoneAction) -> (bool, String) {
                 (false, "That question already closed on your computer.".into())
             }
         }
+        Plan::Reply { session, text } => crate::claude_reply::deliver_reply(st, &session, &text),
+        Plan::Choose { session, value } => crate::claude_reply::deliver_choice(st, &session, &value),
         Plan::Setting { key, value } => match apply_setting(&st.settings(), &key, &value) {
             Ok(next) => match crate::commands::store_settings(st, next) {
                 Ok(()) => {
@@ -364,7 +387,7 @@ mod tests {
             todo("e", "done", Some("2026-10-01T09:00:00+00:00")), // too old
             todo("f", "done", Some("2026-11-09T09:00:00+00:00")),
         ];
-        let s = snapshot(&todos, &[], &[], &Settings::default(), now());
+        let s = snapshot(&todos, &[], &[], &[], &Settings::default(), now());
         let ids = |v: &Value| v.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
         assert_eq!(ids(&s["todos"]["open"]), ["a", "b"]);
         assert_eq!(ids(&s["todos"]["done"]), ["f", "d"], "newest first, only the last week");
@@ -374,14 +397,19 @@ mod tests {
 
     #[test]
     fn snapshot_shows_live_approvals_and_waiting_sessions() {
-        let p = |id: &str, exp: &str| PendingPermission { id: id.into(), project: "api".into(), summary: "Run: npm test".into(), tool: "Bash".into(), at: "2026-11-09T11:59:00+00:00".into(), expires_at: exp.into() };
+        let p = |id: &str, exp: &str| PendingPermission { id: id.into(), project: "api".into(), summary: "Run: npm test".into(), tool: "Bash".into(), at: "2026-11-09T11:59:00+00:00".into(), expires_at: exp.into(), session_id: "s9".into(), questions: None };
         let sess = |id: &str, status: &str| ClaudeSession { session_id: id.into(), project: "web".into(), cwd: "/x".into(), status: status.into(), message: "Claude is waiting for your input".into(), updated_at: "2026-11-09T11:00:00+00:00".into(), app_bundle: None, terminal: None, transcript_path: None, source: "claude".into() };
-        let s = snapshot(&[], &[p("live", "2026-11-09T12:01:00+00:00"), p("expired", "2026-11-09T11:59:30+00:00")], &[sess("s1", "waiting_reply"), sess("s2", "working")], &Settings::default(), now());
+        let mut q = p("question", "2026-11-09T12:04:00+00:00");
+        q.tool = crate::claude::ASK_TOOL.into();
+        let views = vec![json!({"id": "s1", "state": "waiting_reply"}), json!({"id": "s2", "state": "working"})];
+        let s = snapshot(&[], &[p("live", "2026-11-09T12:01:00+00:00"), p("expired", "2026-11-09T11:59:30+00:00"), q], &[sess("s1", "waiting_reply"), sess("s2", "working")], &views, &Settings::default(), now());
         assert_eq!(s["approvals"].as_array().unwrap().len(), 1);
         assert_eq!(s["approvals"][0]["id"], "live");
         assert_eq!(s["approvals"][0]["expiresAt"], "2026-11-09T12:01:00+00:00");
         assert_eq!(s["waiting"].as_array().unwrap().len(), 1);
         assert_eq!(s["waiting"][0]["id"], "s1");
+        // every session goes to the phone; multiple-choice questions live on their session, not as Allow / Deny
+        assert_eq!(s["sessions"], json!(views));
     }
 
     #[test]
@@ -435,6 +463,13 @@ mod tests {
         assert_eq!(plan(&a("approve", "q1", Value::Null)), Plan::Permission { id: "q1".into(), decision: "allow" });
         assert_eq!(plan(&a("reject", "q1", Value::Null)), Plan::Permission { id: "q1".into(), decision: "deny" });
         assert_eq!(plan(&a("setting", "theme", json!("dark"))), Plan::Setting { key: "theme".into(), value: json!("dark") });
+        assert_eq!(plan(&a("reply", "sid-1", json!("  run the tests  "))), Plan::Reply { session: "sid-1".into(), text: "run the tests".into() });
+        assert!(matches!(plan(&a("reply", "sid-1", json!("   "))), Plan::Reject(_)));
+        assert!(matches!(plan(&a("reply", "sid-1", json!(5))), Plan::Reject(_)));
+        assert!(matches!(plan(&a("reply", "sid-1", json!("x".repeat(4001)))), Plan::Reject(_)));
+        let pick = json!({"id": "q7", "answers": [["Postgres"]]});
+        assert_eq!(plan(&a("choose", "sid-1", pick.clone())), Plan::Choose { session: "sid-1".into(), value: pick });
+        assert!(matches!(plan(&a("choose", "sid-1", json!("Postgres"))), Plan::Reject(_)));
         assert!(matches!(plan(&a("delete_all", "x", Value::Null)), Plan::Reject(_)));
         assert!(matches!(plan(&a("approve", " ", Value::Null)), Plan::Reject(_)));
     }

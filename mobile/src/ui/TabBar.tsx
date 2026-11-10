@@ -1,4 +1,4 @@
-// Floating glass tab bar: Home, To-dos, Ask Flo (the raised mic in the middle), Needs you, Settings.
+// Floating glass tab bar: Home, To-dos, Ask Flo (the raised mic in the middle), Sessions, Settings.
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useRef } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -13,7 +13,7 @@ export type Tab = 'home' | 'todos' | 'needs' | 'settings';
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'todos', label: 'To-dos', icon: 'todos' },
-  { id: 'needs', label: 'Needs you', icon: 'hand' },
+  { id: 'needs', label: 'Sessions', icon: 'claude' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
 ];
 

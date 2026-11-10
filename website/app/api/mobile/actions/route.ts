@@ -6,8 +6,10 @@ export const runtime = "nodejs";
 
 /**
  * Phone: {kind, target, value?} → 202 {action}. kind is todo_done | todo_reopen | approve | reject |
- * setting. The computer picks it up on its next poll, checks it again (only the settings it marks
- * editable can change) and applies it.
+ * setting | reply (target = Claude Code session id, value = text) | choose (target = session id,
+ * value = {id?, answers: [[label]]}). The computer picks it up on its next poll, checks it again
+ * (only the settings it marks editable can change; a reply only ever reaches Claude as a prompt)
+ * and applies it, then finishes it with a message ("Sent to api-server", or why not).
  */
 export async function POST(req: Request) {
   const c = await mobileCaller(req);

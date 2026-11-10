@@ -190,12 +190,21 @@ pub fn remove_hooks(mut settings: Value) -> Value {
 }
 
 /// Add (or refresh) Flo's hook entries.
+#[cfg(test)]
 pub fn add_hooks(settings: Value, command: &str) -> Value {
     add_hooks_with(settings, command, None)
 }
 
 /// Same, plus (when given) the blocking PermissionRequest hook that lets the notch Allow / Deny.
+#[cfg(test)]
 pub fn add_hooks_with(settings: Value, command: &str, permission: Option<&str>) -> Value {
+    add_hooks_full(settings, command, permission, None)
+}
+
+/// Same, plus (when given) the background Stop hook that lets the phone reply to a finished session
+/// (`asyncRewake`: Claude Code doesn't wait for it; when it exits 2 its stderr wakes Claude, even
+/// while the session sits idle at the prompt). See `reply_wait_command`.
+pub fn add_hooks_full(settings: Value, command: &str, permission: Option<&str>, rewake: Option<&str>) -> Value {
     let mut s = remove_hooks(settings);
     if !s.is_object() {
         s = json!({});
@@ -220,7 +229,38 @@ pub fn add_hooks_with(settings: Value, command: &str, permission: Option<&str>) 
         // synchronous: Claude Code waits for the answer (Flo replies within PERMISSION_WAIT_SECS)
         arr.as_array_mut().unwrap().push(json!({ "matcher": "*", "hooks": [{ "type": "command", "command": perm, "timeout": 600 }] }));
     }
+    if let Some(rw) = rewake {
+        let arr = hooks.as_object_mut().unwrap().entry("Stop").or_insert_with(|| json!([]));
+        if !arr.is_array() {
+            *arr = json!([]);
+        }
+        arr.as_array_mut().unwrap().push(json!({ "hooks": [{ "type": "command", "command": rw, "asyncRewake": true, "timeout": REWAKE_HOOK_TIMEOUT_SECS }] }));
+    }
     s
+}
+
+/// Is Flo's background reply hook installed here?
+pub fn has_rewake(settings: &Value) -> bool {
+    settings["hooks"]["Stop"]
+        .as_array()
+        .map(|a| a.iter().filter(|e| is_ours(e)).any(|e| e["hooks"].as_array().map(|hs| hs.iter().any(|h| h["asyncRewake"] == true)).unwrap_or(false)))
+        .unwrap_or(false)
+}
+
+/// How long a finished session keeps listening for a reply from the phone (sessions leave Flo's
+/// list after 12 hours anyway).
+pub const REWAKE_WAIT_SECS: u64 = 12 * 3600;
+/// Claude Code's own limit for the hook: a little longer, so Flo's empty answer ends it first.
+pub const REWAKE_HOOK_TIMEOUT_SECS: u64 = REWAKE_WAIT_SECS + 120;
+
+/// The background Stop hook. It asks Flo "anything from the phone for this session?" and waits.
+/// Flo answers with the reply text (→ printed to stderr, exit 2: Claude Code wakes Claude with it)
+/// or with nothing (you typed in the terminal, the session ended, time ran out, Flo quit → exit 0,
+/// nothing happens). The reply is only ever printed, never run.
+pub fn reply_wait_command(port: u16, token: &str) -> String {
+    format!(
+        "out=$(curl -s -m {REWAKE_WAIT_SECS} -X POST -H \"Content-Type: application/json\" --data-binary @- \"http://127.0.0.1:{port}/claude/reply-wait?token={token}&src={MARKER}&pid=$PPID\" 2>/dev/null) || exit 0; [ -n \"$out\" ] || exit 0; printf '%s\\n' \"$out\" >&2; exit 2"
+    )
 }
 
 /// Claude Code asks this hook before showing a permission prompt.
@@ -261,6 +301,7 @@ pub fn permission_summary(tool: &str, input: &Value) -> String {
         "Read" => format!("Read {}", file("file_path")),
         "WebFetch" => format!("Open {}", s("url")),
         "WebSearch" => format!("Search the web: {}", s("query")),
+        ASK_TOOL => format!("Asks: {}", input["questions"][0]["question"].as_str().unwrap_or("a question").trim()),
         t if t.starts_with("mcp__") => {
             let mut parts = t.splitn(3, "__").skip(1);
             let server = parts.next().unwrap_or("");
@@ -283,22 +324,135 @@ pub struct PendingPermission {
     pub at: String,
     /// when Flo hands the question back to the terminal (PERMISSION_WAIT_SECS)
     pub expires_at: String,
+    /// the Claude Code session asking
+    pub session_id: String,
+    /// AskUserQuestion: what Claude asks, with the options to pick from
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub questions: Option<Vec<Question>>,
+}
+
+/// Claude Code's multiple-choice tool. It reaches Flo through the PermissionRequest hook; the
+/// answer goes back as `updatedInput.answers` (hooks reference: "AskUserQuestion and ExitPlanMode
+/// need this field"; answers map question text → option label, multi-select labels joined by ", ").
+pub const ASK_TOOL: &str = "AskUserQuestion";
+/// A multiple-choice question waits longer for the phone than an Allow / Deny (still inside the
+/// hook's 590 s curl limit). Allow on the notch hands it to the terminal at once.
+pub const QUESTION_WAIT_SECS: u64 = 300;
+
+pub fn wait_secs(tool: &str) -> u64 {
+    if tool == ASK_TOOL {
+        QUESTION_WAIT_SECS
+    } else {
+        PERMISSION_WAIT_SECS
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    pub question: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub header: String,
+    pub multi_select: bool,
+    pub options: Vec<String>,
+}
+
+/// The questions in an AskUserQuestion input (empty for any other tool's input).
+pub fn parse_questions(input: &Value) -> Vec<Question> {
+    input["questions"]
+        .as_array()
+        .map(|qs| {
+            qs.iter()
+                .filter_map(|q| {
+                    let question = q["question"].as_str()?.trim().to_string();
+                    let options: Vec<String> = q["options"].as_array()?.iter().filter_map(|o| o["label"].as_str().or_else(|| o.as_str())).map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+                    (!question.is_empty() && !options.is_empty()).then(|| Question {
+                        question,
+                        header: q["header"].as_str().unwrap_or("").trim().to_string(),
+                        multi_select: q["multiSelect"].as_bool().unwrap_or(false),
+                        options,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The phone's picks (labels per question, in order) → the `answers` object, or why not.
+pub fn choice_answers(questions: &[Question], picks: &[Vec<String>]) -> Result<serde_json::Map<String, Value>, String> {
+    if questions.is_empty() {
+        return Err("That question already closed on your computer.".into());
+    }
+    if picks.len() != questions.len() {
+        return Err(format!("Answer all {} questions.", questions.len()));
+    }
+    let mut out = serde_json::Map::new();
+    for (q, labels) in questions.iter().zip(picks) {
+        if labels.is_empty() || (!q.multi_select && labels.len() > 1) {
+            return Err(format!("Pick {} for \"{}\".", if q.multi_select { "at least one" } else { "one" }, text::truncate_chars(&q.question, 60)));
+        }
+        if let Some(bad) = labels.iter().find(|l| !q.options.iter().any(|o| o == *l)) {
+            return Err(format!("\"{}\" isn't one of the options any more.", text::truncate_chars(bad, 60)));
+        }
+        out.insert(q.question.clone(), json!(labels.join(", ")));
+    }
+    Ok(out)
+}
+
+/// Stdout answering an AskUserQuestion: allow, echoing the questions back with the answers added.
+pub fn question_reply(input: &Value, answers: &serde_json::Map<String, Value>) -> String {
+    let mut updated = if input.is_object() { input.clone() } else { json!({}) };
+    updated["answers"] = Value::Object(answers.clone());
+    json!({ "hookSpecificOutput": { "hookEventName": PERMISSION_EVENT, "decision": { "behavior": "allow", "updatedInput": updated } } }).to_string()
+}
+
+/// Stdout for "no, and here's what I want instead" (a typed reply from the phone): Claude reads the
+/// message as the reason and carries on with it.
+pub fn deny_reply(user_text: &str) -> String {
+    let message = format!("The user replied from their phone through Flo instead of choosing: {user_text}");
+    json!({ "hookSpecificOutput": { "hookEventName": PERMISSION_EVENT, "decision": { "behavior": "deny", "message": message } } }).to_string()
 }
 
 struct Waiting {
+    /// gets the hook's stdout ("" = no decision: Claude Code shows its own prompt)
     tx: std::sync::mpsc::Sender<String>,
     info: PendingPermission,
+    /// the tool input (echoed back when answering a question)
+    input: Value,
 }
 
 /// Questions waiting for Allow / Deny: id → where to send the decision (+ what was asked).
 static PENDING_PERMISSIONS: parking_lot::Mutex<Option<std::collections::HashMap<String, Waiting>>> = parking_lot::Mutex::new(None);
 
 /// The notch (or the paired phone) answered a permission question ("allow" | "deny" | "terminal").
+/// Allow alone can't answer a multiple-choice question, so it hands that one to the terminal.
 pub fn answer_permission(id: &str, decision: &str) -> bool {
+    finish_pending(id, |w| if w.info.tool == ASK_TOOL && decision == "allow" { String::new() } else { permission_reply(decision) })
+}
+
+/// The phone picked options for an AskUserQuestion.
+pub fn answer_question(id: &str, answers: &serde_json::Map<String, Value>) -> bool {
+    finish_pending(id, |w| question_reply(&w.input, answers))
+}
+
+/// The phone typed a reply while Claude waits on a question or a permission: deny, with the reply.
+pub fn deny_with_message(id: &str, user_text: &str) -> bool {
+    finish_pending(id, |_| deny_reply(user_text))
+}
+
+fn finish_pending(id: &str, reply: impl FnOnce(&Waiting) -> String) -> bool {
     let w = PENDING_PERMISSIONS.lock().as_mut().and_then(|m| m.remove(id));
-    let ok = w.map(|w| w.tx.send(decision.to_string()).is_ok()).unwrap_or(false);
+    let ok = w.map(|w| w.tx.send(reply(&w)).is_ok()).unwrap_or(false);
     crate::phone_state::poke();
     ok
+}
+
+/// The question (or permission prompt) a session is waiting on right now, if Flo holds one.
+pub fn pending_for_session(session_id: &str) -> Option<PendingPermission> {
+    if session_id.is_empty() {
+        return None;
+    }
+    pending_permissions().into_iter().rev().find(|p| p.session_id == session_id)
 }
 
 /// Questions still waiting, oldest first.
@@ -308,8 +462,13 @@ pub fn pending_permissions() -> Vec<PendingPermission> {
     v
 }
 
+#[cfg(test)]
 fn add_pending(info: PendingPermission, tx: std::sync::mpsc::Sender<String>) {
-    PENDING_PERMISSIONS.lock().get_or_insert_with(Default::default).insert(info.id.clone(), Waiting { tx, info });
+    add_pending_with(info, Value::Null, tx)
+}
+
+fn add_pending_with(info: PendingPermission, input: Value, tx: std::sync::mpsc::Sender<String>) {
+    PENDING_PERMISSIONS.lock().get_or_insert_with(Default::default).insert(info.id.clone(), Waiting { tx, info, input });
     crate::phone_state::poke();
 }
 
@@ -328,15 +487,20 @@ fn ask_permission(st: &Shared, req: tiny_http::Request, body: &Value) {
     let known = if session_id.is_empty() { None } else { st.db.get_claude_session(session_id).ok().flatten() };
     let app = known.as_ref().and_then(|s| s.terminal.clone().or_else(|| s.app_bundle.clone()));
     let now = chrono::Local::now();
-    add_pending(
+    let wait = wait_secs(tool);
+    let questions = (tool == ASK_TOOL).then(|| parse_questions(&body["tool_input"])).filter(|q| !q.is_empty());
+    add_pending_with(
         PendingPermission {
             id: id.clone(),
             project: project.clone(),
             summary: summary.clone(),
             tool: tool.to_string(),
             at: now.to_rfc3339(),
-            expires_at: (now + chrono::Duration::seconds(PERMISSION_WAIT_SECS as i64)).to_rfc3339(),
+            expires_at: (now + chrono::Duration::seconds(wait as i64)).to_rfc3339(),
+            session_id: session_id.to_string(),
+            questions,
         },
+        body["tool_input"].clone(),
         tx,
     );
     st.emit(
@@ -350,18 +514,41 @@ fn ask_permission(st: &Shared, req: tiny_http::Request, body: &Value) {
     crate::push::notify(st, crate::push::permission_payload(&project, &summary)); // phone, only while Away
     let st2 = st.clone();
     std::thread::spawn(move || {
-        let decision = rx.recv_timeout(std::time::Duration::from_secs(PERMISSION_WAIT_SECS)).unwrap_or_else(|_| "terminal".into());
+        // the hook's stdout; "" (timed out, or handed back) = Claude Code shows its own prompt
+        let reply = rx.recv_timeout(std::time::Duration::from_secs(wait)).unwrap_or_default();
         PENDING_PERMISSIONS.lock().as_mut().map(|m| m.remove(&id));
         crate::phone_state::poke();
-        log::info!("claude permission answered: {decision}");
+        let how = serde_json::from_str::<Value>(&reply).ok().and_then(|v| v["hookSpecificOutput"]["decision"]["behavior"].as_str().map(String::from)).unwrap_or_else(|| "terminal".into());
+        log::info!("claude permission answered: {how}");
         // close the card wherever it is (answered elsewhere, or timed out)
         st2.emit("flo://confirm-done", json!({ "id": id }));
-        let _ = req.respond(tiny_http::Response::from_string(permission_reply(&decision)));
+        let _ = req.respond(tiny_http::Response::from_string(reply));
     });
+}
+
+/// Flo's background reply hook is installed (set when the hooks are written or refreshed).
+static REWAKE_INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn rewake_installed() -> bool {
+    REWAKE_INSTALLED.load(Ordering::SeqCst)
+}
+
+/// The background reply hook command, when this Claude Code can run it (`asyncRewake`).
+fn rewake_command(st: &Shared, token: &str) -> Option<String> {
+    crate::claude_reply::rewake_supported().then(|| reply_wait_command(st.claude_port, token))
 }
 
 pub fn has_hooks(settings: &Value) -> bool {
     HOOK_EVENTS.iter().any(|ev| settings["hooks"][*ev].as_array().map(|a| a.iter().any(is_ours)).unwrap_or(false))
+}
+
+/// The last 64 KB of a transcript the hook named (only a .jsonl under the home dir).
+pub fn recent_transcript(path: &str) -> Option<String> {
+    let p = checked_transcript(path)?;
+    let len = std::fs::metadata(&p).ok()?.len();
+    let text = read_from(&p, len.saturating_sub(64 * 1024))?;
+    // drop the (probably cut) first line
+    Some(if len > 64 * 1024 { text.split_once('\n').map(|(_, r)| r.to_string()).unwrap_or_default() } else { text })
 }
 
 /// Last assistant text in a Claude Code transcript (JSONL).
@@ -510,10 +697,12 @@ pub fn install(st: &Shared) -> Result<ClaudeHookStatus> {
     let token = secrets::hook_token()?;
     let cmd = hook_command(st.claude_port, &token);
     let perm = st.settings().claude_approvals.then(|| permission_command(st.claude_port, &token));
+    let rewake = rewake_command(st, &token);
     for d in dirs {
         let f = d.join("settings.json");
-        write_json(&f, &add_hooks_with(read_json(&f), &cmd, perm.as_deref()))?;
+        write_json(&f, &add_hooks_full(read_json(&f), &cmd, perm.as_deref(), rewake.as_deref()))?;
     }
+    REWAKE_INSTALLED.store(rewake.is_some(), Ordering::SeqCst);
     Ok(status(st))
 }
 
@@ -527,6 +716,7 @@ pub fn uninstall(st: &Shared) -> Result<ClaudeHookStatus> {
             }
         }
     }
+    REWAKE_INSTALLED.store(false, Ordering::SeqCst);
     Ok(status(st))
 }
 
@@ -649,6 +839,8 @@ pub fn emit_sessions(st: &Shared) {
     if let Ok(list) = st.db.list_claude_sessions() {
         st.emit(ev::CLAUDE_SESSIONS, list);
     }
+    // the phone's session list follows promptly (e.g. working → done)
+    crate::phone_state::poke();
 }
 
 /// Focus the window running a session (shared by events and tray items).
@@ -670,11 +862,15 @@ pub fn refresh_if_installed(st: &Shared) {
     let cmd = hook_command(st.claude_port, &token);
     let approvals = st.settings().claude_approvals;
     let perm = approvals.then(|| permission_command(st.claude_port, &token));
+    let rewake = rewake_command(st, &token);
     for d in config_dirs() {
         let f = d.join("settings.json");
         let v = read_json(&f);
         if has_hooks(&v) {
-            let fresh = add_hooks_with(v.clone(), &cmd, perm.as_deref());
+            let fresh = add_hooks_full(v.clone(), &cmd, perm.as_deref(), rewake.as_deref());
+            if has_rewake(&fresh) {
+                REWAKE_INSTALLED.store(true, Ordering::SeqCst);
+            }
             if fresh != v {
                 match write_json(&f, &fresh) {
                     Ok(()) => log::info!("claude hooks refreshed in {} (approvals {})", f.display(), if approvals { "on" } else { "off" }),
@@ -757,10 +953,20 @@ pub fn spawn_listener(st: Shared) {
                 let url = req.url().to_string();
                 let is_agent = url.starts_with("/agent/event");
                 let is_permission = url.starts_with("/claude/permission");
-                let ok_path = url.starts_with("/claude/hook") || is_agent || is_permission;
+                let is_reply_wait = url.starts_with("/claude/reply-wait");
+                let ok_path = url.starts_with("/claude/hook") || is_agent || is_permission || is_reply_wait;
                 let parsed = url::Url::parse(&format!("http://x{url}")).ok();
                 let q = |name: &str| parsed.as_ref().and_then(|u| u.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.to_string()));
                 let ok_token = q("token").as_deref() == Some(token.as_str());
+                let pid = q("pid").and_then(|p| p.parse::<i32>().ok());
+                if req.method() == &tiny_http::Method::Post && ok_token && is_reply_wait {
+                    // the background Stop hook: no process-tree walk needed, just wait
+                    let mut body = String::new();
+                    let _ = req.as_reader().take(1024 * 1024).read_to_string(&mut body);
+                    let v: Value = serde_json::from_str(&body).unwrap_or(json!({}));
+                    crate::claude_reply::serve_wait(req, &v, pid);
+                    continue;
+                }
                 let (mut bundle, term) = (q("bundle"), q("term"));
                 // most reliable: walk the Claude process tree up to the hosting .app
                 if let Some(app) = q("pid").and_then(|p| p.parse::<i32>().ok()).and_then(crate::platform::host_app_of) {
@@ -773,6 +979,9 @@ pub fn spawn_listener(st: Shared) {
                 let mut body = String::new();
                 let _ = req.as_reader().take(1024 * 1024).read_to_string(&mut body);
                 let v: Value = serde_json::from_str(&body).unwrap_or(json!({}));
+                if let (Some(p), Some(sid)) = (pid, v["session_id"].as_str()) {
+                    crate::claude_reply::note_pid(sid, p);
+                }
                 if is_permission {
                     if st.settings().claude_approvals {
                         ask_permission(&st, req, &v); // answered on its own thread
@@ -791,6 +1000,10 @@ pub fn spawn_listener(st: Shared) {
                     let transcript = v["transcript_path"].as_str().and_then(safe_transcript);
                     let ev = parse_hook_from(&v, transcript.as_deref(), bundle, term);
                     crate::autocontinue::observe(&st, &ev, transcript.as_deref()); // usage-limit stops / typing cancels
+                    // you typed in the terminal, or the session ended: its reply hook stops waiting
+                    if matches!(ev.kind.as_str(), "prompt" | "end") {
+                        crate::claude_reply::release(&ev.session_id);
+                    }
                     let Some(status) = session_status(&ev) else { continue };
                     if ev.kind == "stop" {
                         on_stop(&st, ev, transcript.as_deref(), v["transcript_path"].as_str());
@@ -886,10 +1099,10 @@ mod tests {
     #[test]
     fn an_answer_reaches_the_waiting_request() {
         let (tx, rx) = std::sync::mpsc::channel::<String>();
-        add_pending(PendingPermission { id: "q1".into(), project: "api".into(), summary: "Run: npm test".into(), tool: "Bash".into(), at: "2026-11-09T10:00:00+00:00".into(), expires_at: "2026-11-09T10:02:00+00:00".into() }, tx);
+        add_pending(PendingPermission { id: "q1".into(), project: "api".into(), summary: "Run: npm test".into(), tool: "Bash".into(), at: "2026-11-09T10:00:00+00:00".into(), expires_at: "2026-11-09T10:02:00+00:00".into(), session_id: String::new(), questions: None }, tx);
         assert!(pending_permissions().iter().any(|p| p.id == "q1" && p.summary == "Run: npm test"));
         assert!(answer_permission("q1", "allow"));
-        assert_eq!(rx.recv().unwrap(), "allow");
+        assert_eq!(rx.recv().unwrap(), permission_reply("allow"), "the hook gets the decision JSON");
         assert!(!pending_permissions().iter().any(|p| p.id == "q1"), "answered questions leave the list");
         assert!(!answer_permission("q1", "deny")); // already answered
     }
@@ -1070,6 +1283,109 @@ mod tests {
             Some(("/System/Applications/Utilities/Terminal.app".into(), false))
         );
         assert_eq!(open_target(Some("/tmp/../evil.app"), None), None);
+    }
+
+
+    // ── answering from the phone: AskUserQuestion, replies, the rewake hook ──
+
+    fn ask_input() -> Value {
+        json!({"questions": [
+            {"question": "Which database?", "header": "DB", "multiSelect": false, "options": [{"label": "Postgres", "description": "server"}, {"label": "SQLite", "description": "file"}]},
+            {"question": "Which extras?", "header": "Extras", "multiSelect": true, "options": [{"label": "Auth"}, {"label": "Billing"}, {"label": "Search"}]}
+        ]})
+    }
+
+    #[test]
+    fn reads_multiple_choice_questions() {
+        let q = parse_questions(&ask_input());
+        assert_eq!(q.len(), 2);
+        assert_eq!(q[0].question, "Which database?");
+        assert_eq!(q[0].options, vec!["Postgres", "SQLite"]);
+        assert!(!q[0].multi_select && q[1].multi_select);
+        assert!(parse_questions(&json!({"command": "ls"})).is_empty());
+    }
+
+    #[test]
+    fn choices_must_match_the_options() {
+        let q = parse_questions(&ask_input());
+        let a = |v: Vec<Vec<&str>>| v.into_iter().map(|x| x.into_iter().map(String::from).collect::<Vec<_>>()).collect::<Vec<_>>();
+        let ok = choice_answers(&q, &a(vec![vec!["Postgres"], vec!["Auth", "Search"]])).unwrap();
+        assert_eq!(ok["Which database?"], "Postgres");
+        assert_eq!(ok["Which extras?"], "Auth, Search");
+        assert!(choice_answers(&q, &a(vec![vec!["Postgres"]])).is_err(), "every question needs an answer");
+        assert!(choice_answers(&q, &a(vec![vec!["Postgres", "SQLite"], vec!["Auth"]])).is_err(), "single choice takes one");
+        assert!(choice_answers(&q, &a(vec![vec!["MySQL"], vec!["Auth"]])).is_err(), "not an option");
+    }
+
+    #[test]
+    fn answers_go_back_through_updated_input() {
+        let answers = choice_answers(&parse_questions(&ask_input()), &[vec!["SQLite".into()], vec!["Billing".into()]]).unwrap();
+        let v: Value = serde_json::from_str(&question_reply(&ask_input(), &answers)).unwrap();
+        let d = &v["hookSpecificOutput"]["decision"];
+        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
+        assert_eq!(d["behavior"], "allow");
+        assert_eq!(d["updatedInput"]["questions"], ask_input()["questions"], "the original questions are echoed back");
+        assert_eq!(d["updatedInput"]["answers"]["Which database?"], "SQLite");
+        // a typed reply instead: deny with the user's words as the message
+        let v: Value = serde_json::from_str(&deny_reply("use postgres, and say why")).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(v["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().ends_with("use postgres, and say why"));
+    }
+
+    #[test]
+    fn allow_from_the_notch_on_a_question_hands_it_to_the_terminal() {
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let info = PendingPermission { id: "aq1".into(), project: "api".into(), summary: "Asks: Which database?".into(), tool: ASK_TOOL.into(), at: "2026-11-09T10:00:00+00:00".into(), expires_at: "2026-11-09T10:05:00+00:00".into(), session_id: "s-aq".into(), questions: Some(parse_questions(&ask_input())) };
+        add_pending_with(info, ask_input(), tx);
+        assert_eq!(pending_for_session("s-aq").map(|p| p.id), Some("aq1".into()));
+        assert!(answer_permission("aq1", "allow"));
+        assert_eq!(rx.recv().unwrap(), "", "Allow alone can't answer a question: Claude Code shows it instead");
+        assert!(pending_for_session("s-aq").is_none());
+    }
+
+    #[test]
+    fn a_question_answer_reaches_the_waiting_request() {
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let info = PendingPermission { id: "aq2".into(), project: "api".into(), summary: "Asks".into(), tool: ASK_TOOL.into(), at: "2026-11-09T10:00:00+00:00".into(), expires_at: "2026-11-09T10:05:00+00:00".into(), session_id: "s-aq2".into(), questions: Some(parse_questions(&ask_input())) };
+        add_pending_with(info, ask_input(), tx);
+        let answers = choice_answers(&parse_questions(&ask_input()), &[vec!["Postgres".into()], vec!["Auth".into()]]).unwrap();
+        assert!(answer_question("aq2", &answers));
+        let v: Value = serde_json::from_str(&rx.recv().unwrap()).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["decision"]["updatedInput"]["answers"]["Which extras?"], "Auth");
+        assert!(!answer_question("aq2", &answers), "only once");
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let info = PendingPermission { id: "aq3".into(), project: "api".into(), summary: "Run: rm -rf build".into(), tool: "Bash".into(), at: "2026-11-09T10:00:00+00:00".into(), expires_at: "2026-11-09T10:02:00+00:00".into(), session_id: "s-aq3".into(), questions: None };
+        add_pending_with(info, json!({"command": "rm -rf build"}), tx);
+        assert!(deny_with_message("aq3", "don't delete it, move it to /tmp"));
+        assert!(rx.recv().unwrap().contains("move it to /tmp"));
+    }
+
+    #[test]
+    fn questions_wait_longer_than_permissions() {
+        assert!(wait_secs(ASK_TOOL) > wait_secs("Bash"));
+        assert_eq!(wait_secs("Bash"), PERMISSION_WAIT_SECS);
+        assert!(wait_secs(ASK_TOOL) < 590, "inside the hook's curl timeout");
+        assert_eq!(permission_summary(ASK_TOOL, &ask_input()), "Asks: Which database?");
+    }
+
+    #[test]
+    fn rewake_hook_waits_in_the_background_and_wakes_claude_with_exit_2() {
+        let cmd = reply_wait_command(47621, "tok");
+        assert!(cmd.contains("/claude/reply-wait?token=tok&src=flo-flow-hook"));
+        assert!(cmd.contains("&pid=$PPID"));
+        assert!(cmd.contains("printf '%s\\n' \"$out\" >&2; exit 2"), "{cmd}");
+        assert!(!cmd.contains("eval"), "the reply is printed, never run");
+        let s = add_hooks_full(json!({}), &hook_command(47621, "tok"), None, Some(&cmd));
+        let stop = s["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 2, "the notify hook and the rewake hook");
+        let rw = stop.iter().find(|e| e["hooks"][0]["asyncRewake"] == true).expect("asyncRewake entry");
+        assert_eq!(rw["hooks"][0]["timeout"], json!(REWAKE_HOOK_TIMEOUT_SECS));
+        assert!(has_rewake(&s));
+        // refresh without rewake drops it; uninstall removes everything
+        let off = add_hooks_full(s.clone(), &hook_command(47621, "tok"), None, None);
+        assert_eq!(off["hooks"]["Stop"].as_array().unwrap().len(), 1);
+        assert!(!has_rewake(&off));
+        assert!(remove_hooks(s)["hooks"].is_null());
     }
 
     #[test]

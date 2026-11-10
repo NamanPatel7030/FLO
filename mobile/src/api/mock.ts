@@ -135,6 +135,17 @@ export function mockComputer(): ComputerSnapshot {
         { id: 'q2', project: 'api', summary: 'Edit rate_limit.rs', tool: 'Edit', at: ago(0.1), expiresAt: ahead(1.9) },
       ],
       waiting: [{ id: 's1', project: 'mobile', message: 'Claude is waiting for your input', status: 'waiting_reply', at: ago(6) }],
+      sessions: [
+        {
+          id: 'c1', project: 'api', folder: 'api', state: 'waiting_reply', updatedAt: ago(0.4), reply: 'answer',
+          message: 'I can store sessions in Postgres or SQLite. Which do you want?',
+          question: { id: 'aq1', questions: [{ question: 'Which database should the session store use?', header: 'Database', multiSelect: false, options: ['Postgres', 'SQLite', 'Redis'] }] },
+        },
+        { id: 'c2', project: 'website', folder: 'website', state: 'needs_approval', updatedAt: ago(0.3), reply: 'answer', approvalId: 'q1', message: 'Ready to run the migration.' },
+        { id: 'c3', project: 'Flo', folder: 'flo-mvp', state: 'done', updatedAt: ago(4), reply: 'instant', message: 'Done. The notch now shows every session, and tests pass.' },
+        { id: 'c4', project: 'mobile', folder: 'mobile', state: 'working', updatedAt: ago(1), reply: 'queued', message: 'Running the Jest suite.' },
+        { id: 'c5', project: 'docs', folder: 'docs', state: 'idle', updatedAt: ago(90), reply: 'none', replyHint: 'This session finished before Flo last started, so it isn\'t listening for your phone. Send it anything in its terminal once and your phone can reply after that.', message: 'Updated the README.' },
+      ],
       settings: [
         { key: 'theme', label: 'Theme', section: 'Appearance', kind: 'select', value: 'light', editable: true, options: opts(['light', 'Light'], ['dark', 'Dark'], ['system', 'System']) },
         { key: 'notchStyle', label: 'Notch animation', section: 'Appearance', kind: 'select', value: 'ribbon', editable: true, options: opts(['ribbon', 'Ribbon'], ['wave', 'Wave'], ['bars', 'Bars'], ['pulse', 'Pulse'], ['orb', 'Orb'], ['aurora', 'Aurora']) },
@@ -188,7 +199,14 @@ export function createMockApi(): FloApi & { claim(): Promise<PairClaimResponse> 
       } else if (a.kind === 'approve' || a.kind === 'reject') {
         st.approvals = st.approvals.filter((x) => x.id !== a.target);
       } else if (a.kind === 'setting') {
-        st.settings = st.settings.map((x) => (x.key === a.target && a.value !== null ? { ...x, value: a.value } : x));
+        const v = a.value;
+        if (v !== null && typeof v !== 'object') st.settings = st.settings.map((x) => (x.key === a.target ? { ...x, value: v } : x));
+      } else if (a.kind === 'reply' || a.kind === 'choose') {
+        const sess = st.sessions.find((x) => x.id === a.target);
+        if (sess) {
+          a.message = sess.reply === 'queued' ? `Queued for ${sess.folder}. Claude gets it when it finishes what it's doing.` : `Sent to ${sess.folder}. Claude is on it.`;
+          st.sessions = st.sessions.map((x) => (x.id === a.target ? { ...x, state: 'working', question: undefined, approvalId: undefined, reply: 'queued' } : x));
+        }
       }
       a.status = 'done';
       computer.updatedAt = new Date().toISOString();

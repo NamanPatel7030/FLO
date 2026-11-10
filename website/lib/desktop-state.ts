@@ -1,4 +1,4 @@
-// Pure validation for the computer snapshot (to-dos, Claude approvals, non-secret settings) that the
+// Pure validation for the computer snapshot (to-dos, Claude Code sessions and approvals, non-secret settings) that the
 // desktop app publishes for the paired phone, and for the actions the phone sends back.
 // No imports, so node --test can run it directly (tests/desktop-state-logic.test.mjs).
 //
@@ -15,12 +15,45 @@ export const STATE_LIMITS = {
   settings: 150,
   options: 24,
   listItems: 30,
+  /** Claude Code sessions (all of them, not only the ones waiting) */
+  sessions: 12,
+  /** session's last message excerpt */
+  sessionMessage: 400,
+  /** questions in one multiple-choice prompt (AskUserQuestion allows 4) */
+  questions: 4,
+  questionOptions: 8,
+  /** a typed reply to a session */
+  replyChars: 4000,
 } as const;
 
 export type TodoOpen = { id: string; title: string; due?: string; source?: string; person?: string; project?: string; createdAt: string };
 export type TodoDone = { id: string; title: string; completedAt: string };
 export type Approval = { id: string; project: string; summary: string; tool: string; at: string; expiresAt: string };
 export type Waiting = { id: string; project: string; message: string; status: "waiting_reply" | "needs_approval"; at: string };
+/** working | waiting for a typed reply or a choice | waiting for Allow / Deny | finished in the last 30 minutes | quiet */
+export type SessionState = "working" | "waiting_reply" | "needs_approval" | "done" | "idle";
+/**
+ * How a reply from the phone reaches the session right now: instantly (the session is idle and
+ * listening), queued (it gets it when the current turn ends), as the answer to the question it is
+ * asking, by starting it again in the background (its terminal is closed), or not at all.
+ */
+export type SessionReply = "instant" | "queued" | "answer" | "resume" | "none";
+export type SessionQuestion = { question: string; header?: string; multiSelect: boolean; options: string[] };
+export type Session = {
+  id: string;
+  project: string;
+  folder: string;
+  state: SessionState;
+  message: string;
+  updatedAt: string;
+  reply: SessionReply;
+  /** why the phone can't reply (reply = none) */
+  replyHint?: string;
+  /** the Allow / Deny question for this session (an id in `approvals`) */
+  approvalId?: string;
+  /** a multiple-choice question Claude is asking */
+  question?: { id: string; questions: SessionQuestion[] };
+};
 export type SettingKind = "toggle" | "select" | "text" | "number" | "list";
 export type SettingValue = boolean | number | string | string[];
 export type SettingEntry = {
@@ -42,6 +75,7 @@ export type ComputerState = {
   todos: { open: TodoOpen[]; done: TodoDone[] };
   approvals: Approval[];
   waiting: Waiting[];
+  sessions: Session[];
   settings: SettingEntry[];
 };
 
@@ -115,6 +149,45 @@ function waiting(v: unknown): Waiting | null {
   };
 }
 
+const SESSION_STATES: readonly SessionState[] = ["working", "waiting_reply", "needs_approval", "done", "idle"];
+const SESSION_REPLIES: readonly SessionReply[] = ["instant", "queued", "answer", "resume", "none"];
+
+function sessionQuestion(v: unknown): SessionQuestion | null {
+  if (!isObj(v)) return null;
+  const question = str(v.question, 300);
+  const options = list(v.options, STATE_LIMITS.questionOptions)
+    .map((o) => str(o, 80))
+    .filter((o): o is string => !!o)
+    .slice(0, STATE_LIMITS.questionOptions);
+  if (!question || !options.length) return null;
+  const q: SessionQuestion = { question, multiSelect: v.multiSelect === true, options };
+  opt(q, "header", str(v.header, 40));
+  return q;
+}
+
+function session(v: unknown): Session | null {
+  if (!isObj(v)) return null;
+  const i = id(v.id);
+  if (!i) return null;
+  const s: Session = {
+    id: i,
+    project: str(v.project, 80) ?? "Claude Code",
+    folder: str(v.folder, 80) ?? "",
+    state: SESSION_STATES.includes(v.state as SessionState) ? (v.state as SessionState) : "idle",
+    message: str(v.message, STATE_LIMITS.sessionMessage) ?? "",
+    updatedAt: str(v.updatedAt, 40) ?? "",
+    reply: SESSION_REPLIES.includes(v.reply as SessionReply) ? (v.reply as SessionReply) : "none",
+  };
+  opt(s, "replyHint", str(v.replyHint, 200));
+  opt(s, "approvalId", id(v.approvalId));
+  if (isObj(v.question)) {
+    const qid = id(v.question.id);
+    const questions = clean(v.question.questions, STATE_LIMITS.questions, sessionQuestion);
+    if (qid && questions.length) s.question = { id: qid, questions };
+  }
+  return s;
+}
+
 function settingValue(kind: SettingKind, v: unknown): SettingValue | null {
   switch (kind) {
     case "toggle":
@@ -174,6 +247,7 @@ export function parseSnapshot(body: unknown): { state: ComputerState } | { error
       },
       approvals: clean(body.approvals, STATE_LIMITS.approvals, approval),
       waiting: clean(body.waiting, STATE_LIMITS.waiting, waiting),
+      sessions: clean(body.sessions, STATE_LIMITS.sessions, session),
       settings: clean(body.settings, STATE_LIMITS.settings, setting),
     },
   };
@@ -181,19 +255,61 @@ export function parseSnapshot(body: unknown): { state: ComputerState } | { error
 
 // ── phone → computer actions ────────────────────────────────────────────────
 
-export const ACTION_KINDS = ["todo_done", "todo_reopen", "approve", "reject", "setting"] as const;
+export const ACTION_KINDS = ["todo_done", "todo_reopen", "approve", "reject", "setting", "reply", "choose"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
-export type ActionIn = { kind: ActionKind; target: string; value: boolean | number | string | null };
+/** `choose`: option labels for each question of the prompt, in order (`id` = the question's id). */
+export type ChooseValue = { id?: string; answers: string[][] };
+export type ActionIn = { kind: ActionKind; target: string; value: boolean | number | string | ChooseValue | null };
 
-/** Validate a phone action. Only `setting` carries a value; the computer re-checks everything. */
+/** A typed reply: control characters dropped (newlines and tabs kept), trimmed, at most 4000 characters. */
+function replyText(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim();
+  return t && t.length <= STATE_LIMITS.replyChars ? t : null;
+}
+
+function chooseValue(v: unknown): ChooseValue | null {
+  if (!isObj(v) || !Array.isArray(v.answers)) return null;
+  const answers = v.answers;
+  if (!answers.length || answers.length > STATE_LIMITS.questions) return null;
+  const out: string[][] = [];
+  for (const a of answers) {
+    if (!Array.isArray(a) || !a.length || a.length > 10) return null;
+    const labels: string[] = [];
+    for (const l of a) {
+      if (typeof l !== "string") return null;
+      const t = l.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+      if (!t || t.length > 200) return null;
+      labels.push(t);
+    }
+    out.push(labels);
+  }
+  if (v.id === undefined) return { answers: out };
+  const qid = id(v.id);
+  return qid ? { id: qid, answers: out } : null;
+}
+
+/**
+ * Validate a phone action. `setting` carries a value; `reply` the text for a Claude Code session;
+ * `choose` the picked option labels. The computer re-checks everything (and only ever hands the
+ * text to Claude as a prompt, never to a shell).
+ */
 export function parseAction(body: unknown): ActionIn | { error: string } {
   if (!isObj(body)) return { error: "Expected a JSON object." };
   const kind = ACTION_KINDS.includes(body.kind as ActionKind) ? (body.kind as ActionKind) : null;
   if (!kind) return { error: `kind must be one of ${ACTION_KINDS.join(", ")}.` };
   const target = id(body.target);
   if (!target) return { error: "Invalid target." };
-  if (kind !== "setting") return { kind, target, value: null };
   const v = body.value;
+  if (kind === "reply") {
+    const text = replyText(v);
+    return text ? { kind, target, value: text } : { error: `A reply needs 1 to ${STATE_LIMITS.replyChars} characters.` };
+  }
+  if (kind === "choose") {
+    const c = chooseValue(v);
+    return c ? { kind, target, value: c } : { error: "Invalid choice." };
+  }
+  if (kind !== "setting") return { kind, target, value: null };
   if (typeof v === "boolean") return { kind, target, value: v };
   if (typeof v === "number" && Number.isFinite(v)) return { kind, target, value: v };
   if (typeof v === "string" && v.length <= 300) return { kind, target, value: v };
