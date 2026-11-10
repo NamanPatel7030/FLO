@@ -249,7 +249,7 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
         String::new()
     };
     let tail = if stt::is_hallucination(&tail, secs) && !committed.is_empty() { String::new() } else { tail };
-    let raw = committed.into_iter().chain(std::iter::once(tail)).filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join(" ");
+    let raw = stt::join_chunks(&committed.into_iter().chain(std::iter::once(tail)).collect::<Vec<_>>());
     if stt::is_hallucination(&raw, secs.max(1.0)) {
         return Err(anyhow!("Didn't catch that. Try speaking a bit longer."));
     }
@@ -339,8 +339,9 @@ pub async fn transcribe_with_prompt(st: &Shared, samples: Vec<f32>, context: &st
 /// `lang_override` forces a language ("hi"/"gu"/…) instead of the user's setting (meetings lock it).
 pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang_override: Option<String>) -> Result<String> {
     let s = st.settings();
-    let vocab: Vec<String> = st.db.list_dictionary().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
-    let mut prompt = vocab.join(", ");
+    // learned words bias the speech model; newest first and bounded (Whisper keeps ~224 prompt tokens)
+    let vocab: Vec<String> = st.db.list_dictionary_recent().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
+    let mut prompt = text::stt_vocab(&vocab, 300);
     if !context.trim().is_empty() {
         if !prompt.is_empty() {
             prompt.push_str(". ");
@@ -367,21 +368,18 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
 
 async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
     let s = st.settings();
-    let dict: Vec<(String, String)> = st
-        .db
-        .list_dictionary()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|d| d.replacement.map(|r| (d.word, r)))
-        .collect();
-    let base = text::apply_dictionary(raw, &dict);
+    let entries = st.db.list_dictionary_recent().unwrap_or_default();
+    let dict: Vec<(String, String)> = entries.iter().filter_map(|d| d.replacement.clone().map(|r| (d.word.clone(), r))).collect();
+    let vocab: Vec<String> = entries.iter().map(|d| d.replacement.clone().unwrap_or_else(|| d.word.clone())).collect();
+    // the user's fixes are applied last, after any cleanup, so nothing can undo them
+    let final_pass = |t: String| text::apply_dictionary(&t, &dict);
+    let base = text::apply_dictionary(&text::tidy_transcript(raw), &dict);
     let cfg = LlmConfig::from_settings(&s);
     // free local pass unless the transcript actually needs the LLM (fillers, corrections, long text)
     if !s.cleanup_enabled || !cfg.is_configured() || !text::needs_llm_cleanup(&base) {
-        return text::basic_cleanup(&base);
+        return final_pass(text::basic_cleanup(&base));
     }
-    let vocab: Vec<String> = st.db.list_dictionary().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
-    let mut system = prompts::cleanup_system(app, &vocab);
+    let mut system = prompts::cleanup_system(app, &vocab, &dict);
     // short personal style notes ride along; long ones would cost tokens on every dictation
     let sp = s.system_prompt.trim();
     if !sp.is_empty() && sp.len() <= 300 {
@@ -400,11 +398,11 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
     // speed: AI polish gets 2.5 s; otherwise paste the locally cleaned text right away
     match tokio::time::timeout(std::time::Duration::from_millis(2500), llm::chat(&st.egress, &cfg, req)).await {
         Ok(Ok(out)) => {
-            let out = text::strip_ai_dashes(&text::apply_dictionary(&text::strip_llm_wrapping(&out), &dict));
+            let out = final_pass(text::strip_ai_dashes(&text::strip_llm_wrapping(&out)));
             // guard against the model answering instead of cleaning
             let (a, b) = (text::word_count(&base) as f32, text::word_count(&out) as f32);
             if out.is_empty() || b > a * 1.8 + 8.0 {
-                text::basic_cleanup(&base)
+                final_pass(text::basic_cleanup(&base))
             } else {
                 out
             }
@@ -412,9 +410,9 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
         Ok(Err(e)) => {
             log::warn!("cleanup LLM failed: {e}");
             st.toast("info", format!("AI cleanup skipped: {e}"));
-            text::basic_cleanup(&base)
+            final_pass(text::basic_cleanup(&base))
         }
-        Err(_) => text::basic_cleanup(&base),
+        Err(_) => final_pass(text::basic_cleanup(&base)),
     }
 }
 

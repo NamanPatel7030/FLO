@@ -700,6 +700,16 @@ impl Db {
         Ok(rows)
     }
 
+    /// Dictionary, most recently added first (learned corrections matter most when bounded).
+    pub fn list_dictionary_recent(&self) -> Result<Vec<DictionaryEntry>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT id, word, replacement FROM dictionary ORDER BY rowid DESC")?;
+        let rows = st
+            .query_map([], |r| Ok(DictionaryEntry { id: r.get(0)?, word: r.get(1)?, replacement: r.get(2)? }))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn add_dictionary(&self, word: &str, replacement: Option<&str>) -> Result<DictionaryEntry> {
         let e = DictionaryEntry {
             id: new_id(),
@@ -1249,6 +1259,16 @@ fn row_note(r: &Row) -> rusqlite::Result<Note> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dictionary_recent_lists_newest_first() {
+        let db = super::Db::open_in_memory().unwrap();
+        db.add_dictionary("zeta", Some("Zeta")).unwrap();
+        db.add_dictionary("alpha", Some("Alpha")).unwrap();
+        db.add_dictionary("tory", Some("Tauri")).unwrap();
+        let words: Vec<String> = db.list_dictionary_recent().unwrap().into_iter().map(|d| d.word).collect();
+        assert_eq!(words, vec!["tory", "alpha", "zeta"]);
+    }
+
 
     #[test]
     fn skills_round_trip() {

@@ -5,48 +5,250 @@ pub fn word_count(s: &str) -> u32 {
     s.split_whitespace().filter(|w| w.chars().any(|c| c.is_alphanumeric())).count() as u32
 }
 
-/// Apply personal-dictionary replacements, case-insensitive, whole-word.
-/// `entries`: (heard_as, replacement). Entries without replacement are only used as STT hints.
+/// Apply personal-dictionary replacements: case-insensitive, whole words only (Unicode aware),
+/// multi-word phrases tolerate any whitespace between their words, the longest phrase wins, and
+/// one pass over the text — so a replacement is never replaced again and applying twice is a no-op
+/// ("app" → "Flo app" doesn't grow into "Flo Flo app"). The replacement is inserted exactly as the
+/// user wrote it. `entries`: (heard_as, replacement).
 pub fn apply_dictionary(text: &str, entries: &[(String, String)]) -> String {
-    let mut out = text.to_string();
-    for (from, to) in entries {
-        if from.trim().is_empty() {
+    struct Rule {
+        from: Vec<String>, // lowercased words
+        seps: Vec<String>, // non-space separators between them
+        to_words: Vec<String>,
+        to_seps: Vec<String>,
+        to: String,
+    }
+    let rules: Vec<Rule> = entries
+        .iter()
+        .filter_map(|(from, to)| {
+            let (fw, fs) = split_words(from);
+            if fw.is_empty() || from.trim() == to.trim() {
+                return None;
+            }
+            let from: Vec<String> = fw.iter().map(|w| w.to_lowercase()).collect();
+            let seps = fs[1..fs.len() - 1].iter().map(|s| squash_space(s)).collect();
+            let (tw, ts) = split_words(to);
+            let to_words = tw.iter().map(|w| w.to_string()).collect();
+            let to_seps = if tw.len() > 1 { ts[1..ts.len() - 1].iter().map(|s| squash_space(s)).collect() } else { vec![] };
+            Some(Rule { from, seps, to_words, to_seps, to: to.trim().to_string() })
+        })
+        .collect();
+    if rules.is_empty() {
+        return text.to_string();
+    }
+    let (words, seps) = split_words(text);
+    let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+    // does rule word sequence `want` (with separators `want_seps`) start at word i? → words used
+    let matches_at = |i: usize, want: &[String], want_seps: &[String], exact: bool| -> bool {
+        if i + want.len() > words.len() {
+            return false;
+        }
+        want.iter().enumerate().all(|(k, w)| if exact { words[i + k] == w.as_str() } else { lower[i + k] == *w })
+            && want_seps.iter().enumerate().all(|(k, s)| squash_space(seps[i + k + 1]) == *s)
+    };
+    let mut out = String::with_capacity(text.len() + 16);
+    out.push_str(seps[0]);
+    let mut i = 0;
+    while i < words.len() {
+        // already the user's spelling (from an earlier pass)? keep it as is
+        let keep = rules
+            .iter()
+            .filter(|r| !r.to_words.is_empty())
+            .filter(|r| matches_at(i, &r.to_words, &r.to_seps, true))
+            .map(|r| r.to_words.len())
+            .max()
+            .unwrap_or(0);
+        let hit = rules.iter().filter(|r| r.from.len() > keep && matches_at(i, &r.from, &r.seps, false)).max_by_key(|r| r.from.len());
+        let used = match hit {
+            Some(r) => {
+                out.push_str(&r.to);
+                r.from.len()
+            }
+            None => {
+                let n = keep.max(1);
+                for k in 0..n {
+                    if k > 0 {
+                        out.push_str(seps[i + k]);
+                    }
+                    out.push_str(words[i + k]);
+                }
+                n
+            }
+        };
+        i += used;
+        out.push_str(seps[i]);
+    }
+    out
+}
+
+/// Word characters: letters/digits (any script), Indic vowel signs and viramas, joiners, `_ ' -`
+/// inside a word.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || ('\u{0900}'..='\u{0DFF}').contains(&c) || c == '\u{200C}' || c == '\u{200D}'
+}
+
+/// Split into words and the separators around them: `seps.len() == words.len() + 1`, and
+/// `seps[0] + words[0] + seps[1] + … + seps[n]` is the original text. Apostrophes and hyphens
+/// between letters stay inside the word ("they're", "e-mail").
+fn split_words(s: &str) -> (Vec<&str>, Vec<&str>) {
+    let mut words = vec![];
+    let mut seps = vec![];
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
+    let mut sep_start = 0;
+    let mut k = 0;
+    while k < chars.len() {
+        if is_word_char(chars[k].1) {
+            let ws = chars[k].0;
+            let mut j = k + 1;
+            while j < chars.len() {
+                let c = chars[j].1;
+                let joiner = (c == '\'' || c == '’' || c == '-') && j + 1 < chars.len() && is_word_char(chars[j + 1].1);
+                if is_word_char(c) || joiner {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            let we = if j < chars.len() { chars[j].0 } else { s.len() };
+            seps.push(&s[sep_start..ws]);
+            words.push(&s[ws..we]);
+            sep_start = we;
+            k = j;
+        } else {
+            k += 1;
+        }
+    }
+    seps.push(&s[sep_start..]);
+    (words, seps)
+}
+
+/// Whitespace runs → nothing (so "note  book" and "note\nbook" match "note book").
+fn squash_space(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Learned words for the speech model's prompt: newest first (`newest_first`), deduplicated
+/// case-insensitively, comma separated, at most `max_chars` long. Whisper keeps only the last
+/// ~224 prompt tokens, so an unbounded list silently drops words.
+pub fn stt_vocab(newest_first: &[String], max_chars: usize) -> String {
+    let mut seen = HashSet::new();
+    let mut out = String::new();
+    for w in newest_first {
+        let w = w.trim();
+        if w.is_empty() || !seen.insert(w.to_lowercase()) {
             continue;
         }
-        out = replace_whole_word_ci(&out, from, to);
-    }
-    out
-}
-
-fn replace_whole_word_ci(hay: &str, needle: &str, rep: &str) -> String {
-    let lower_hay = hay.to_lowercase();
-    let lower_needle = needle.to_lowercase();
-    // Only safe when lowercasing doesn't change byte lengths (ASCII / most scripts).
-    if lower_hay.len() != hay.len() {
-        return hay.replace(needle, rep);
-    }
-    let mut out = String::with_capacity(hay.len());
-    let mut i = 0;
-    let bytes = hay.as_bytes();
-    while let Some(pos) = lower_hay[i..].find(&lower_needle) {
-        let start = i + pos;
-        let end = start + needle.len();
-        let before_ok = start == 0 || !is_word_byte(bytes[start - 1]);
-        let after_ok = end >= bytes.len() || !is_word_byte(bytes[end]);
-        out.push_str(&hay[i..start]);
-        if before_ok && after_ok {
-            out.push_str(rep);
-        } else {
-            out.push_str(&hay[start..end]);
+        let add = if out.is_empty() { w.len() } else { w.len() + 2 };
+        if out.len() + add > max_chars {
+            break;
         }
-        i = end;
+        if !out.is_empty() {
+            out.push_str(", ");
+        }
+        out.push_str(w);
     }
-    out.push_str(&hay[i..]);
     out
 }
 
-fn is_word_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
+/// Local, always-on fixes for what the speech model gets wrong around joins and context:
+/// a missing space after sentence punctuation ("colors.Like" → "colors. Like"; never inside URLs,
+/// emails, numbers, file names or abbreviations), a word misheard here but heard right elsewhere
+/// in the same dictation with the same word before it ("light theme … light Thim" → "light
+/// theme"), and a capital after a comma on a word that isn't a name ("want, Light" → "want, light").
+pub fn tidy_transcript(t: &str) -> String {
+    let spaced = space_after_punctuation(t);
+    let (words, seps) = split_words(&spaced);
+    if words.is_empty() {
+        return spaced;
+    }
+    let mut words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+    prefer_consistent_spelling(&mut words);
+    let lower_seen: HashSet<String> = words.iter().filter(|w| w.chars().next().map(char::is_lowercase).unwrap_or(false)).cloned().collect();
+    for k in 0..words.len() {
+        let sep = seps[k];
+        if k == 0 || !sep.contains(',') || sep.contains(['.', '!', '?', '\n']) {
+            continue;
+        }
+        let w = &words[k];
+        let mut cs = w.chars();
+        let capitalised = cs.next().map(char::is_uppercase).unwrap_or(false) && cs.all(|c| !c.is_uppercase());
+        if !capitalised || w == "I" || w.starts_with("I'") || w.starts_with("I’") {
+            continue;
+        }
+        let lower = w.to_lowercase();
+        if is_common(&lower) || lower_seen.contains(&lower) {
+            words[k] = lower;
+        }
+    }
+    let mut out = String::with_capacity(spaced.len());
+    for (k, w) in words.iter().enumerate() {
+        out.push_str(seps[k]);
+        out.push_str(w);
+    }
+    out.push_str(seps[words.len()]);
+    out
+}
+
+/// "colors.Like" → "colors. Like", "want,Light" → "want, Light", "Really?Yes" → "Really? Yes".
+fn space_after_punctuation(t: &str) -> String {
+    let mut out = String::with_capacity(t.len() + 8);
+    for (ti, token) in t.split(' ').enumerate() {
+        if ti > 0 {
+            out.push(' ');
+        }
+        if token.contains("://") || token.contains('@') || token.starts_with("www.") {
+            out.push_str(token);
+            continue;
+        }
+        let cs: Vec<char> = token.chars().collect();
+        for (k, &c) in cs.iter().enumerate() {
+            out.push(c);
+            let (Some(&prev), Some(&next)) = (k.checked_sub(1).and_then(|p| cs.get(p)), cs.get(k + 1)) else { continue };
+            if !prev.is_alphabetic() || !next.is_alphabetic() {
+                continue;
+            }
+            let after_next_lower = cs.get(k + 2).map(|c| c.is_lowercase()).unwrap_or(false);
+            // letters right before the punctuation ("U.S" has one: an abbreviation)
+            let run = cs[..k].iter().rev().take_while(|c| c.is_alphabetic()).count();
+            let add = match c {
+                ',' => true,
+                '?' | '!' => next.is_uppercase(),
+                '.' => next.is_uppercase() && after_next_lower && run >= 2,
+                _ => false,
+            };
+            if add {
+                out.push(' ');
+            }
+        }
+    }
+    out
+}
+
+/// Replace a word with a longer sound-alike that was heard elsewhere in the same text after the
+/// same word ("light Thim" next to "light theme"). ASCII words only, never everyday words.
+fn prefer_consistent_spelling(words: &mut [String]) {
+    let lower: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+    let mut swaps: Vec<(String, String)> = vec![];
+    for (i, u) in lower.iter().enumerate() {
+        if i == 0 || u.len() < 3 || !u.chars().all(|c| c.is_ascii_alphabetic()) || is_common(u) || swaps.iter().any(|(a, _)| a == u) {
+            continue;
+        }
+        for (j, v) in lower.iter().enumerate() {
+            if j == 0 || v.len() <= u.len() || !v.chars().all(|c| c.is_ascii_alphabetic()) || is_common(v) || lower[j - 1] != lower[i - 1] {
+                continue;
+            }
+            let d = levenshtein(u, v) as f64 / v.len() as f64;
+            if d <= 0.5 && sound_key(u) == sound_key(v) {
+                swaps.push((u.clone(), words[j].clone()));
+                break;
+            }
+        }
+    }
+    for (u, v) in swaps {
+        for w in words.iter_mut().filter(|w| w.to_lowercase() == u) {
+            *w = v.clone();
+        }
+    }
 }
 
 const FILLERS: &[&str] = &["um", "uh", "erm", "uhm", "hmm", "mm"];
@@ -206,10 +408,6 @@ pub fn best_match<'a>(query: &str, candidates: &'a [(String, String)]) -> Option
     best.filter(|b| b.1 >= 0.25).map(|b| b.0)
 }
 
-fn norm_word(w: &str) -> String {
-    w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-').to_string()
-}
-
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -225,23 +423,99 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-/// Looks like a spelling fix of the same word (not a rewrite)?
-fn similar_word(a: &str, b: &str) -> bool {
-    let (la, lb) = (a.to_lowercase(), b.to_lowercase());
-    if la == lb {
-        return a != b; // capitalisation fix ("tauri" → "Tauri")
+/// Everyday words. When both sides of an edit are everyday words ("send" → "sent", "their" →
+/// "they're") it's grammar or rewording, not a mishearing — learning it would rewrite that word in
+/// every future dictation.
+const COMMON_WORDS: &[&str] = &[
+    "a", "about", "after", "again", "all", "also", "am", "an", "and", "any", "are", "as", "ask", "asked", "at", "back", "be",
+    "because", "been", "before", "being", "but", "by", "call", "came", "can", "can't", "come", "could", "day", "did", "do",
+    "does", "done", "don't", "down", "each", "even", "for", "from", "get", "give", "go", "going", "gone", "good", "got",
+    "great", "had", "has", "have", "he", "her", "here", "him", "his", "how", "i", "if", "in", "into", "is", "it", "it's",
+    "its", "just", "know", "let", "like", "look", "made", "make", "many", "may", "me", "might", "more", "most", "much",
+    "must", "my", "need", "new", "no", "not", "now", "of", "off", "ok", "okay", "old", "on", "one", "only", "or", "our",
+    "out", "over", "put", "said", "saw", "say", "see", "send", "sent", "set", "she", "should", "so", "some", "take",
+    "tell", "than", "that", "the", "their", "them", "then", "there", "these", "they", "they're", "think", "this", "those",
+    "three", "time", "to", "today", "told", "too", "took", "two", "up", "us", "use", "used", "very", "want", "was", "way",
+    "we", "we're", "well", "went", "were", "what", "when", "where", "which", "who", "why", "will", "with", "won't", "work",
+    "would", "yes", "yesterday", "tomorrow", "you", "you're", "your", "four", "five", "week", "really", "still", "right",
+];
+
+fn is_common(w: &str) -> bool {
+    let w = w.to_lowercase().replace('’', "'");
+    COMMON_WORDS.contains(&w.as_str())
+}
+
+/// Rough sound key: first letter, then consonants with sound-alike letters merged (c/k/q, s/z,
+/// f/v/ph), vowels, h, w, y dropped and repeats collapsed. "tory" and "Tauri" → "tr".
+fn sound_key(s: &str) -> String {
+    let s: String = s.to_lowercase().chars().filter(|c| c.is_alphabetic()).collect::<String>().replace("ph", "f").replace("ck", "k");
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        let m = match c {
+            'c' | 'q' | 'k' => 'k',
+            'z' | 's' => 's',
+            'v' | 'f' => 'f',
+            'a' | 'e' | 'i' | 'o' | 'u' | 'y' | 'h' | 'w' if i > 0 => continue,
+            'a' | 'e' | 'i' | 'o' | 'u' | 'y' => 'a',
+            c => c,
+        };
+        if !out.ends_with(m) {
+            out.push(m);
+        }
     }
-    let d = levenshtein(&la, &lb);
-    let longest = la.chars().count().max(lb.chars().count());
-    longest >= 3 && (d as f64 / longest as f64) <= 0.5 || (la.chars().next() == lb.chars().next() && d <= 3 && longest >= 4)
+    out
+}
+
+/// Is `heard` → `corrected` a fix of something the speech model misheard (worth learning for good),
+/// rather than a rewrite, a grammar edit, sentence-start capitalisation or a half-typed word?
+fn is_mishearing(heard: &[&str], corrected: &[&str], sentence_start: bool) -> bool {
+    let key = |ws: &[&str]| ws.iter().map(|w| w.to_lowercase()).collect::<String>();
+    let (hk, ck) = (key(heard), key(corrected));
+    if heard == corrected {
+        return false;
+    }
+    if hk == ck {
+        if heard.len() != corrected.len() {
+            return true; // "note book" → "notebook", "icecream" → "ice cream"
+        }
+        // capitalisation only: must capitalise something, not just the start of a sentence
+        if !corrected.iter().any(|w| w.chars().any(|c| c.is_uppercase())) {
+            return false;
+        }
+        let only_first_letter = heard.len() == corrected.len()
+            && heard[1..] == corrected[1..]
+            && heard[0].chars().skip(1).eq(corrected[0].chars().skip(1));
+        if sentence_start && only_first_letter {
+            return false;
+        }
+        return !(heard.len() == 1 && is_common(heard[0]));
+    }
+    let (hn, cn) = (hk.chars().count(), ck.chars().count());
+    if hn < 3 || cn < 3 {
+        return false;
+    }
+    // "app" → "apps", "deploy" → "deployed": inflection, not a mishearing
+    let (short, long) = if hn <= cn { (&hk, &ck) } else { (&ck, &hk) };
+    if let Some(rest) = long.strip_prefix(short.as_str()) {
+        if ["s", "es", "ed", "d", "ing", "'s", "er", "ly", "n't"].contains(&rest) {
+            return false;
+        }
+    }
+    if heard.iter().all(|w| is_common(w)) && corrected.iter().all(|w| is_common(w)) {
+        return false;
+    }
+    let d = levenshtein(&hk, &ck) as f64 / hn.max(cn) as f64;
+    d <= 0.34 || (d <= 0.6 && sound_key(&hk) == sound_key(&ck))
 }
 
 /// Words the user replaced in text Flo pasted. `before` = field content right after the paste,
-/// `after` = content once the user edited it. Returns (heard, corrected) pairs.
+/// `after` = content once the user edited it. Returns (heard, corrected) pairs; a multi-word fix
+/// comes back as one phrase ("new york" → "New York"), split/merged words too ("note book" →
+/// "notebook"). Surrounding punctuation is ignored.
 pub fn detect_corrections(pasted: &str, before: &str, after: &str) -> Vec<(String, String)> {
-    let pasted_words: std::collections::HashSet<String> = pasted.split_whitespace().map(|w| norm_word(w).to_lowercase()).collect();
-    let a: Vec<String> = before.split_whitespace().map(norm_word).filter(|w| !w.is_empty()).collect();
-    let b: Vec<String> = after.split_whitespace().map(norm_word).filter(|w| !w.is_empty()).collect();
+    let pasted_words: HashSet<String> = split_words(pasted).0.iter().map(|w| w.to_lowercase()).collect();
+    let (a, _) = split_words(before);
+    let (b, b_seps) = split_words(after);
     if a.is_empty() || b.is_empty() || a.len() > 3000 || b.len() > 3000 || a == b {
         return vec![];
     }
@@ -265,36 +539,47 @@ pub fn detect_corrections(pasted: &str, before: &str, after: &str) -> Vec<(Strin
             dp[i][j] = if am[i] == bm[j] { dp[i + 1][j + 1] + 1 } else { dp[i + 1][j].max(dp[i][j + 1]) };
         }
     }
-    // walk the diff; collect runs of (deleted, inserted)
+    // walk the diff into hunks of (deleted words, inserted words, index of the first inserted word in `b`)
+    let mut hunks: Vec<(Vec<&str>, Vec<&str>, usize)> = vec![];
+    let (mut del, mut ins, mut at) = (vec![], vec![], s);
     let (mut i, mut j) = (0, 0);
-    let mut out: Vec<(String, String)> = vec![];
-    let mut del: Vec<&String> = vec![];
-    let mut ins: Vec<&String> = vec![];
-    let flush = |del: &mut Vec<&String>, ins: &mut Vec<&String>, out: &mut Vec<(String, String)>| {
-        if !del.is_empty() && del.len() == ins.len() && del.len() <= 2 {
-            for (d, n) in del.iter().zip(ins.iter()) {
-                if d != n && pasted_words.contains(&d.to_lowercase()) && similar_word(d, n) && !out.iter().any(|(h, _)| h == *d) {
-                    out.push(((*d).clone(), (*n).clone()));
-                }
-            }
-        }
-        del.clear();
-        ins.clear();
-    };
     while i < n || j < m {
         if i < n && j < m && am[i] == bm[j] {
-            flush(&mut del, &mut ins, &mut out);
+            if !del.is_empty() || !ins.is_empty() {
+                hunks.push((std::mem::take(&mut del), std::mem::take(&mut ins), at));
+            }
             i += 1;
             j += 1;
+            at = s + j;
         } else if j < m && (i == n || dp[i][j + 1] >= dp[i + 1][j]) {
-            ins.push(&bm[j]);
+            ins.push(bm[j]);
             j += 1;
         } else {
-            del.push(&am[i]);
+            del.push(am[i]);
             i += 1;
         }
     }
-    flush(&mut del, &mut ins, &mut out);
+    if !del.is_empty() || !ins.is_empty() {
+        hunks.push((del, ins, at));
+    }
+    let mut out: Vec<(String, String)> = vec![];
+    for (del, ins, at) in hunks {
+        // pure insertions/deletions aren't fixes; long runs are rewrites
+        if del.is_empty() || ins.is_empty() || del.len() > 3 || ins.len() > 3 {
+            continue;
+        }
+        if !del.iter().all(|w| pasted_words.contains(&w.to_lowercase())) {
+            continue; // the user edited their own text, not Flo's
+        }
+        let sentence_start = at == 0 || b_seps[at].contains(['.', '!', '?', '\n', '।']);
+        if !is_mishearing(&del, &ins, sentence_start) {
+            continue;
+        }
+        let (heard, corrected) = (del.join(" "), ins.join(" "));
+        if !out.iter().any(|(h, _)| h.eq_ignore_ascii_case(&heard)) {
+            out.push((heard, corrected));
+        }
+    }
     out.truncate(3);
     out
 }
@@ -930,5 +1215,176 @@ mod tests {
     fn truncates() {
         assert_eq!(truncate_chars("abcdef", 4), "abc…");
         assert_eq!(truncate_chars("abc", 4), "abc");
+    }
+}
+
+#[cfg(test)]
+mod correction_tests {
+    use super::*;
+
+    fn pair(h: &str, c: &str) -> Vec<(String, String)> {
+        vec![(h.to_string(), c.to_string())]
+    }
+
+    // ── detection ───────────────────────────────────────────────────────────
+    #[test]
+    fn learns_a_fix_next_to_punctuation() {
+        let p = "Deploy the tory, then ping me";
+        assert_eq!(detect_corrections(p, p, "Deploy the Tauri, then ping me"), pair("tory", "Tauri"));
+    }
+
+    #[test]
+    fn learns_split_and_merged_words() {
+        let p = "write it in my note book today";
+        assert_eq!(detect_corrections(p, p, "write it in my notebook today"), pair("note book", "notebook"));
+        let p = "I want icecream now";
+        assert_eq!(detect_corrections(p, p, "I want ice cream now"), pair("icecream", "ice cream"));
+    }
+
+    #[test]
+    fn learns_multi_word_fixes_as_one_phrase() {
+        // two separate "new"→"New" / "york"→"York" rules would capitalise every "new" forever
+        let p = "we fly to new york soon";
+        assert_eq!(detect_corrections(p, p, "we fly to New York soon"), pair("new york", "New York"));
+        let p = "ask rahul meta about it";
+        assert_eq!(detect_corrections(p, p, "ask Rahul Mehta about it"), pair("rahul meta", "Rahul Mehta"));
+    }
+
+    #[test]
+    fn learns_sound_alike_names() {
+        let p = "thanks Neman for the review";
+        assert_eq!(detect_corrections(p, p, "thanks Naman for the review"), pair("Neman", "Naman"));
+        let p = "the kubernetis cluster";
+        assert_eq!(detect_corrections(p, p, "the Kubernetes cluster"), pair("kubernetis", "Kubernetes"));
+    }
+
+    #[test]
+    fn ignores_sentence_start_capitalisation_and_common_words() {
+        let p = "the plan is ready";
+        assert!(detect_corrections(p, p, "The plan is ready").is_empty());
+        let p = "ok. the plan is ready";
+        assert!(detect_corrections(p, p, "ok. The plan is ready").is_empty());
+        // decapitalising is restructuring, not a mishearing
+        let p = "Ready now";
+        assert!(detect_corrections(p, p, "ready now").is_empty());
+    }
+
+    #[test]
+    fn ignores_grammar_edits() {
+        let p = "I send it yesterday";
+        assert!(detect_corrections(p, p, "I sent it yesterday").is_empty());
+        let p = "open the two app";
+        assert!(detect_corrections(p, p, "open the two apps").is_empty());
+        let p = "their going home";
+        assert!(detect_corrections(p, p, "they're going home").is_empty());
+    }
+
+    #[test]
+    fn ignores_half_typed_words_and_wipes() {
+        // a snapshot taken mid-typing ("Tau") must not be learned as the fix for "tory"
+        let p = "build it with tory today";
+        assert!(detect_corrections(p, p, "build it with Tau today").is_empty());
+        assert!(detect_corrections(p, p, "").is_empty());
+        assert!(detect_corrections(p, p, "x").is_empty());
+        // a big rewrite isn't a mishearing
+        assert!(detect_corrections(p, p, "ship the whole thing on monday instead").is_empty());
+    }
+
+    // ── applying ────────────────────────────────────────────────────────────
+    fn d(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+    }
+
+    #[test]
+    fn applying_twice_changes_nothing_more() {
+        let dict = d(&[("app", "Flo app"), ("tory", "Tauri")]);
+        let once = apply_dictionary("open the app with tory", &dict);
+        assert_eq!(once, "open the Flo app with Tauri");
+        assert_eq!(apply_dictionary(&once, &dict), once);
+    }
+
+    #[test]
+    fn longest_phrase_wins_and_spacing_is_tolerated() {
+        let dict = d(&[("note", "Note"), ("note book", "notebook")]);
+        assert_eq!(apply_dictionary("my note book is here", &dict), "my notebook is here");
+        assert_eq!(apply_dictionary("my note  book is here", &dict), "my notebook is here");
+        assert_eq!(apply_dictionary("a Note", &dict), "a Note");
+    }
+
+    #[test]
+    fn case_insensitive_even_with_non_ascii_text() {
+        let dict = d(&[("tory", "Tauri"), ("new york", "New York")]);
+        assert_eq!(apply_dictionary("İstanbul trip with Tory", &dict), "İstanbul trip with Tauri");
+        assert_eq!(apply_dictionary("TORY, then NEW YORK.", &dict), "Tauri, then New York.");
+        assert_eq!(apply_dictionary("history of new yorkers", &dict), "history of new yorkers");
+    }
+
+    #[test]
+    fn devanagari_words_keep_their_boundaries() {
+        let dict = d(&[("राहुल", "Rahul")]);
+        assert_eq!(apply_dictionary("राहुलजी आए", &dict), "राहुलजी आए");
+        assert_eq!(apply_dictionary("राहुल आए", &dict), "Rahul आए");
+    }
+
+    // ── vocabulary bias ─────────────────────────────────────────────────────
+    #[test]
+    fn stt_vocab_is_deduped_bounded_and_keeps_newest() {
+        let newest_first: Vec<String> = ["Tauri", "tauri", "Naman"].iter().map(|s| s.to_string()).chain((0..200).map(|i| format!("Word{i}"))).collect();
+        let v = stt_vocab(&newest_first, 120);
+        assert!(v.starts_with("Tauri, Naman, Word0"));
+        assert!(v.len() <= 120);
+        assert!(!v.contains("tauri"));
+        assert_eq!(stt_vocab(&[], 100), "");
+    }
+}
+
+#[cfg(test)]
+mod tidy_tests {
+    use super::*;
+
+    #[test]
+    fn adds_the_missing_space_after_sentence_punctuation() {
+        assert_eq!(tidy_transcript("proper combination of colors.Like light theme I want,Light theme"), "proper combination of colors. Like light theme I want, light theme");
+        assert_eq!(tidy_transcript("Really?Yes!Great"), "Really? Yes! Great");
+    }
+
+    #[test]
+    fn leaves_urls_numbers_emails_files_and_abbreviations_alone() {
+        for t in [
+            "Version 3.5 is out",
+            "open https://example.com/a,b?x=1.Done",
+            "mail naman@flo.app today",
+            "send file.txt and Report.pdf",
+            "e.g. this, i.e. that",
+            "the U.S. team",
+            "use Node.js now",
+            "it costs 1,200 rupees",
+        ] {
+            assert_eq!(tidy_transcript(t), t);
+        }
+    }
+
+    #[test]
+    fn lowercases_mid_sentence_capitals_after_a_comma() {
+        assert_eq!(tidy_transcript("I want light, Light is nice"), "I want light, light is nice");
+        // names, "I" and words never seen lowercase stay
+        assert_eq!(tidy_transcript("Thanks, Naman, I will"), "Thanks, Naman, I will");
+        assert_eq!(tidy_transcript("Sure, The plan works"), "Sure, the plan works");
+    }
+
+    #[test]
+    fn prefers_the_spelling_heard_right_elsewhere_in_the_same_dictation() {
+        let t = "Like light theme I want, light Thim and yellow color, light thim and light blue color";
+        assert_eq!(tidy_transcript(t), "Like light theme I want, light theme and yellow color, light theme and light blue color");
+        // different words in different contexts are left alone
+        assert_eq!(tidy_transcript("the team met Tim"), "the team met Tim");
+    }
+
+    #[test]
+    fn real_dictation_from_0_1_2() {
+        let raw = "Create attractive PDF with round corners with green gradients of proper combination of colors.Like light theme I want,Light, Thim and Yellow color Light, Thim and Light Blue color";
+        let out = tidy_transcript(raw);
+        assert!(out.contains("colors. Like light theme I want, light, theme and"), "{out}");
+        assert!(!out.contains("Thim"), "{out}");
     }
 }

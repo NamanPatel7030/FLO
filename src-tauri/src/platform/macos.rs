@@ -179,6 +179,14 @@ extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> AXRef;
     fn AXUIElementCopyAttributeValue(el: AXRef, attr: core_foundation::string::CFStringRef, out: *mut core_foundation::base::CFTypeRef) -> i32;
     fn AXUIElementSetMessagingTimeout(el: AXRef, secs: f32) -> i32;
+    fn AXUIElementSetAttributeValue(el: AXRef, attr: core_foundation::string::CFStringRef, value: core_foundation::base::CFTypeRef) -> i32;
+    fn AXUIElementCopyParameterizedAttributeValue(
+        el: AXRef,
+        attr: core_foundation::string::CFStringRef,
+        param: core_foundation::base::CFTypeRef,
+        out: *mut core_foundation::base::CFTypeRef,
+    ) -> i32;
+    fn AXValueCreate(kind: u32, ptr: *const c_void) -> core_foundation::base::CFTypeRef;
     fn CFHash(cf: core_foundation::base::CFTypeRef) -> usize;
     fn CFRelease(cf: core_foundation::base::CFTypeRef);
 }
@@ -196,6 +204,58 @@ unsafe fn cf_to_string(v: core_foundation::base::CFTypeRef) -> Option<String> {
     t.downcast::<core_foundation::string::CFString>().map(|s| s.to_string())
 }
 
+/// Chromium and Electron apps (Chrome, Slack, Discord, VS Code, Notion…) only build their
+/// accessibility tree — and so only expose a text field's value — once an assistive app asks for
+/// it with `AXManualAccessibility`. Done once per app (it costs those apps a little memory).
+fn enable_app_accessibility(pid: i32) {
+    use core_foundation::base::TCFType;
+    static DONE: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashSet<i32>>> = std::sync::OnceLock::new();
+    if pid <= 0 || !DONE.get_or_init(Default::default).lock().insert(pid) {
+        return;
+    }
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return;
+        }
+        AXUIElementSetMessagingTimeout(app, 0.3);
+        let name = core_foundation::string::CFString::new("AXManualAccessibility");
+        let yes = core_foundation::boolean::CFBoolean::true_value();
+        AXUIElementSetAttributeValue(app, name.as_concrete_TypeRef(), yes.as_CFTypeRef());
+        CFRelease(app as core_foundation::base::CFTypeRef);
+    }
+}
+
+/// Whole text of a field that has no string `AXValue` (some web/Electron editors), via
+/// `AXStringForRange` over `AXNumberOfCharacters`.
+unsafe fn ax_text_by_range(el: AXRef) -> Option<String> {
+    use core_foundation::base::{CFType, TCFType};
+    #[repr(C)]
+    struct CFRange {
+        location: isize,
+        length: isize,
+    }
+    let n = ax_copy(el, "AXNumberOfCharacters")?;
+    let n = CFType::wrap_under_create_rule(n).downcast::<core_foundation::number::CFNumber>().and_then(|n| n.to_i64())?;
+    if n <= 0 || n >= 200_000 {
+        return None;
+    }
+    let range = CFRange { location: 0, length: n as isize };
+    let param = AXValueCreate(4 /* kAXValueTypeCFRange */, &range as *const CFRange as *const c_void);
+    if param.is_null() {
+        return None;
+    }
+    let name = core_foundation::string::CFString::new("AXStringForRange");
+    let mut out: core_foundation::base::CFTypeRef = std::ptr::null();
+    let ok = AXUIElementCopyParameterizedAttributeValue(el, name.as_concrete_TypeRef(), param, &mut out) == 0 && !out.is_null();
+    CFRelease(param);
+    if ok {
+        cf_to_string(out)
+    } else {
+        None
+    }
+}
+
 /// Text of the focused field (identity hash, value). None for secure/password fields.
 pub fn focused_text() -> Option<(usize, String)> {
     unsafe {
@@ -204,12 +264,19 @@ pub fn focused_text() -> Option<(usize, String)> {
             return None;
         }
         AXUIElementSetMessagingTimeout(sys, 0.5);
+        if let Some(app) = ax_copy(sys, "AXFocusedApplication") {
+            let mut pid = 0;
+            AXUIElementGetPid(app as AXRef, &mut pid);
+            CFRelease(app);
+            enable_app_accessibility(pid);
+        }
         let el = ax_copy(sys, "AXFocusedUIElement");
         CFRelease(sys);
         let el = el?;
-        let secure = ax_copy(el, "AXSubrole").and_then(|v| cf_to_string(v)).map(|s| s == "AXSecureTextField").unwrap_or(false);
+        let is_secure = |attr: &str| ax_copy(el, attr).and_then(|v| cf_to_string(v)).map(|s| s == "AXSecureTextField").unwrap_or(false);
+        let secure = is_secure("AXSubrole") || is_secure("AXRole");
         let id = CFHash(el);
-        let value = if secure { None } else { ax_copy(el, "AXValue").and_then(|v| cf_to_string(v)) };
+        let value = if secure { None } else { ax_copy(el, "AXValue").and_then(|v| cf_to_string(v)).or_else(|| ax_text_by_range(el)) };
         CFRelease(el);
         value.filter(|v| v.len() < 200_000).map(|v| (id, v))
     }

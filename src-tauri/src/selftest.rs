@@ -152,7 +152,7 @@ async fn run_async() -> Value {
                 row["llm_cleanup_needed"] = json!(gated);
                 let t1 = Instant::now();
                 let final_text = if gated && cfg.is_configured() {
-                    let system = prompts::cleanup_system("Notes", &[]);
+                    let system = prompts::cleanup_system("Notes", &[], &[]);
                     let req = ChatRequest {
                         system: &system,
                         user: &raw,

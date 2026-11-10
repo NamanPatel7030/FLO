@@ -89,6 +89,28 @@ pub fn collapse_repeat(text: &str) -> String {
     text.to_string()
 }
 
+/// Join the sentences decoded at each pause into one transcript. Each one is decoded with the
+/// previous sentence as Whisper's prompt, and a short or unclear chunk can come back as a copy of
+/// that prompt — those copies used to be joined as is ("…Light Blue color Light Blue color").
+/// A chunk that repeats the previous one is dropped, and loops spanning chunks are collapsed.
+pub fn join_chunks(chunks: &[String]) -> String {
+    let mut kept: Vec<&str> = vec![];
+    for c in chunks {
+        let c = c.trim();
+        if c.is_empty() {
+            continue;
+        }
+        if let Some(prev) = kept.last() {
+            let (w, pw) = (norm_words(c), norm_words(prev));
+            if w.len() >= 3 && (w == pw || (pw.len() > w.len() && pw.ends_with(&w))) {
+                continue;
+            }
+        }
+        kept.push(c);
+    }
+    collapse_loops(&kept.join(" "))
+}
+
 fn norm_words(t: &str) -> Vec<String> {
     t.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).filter(|w| !w.is_empty()).collect()
 }
@@ -158,6 +180,19 @@ fn collapse_phrase_loops(text: &str) -> String {
             let need = if n == 1 { 4 } else { 3 };
             if reps + usize::from(partial) < need {
                 continue;
+            }
+            // the loop was found one or more words early: "…Yellow color | Light, Thim and Light
+            // Blue color | Light, Thim …" read as copies of "color Light … Blue" swallows the last
+            // "color". When the copies really start at a capitalised word, start there instead.
+            if partial && n >= 3 {
+                let k = rest.len();
+                let starts_upper = |w: &str| w.chars().next().map(char::is_uppercase).unwrap_or(false);
+                let rest_whole = rest.iter().zip(&key[i..i + n]).all(|(a, b)| a == b);
+                if rest_whole && k < n && starts_upper(words[i + k]) && !starts_upper(words[i]) {
+                    out.extend(words[i..i + k].iter().map(|w| w.to_string()));
+                    i += k;
+                    continue 'outer;
+                }
             }
             if partial {
                 end = words.len();
@@ -703,6 +738,10 @@ impl LocalWhisper {
         let mut probs = vec![];
         for i in 0..n {
             if let Ok(t) = state.full_get_segment_text(i) {
+                // segments don't always start with a space ("colors." + "Like" → "colors.Like")
+                if !out.is_empty() && !out.ends_with(char::is_whitespace) && !t.starts_with(char::is_whitespace) {
+                    out.push(' ');
+                }
                 out.push_str(&t);
             }
             for j in 0..state.full_n_tokens(i).unwrap_or(0) {
@@ -1132,5 +1171,39 @@ mod tests {
         let d = Path::new("/tmp/m");
         assert_eq!(model_path(d, "base.en").unwrap(), Path::new("/tmp/m/ggml-base.en.bin"));
         assert!(list_models(d).iter().all(|m| !m.installed));
+    }
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+
+    const REAL: &str = "Create attractive PDF with round corners with green radians of proper combination of colors.Like light theme I want,Light, Thim and Yellow color Light, Thim and Light Blue color Light, Thim and Light Blue color Light, Thim and Light Blue color";
+
+    #[test]
+    fn head_already_collapses_a_loop_inside_one_decode() {
+        let out = collapse_loops(REAL);
+        assert_eq!(out.matches("Light Blue color").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn pause_chunks_that_echo_the_previous_one_are_dropped() {
+        // each sentence is decoded on its own with the previous one as Whisper's prompt; a short or
+        // unclear chunk comes back as a copy of that prompt, and the copies were simply joined
+        let chunks: Vec<String> = [
+            "Create attractive PDF with round corners with green radians of proper combination of colors.",
+            "Like light theme I want,",
+            "Light, Thim and Yellow color",
+            "Light, Thim and Light Blue color",
+            "Light, Thim and Light Blue color",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let out = join_chunks(&chunks);
+        assert_eq!(out.matches("Light Blue color").count(), 1, "{out}");
+        assert!(out.contains("Yellow color"));
+        // ordinary speech stays
+        assert_eq!(join_chunks(&["It is very very good.".into(), "Thanks.".into()]), "It is very very good. Thanks.");
     }
 }
