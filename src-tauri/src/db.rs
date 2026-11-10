@@ -176,6 +176,8 @@ impl Db {
             "ALTER TABLE assistant_log ADD COLUMN thread_id TEXT",
             "CREATE INDEX IF NOT EXISTS idx_assistant_created ON assistant_log(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_assistant_thread ON assistant_log(thread_id, created_at)",
+            // Connect with Google: the calendar cache (local only, never synced; cleared on disconnect)
+            "CREATE TABLE IF NOT EXISTS google_cache(key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL)",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -720,6 +722,24 @@ impl Db {
     }
 
     // ── meeting speakers (meeting.rs / speakers.rs own the JSON shape) ───────
+    // ── Connect with Google cache (google.rs) ───────────────────────────────
+    pub fn google_cache_get(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.conn.lock().query_row("SELECT json FROM google_cache WHERE key=?1", [key], |r| r.get(0)).optional()?)
+    }
+
+    pub fn google_cache_set(&self, key: &str, json: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT INTO google_cache VALUES (?1,?2,?3) ON CONFLICT(key) DO UPDATE SET json=?2, updated_at=?3",
+            params![key, json, chrono::Local::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn google_cache_clear(&self) -> Result<()> {
+        self.conn.lock().execute("DELETE FROM google_cache", [])?;
+        Ok(())
+    }
+
     pub fn meeting_meta(&self, note_id: &str) -> Result<Option<String>> {
         Ok(self.conn.lock().query_row("SELECT json FROM meeting_meta WHERE note_id=?1", [note_id], |r| r.get(0)).optional()?)
     }

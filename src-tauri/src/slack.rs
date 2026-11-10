@@ -266,7 +266,7 @@ const OAUTH_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 /// Live event so the Integrations card updates without a reload.
 pub const EV_SLACK: &str = "flo://slack";
 
-fn new_verifier() -> String {
+pub(crate) fn new_verifier() -> String {
     use base64::Engine;
     use rand::RngCore;
     let mut b = [0u8; 32];

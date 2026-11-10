@@ -55,6 +55,10 @@ pub struct MeetingMeta {
     /// herself / was addressed by name). Shown as a one-click suggestion, never applied silently.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub suggested: BTreeMap<String, String>,
+    /// guest names from the calendar invite (Connect with Google → "Take notes"). Offered as
+    /// speaker names and given to the summary as hints; never applied silently.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attendees: Vec<String>,
 }
 
 /// What the Notes UI needs (no embeddings).
@@ -70,6 +74,8 @@ pub struct MeetingInfo {
     pub suggestions: BTreeMap<String, String>,
     /// names of every voice Flo remembers (rename autocomplete)
     pub known_voices: Vec<String>,
+    /// guest names from the calendar invite this meeting was started from
+    pub attendees: Vec<String>,
 }
 
 fn load_meta(st: &Shared, note_id: &str) -> Option<MeetingMeta> {
@@ -91,6 +97,7 @@ pub fn info(st: &Shared, note_id: &str) -> Option<MeetingInfo> {
         voiced: m.speakers.into_iter().filter(|c| !c.centroid.is_empty()).map(|c| c.label).collect(),
         suggestions: m.suggested,
         known_voices,
+        attendees: m.attendees,
     })
 }
 
@@ -104,6 +111,12 @@ fn load_voices(st: &Shared) -> Vec<Voice> {
 }
 
 pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> Result<Note> {
+    start_with_attendees(st, title, project_id, vec![])
+}
+
+/// Start meeting notes with the guest names from a calendar invite (google.rs "Take notes").
+pub fn start_with_attendees(st: Shared, title: Option<String>, project_id: Option<String>, attendees: Vec<String>) -> Result<Note> {
+    let attendees = clean_attendees(&attendees);
     if st.meeting.lock().is_some() {
         return Err(anyhow!("A meeting is already being recorded"));
     }
@@ -133,12 +146,12 @@ pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> R
         Ok(t) => Some(t),
         Err(e) => {
             log::warn!("call audio unavailable, recording mic only: {e}");
-            save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_MIC.into(), capture_note: Some(e.to_string()), ..Default::default() });
+            save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_MIC.into(), capture_note: Some(e.to_string()), attendees: attendees.clone(), ..Default::default() });
             None
         }
     };
     if tap.is_some() {
-        save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_DUAL.into(), ..Default::default() });
+        save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_DUAL.into(), attendees: attendees.clone(), ..Default::default() });
         ensure_speaker_model(&st);
     }
     let stop = Arc::new(AtomicBool::new(false));
@@ -797,6 +810,39 @@ add \"speakerNames\":{\"Speaker N\":\"Name\"} to the JSON. Only first names actu
     out
 }
 
+/// Calendar guest names, cleaned for prompts and the rename list: trimmed, name-like, ≤ 40 chars,
+/// no duplicates, at most 20.
+pub fn clean_attendees(names: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for n in names {
+        let n = n.split_whitespace().collect::<Vec<_>>().join(" ");
+        let n = n.trim_matches(|c: char| c == '"' || c == '\'' || c == ',');
+        if n.is_empty() || n.chars().count() > 40 || n.contains('@') || !n.chars().next().is_some_and(|c| c.is_alphabetic()) {
+            continue;
+        }
+        if out.iter().any(|o| o.eq_ignore_ascii_case(n)) {
+            continue;
+        }
+        out.push(n.to_string());
+        if out.len() >= 20 {
+            break;
+        }
+    }
+    out
+}
+
+/// Extra system-prompt line naming the calendar guests, so `Speaker N` names can come from them.
+pub fn attendee_prompt_extra(attendees: &[String]) -> String {
+    let a = clean_attendees(attendees);
+    if a.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\nThe calendar invite lists these guests: {}. They are likely speakers, but only use a name for a `Speaker N` when the transcript supports it.",
+        a.join(", ")
+    )
+}
+
 /// Parse the model's `speakerNames` and keep only safe suggestions: the label is a generic one
 /// still present in the transcript, the name is short and name-like, and no two labels get the
 /// same name (or a name someone in the transcript already has).
@@ -851,7 +897,8 @@ async fn summarize_incremental(st: &Shared, note_id: &str, from: usize) -> Optio
     }
     let new_lines = n.transcript[from..].iter().map(seg_line).collect::<Vec<_>>().join("\n");
     let user = prompts::meeting_update_user(&n.summary, &new_lines);
-    let (parsed, _) = summarize_with(st, &user, false, 700).await?;
+    let attendees = load_meta(st, note_id).map(|m| m.attendees).unwrap_or_default();
+    let (parsed, _) = summarize_with(st, &user, false, 700, &attendees).await?;
     Some((parsed, n.transcript.len()))
 }
 
@@ -868,11 +915,12 @@ async fn summarize(st: &Shared, note_id: &str, final_pass: bool) -> Option<(prom
         let tail: String = full.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
         prompts::meeting_update_user(&n.summary, &tail)
     };
-    summarize_with(st, &user, final_pass, 1200).await
+    let attendees = load_meta(st, note_id).map(|m| m.attendees).unwrap_or_default();
+    summarize_with(st, &user, final_pass, 1200, &attendees).await
 }
 
 /// Returns the parsed summary and the raw model output (final pass: also carries `speakerNames`).
-async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u32) -> Option<(prompts::ParsedSummary, String)> {
+async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u32, attendees: &[String]) -> Option<(prompts::ParsedSummary, String)> {
     let s = st.settings();
     let cfgl = LlmConfig::from_settings(&s);
     if !cfgl.is_configured() {
@@ -880,6 +928,7 @@ async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u
     }
     let mut system = prompts::meeting_summary_system(final_pass);
     system.push_str(&speaker_prompt_extra(&s.user_name, final_pass));
+    system.push_str(&attendee_prompt_extra(attendees));
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\nUser's instructions: {}", text::truncate_chars(s.system_prompt.trim(), 1000)));
     }
@@ -1149,6 +1198,20 @@ mod tests {
         assert!(live.is_empty());
         assert!(!speaker_prompt_extra("Parth", false).contains("speakerNames"));
         assert!(!p.contains('\u{2014}'), "no em dashes");
+    }
+
+    #[test]
+    fn calendar_attendees_are_cleaned_and_offered_as_hints() {
+        let a = clean_attendees(&["  Priya  Shah ".into(), "priya shah".into(), "rahul@example.com".into(), "".into(), "Rahul".into(), "x".repeat(41)]);
+        assert_eq!(a, vec!["Priya Shah".to_string(), "Rahul".to_string()]);
+        let p = attendee_prompt_extra(&a);
+        assert!(p.contains("Priya Shah, Rahul") && p.contains("Speaker N"));
+        assert!(!p.contains('\u{2014}'), "no em dashes");
+        assert!(attendee_prompt_extra(&[]).is_empty());
+        let m: MeetingMeta = serde_json::from_str(r#"{"capture":"mic","attendees":["Priya"]}"#).unwrap();
+        assert_eq!(m.attendees, vec!["Priya".to_string()]);
+        // old metas without attendees still load, and empty lists aren't written
+        assert!(serde_json::to_string(&MeetingMeta::default()).unwrap().find("attendees").is_none());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-// Pure validation for the computer snapshot (to-dos, Claude Code sessions and approvals, non-secret settings) that the
+// Pure validation for the computer snapshot (to-dos, Claude Code sessions and approvals, non-secret settings, upcoming meetings) that the
 // desktop app publishes for the paired phone, and for the actions the phone sends back.
 // No imports, so node --test can run it directly (tests/desktop-state-logic.test.mjs).
 //
@@ -24,6 +24,8 @@ export const STATE_LIMITS = {
   questionOptions: 8,
   /** a typed reply to a session */
   replyChars: 4000,
+  /** upcoming calendar events (Connect Google), soonest first */
+  meetings: 3,
 } as const;
 
 export type TodoOpen = { id: string; title: string; due?: string; source?: string; person?: string; project?: string; createdAt: string };
@@ -68,6 +70,8 @@ export type SettingEntry = {
   min?: number;
   max?: number;
 };
+/** An upcoming calendar event the computer shares with the phone ("Next meeting" on Home). */
+export type Meeting = { id: string; title: string; start: string; end: string; attendees: number; join: boolean };
 export type ComputerInfo = { platform: "macos" | "windows" | "linux" | "other"; appVersion: string; name?: string };
 export type ComputerState = {
   v: 1;
@@ -77,6 +81,7 @@ export type ComputerState = {
   waiting: Waiting[];
   sessions: Session[];
   settings: SettingEntry[];
+  meetings: Meeting[];
 };
 
 const ID_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
@@ -224,6 +229,22 @@ function setting(v: unknown): SettingEntry | null {
   return s;
 }
 
+/** ISO 8601 date-time that parses ("2026-11-10T09:30:00+05:30"), at most 40 characters. */
+function isoTime(v: unknown): string | null {
+  if (typeof v !== "string" || v.length > 40 || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return null;
+  return Number.isNaN(Date.parse(v)) ? null : v;
+}
+
+function meeting(v: unknown): Meeting | null {
+  if (!isObj(v)) return null;
+  const i = typeof v.id === "string" && v.id.length <= 200 ? str(v.id, 200) : null;
+  const title = str(v.title, 120);
+  const start = isoTime(v.start), end = isoTime(v.end);
+  if (!i || !title || !start || !end) return null;
+  const n = typeof v.attendees === "number" && Number.isInteger(v.attendees) ? v.attendees : 0;
+  return { id: i, title, start, end, attendees: Math.min(1000, Math.max(0, n)), join: v.join === true };
+}
+
 function clean<T>(v: unknown, cap: number, f: (x: unknown) => T | null): T[] {
   return list(v, cap).map(f).filter((x): x is T => x !== null).slice(0, cap);
 }
@@ -249,6 +270,7 @@ export function parseSnapshot(body: unknown): { state: ComputerState } | { error
       waiting: clean(body.waiting, STATE_LIMITS.waiting, waiting),
       sessions: clean(body.sessions, STATE_LIMITS.sessions, session),
       settings: clean(body.settings, STATE_LIMITS.settings, setting),
+      meetings: clean(body.meetings, STATE_LIMITS.meetings, meeting),
     },
   };
 }

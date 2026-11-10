@@ -52,6 +52,8 @@ export interface Settings {
   systemPrompt: string;
   /** turn unanswered Slack DMs / mentions into to-dos (when connected) */
   slackSync: boolean;
+  /** Connect with Google: Calendar meeting alerts + Gmail (optional; older settings files lack it) */
+  google?: GoogleSettings;
   /** first-run setup wizard completed */
   onboarded: boolean;
   /** Flo account server (sign-in only; data stays on the Mac) */
@@ -260,6 +262,8 @@ export type AssistantAction =
   | { type: "insert_text"; text: string }
   /** staged — the user confirms in the notch (flo://confirm) before sending */
   | { type: "slack_send"; to: string; text: string }
+  /** staged like slack_send: the user confirms in the notch before the email goes out */
+  | { type: "gmail_send"; to: string; text: string; subject?: string; reply_to?: string }
   /** "connect to Mobbin MCP": opens Flo Agent > Apps with the Add MCP server form filled in */
   | { type: "connect_mcp"; name: string; url?: string };
 
@@ -313,6 +317,8 @@ export interface MeetingInfo {
   suggestions?: Record<string, string>;
   /** every voice Flo remembers (rename autocomplete) */
   knownVoices?: string[];
+  /** names from the calendar invite when notes were started from a Google Calendar event */
+  attendees?: string[];
 }
 
 export interface MeetingEvent {
@@ -609,8 +615,8 @@ export interface Integration {
 /** Something Flo wants you to approve before it happens (e.g. send a Slack message). */
 export interface ConfirmEvent {
   id: string;
-  /** slack = a drafted message to send · claude = a Claude Code permission prompt */
-  kind: "slack" | "claude";
+  /** slack = a drafted message to send · gmail = a drafted email · claude = a Claude Code permission prompt */
+  kind: "slack" | "gmail" | "claude";
   title: string;
   body: string;
   // claude permission prompts: who is asking (all optional; older backends send title/body only)
@@ -757,7 +763,99 @@ export const EV = {
   presence: "flo://presence",
   /** payload: NowPlaying | null — media started / changed / paused / stopped (polling is the fallback) */
   nowPlaying: "flo://now-playing",
+  /** payload: GoogleEvent: Google connected (flo://google deep link) or disconnected */
+  google: "flo://google",
+  /** payload: CalendarEvent[]: fresh calendar cache after each poll */
+  calendar: "flo://calendar",
+  /** payload: MeetingAlert: a meeting is about to start (same id re-sent with phase "now") */
+  meetingAlert: "flo://meeting-alert",
+  /** payload: {id}: the alert was dismissed elsewhere or the meeting ended: close the card */
+  meetingAlertDone: "flo://meeting-alert-done",
 } as const;
+
+// ── Google (Calendar + Gmail) ───────────────────────────────────────────────
+export interface GoogleSettings {
+  /** use Calendar (when the scope is granted). default true */
+  calendar: boolean;
+  /** use Gmail (when granted). default true */
+  gmail: boolean;
+  /** alert this many minutes before a meeting: 1 | 2 | 5 | 10, default 5 */
+  alertMinutes: number;
+  /** also alert for events without other attendees. default false */
+  alertSolo: boolean;
+  /** selected calendar ids; empty = primary only */
+  calendars: string[];
+  /** turn emails that need a reply into to-dos. default true */
+  gmailTodos: boolean;
+}
+
+export const DEFAULT_GOOGLE_SETTINGS: GoogleSettings = { calendar: true, gmail: true, alertMinutes: 5, alertSolo: false, calendars: [], gmailTodos: true };
+
+/** google_status: the connected account and which scopes were granted. */
+export interface GoogleStatus {
+  email: string;
+  calendar: boolean;
+  gmail: boolean;
+}
+
+export interface GoogleCalendar {
+  id: string;
+  summary: string;
+  primary: boolean;
+  selected: boolean;
+  color?: string;
+}
+
+export interface CalendarAttendee {
+  name: string;
+  email: string;
+  self: boolean;
+  /** accepted | declined | tentative | needsAction */
+  response: string;
+}
+
+export type JoinKind = "meet" | "zoom" | "teams" | "other";
+
+export interface CalendarEvent {
+  id: string;
+  calendarId: string;
+  title: string;
+  /** ISO 8601 with offset; all-day: "YYYY-MM-DD" */
+  start: string;
+  end: string;
+  allDay: boolean;
+  location?: string;
+  joinUrl?: string;
+  joinKind?: JoinKind;
+  attendees: CalendarAttendee[];
+  declined: boolean;
+  htmlLink?: string;
+}
+
+export interface MeetingAlert {
+  /** event id + start (stable per occurrence) */
+  id: string;
+  eventId: string;
+  title: string;
+  start: string;
+  end: string;
+  /** display names, self excluded, max 8 */
+  attendees: string[];
+  /** other attendees, total */
+  attendeeCount: number;
+  joinUrl?: string;
+  joinKind?: JoinKind;
+  phase: "soon" | "now";
+}
+
+export type MeetingAlertAction = "dismiss" | "snooze" | "join" | "notes";
+
+/** EV.google payload */
+export interface GoogleEvent {
+  connected: boolean;
+  email?: string;
+  error?: string;
+}
 
 /** EV.slack payload. `who` = "user · workspace" (same as slack_status). */
 export interface SlackEvent {
@@ -824,6 +922,10 @@ export interface HandsfreeEvent {
  *  slack_connect({token}) -> string ("Name · workspace")   slack_status() -> string|null   slack_disconnect({revoke?})
  *  slack_oauth_start() -> string (Connect URL, opened in the browser; finishes via flo://slack → EV.slack)
  *  slack_sync_now() -> number (to-dos added)   confirm_action({id, approve}) -> string
+ *  google_oauth_start({calendar, gmail}) -> string (URL; finishes via flo://google → EV.google)
+ *  google_status() -> GoogleStatus|null   google_disconnect()   google_calendars() -> GoogleCalendar[]
+ *  google_events() / google_refresh_events() -> CalendarEvent[]   gmail_sync_now() -> number
+ *  google_meeting_action({id, action: dismiss|snooze|join|notes}) -> string
  *  list_context_docs() -> ContextDoc[]          get_context_doc({id}) -> {doc: ContextDoc, content: string}
  *  add_context_doc({title, content}) -> ContextDoc   (frontend reads .md/.txt files via FileReader)
  *  update_context_doc({id, title?, enabled?, pinned?, content?})   delete_context_doc({id})

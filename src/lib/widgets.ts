@@ -6,7 +6,7 @@
 // subscribe via onWidgetsChange so the panel reflects edits live.
 import { loadZones, ZONES_EVENT, ZONES_KEY } from "./timezones";
 
-export type WidgetId = "nowPlaying" | "today" | "timer" | "pomodoro" | "clock" | "weather" | "agents" | "note";
+export type WidgetId = "nowPlaying" | "today" | "timer" | "pomodoro" | "clock" | "weather" | "agents" | "note" | "agenda";
 
 export interface WidgetMeta {
   id: WidgetId;
@@ -23,6 +23,7 @@ export const WIDGETS: WidgetMeta[] = [
   { id: "nowPlaying", label: "Now Playing", hint: "Artwork, progress, transport controls and volume", span: 2, h: 148 },
   { id: "agents", label: "Claude sessions", hint: "Live Claude Code sessions — scroll, hover to expand", span: 2, h: 132 },
   { id: "note", label: "Quick note", hint: "A scratch note, saved on this device", span: 2, h: 92 },
+  { id: "agenda", label: "Today's agenda", hint: "Your next Google Calendar meetings, with a Join link", span: 2, h: 132 },
   { id: "today", label: "Today's to-dos", hint: "Check off tasks, see why each is here — scroll, hover to expand", span: 2, h: 148 },
   { id: "timer", label: "Stopwatch", hint: "A simple count-up timer", span: 1, h: 96 },
   { id: "pomodoro", label: "Pomodoro", hint: "A 25-minute focus countdown", span: 1, h: 96 },

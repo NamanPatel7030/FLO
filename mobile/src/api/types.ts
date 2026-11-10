@@ -159,6 +159,18 @@ export interface ComputerSetting {
   /** set on the phone while a change is on the way */
   sending?: boolean;
 }
+/** An upcoming calendar event from the computer (Connect Google), soonest first. */
+export interface Meeting {
+  id: string;
+  title: string;
+  /** ISO 8601 */
+  start: string;
+  end: string;
+  /** other people invited */
+  attendees: number;
+  /** has a join link (Meet, Zoom, Teams) */
+  join: boolean;
+}
 export interface ComputerState {
   computer: { platform: ComputerPlatform; appVersion: string };
   todos: { open: TodoOpen[]; done: TodoDone[] };
@@ -166,6 +178,8 @@ export interface ComputerState {
   waiting: WaitingSession[];
   sessions: ClaudeSessionView[];
   settings: ComputerSetting[];
+  /** at most 3; [] when Google isn't connected */
+  meetings: Meeting[];
 }
 export type ActionKind = 'todo_done' | 'todo_reopen' | 'approve' | 'reject' | 'setting' | 'reply' | 'choose';
 /** `choose`: option labels for each question, in order (`id` = the question's id). */

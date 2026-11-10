@@ -24,7 +24,7 @@ export function loadEnv() {
       if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
     }
   }
-  return { ...out, ...Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(AUTH_SECRET|DATABASE_URL|SLACK_|NEXT_PUBLIC_)/.test(k))) };
+  return { ...out, ...Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(AUTH_SECRET|DATABASE_URL|SLACK_|GOOGLE_|NEXT_PUBLIC_)/.test(k))) };
 }
 
 export function testDbUrl() {

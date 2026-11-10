@@ -124,6 +124,32 @@ pub struct Settings {
     /// Settings → Privacy → "Share usage counts with Flo": daily totals only, never content
     /// (usage_share.rs). Off by default.
     pub share_usage: bool,
+    /// Connect with Google: which parts to use and how meeting alerts behave (google.rs)
+    pub google: GoogleSettings,
+}
+
+/// Connect with Google (Settings → Integrations → Google). Tokens live in the keychain, not here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GoogleSettings {
+    /// use Google Calendar (when that permission was granted)
+    pub calendar: bool,
+    /// use Gmail (when that permission was granted)
+    pub gmail: bool,
+    /// minutes before a meeting the notch shows it: 1 | 2 | 5 | 10
+    pub alert_minutes: u32,
+    /// also alert for events with no other guests
+    pub alert_solo: bool,
+    /// calendar ids to read; empty = the primary calendar
+    pub calendars: Vec<String>,
+    /// turn emails that need a reply into to-dos
+    pub gmail_todos: bool,
+}
+
+impl Default for GoogleSettings {
+    fn default() -> Self {
+        Self { calendar: true, gmail: true, alert_minutes: 5, alert_solo: false, calendars: vec![], gmail_todos: true }
+    }
 }
 
 /// End-to-end encrypted sync. Off by default; categories are what the user chose to sync.
@@ -225,6 +251,7 @@ impl Default for Settings {
             stt_keep_warm_mins: 10,
             reuse_answers: true,
             share_usage: false,
+            google: GoogleSettings::default(),
         }
     }
 }
@@ -306,6 +333,16 @@ pub enum AssistantAction {
     SlackSend {
         to: String,
         text: String,
+    },
+    /// staged only (Connect with Google): the user confirms in the notch before anything is sent.
+    /// `reply_to` = the Gmail message id being answered (keeps the thread).
+    GmailSend {
+        to: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subject: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<String>,
     },
     /// media / volume: volume_up | volume_down | mute | playpause | next | previous
     Media {

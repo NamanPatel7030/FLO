@@ -215,7 +215,10 @@ fn build(st: &Shared) -> Value {
     let sessions = st.db.list_claude_sessions().unwrap_or_default();
     let now = chrono::Local::now();
     let views = crate::claude_reply::session_views(&sessions, now);
-    snapshot(&todos, &crate::claude::pending_permissions(), &sessions, &views, &st.settings(), now)
+    let mut v = snapshot(&todos, &crate::claude::pending_permissions(), &sessions, &views, &st.settings(), now);
+    // Connect with Google: the next few meetings for the phone's Home (titles and times only)
+    v["meetings"] = crate::google::phone_snapshot(st);
+    v
 }
 
 // ── actions from the phone ───────────────────────────────────────────────────

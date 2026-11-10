@@ -29,4 +29,15 @@ describe("settleConfirmedCard", () => {
     expect(settleConfirmedCard(other, "Sent to X")).toBe(other);
     expect(settleConfirmedCard(null, "Sent")).toBeNull();
   });
+  it("settles a staged email the same way", () => {
+    const email = card({
+      query: "reply to the last email from Rahul saying I'll send it tonight",
+      reply: "Ready to email Rahul Mehta. Confirm in the notch to send.",
+      actions: [{ type: "gmail_send", to: "Rahul", text: "I'll send it tonight", reply_to: "m1" }],
+      results: ["Waiting for you to confirm the email to Rahul Mehta"],
+    });
+    const c = settleConfirmedCard(email, "Sent to Rahul Mehta");
+    expect(c?.reply).toBe("Sent to Rahul Mehta");
+    expect(c?.results).toEqual([]);
+  });
 });

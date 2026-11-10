@@ -10,6 +10,7 @@ import { EmptyInbox } from '../ui/EmptyInbox';
 import { Icon } from '../ui/Icons';
 import { Notchling, type Mood } from '../ui/Notchling';
 import { UpdateCard } from '../ui/UpdateCard';
+import { NextMeetingCard } from '../ui/NextMeeting';
 import { GlassCard } from '../ui/Glass';
 import { usePrefs } from '../state/Prefs';
 import { Pressable } from 'react-native';
@@ -160,6 +161,8 @@ export function HomeScreen({ onSettings, onVoice, onNeedsYou, onTodos }: { onSet
           )}
 
           <PresenceCard presence={flo.presence} busy={flo.presenceBusy} onChange={(s) => void flo.setPresence(s)} />
+
+          <NextMeetingCard meetings={computer.state?.meetings} />
 
           {openTodos > 0 && onTodos && (
             <Pressable testID="home-todos" accessibilityRole="button" onPress={onTodos} style={{ marginTop: 10 }}>

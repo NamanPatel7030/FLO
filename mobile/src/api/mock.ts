@@ -139,6 +139,7 @@ export function mockComputer(): ComputerSnapshot {
         { id: 'q1', project: 'website', summary: 'Run: npm run migrate', tool: 'Bash', at: ago(0.3), expiresAt: ahead(1.7) },
         { id: 'q2', project: 'api', summary: 'Edit rate_limit.rs', tool: 'Edit', at: ago(0.1), expiresAt: ahead(1.9) },
       ],
+      meetings: [{ id: 'ev1', title: 'Design sync', start: ahead(25), end: ahead(55), attendees: 4, join: true }],
       waiting: [{ id: 's1', project: 'mobile', message: 'Claude is waiting for your input', status: 'waiting_reply', at: ago(6) }],
       sessions: [
         {

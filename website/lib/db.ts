@@ -167,6 +167,66 @@ export async function claimSlackHandoff(
   return r ? { sealed: String(r.sealed), team: String(r.team ?? ""), slackUser: String(r.slack_user ?? "") } : null;
 }
 
+// ── one-click Connect Google (see lib/google.ts) ────────────────────────────
+
+/** One-time OAuth state for Connect Google: the desktop's challenge, the products asked for ("calendar gmail"), the account. */
+export async function createGoogleState(state: string, challenge: string, scopes: string, userId: string | null, ttlMs: number): Promise<void> {
+  const db = sql();
+  await db`delete from app.google_states where expires_at < now()`;
+  await db`
+    insert into app.google_states (state, challenge, scopes, user_id, expires_at)
+    values (${state}, ${challenge}, ${scopes},
+            (select id from public.profiles where id = ${ownerOrNull(userId)}::uuid),
+            now() + make_interval(secs => ${ms(ttlMs)}))`;
+}
+
+/** The products asked for when this state is live (issued, unused, unexpired), else null. Doesn't consume it. */
+export async function googleStateLive(state: string): Promise<{ scopes: string } | null> {
+  const rows = await sql()<{ scopes: string }[]>`
+    select scopes from app.google_states where state = ${state} and not used and expires_at > now()`;
+  return rows[0] ? { scopes: String(rows[0].scopes ?? "") } : null;
+}
+
+/** Consume a state once (the OAuth callback). */
+export async function consumeGoogleState(state: string): Promise<{ challenge: string; userId: string | null; scopes: string } | null> {
+  const rows = await sql()<{ challenge: string; user_id: string | null; scopes: string }[]>`
+    delete from app.google_states
+     where state = ${state} and not used and expires_at > now()
+    returning challenge, user_id, scopes`;
+  const r = rows[0];
+  return r ? { challenge: String(r.challenge), userId: r.user_id ? String(r.user_id) : null, scopes: String(r.scopes ?? "") } : null;
+}
+
+/** Park sealed Google tokens under a one-time handoff code (the desktop claims it). */
+export async function createGoogleHandoff(h: {
+  code: string;
+  sealed: string;
+  challenge: string;
+  userId: string | null;
+  email: string;
+  ttlMs: number;
+}): Promise<void> {
+  const db = sql();
+  await db`delete from app.google_handoffs where expires_at < now()`;
+  await db`
+    insert into app.google_handoffs (code, sealed, challenge, user_id, email, expires_at)
+    values (${h.code}, ${h.sealed}, ${h.challenge},
+            (select id from public.profiles where id = ${ownerOrNull(h.userId)}::uuid),
+            ${h.email}, now() + make_interval(secs => ${ms(h.ttlMs)}))`;
+}
+
+/** Claim a Google handoff exactly once (same rules as claimSlackHandoff). The row is deleted on success. */
+export async function claimGoogleHandoff(code: string, challenge: string, userId: string | null): Promise<{ sealed: string; email: string } | null> {
+  const uid = ownerOrNull(userId);
+  const rows = await sql()<{ sealed: string; email: string }[]>`
+    delete from app.google_handoffs
+     where code = ${code} and challenge = ${challenge} and not used and expires_at > now()
+       and (user_id is null or user_id = ${uid}::uuid)
+    returning sealed, email`;
+  const r = rows[0];
+  return r ? { sealed: String(r.sealed), email: String(r.email ?? "") } : null;
+}
+
 export { iso as toIso };
 
 // ── usage counter (public totals only) ──────────────────────────────────────

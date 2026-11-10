@@ -4,6 +4,10 @@ import type {
   AssistantResponse,
   AssistantThread,
   AttentionStatus,
+  CalendarEvent,
+  GoogleCalendar,
+  GoogleStatus,
+  MeetingAlertAction,
   ClaudeEvent,
   ClaudeHookStatus,
   ClaudeSession,
@@ -160,6 +164,17 @@ export const api = {
   slackOauthStart: () => call<string>("slack_oauth_start"),
   slackDisconnect: (revoke = false) => call<void>("slack_disconnect", { revoke }),
   slackSyncNow: () => call<number>("slack_sync_now"),
+  // Connect with Google (Calendar meeting alerts + Gmail); the OAuth result arrives on EV.google
+  googleOauthStart: (calendar: boolean, gmail: boolean) => call<string>("google_oauth_start", { calendar, gmail }),
+  googleStatus: () => call<GoogleStatus | null>("google_status").catch(() => null),
+  /** revokes at Google and forgets the tokens on this computer */
+  googleDisconnect: () => call<void>("google_disconnect"),
+  googleCalendars: () => call<GoogleCalendar[]>("google_calendars"),
+  /** cached: today + next 48 h, sorted by start ([] when not connected) */
+  googleEvents: () => call<CalendarEvent[]>("google_events").catch(() => [] as CalendarEvent[]),
+  googleRefreshEvents: () => call<CalendarEvent[]>("google_refresh_events"),
+  googleMeetingAction: (id: string, action: MeetingAlertAction) => call<string>("google_meeting_action", { id, action }),
+  gmailSyncNow: () => call<number>("gmail_sync_now"),
   confirmAction: (id: string, approve: boolean) => call<string>("confirm_action", { id, approve }),
   /** Claude Code permission prompt: allow | deny | terminal (answer it in the terminal instead) */
   answerClaudePermission: (id: string, decision: "allow" | "deny" | "terminal") => call<void>("answer_claude_permission", { id, decision }),

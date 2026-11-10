@@ -17,6 +17,7 @@ import { api } from "../lib/api";
 import type { ClaudeSession, Todo, Weather } from "../lib/types";
 import { EMPTY_WIDGETS_H, GAP, PANEL_COLS, packPanelRows, panelGridHeight, panelGridMax, widgetHeight, ZONE_ROW_H, type WidgetId } from "../lib/widgets";
 import { NowPlayingCard } from "./NowPlaying";
+import { AgendaWidget } from "./AgendaWidget";
 import { dayOffset, dayOffsetLabel, formatZoneTime, hourDiffLabel, isDaytime, loadZones, onZonesChange, type ClockZone } from "../lib/timezones";
 
 export type WidgetAction = "dictate" | "ask" | "meeting" | "dashboard" | "todos" | "customize";
@@ -101,6 +102,8 @@ function WidgetTile({ id, sessions, onAction }: { id: WidgetId; sessions: Claude
       return <AgentsWidget sessions={sessions} onOpen={() => onAction("dashboard")} />;
     case "note":
       return <NoteWidget />;
+    case "agenda":
+      return <AgendaWidget />;
   }
 }
 

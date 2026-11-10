@@ -241,3 +241,36 @@ test("migration 0008 allows every action kind and bounds the value", () => {
   for (const k of ACTION_KINDS) assert.match(sql, new RegExp(`'${k}'`), k);
   assert.match(sql, /mobile_actions_value_size/);
 });
+
+test("meetings: kept validated, capped at 3, unknown fields dropped, missing → []", () => {
+  assert.deepEqual(parseSnapshot({ v: 1 }).state.meetings, []);
+  assert.deepEqual(parseSnapshot(snap({ meetings: "nope" })).state.meetings, []);
+  const m = (o = {}) => ({ id: "ev1_20261110T093000Z", title: "Design sync", start: "2026-11-10T09:30:00+05:30", end: "2026-11-10T10:00:00+05:30", attendees: 4, join: true, ...o });
+  const r = parseSnapshot(snap({
+    meetings: [
+      m({ location: "Room 4", description: "secret agenda" }),
+      m({ id: "" }),
+      m({ id: "e2", title: "y".repeat(300), attendees: 5000, join: "yes" }),
+      m({ id: "e3", attendees: -2 }),
+      m({ id: "e4", attendees: 2.5 }),
+    ],
+  }));
+  assert.ok("state" in r);
+  const ms = r.state.meetings;
+  assert.equal(ms.length, STATE_LIMITS.meetings);
+  assert.equal(STATE_LIMITS.meetings, 3);
+  assert.deepEqual(ms[0], { id: "ev1_20261110T093000Z", title: "Design sync", start: "2026-11-10T09:30:00+05:30", end: "2026-11-10T10:00:00+05:30", attendees: 4, join: true });
+  assert.equal(ms[1].id, "e2");
+  assert.ok(ms[1].title.length <= 120);
+  assert.equal(ms[1].attendees, 1000);
+  assert.equal(ms[1].join, false);
+  assert.equal(ms[2].attendees, 0);
+  assert.equal(ms[0].location, undefined);
+  for (const bad of [{ id: "x".repeat(201) }, { title: "" }, { start: "tomorrow" }, { end: "2026-11-10" }, { start: "2026-13-45T99:00" }, { attendees: "4" }]) {
+    const got = parseSnapshot(snap({ meetings: [m(bad)] })).state.meetings;
+    if ("attendees" in bad) assert.equal(got[0].attendees, 0);
+    else assert.deepEqual(got, [], JSON.stringify(bad));
+  }
+  // ids up to 200 characters (Google event ids can be long)
+  assert.equal(parseSnapshot(snap({ meetings: [m({ id: "a".repeat(200) })] })).state.meetings[0].id.length, 200);
+});

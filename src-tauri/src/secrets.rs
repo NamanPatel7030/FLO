@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 
 const SERVICE: &str = "com.flo.flow";
-pub const PROVIDERS: &[&str] = &["openai", "anthropic", "gemini", "groq", "openrouter", "slack", "minimax", "qwen", "ollama_cloud", "hermes_slack_bot", "hermes_slack_app", "sarvam"];
+pub const PROVIDERS: &[&str] = &["openai", "anthropic", "gemini", "groq", "openrouter", "slack", "minimax", "qwen", "ollama_cloud", "hermes_slack_bot", "hermes_slack_app", "sarvam", "google"];
 
 fn entry(name: &str) -> Result<keyring::Entry> {
     Ok(keyring::Entry::new(SERVICE, name)?)

@@ -444,7 +444,8 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
   const [added, setAdded] = useState<Set<number>>(new Set());
   const info = useMeetingInfo(note.id, note.transcript);
   const me = useStore((s) => s.settings?.userName);
-  const names = [...new Set([...(info?.knownVoices ?? []), ...Object.values(info?.suggestions ?? {})])];
+  // rename suggestions: voices Flo knows, names the conversation revealed, and the calendar invite's guests
+  const names = [...new Set([...(info?.knownVoices ?? []), ...Object.values(info?.suggestions ?? {}), ...(info?.attendees ?? [])])];
   const rename = async (from: string, to: string) => {
     try {
       await api.renameSpeaker(note.id, from, to);

@@ -68,24 +68,25 @@ export const randomCode = () => randomBytes(24).toString("base64url");
 // ── sealing (AES-256-GCM, key derived from AUTH_SECRET) ─────────────────────
 // Format: base64url(iv[12] ‖ tag[16] ‖ ciphertext). tests/slack-routes.mjs mirrors this to seed rows.
 const KEY_INFO = "flo/slack-handoff/v1";
-function key(): Buffer {
+function key(info: string): Buffer {
   const s = process.env.AUTH_SECRET;
   if (!s) throw new Error("AUTH_SECRET is not set");
-  return Buffer.from(hkdfSync("sha256", s, "", KEY_INFO, 32));
+  return Buffer.from(hkdfSync("sha256", s, "", info, 32));
 }
 
-export function seal(plain: string, aad: string): string {
+/** Seal under a per-feature key (HKDF `info`), e.g. "flo/google-handoff/v1" in lib/google.ts. */
+export function sealWith(info: string, plain: string, aad: string): string {
   const iv = randomBytes(12);
-  const c = createCipheriv("aes-256-gcm", key(), iv);
+  const c = createCipheriv("aes-256-gcm", key(info), iv);
   c.setAAD(Buffer.from(aad));
   const ct = Buffer.concat([c.update(plain, "utf8"), c.final()]);
   return Buffer.concat([iv, c.getAuthTag(), ct]).toString("base64url");
 }
 
-export function unseal(sealed: string, aad: string): string | null {
+export function unsealWith(info: string, sealed: string, aad: string): string | null {
   try {
     const b = Buffer.from(sealed, "base64url");
-    const d = createDecipheriv("aes-256-gcm", key(), b.subarray(0, 12));
+    const d = createDecipheriv("aes-256-gcm", key(info), b.subarray(0, 12));
     d.setAAD(Buffer.from(aad));
     d.setAuthTag(b.subarray(12, 28));
     return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString("utf8");
@@ -93,6 +94,9 @@ export function unseal(sealed: string, aad: string): string | null {
     return null;
   }
 }
+
+export const seal = (plain: string, aad: string) => sealWith(KEY_INFO, plain, aad);
+export const unseal = (sealed: string, aad: string) => unsealWith(KEY_INFO, sealed, aad);
 
 /** Exchange the OAuth code. Returns only what we need; never log the response. */
 export async function exchangeCode(

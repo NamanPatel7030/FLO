@@ -42,6 +42,8 @@ import {
   type HandsfreeEvent,
   type HoverEvent,
   type IslandGeometry,
+  type MeetingAlert,
+  type MeetingAlertAction,
   type MeetingDetectedEvent,
   type MeetingEvent,
   type Mode,
@@ -52,6 +54,8 @@ import {
   type TranscriptEvent,
 } from "../lib/types";
 import { IslandContent } from "./IslandContent";
+import { MeetingCard } from "./MeetingCard";
+import { alertExpired, upsertAlert } from "../lib/meetingAlert";
 import { ConfirmCard, CorrectionCard, MeetingPromptCard, TrayItemView, TrayRow, TrayTooltip, type TrayItem } from "./Tray";
 import { runDemo } from "./demo";
 import { NotchViz } from "./Ribbon";
@@ -146,6 +150,9 @@ export default function Island() {
   const [claudeQueue, setClaudeQueue] = useState<ClaudeEvent[]>([]);
   /** to-do reminders waiting for Done / Snooze (oldest first) */
   const [reminders, setReminders] = useState<Todo[]>([]);
+  /** Google Calendar meetings about to start (EV.meetingAlert; same id updates in place) */
+  const [meetingAlerts, setMeetingAlerts] = useState<MeetingAlert[]>([]);
+  const seenAlerts = useRef(new Set<string>());
   const [meeting, setMeeting] = useState<MeetingInfo>({ live: false, startedAt: 0 });
   const [meetingOpen, setMeetingOpen] = useState(false);
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
@@ -382,6 +389,15 @@ export default function Island() {
         if (t && t.id) setReminders((q) => (q.some((x) => x.id === t.id) ? q : [...q, t]));
         notifyChime();
       }),
+      on<MeetingAlert>(EV.meetingAlert, (a) => {
+        if (!a || !a.id) return;
+        setMeetingAlerts((q) => upsertAlert(q, a));
+        if (!seenAlerts.current.has(a.id)) {
+          seenAlerts.current.add(a.id);
+          notifyChime();
+        }
+      }),
+      on<{ id: string }>(EV.meetingAlertDone, (d) => d && d.id && setMeetingAlerts((q) => q.filter((x) => x.id !== d.id))),
       on<null>(EV.todos, () => api.listTodos().then(setTodos).catch(() => {})),
       on<ConfirmEvent>(EV.confirm, (c) => {
         if (!c || !c.id) return;
@@ -546,6 +562,20 @@ export default function Island() {
     });
   }, []);
 
+  const headMeeting = meetingAlerts[0];
+  // a meeting card drops off 10 minutes after the meeting started
+  useEffect(() => {
+    if (!meetingAlerts.length) return;
+    const prune = () => setMeetingAlerts((q) => (q.some((a) => alertExpired(a, Date.now())) ? q.filter((a) => !alertExpired(a, Date.now())) : q));
+    prune();
+    const t = setInterval(prune, 30_000);
+    return () => clearInterval(t);
+  }, [meetingAlerts.length]);
+  const answerMeeting = useCallback((a: MeetingAlert, action: MeetingAlertAction) => {
+    setMeetingAlerts((q) => q.filter((x) => x.id !== a.id));
+    api.googleMeetingAction(a.id, action).catch(() => {});
+  }, []);
+
   const headClaude = claudeQueue[0];
   useEffect(() => {
     if (!headClaude || hover) return;
@@ -646,6 +676,7 @@ export default function Island() {
     if (agent) return "agent";
     if (promptOpen && detected && !meeting.live) return "meetingPrompt";
     if (card) return "card";
+    if (headMeeting) return "meetingSoon";
     if (headReminder) return "reminder";
     if (headClaude) return "claude";
     if (history) return "history";
@@ -660,7 +691,7 @@ export default function Island() {
     if (hover && dwell) return "peek";
     if (trayItems.all.length || musicLive) return "tray";
     return "collapsed";
-  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headReminder, headClaude, history, meeting.live, meetingOpen, widgetsOpen, handsfree, preview, hover, dwell, tipItem, trayItems.all.length, musicLive]);
+  }, [phase, mode, result, headConfirm, headFix, agent, promptOpen, detected, card, headMeeting, headReminder, headClaude, history, meeting.live, meetingOpen, widgetsOpen, handsfree, preview, hover, dwell, tipItem, trayItems.all.length, musicLive]);
 
   // no expansion before the dwell completes (prevents an enter-resize that could feed back into hover)
   const swell = false;
@@ -756,6 +787,7 @@ export default function Island() {
       else if (card) setCard(null);
       else if (result) setResult(null);
       else if (phase === "error") setPhase("idle");
+      else if (headMeeting) setMeetingAlerts((q) => q.slice(1));
       else if (headReminder) setReminders((q) => q.slice(1));
       else if (headClaude) setClaudeQueue((q) => q.slice(1));
       else if (promptOpen) setPromptOpen(false);
@@ -771,7 +803,7 @@ export default function Island() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", onBlur);
     };
-  }, [phase, mode, card, headReminder, headClaude, history, result, headFix, promptOpen, agent, widgetsOpen, handsfree]);
+  }, [phase, mode, card, headMeeting, headReminder, headClaude, history, result, headFix, promptOpen, agent, widgetsOpen, handsfree]);
 
   // watchdog: if the backend stopped confirming activity, return to idle (never spin forever)
   useEffect(() => {
@@ -886,7 +918,7 @@ export default function Island() {
     : { width: size.width - 24, height: size.height - 24 };
   // whole points at rest (crisp edges at 1x; the collapsed shape keeps the hardware notch's size)
   const pill = collapsed ? rawPill : { width: Math.round(rawPill.width), height: Math.round(rawPill.height) };
-  const bigCard = ["card", "claude", "reminder", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm", "agent"].includes(shown);
+  const bigCard = ["card", "claude", "reminder", "meetingSoon", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm", "agent"].includes(shown);
   const panelOpen = shown === "peek";
   // one radius scale for the whole notch: the closed notch (a touch rounder than the hardware's,
   // so its corners stay hidden behind the camera housing), the live row, cards, the open panel
@@ -1101,6 +1133,8 @@ export default function Island() {
                     setTimeout(() => setCorrections((q) => q.filter((x) => x.id !== headFix.id)), 1300);
                   }}
                 />
+              ) : shown === "meetingSoon" && headMeeting ? (
+                <MeetingCard alert={headMeeting} more={meetingAlerts.length - 1} notch={notch} geo={geo} onAction={(a) => answerMeeting(headMeeting, a)} />
               ) : shown === "meetingPrompt" && detected ? (
                 <MeetingPromptCard app={detected} notch={notch} geo={geo} onStart={() => startNotes(detected)} onLater={() => setPromptOpen(false)} />
               ) : shown === "tray" || shown === "trayTooltip" ? (

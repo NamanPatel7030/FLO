@@ -47,6 +47,8 @@ mod sysaudio;
 mod vault;
 mod slack;
 mod slack_read;
+mod google;
+mod gmail;
 mod state;
 mod stt;
 mod sync;
@@ -583,6 +585,14 @@ pub fn run() {
             commands::slack_status,
             commands::slack_disconnect,
             commands::slack_sync_now,
+            commands::google_oauth_start,
+            commands::google_status,
+            commands::google_disconnect,
+            commands::google_calendars,
+            commands::google_events,
+            commands::google_refresh_events,
+            commands::google_meeting_action,
+            commands::gmail_sync_now,
             commands::confirm_action,
             commands::stop_agent,
             commands::toggle_agent_mode,
@@ -695,6 +705,7 @@ pub fn run() {
                     for url in event.urls() {
                         account::handle_deep_link(st_dl.clone(), url.to_string());
                         slack::handle_deep_link(st_dl.clone(), url.to_string());
+                        google::handle_deep_link(st_dl.clone(), url.to_string());
                     }
                 });
             }
@@ -707,6 +718,7 @@ pub fn run() {
             start_hotkeys(st.clone());
             meeting_detect::spawn(st.clone());
             slack::spawn(st.clone());
+            google::spawn(st.clone());
             match st.db.backfill_due_dates() {
                 Ok(n) if n > 0 => log::info!("dated {n} to-do(s) from their words"),
                 Err(e) => log::warn!("backfill due dates: {e}"),

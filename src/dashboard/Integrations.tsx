@@ -1,10 +1,12 @@
-// Settings → Integrations: agent tools (Claude Code, Codex, Cursor, webhook). Slack has one page: Flo Agent → Slack.
+// Settings → Integrations: agent tools (Claude Code, Codex, Cursor, webhook), Google (Calendar + Gmail).
+// Slack has one page: Flo Agent → Slack.
 import { deviceWord } from "../lib/os";
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { ArrowRight, Asterisk, Check, CodeXml, Copy, MousePointer2, Plug, Terminal, Unplug, Webhook } from "lucide-react";
 import { CodingAgents } from "./CodingAgents";
 import { SlackIcon } from "./SlackCard";
+import { GoogleCard } from "./GoogleCard";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import type { Integration } from "../lib/types";
@@ -62,6 +64,8 @@ export function Integrations() {
           Open <ArrowRight size={13} />
         </span>
       </Card>
+      {/* Connect with Google: Calendar meeting alerts + Gmail */}
+      <GoogleCard />
       <Card className="p-5">
         <CardTitle icon={<CodeXml size={15} />}>Coding agents</CardTitle>
         <p className="-mt-1.5 mb-3.5 text-[12.5px] text-muted">Connect your AI coding account. Projects → Code → Edit with AI hands your task to it, in your repo, on this {deviceWord()}.</p>

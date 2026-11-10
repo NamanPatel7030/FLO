@@ -24,7 +24,7 @@ import type {
   Settings,
   Todo,
   TodoStatus, Skill, Connection } from "./types";
-import { EV, type ThemeMode } from "./types";
+import { DEFAULT_GOOGLE_SETTINGS, EV, type CalendarEvent, type GoogleStatus, type MeetingAlert, type ThemeMode } from "./types";
 import { countWords } from "./format";
 import { codeMock, UNHANDLED } from "./mockCode";
 import { mediaControl, mediaSample, mediaSet } from "./mockMedia";
@@ -68,6 +68,7 @@ const settings: Settings = {
   learnCorrections: true,
   systemPrompt: "",
   slackSync: false,
+  google: { ...DEFAULT_GOOGLE_SETTINGS },
   // ?onboard=1 shows the first-run setup wizard in the browser preview
   accountUrl: "http://localhost:3000",
   onboarded: typeof location === "undefined" || !new URLSearchParams(location.search).has("onboard"),
@@ -639,7 +640,27 @@ function fakeAssistant(text: string): AssistantResponse {
   const q = text.toLowerCase();
   const res: AssistantResponse = { id: uid("a"), query: text, reply: "", actions: [], results: [], createdAt: new Date().toISOString(), mode: "quick" };
   const proj = [...projects.values()].find((p) => q.includes(p.name.toLowerCase()));
-  if (q.includes("to-do") || q.includes("todo") || q.startsWith("add") || q.includes("remind")) {
+  const reply = /\breply to (?:the )?(?:last |latest )?(?:e-?mail|mail) from (\w+)(?: saying| and say| to say)?[:,]?\s+(.+)$/i.exec(text.trim());
+  const gmailAsk = /\b(e-?mails?|inbox|gmail)\b/.test(q);
+  if ((reply || gmailAsk) && !googleStatus?.gmail) {
+    res.reply = "Connect Google in Settings, Integrations and turn on Gmail, then I can read and answer your email.";
+  } else if (reply) {
+    const mail = GMAIL.find((m) => m.from.toLowerCase().startsWith(reply[1].toLowerCase()));
+    const to = mail?.from ?? reply[1];
+    const body = reply[2].trim().replace(/^./, (c) => c.toUpperCase());
+    res.actions.push({ type: "gmail_send", to, text: body, subject: mail ? `Re: ${mail.subject}` : undefined, reply_to: mail?.id });
+    res.results.push(`Waiting for you to confirm the email to ${to}`);
+    res.reply = `Ready to email ${to}: "${body}". Confirm in the notch to send.`;
+    const c: ConfirmEvent = { id: uid("cf"), kind: "gmail", title: `Send to ${to} by email?`, body };
+    gmailPending.set(c.id, to);
+    setTimeout(() => mockEmit(EV.confirm, c), 50);
+  } else if (gmailAsk) {
+    const need = GMAIL.filter((m) => m.needsReply);
+    res.reply =
+      `You have ${GMAIL.length} recent emails. ` +
+      GMAIL.map((m) => `${m.from}: ${m.subject}`).join(" · ") +
+      (need.length ? `. ${need[0].from} is waiting on a reply: "${need[0].snippet}"` : "");
+  } else if (q.includes("to-do") || q.includes("todo") || q.startsWith("add") || q.includes("remind")) {
     const title = text.replace(/.*?(to-?do( to \w+)?|remind me to)[:,]?\s*/i, "").replace(/^./, (c) => c.toUpperCase()) || text;
     const t: Todo = { id: uid("t"), title, source: "assistant", status: "open", projectId: proj?.id, createdAt: res.createdAt };
     todos.unshift(t);
@@ -765,6 +786,93 @@ export function mockConfirm(title = "Send to Rahul on Slack?", body = "Hey Rahul
   mockEmit(EV.confirm, e);
   return e;
 }
+
+// ── Connect with Google (Calendar + Gmail) ──────────────────────────────────
+// google_oauth_start opens the website (recorded in openedUrls) and, after a short delay, the
+// flo://google deep link "arrives" (mockGoogleDeepLink) like it would after Google's consent screen.
+let googleStatus: GoogleStatus | null = null;
+let googlePending: { state: string; calendar: boolean; gmail: boolean } | null = null;
+let googleRevoked = 0;
+const GOOGLE_EMAIL = "you@example.com";
+/** fixtures are laid out once, relative to when the preview loaded, so countdowns really count down */
+const GOOGLE_T0 = Date.now();
+const atMin = (m: number) => new Date(GOOGLE_T0 + m * 60_000).toISOString();
+const me = { name: "You", email: GOOGLE_EMAIL, self: true, response: "accepted" };
+const guest = (name: string, response = "accepted") => ({ name, email: `${name.split(" ")[0].toLowerCase()}@example.com`, self: false, response });
+function googleFixtures(): CalendarEvent[] {
+  const today = dayStr(new Date(GOOGLE_T0));
+  return [
+    { id: "ev_allday", calendarId: "primary", title: "Offsite prep", start: today, end: inDays(1), allDay: true, attendees: [], declined: false },
+    {
+      id: "ev_design",
+      calendarId: "primary",
+      title: "Design sync",
+      start: atMin(25),
+      end: atMin(55),
+      allDay: false,
+      joinUrl: "https://meet.google.com/abc-defg-hij",
+      joinKind: "meet",
+      attendees: [me, guest("Priya Shah"), guest("Rahul Mehta"), guest("Sam Lee", "tentative")],
+      declined: false,
+      htmlLink: "https://calendar.google.com/event?eid=design",
+    },
+    { id: "ev_vendor", calendarId: "primary", title: "Vendor pitch", start: atMin(70), end: atMin(100), allDay: false, attendees: [{ ...me, response: "declined" }, guest("Alex Kim")], declined: true },
+    { id: "ev_priya", calendarId: "primary", title: "1:1 with Priya", start: atMin(120), end: atMin(150), allDay: false, joinUrl: "https://zoom.us/j/123456789", joinKind: "zoom", attendees: [me, guest("Priya Shah")], declined: false },
+    { id: "ev_client", calendarId: "work", title: "Client review", start: atMin(26 * 60), end: atMin(27 * 60), allDay: false, joinUrl: "https://teams.microsoft.com/l/meetup-join/xyz", joinKind: "teams", attendees: [me, guest("Meera Iyer"), guest("Dhruv Burada")], declined: false },
+  ];
+}
+const googleEvents = () => (googleStatus?.calendar && settings.google?.calendar !== false ? googleFixtures() : []);
+function mockGoogleDeepLink(code = "google_handoff_demo_123456") {
+  if (!googlePending || code.toUpperCase().includes("BAD")) {
+    const error = "That Google link expired. Click Connect with Google in Flo again.";
+    mockEmit(EV.google, { connected: false, error });
+    mockEmit(EV.toast, { kind: "error", text: `Google: ${error}` });
+    return false;
+  }
+  const p = googlePending;
+  googlePending = null;
+  // include_granted_scopes: a second consent adds to what was granted before
+  googleStatus = { email: GOOGLE_EMAIL, calendar: p.calendar || !!googleStatus?.calendar, gmail: p.gmail || !!googleStatus?.gmail };
+  mockEmit(EV.google, { connected: true, email: GOOGLE_EMAIL });
+  mockEmit(EV.toast, { kind: "success", text: `Google connected as ${GOOGLE_EMAIL}` });
+  mockEmit(EV.calendar, googleEvents());
+  return true;
+}
+/** alerts fired in this preview (google_meeting_action looks them up by id) */
+const meetingAlerts = new Map<string, MeetingAlert>();
+/** attendee names for the meeting started from a calendar alert (meeting_info.attendees) */
+let liveAttendees: { noteId: string; names: string[] } | null = null;
+/** Test hook: a meeting is about to start (defaults to the "Design sync" fixture, starting in 5 min). */
+export function mockMeetingAlert(o: Partial<MeetingAlert> & { inMinutes?: number } = {}): MeetingAlert {
+  const { inMinutes, ...rest } = o;
+  const ev = googleFixtures().find((e) => e.id === "ev_design")!;
+  const start = new Date(Date.now() + (inMinutes ?? 5) * 60_000);
+  const others = ev.attendees.filter((a) => !a.self);
+  const a: MeetingAlert = {
+    id: `${ev.id}@${start.toISOString()}`,
+    eventId: ev.id,
+    title: ev.title,
+    start: start.toISOString(),
+    end: new Date(start.getTime() + 30 * 60_000).toISOString(),
+    attendees: others.map((x) => x.name),
+    attendeeCount: others.length,
+    joinUrl: ev.joinUrl,
+    joinKind: ev.joinKind,
+    phase: "soon",
+    ...rest,
+  };
+  meetingAlerts.set(a.id, a);
+  mockEmit(EV.meetingAlert, a);
+  return a;
+}
+/** Gmail fixtures (newest first) the mock assistant reads from */
+const GMAIL = [
+  { id: "m1", from: "Rahul Mehta", subject: "Invoice for October", snippet: "Can you send the signed invoice by tomorrow?", needsReply: true },
+  { id: "m2", from: "Priya Shah", subject: "Design sync agenda", snippet: "Added the onboarding flow to today's agenda.", needsReply: false },
+  { id: "m3", from: "Northwind Billing", subject: "Your receipt", snippet: "Thanks for your payment of $49.", needsReply: false },
+];
+/** staged emails waiting for Send in the notch: confirm id → recipient */
+const gmailPending = new Map<string, string>();
 
 /** A Claude Code permission prompt, shaped like claude.rs ask_permission emits it. */
 export function mockPermission(project = "blog-100-plan", tool = "Bash", body = "Run: npm run build && npx wrangler pages deploy ./dist --project-name blog-100-plan --branch main --commit-dirty=true", secsAgo = 0) {
@@ -1191,7 +1299,10 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       if (args.noteId === "n1")
         return { capture: "mic+call", voiced: ["Speaker 1", "Speaker 2", "Rahul"], suggestions: { ...mockSpeakerSuggestions }, knownVoices: ["Meera", "Rahul"] };
       if (args.noteId === "n2") return { capture: "mic", captureNote: "Call audio capture needs macOS 14.2 or later", voiced: [] };
-      return liveNote && args.noteId === liveNote.id ? { capture: "mic+call", voiced: [] } : null;
+      const la = liveAttendees as { noteId: string; names: string[] } | null;
+      const attendees = la && la.noteId === args.noteId ? la.names : undefined;
+      if (liveNote && args.noteId === liveNote.id) return { capture: "mic+call", voiced: [], ...(attendees ? { attendees } : {}) };
+      return attendees ? { capture: "mic+call", voiced: [], attendees } : null;
     }
     case "rename_speaker": {
       const n = notes.find((x) => x.id === args.noteId);
@@ -1354,9 +1465,72 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
     case "slack_sync_now":
       return 3;
-    case "confirm_action":
+    case "confirm_action": {
       confirmLog.push({ id: args.id, approve: !!args.approve });
+      const to = gmailPending.get(args.id);
+      gmailPending.delete(args.id);
+      if (to) return args.approve ? `Sent to ${to}` : "Cancelled";
       return args.approve ? "Sent" : "Cancelled";
+    }
+    case "google_oauth_start": {
+      await sleep(150);
+      const state = "gs_" + Math.random().toString(36).slice(2, 10);
+      googlePending = { state, calendar: !!args.calendar, gmail: !!args.gmail };
+      const scopes = [args.calendar && "calendar", args.gmail && "gmail"].filter(Boolean).join(",");
+      const url = `${ACCOUNT_URL}/api/google/install?state=${state}&scopes=${scopes}`;
+      openedUrls.push(url);
+      // the user approves on Google's page and the browser hands flo://google?code=… back
+      if (!(window as any).__floGoogleManual) setTimeout(() => mockGoogleDeepLink(), 700);
+      return url;
+    }
+    case "google_status":
+      return googleStatus ? { ...googleStatus } : null;
+    case "google_disconnect":
+      if (googleStatus) googleRevoked++;
+      googleStatus = null;
+      mockEmit(EV.google, { connected: false });
+      mockEmit(EV.calendar, []);
+      return null;
+    case "google_calendars": {
+      if (!googleStatus?.calendar) throw new Error("Connect Google Calendar first");
+      const sel = settings.google?.calendars ?? [];
+      return [
+        { id: "primary", summary: GOOGLE_EMAIL, primary: true, color: "#4285F4" },
+        { id: "work", summary: "Work", primary: false, color: "#0B8043" },
+        { id: "family", summary: "Family", primary: false, color: "#E67C73" },
+      ].map((c) => ({ ...c, selected: sel.length ? sel.includes(c.id) : c.primary }));
+    }
+    case "google_events":
+      return googleEvents();
+    case "google_refresh_events": {
+      await sleep(200);
+      const evs = googleEvents();
+      mockEmit(EV.calendar, evs);
+      return evs;
+    }
+    case "google_meeting_action": {
+      const a = meetingAlerts.get(args.id);
+      meetingAlerts.delete(args.id);
+      mockEmit(EV.meetingAlertDone, { id: args.id });
+      switch (args.action) {
+        case "join":
+          if (a?.joinUrl) openedUrls.push(a.joinUrl);
+          return a?.joinKind === "zoom" ? "Opened Zoom" : a?.joinKind === "teams" ? "Opened Microsoft Teams" : "Opened Google Meet";
+        case "notes": {
+          sessionMode = "meeting";
+          const n = startMockMeeting(a?.title ?? "Meeting notes");
+          liveAttendees = { noteId: n.id, names: a?.attendees ?? [] };
+          return n.title;
+        }
+        case "snooze":
+          return "Snoozed until it starts";
+        default:
+          return "Dismissed";
+      }
+    }
+    case "gmail_sync_now":
+      if (!googleStatus?.gmail) throw new Error("Connect Gmail first");
+      return GMAIL.filter((m) => m.needsReply).length;
     case "list_context_docs":
       return contextDocs.map((d) => ({ ...d }));
     case "get_context_doc": {
@@ -1515,6 +1689,17 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     /** simulate flo://slack?code=… arriving (after Connect Slack in the browser) */
     slackDeepLink: mockSlackDeepLink,
     slackRevoked: () => slackRevoked,
+    /** simulate flo://google?code=… arriving (google_oauth_start also does this by itself after ~0.7 s
+     *  unless window.__floGoogleManual is set) */
+    googleDeepLink: mockGoogleDeepLink,
+    /** connect Google right away (both Calendar and Gmail), without the browser round trip */
+    connectGoogle: () => {
+      googlePending = { state: "gs_test", calendar: true, gmail: true };
+      return mockGoogleDeepLink();
+    },
+    googleRevoked: () => googleRevoked,
+    /** fire EV.meetingAlert (default: "Design sync" in 5 min with a Meet link and 3 guests) */
+    meetingAlert: mockMeetingAlert,
     /** now playing: "spotify" | "youtube" | "paused" | "none" | a NowPlaying | null → emits EV.nowPlaying */
     setNowPlaying: (v: unknown) => emitNowPlaying(mediaSet(v as never)),
   };

@@ -131,6 +131,8 @@ export type IslandVariant =
   | "card"
   | "claude"
   | "reminder"
+  /** a Google Calendar meeting starts soon: countdown, guests, Join / Take notes */
+  | "meetingSoon"
   | "tray"
   | "trayTooltip"
   | "correction"
@@ -546,6 +548,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       case "reminder":
         // 500 wide: two-line messages wrap at a natural width instead of crowding the buttons
         return { width: 500, height: nh + ISLAND_GAP + 64 };
+      case "meetingSoon":
+        // the reminder row, a little wider for Join + Take notes and a touch taller for the guests line
+        return { width: 560, height: nh + ISLAND_GAP + 68 };
     }
   }
   // floating capsule (Windows / no notch). Padding 24 for shadow.
@@ -590,6 +595,8 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
     case "claude":
     case "reminder":
       return { width: 380 + pad, height: 74 + pad };
+    case "meetingSoon":
+      return { width: 470 + pad, height: 80 + pad };
   }
 }
 

@@ -11,6 +11,7 @@ import type {
   ComputerSetting,
   ComputerSnapshot,
   ComputerState,
+  Meeting,
   PhoneAction,
   SessionQuestion,
   SessionReply,
@@ -141,6 +142,15 @@ function parseState(r: unknown): ComputerState | null {
       if (typeof x.hint === 'string') out.hint = x.hint;
       return out;
     }),
+    meetings: keep<Meeting>(r.meetings, (m) => {
+      const id = s(m.id);
+      const title = s(m.title).trim();
+      const start = s(m.start);
+      const end = s(m.end);
+      if (!id || !title || Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) return null;
+      const n = typeof m.attendees === 'number' && Number.isFinite(m.attendees) ? Math.max(0, Math.floor(m.attendees)) : 0;
+      return { id, title, start, end, attendees: n, join: m.join === true };
+    }).slice(0, 3),
   };
 }
 

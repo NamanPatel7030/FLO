@@ -20,6 +20,8 @@ pub enum HostClass {
     Weather,
     /// track artwork images (YouTube / Spotify thumbnail CDNs)
     Artwork,
+    /// Google Calendar / Gmail APIs and token revocation (Connect with Google)
+    Google,
     Unknown,
 }
 
@@ -41,6 +43,8 @@ pub enum Purpose {
     Artwork,
     /// end-to-end encrypted sync (ciphertext only, to the account host)
     Sync,
+    /// Google Calendar + Gmail, straight to googleapis.com with the user's own token
+    Google,
 }
 
 impl Purpose {
@@ -59,6 +63,7 @@ impl Purpose {
             Purpose::Account => "account sign-in",
             Purpose::Artwork => "now playing artwork",
             Purpose::Sync => "encrypted sync",
+            Purpose::Google => "google calendar and gmail",
         }
     }
 }
@@ -77,6 +82,10 @@ const PROVIDER_HOSTS: &[&str] = &[
     "ollama.com",
     "api.sarvam.ai",
 ];
+
+/// Calendar (www.googleapis.com/calendar/v3), Gmail, and token revocation. Reachable only for
+/// Purpose::Google, with the user's own OAuth token.
+const GOOGLE_HOSTS: &[&str] = &["www.googleapis.com", "gmail.googleapis.com", "oauth2.googleapis.com"];
 
 pub fn classify_host(host: &str) -> HostClass {
     let h = host.trim_end_matches('.').to_ascii_lowercase();
@@ -97,6 +106,10 @@ pub fn classify_host(host: &str) -> HostClass {
     if h == "i.ytimg.com" || h == "i.scdn.co" {
         return HostClass::Artwork;
     }
+    // Connect with Google: exact API hosts only (generativelanguage.googleapis.com stays a provider)
+    if GOOGLE_HOSTS.contains(&h.as_str()) {
+        return HostClass::Google;
+    }
     HostClass::Unknown
 }
 
@@ -107,6 +120,7 @@ pub fn is_allowed(host: &str, purpose: Purpose, cloud_allowed: bool) -> bool {
         HostClass::ModelHub => purpose == Purpose::ModelDownload,
         HostClass::Weather => purpose == Purpose::Weather,
         HostClass::Artwork => purpose == Purpose::Artwork,
+        HostClass::Google => purpose == Purpose::Google,
         HostClass::Unknown => false,
     }
 }
@@ -285,6 +299,21 @@ mod tests {
         assert!(e.check("https://flo.example.com/api/app/me", Purpose::Account, true).is_ok());
         assert!(e.check("https://flo.example.com/x", Purpose::Assistant, true).is_err());
         assert!(e.check("https://evil.example.com/x", Purpose::Account, true).is_err());
+    }
+
+    #[test]
+    fn google_apis_only_for_google() {
+        for h in ["www.googleapis.com", "gmail.googleapis.com", "oauth2.googleapis.com"] {
+            assert_eq!(classify_host(h), HostClass::Google, "{h}");
+            assert!(is_allowed(h, Purpose::Google, false), "{h}");
+            assert!(!is_allowed(h, Purpose::Assistant, true), "{h}");
+            assert!(!is_allowed(h, Purpose::Slack, true), "{h}");
+        }
+        // Gemini stays a cloud provider, not a Google-integration host
+        assert_eq!(classify_host("generativelanguage.googleapis.com"), HostClass::Provider);
+        assert!(!is_allowed("generativelanguage.googleapis.com", Purpose::Google, false));
+        assert_eq!(classify_host("evil.googleapis.com"), HostClass::Unknown);
+        assert_eq!(classify_host("www.googleapis.com.evil.io"), HostClass::Unknown);
     }
 
     #[test]

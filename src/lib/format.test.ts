@@ -136,6 +136,14 @@ describe("islandSize", () => {
     expect(c.width).toBeGreaterThan(200);
     expect(c.height).toBeLessThan(islandSize("card", geo).height);
   });
+  it("meeting card is at least the reminder card's size, on the notch and floating", () => {
+    const r = islandSize("reminder", geo);
+    const m = islandSize("meetingSoon", geo);
+    expect(m.width).toBeGreaterThanOrEqual(r.width);
+    expect(m.height).toBeGreaterThanOrEqual(r.height);
+    const flat = { ...geo, platform: "windows" as const, hasNotch: false };
+    expect(islandSize("meetingSoon", flat).height).toBeGreaterThanOrEqual(islandSize("reminder", flat).height);
+  });
   for (const nh of [32, 38]) {
     const g = { ...geo, notchHeight: nh, notchWidth: nh === 32 ? 185 : 200 };
     it(`done stays flush with the notch (nh=${nh}) with symmetric wings`, () => {

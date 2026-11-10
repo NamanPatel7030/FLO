@@ -12,6 +12,9 @@ import { ClaudeSessionsCard, TodoRow } from "../components";
 import { missingRequired, permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { deviceWord, os } from "../../lib/os";
 import { Ocean } from "../../island/Ocean";
+import { CalendarClock, Video } from "lucide-react";
+import { joinLabel, nextEvent, nextHeadline, eventTimeLabel } from "../../lib/meetingAlert";
+import { openLink, useCalendar } from "../../lib/useCalendar";
 
 export default function Home() {
   const { settings, todos, projects, notes, geo, go } = useStore();
@@ -69,6 +72,8 @@ export default function Home() {
           <MicOrb />
         </div>
       </Card>
+
+      <NextMeeting />
 
       {/* today stats */}
       <div className="grid grid-cols-4 gap-4">
@@ -250,6 +255,34 @@ function SetupCard({ onOpen }: { onOpen: () => void }) {
           {needsRestart ? "Restart Flo" : "Grant access"}
         </Button>
       </div>
+    </Card>
+  );
+}
+
+/** "Next: Design sync in 25 min" from Google Calendar (hidden when not connected or nothing is left today). */
+function NextMeeting() {
+  const { connected, events, now } = useCalendar();
+  const ev = connected ? nextEvent(events, now) : null;
+  const line = ev ? nextHeadline(events, now) : null;
+  if (!ev || !line) return null;
+  const guests = ev.attendees.filter((a) => !a.self).length;
+  return (
+    <Card className="flex items-center gap-3 px-4 py-3" >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-400/15 text-brand-300">
+        <CalendarClock size={17} />
+      </span>
+      <div className="min-w-0 flex-1" data-testid="home-next-meeting">
+        <div className="truncate text-[14px] font-semibold">{line}</div>
+        <div className="truncate text-[12px] text-muted">
+          {eventTimeLabel(ev)}
+          {guests > 0 ? ` · ${guests} guest${guests === 1 ? "" : "s"}` : ""}
+        </div>
+      </div>
+      {ev.joinUrl && (
+        <Button size="sm" icon={<Video size={13} />} onClick={() => openLink(ev.joinUrl!)}>
+          {joinLabel(ev.joinKind)}
+        </Button>
+      )}
     </Card>
   );
 }

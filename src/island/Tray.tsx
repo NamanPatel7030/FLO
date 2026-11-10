@@ -4,7 +4,7 @@
 import { deviceWord, modKey } from "../lib/os";
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowUpRight, Asterisk, Check, CheckCircle2, ChevronLeft, ChevronRight, Folder, Trash2, ExternalLink, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
+import { ArrowUpRight, Asterisk, Check, CheckCircle2, ChevronLeft, ChevronRight, Folder, Trash2, ExternalLink, Mail, MousePointer2, Radio, Send, Sparkles, Terminal, Webhook, X } from "lucide-react";
 import {
   appLabel,
   claudeStatusLabel,
@@ -413,7 +413,7 @@ export function TrayTooltip({
   );
 }
 
-/** "Send to Rahul on Slack?" — Flo never sends without this OK. */
+/** "Send to Rahul on Slack?" / "Send to Rahul Mehta by email?": Flo never sends without this OK. */
 export function ConfirmCard({
   c,
   more,
@@ -442,12 +442,16 @@ export function ConfirmCard({
       geo={geo}
       testId="confirm-card"
       icon={
+        c.kind === "gmail" ? (
+          <Mail size={16} className="text-white/85" aria-hidden data-testid="confirm-gmail-icon" />
+        ) : (
         <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden>
           <path fill="#E01E5A" d="M5 15a2 2 0 1 1-2-2h2v2Zm1 0a2 2 0 1 1 4 0v5a2 2 0 1 1-4 0v-5Z" />
           <path fill="#36C5F0" d="M9 5a2 2 0 1 1 2-2v2H9Zm0 1a2 2 0 1 1 0 4H4a2 2 0 1 1 0-4h5Z" />
           <path fill="#2EB67D" d="M19 9a2 2 0 1 1 2 2h-2V9Zm-1 0a2 2 0 1 1-4 0V4a2 2 0 1 1 4 0v5Z" />
           <path fill="#ECB22E" d="M15 19a2 2 0 1 1-2 2v-2h2Zm0-1a2 2 0 1 1 0-4h5a2 2 0 1 1 0 4h-5Z" />
         </svg>
+        )
       }
       actions={
         <div className="flex flex-col items-stretch gap-1">

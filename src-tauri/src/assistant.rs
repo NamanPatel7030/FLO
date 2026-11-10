@@ -226,6 +226,7 @@ pub fn screen_action(a: &AssistantAction) -> bool {
             | AssistantAction::OpenApp { .. }
             | AssistantAction::Automate { .. }
             | AssistantAction::SlackSend { .. }
+            | AssistantAction::GmailSend { .. }
             | AssistantAction::ConnectMcp { .. }
     )
 }
@@ -304,9 +305,16 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
     // (a pending Keychain prompt must not hold the answer)
     let slack_on = tokio::time::timeout(std::time::Duration::from_secs(2), crate::secrets::get_api_key_async("slack")).await.ok().and_then(|r| r.ok()).flatten().is_some();
     let slack_ask = slack_wanted(slack_on, query, &crate::slack_read::known_names());
+    // Google: Gmail / Calendar are read only when the request is about them (word checks, no network)
+    let gs = st.settings().google;
+    let google_on = tokio::time::timeout(std::time::Duration::from_secs(2), crate::secrets::get_api_key_async("google")).await.ok().and_then(|r| r.ok()).flatten().is_some();
+    let gmail_connected = google_on && crate::google::gmail_on(&gs);
+    let calendar_connected = google_on && crate::google::calendar_on(&gs);
+    let gmail_ask = gmail_wanted(gmail_connected, query);
+    let calendar_ask = calendar_connected && crate::google::is_calendar_request(query);
     // 1) instant local commands ("open Slack", "google …", "play … on youtube") — no AI needed
     // ("search Slack for …" is a Slack read, not a web search)
-    if selection.is_none() && mode == "quick" && !slack_ask {
+    if selection.is_none() && mode == "quick" && !slack_ask && !gmail_ask && !calendar_ask {
         if let Some(intent) = crate::intents::parse(query) {
             let result = execute(st, &intent.action, front, false).await;
             let (reply, results) = match result {
@@ -435,6 +443,26 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
         None
     };
     system.push_str(&crate::slack_read::assistant_note(slack_on, slack_data.as_deref()));
+    let gmail_data = if gmail_ask {
+        Some(match tokio::time::timeout(SLACK_TIMEOUT, crate::gmail::context_for(st, query)).await {
+            Ok(Ok(d)) => d,
+            Ok(Err(e)) => format!("(Couldn't read Gmail just now: {e})"),
+            Err(_) => "(Gmail didn't answer in time.)".into(),
+        })
+    } else {
+        None
+    };
+    system.push_str(&crate::gmail::assistant_note(gmail_connected, crate::google::can_send(), gmail_data.as_deref()));
+    let calendar_data = if calendar_ask {
+        Some(match tokio::time::timeout(SLACK_TIMEOUT, crate::google::context_for(st)).await {
+            Ok(Ok(d)) => d,
+            Ok(Err(e)) => format!("(Couldn't read the calendar just now: {e})"),
+            Err(_) => "(Google Calendar didn't answer in time.)".into(),
+        })
+    } else {
+        None
+    };
+    system.push_str(&crate::google::calendar_note(calendar_connected, calendar_data.as_deref()));
     if !s.system_prompt.trim().is_empty() {
         system.push_str(&format!("\n\nThe user's own instructions (follow them):\n{}", text::truncate_chars(s.system_prompt.trim(), 2000)));
     }
@@ -516,6 +544,12 @@ const SLACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 /// isn't just "open Slack".
 pub fn slack_wanted(connected: bool, query: &str, names: &[String]) -> bool {
     connected && crate::slack_read::is_slack_request(query, names) && !crate::slack_read::is_open_command(query)
+}
+
+/// Fetch Gmail for this request? Only when Gmail is connected, the request is about email, and it
+/// isn't just "open Gmail".
+pub fn gmail_wanted(connected: bool, query: &str) -> bool {
+    connected && crate::gmail::is_email_request(query) && !crate::gmail::is_open_command(query)
 }
 
 /// The Knowledge documents a skill attaches ("doc:<id>" on the canvas), as prompt text.
@@ -690,6 +724,7 @@ pub async fn execute(st: &Shared, a: &AssistantAction, front: &FrontApp, had_sel
             Ok(format!("Opened {name}"))
         }
         AssistantAction::SlackSend { to, text: body } => crate::slack::propose_send(st, to, body).await,
+        AssistantAction::GmailSend { to, text: body, subject, reply_to } => crate::gmail::propose_send(st, to, body, subject.as_deref(), reply_to.as_deref()).await,
         AssistantAction::Automate { goal } => {
             // one screen agent at a time: a second one would fight the first for the mouse
             if crate::agent::is_running() {

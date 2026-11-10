@@ -956,6 +956,56 @@ pub async fn slack_sync_now(st: State<'_, Shared>) -> R<usize> {
     crate::slack::sync(st.inner()).await.map_err(e)
 }
 
+// ── Connect with Google (google.rs, gmail.rs) ────────────────────────────────
+
+/// One-click Connect with Google (Calendar and / or Gmail): opens our website's Connect URL in the
+/// browser; finishes via flo://google. Checking another box later asks only for the new permission.
+#[tauri::command]
+pub async fn google_oauth_start(st: State<'_, Shared>, calendar: bool, gmail: bool) -> R<String> {
+    crate::google::oauth_start(st.inner(), calendar, gmail).await.map_err(e)
+}
+
+#[tauri::command]
+pub async fn google_status() -> R<Option<crate::google::GoogleStatus>> {
+    crate::google::status().await.map_err(e)
+}
+
+/// Revoke at Google, then forget the tokens and every cached calendar / Gmail bit.
+#[tauri::command]
+pub async fn google_disconnect(st: State<'_, Shared>) -> R<()> {
+    crate::google::disconnect(st.inner()).await.map_err(e)
+}
+
+#[tauri::command]
+pub async fn google_calendars(st: State<'_, Shared>) -> R<Vec<crate::google::GoogleCalendar>> {
+    crate::google::list_calendars(st.inner()).await.map_err(e)
+}
+
+/// Today + the next 48 h from the local cache (no network).
+#[tauri::command]
+pub fn google_events(st: State<Shared>) -> Vec<crate::google::CalendarEvent> {
+    if crate::google::load_tokens().is_none() {
+        return vec![];
+    }
+    crate::google::cached_events(st.inner())
+}
+
+#[tauri::command]
+pub async fn google_refresh_events(st: State<'_, Shared>) -> R<Vec<crate::google::CalendarEvent>> {
+    crate::google::refresh_events(st.inner()).await.map_err(e)
+}
+
+/// The notch meeting card: "dismiss" | "snooze" | "join" | "notes".
+#[tauri::command]
+pub async fn google_meeting_action(st: State<'_, Shared>, id: String, action: String) -> R<String> {
+    crate::google::meeting_action(st.inner(), &id, &action).await.map_err(e)
+}
+
+#[tauri::command]
+pub async fn gmail_sync_now(st: State<'_, Shared>) -> R<usize> {
+    crate::gmail::sync(st.inner()).await.map_err(e)
+}
+
 /// Ask our update server whether a newer Flo exists.
 #[tauri::command]
 pub async fn check_update(app: tauri::AppHandle) -> R<crate::updater::UpdateInfo> {
@@ -981,7 +1031,11 @@ pub fn answer_claude_permission(id: String, decision: String) -> R<()> {
 /// Confirm / cancel a staged action (e.g. a Slack message the assistant drafted).
 #[tauri::command]
 pub async fn confirm_action(st: State<'_, Shared>, id: String, approve: bool) -> R<String> {
-    let r = crate::slack::confirm(st.inner(), &id, approve).await.map_err(e)?;
+    let r = if crate::gmail::has_pending(&id) {
+        crate::gmail::confirm(st.inner(), &id, approve).await.map_err(e)?
+    } else {
+        crate::slack::confirm(st.inner(), &id, approve).await.map_err(e)?
+    };
     st.toast("success", r.clone());
     Ok(r)
 }
