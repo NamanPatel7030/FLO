@@ -515,10 +515,10 @@ async fn run_requests(st: Shared, first: String, busy: Busy) {
         let t0 = Instant::now();
         let outcome = tokio::time::timeout(REQUEST_TIMEOUT, assistant::run(&st, &req, None, &front, None)).await;
         match outcome {
-            Ok(Ok(resp)) => {
+            Ok(Ok(mut resp)) => {
                 let automate = assistant::handed_to_screen(&resp);
                 log::info!("agent mode request: answered in {} ms{}", t0.elapsed().as_millis(), if automate { ", screen control" } else { "" });
-                let _ = st.db.insert_assistant(&resp);
+                assistant::log_exchange(&st, &mut resp, "notch");
                 st.emit(ev::ASSISTANT, resp);
                 if automate {
                     // the agent is spawned in the background: wait for it to start, then to finish

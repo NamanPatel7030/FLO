@@ -182,15 +182,23 @@ pub fn set_setup_capture(on: bool) {
 }
 
 #[tauri::command]
-pub async fn ask_assistant(st: State<'_, Shared>, text: String, mode: Option<String>) -> R<AssistantResponse> {
+/// `thread_id`: continue that Assistant thread (its recent turns are context for the answer);
+/// `new_thread`: start a new thread; neither: the time-gap rule (db.rs) picks the thread.
+pub async fn ask_assistant(st: State<'_, Shared>, text: String, mode: Option<String>, thread_id: Option<String>, new_thread: Option<bool>) -> R<AssistantResponse> {
     let st = st.inner().clone();
     st.state(Phase::Thinking, Mode::Assistant, None);
     let front = st.last_front.lock().clone();
     let mode = mode.unwrap_or_else(|| "quick".into());
-    let r = assistant::run_mode(&st, &text, None, &front, None, &mode).await;
-    match &r {
+    let thread_id = if new_thread.unwrap_or(false) { None } else { thread_id };
+    let turns: Vec<(String, String)> = match &thread_id {
+        Some(t) => st.db.list_assistant_page(Some(t), None, assistant::THREAD_CONTEXT_TURNS).unwrap_or_default().into_iter().map(|r| (r.query, r.reply)).collect(),
+        None => vec![],
+    };
+    let mut r = assistant::with_thread(turns, assistant::run_mode(&st, &text, None, &front, None, &mode)).await;
+    match &mut r {
         Ok(resp) => {
-            let _ = st.db.insert_assistant(resp);
+            resp.thread_id = if new_thread.unwrap_or(false) { Some(resp.id.clone()) } else { thread_id };
+            assistant::log_exchange(&st, resp, "typed");
             st.emit(ev::ASSISTANT, resp.clone());
             st.finish(Phase::Done, Mode::Assistant, None);
         }
@@ -205,6 +213,19 @@ pub fn list_assistant(st: State<Shared>, limit: Option<u32>) -> R<Vec<AssistantR
     st.db.list_assistant(limit.unwrap_or(100)).map_err(e)
 }
 
+/// One page of Assistant history, oldest first: the newest `limit` exchanges (of one thread, or
+/// all) older than the exchange `before`.
+#[tauri::command]
+pub fn list_assistant_page(st: State<Shared>, thread_id: Option<String>, before: Option<String>, limit: Option<u32>) -> R<Vec<AssistantResponse>> {
+    st.db.list_assistant_page(thread_id.as_deref(), before.as_deref(), limit.unwrap_or(30).min(200)).map_err(e)
+}
+
+/// Assistant threads, most recently active first (optionally only those matching `query`).
+#[tauri::command]
+pub fn list_assistant_threads(st: State<Shared>, limit: Option<u32>, query: Option<String>) -> R<Vec<AssistantThread>> {
+    st.db.list_assistant_threads(limit.unwrap_or(50).min(500), query.as_deref()).map_err(e)
+}
+
 /// "Go deeper" (screenshot + detailed answer) or "Search the web" on a previous answer.
 #[tauri::command]
 pub async fn assistant_followup(st: State<'_, Shared>, id: String, mode: String) -> R<AssistantResponse> {
@@ -213,10 +234,12 @@ pub async fn assistant_followup(st: State<'_, Shared>, id: String, mode: String)
         return Err("mode must be deep or web".into());
     }
     st.state(Phase::Thinking, Mode::Assistant, None);
-    let r = assistant::followup(&st, &id, &mode).await;
-    match &r {
+    let mut r = assistant::followup(&st, &id, &mode).await;
+    match &mut r {
         Ok(resp) => {
-            let _ = st.db.insert_assistant(resp);
+            // stays in the thread of the answer it goes deeper on
+            resp.thread_id = st.db.assistant_thread_of(&id).ok().flatten();
+            assistant::log_exchange(&st, resp, "typed");
             st.emit(ev::ASSISTANT, resp.clone());
             st.finish(Phase::Done, Mode::Assistant, None);
         }

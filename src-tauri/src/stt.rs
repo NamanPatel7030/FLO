@@ -326,6 +326,33 @@ pub fn pick_language(scored: &[(String, f32)]) -> Option<String> {
     scored.iter().filter(|(_, l)| l.is_finite()).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(c, _)| c.clone())
 }
 
+/// Languages "auto" may pick from: the configured ones (Settings `auto_languages`), or English +
+/// Hindi when none are configured. Never all 99: a short or unclear English clip otherwise comes
+/// out as Finnish or Welsh ("Suurin suurin kautta.").
+pub fn allowed_languages(configured: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for l in configured.iter().map(|l| l.trim().to_lowercase()) {
+        if !l.is_empty() && l != "auto" && !out.contains(&l) {
+            out.push(l);
+        }
+    }
+    if out.is_empty() {
+        out = vec!["en".into(), "hi".into()];
+    }
+    out
+}
+
+/// Pure (unit-tested): the detected language restricted to `allowed`. `scored` are (code, logit or
+/// probability) for any languages, e.g. all 99; when Whisper's top pick isn't allowed, the best
+/// allowed one wins, and when no allowed language was scored, the first allowed one.
+pub fn pick_allowed_language(scored: &[(String, f32)], allowed: &[String]) -> Option<String> {
+    if allowed.is_empty() {
+        return pick_language(scored);
+    }
+    let within: Vec<(String, f32)> = scored.iter().filter(|(c, _)| allowed.contains(c)).cloned().collect();
+    pick_language(&within).or_else(|| allowed.first().cloned())
+}
+
 /// Pure helper (unit-tested): highest-probability candidate whose language id is known.
 pub fn best_candidate(probs: &[f32], cands: &[String], id_of: impl Fn(&str) -> Option<usize>) -> Option<String> {
     cands
@@ -483,7 +510,8 @@ pub struct LocalWhisper {
     detected: Mutex<Option<String>>,
     /// use the pre-tuning decode settings (benchmark baseline only)
     pub baseline: std::sync::atomic::AtomicBool,
-    /// language "auto" only chooses among these (empty = Whisper's own pick out of 99)
+    /// language "auto" only chooses among these (set from `allowed_languages`, never empty in the
+    /// app; empty = Whisper's own pick out of 99, benchmark only)
     pub auto_langs: Mutex<Vec<String>>,
     /// last transcribe: timing + confidence (diagnostics / benchmark)
     pub last_timing: Mutex<DecodeTiming>,
@@ -670,7 +698,7 @@ impl LocalWhisper {
                 logits.get(ctx.token_lang(id) as usize).map(|l| (c.clone(), *l))
             })
             .collect();
-        pick_language(&scored)
+        pick_allowed_language(&scored, cands)
     }
 
     /// Most likely language among `cands` from a full 30 s window (the old detector; ~1 s).
@@ -1083,6 +1111,26 @@ mod tests {
         assert_eq!(mean_confidence(&[]), 0.0);
         assert!((mean_confidence(&[0.9, 0.7]) - 0.8).abs() < 1e-6);
         assert!(mean_confidence(&[0.2, 0.3]) < CONFIDENT);
+    }
+
+    #[test]
+    fn finnish_detected_falls_back_to_an_allowed_language() {
+        // regression: "Suurin suurin kautta." — Whisper's top pick was Finnish for English speech
+        let scored = vec![("fi".to_string(), 4.1), ("en".to_string(), 3.0), ("hi".to_string(), 1.2), ("cy".to_string(), 3.5)];
+        let allowed = allowed_languages(&["en".into(), "hi".into(), "gu".into()]);
+        assert_eq!(pick_allowed_language(&scored, &allowed).as_deref(), Some("en"));
+        // Hindi still wins when it scores best among the allowed
+        let scored = vec![("fi".to_string(), 4.1), ("en".to_string(), 1.0), ("hi".to_string(), 3.2)];
+        assert_eq!(pick_allowed_language(&scored, &allowed).as_deref(), Some("hi"));
+        // nothing allowed was scored → the first allowed language, never Finnish
+        assert_eq!(pick_allowed_language(&[("fi".to_string(), 4.1)], &allowed).as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn allowed_languages_default_to_english_and_hindi() {
+        assert_eq!(allowed_languages(&[]), vec!["en", "hi"]);
+        assert_eq!(allowed_languages(&["auto".into(), " ".into()]), vec!["en", "hi"]);
+        assert_eq!(allowed_languages(&["EN".into(), "gu".into(), "en".into()]), vec!["en", "gu"]);
     }
 
     #[test]

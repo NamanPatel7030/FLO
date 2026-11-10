@@ -444,6 +444,8 @@ pub fn run() {
             commands::ask_assistant,
             commands::assistant_followup,
             commands::list_assistant,
+            commands::list_assistant_page,
+            commands::list_assistant_threads,
             commands::list_history,
             commands::get_analytics,
             commands::list_todos,

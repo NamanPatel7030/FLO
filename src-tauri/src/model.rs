@@ -55,7 +55,8 @@ pub struct Settings {
     pub stt_model: String,
     pub language: String,
     /// with language "auto": only these languages are considered (stops Hindi being heard as
-    /// Urdu/Marathi/Nepali, or short English clips as Welsh). Empty = all 99.
+    /// Urdu/Marathi/Nepali, or short English clips as Welsh or Finnish). Empty = English + Hindi
+    /// (stt::allowed_languages).
     pub auto_languages: Vec<String>,
     pub llm_provider: String,
     pub llm_model: String,
@@ -333,6 +334,24 @@ pub struct AssistantResponse {
     /// web sources when mode = web
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<Source>,
+    /// the conversation thread this exchange belongs to (set when it is logged; see db.rs)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    /// where the request came from: notch | typed | phone | agent | skill (None on old rows)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// One conversation thread on the Assistant page (derived from assistant_log rows).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantThread {
+    pub id: String,
+    /// the thread's first question
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub count: u32,
 }
 
 fn quick_mode() -> String {
@@ -806,6 +825,9 @@ pub mod ev {
     pub const LEVEL: &str = "flo://level";
     pub const TRANSCRIPT: &str = "flo://transcript";
     pub const ASSISTANT: &str = "flo://assistant";
+    /// an exchange was added to the Assistant history (any source; the notch card listens to
+    /// ASSISTANT, the dashboard's Assistant page to both)
+    pub const ASSISTANT_LOG: &str = "flo://assistant-log";
     pub const MEETING: &str = "flo://meeting";
     pub const TODOS: &str = "flo://todos-changed";
     pub const PROJECTS: &str = "flo://projects-changed";

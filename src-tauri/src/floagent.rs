@@ -503,8 +503,8 @@ fn persona_note(cfg: &AgentConfig) -> String {
 /// The assistant path (instant commands, skills, answers). A reply that hands work to the screen
 /// agent keeps the run open until that finishes.
 async fn answer(st: &Shared, id: &str, goal: &str, front: &FrontApp) -> Result<Option<String>> {
-    let resp = crate::assistant::run_mode(st, goal, None, front, None, "quick").await?;
-    let _ = st.db.insert_assistant(&resp);
+    let mut resp = crate::assistant::run_mode(st, goal, None, front, None, "quick").await?;
+    crate::assistant::log_exchange(st, &mut resp, "agent");
     for r in &resp.results {
         update(st, id, |run| run.push("step", r));
     }

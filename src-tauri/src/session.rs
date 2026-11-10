@@ -281,9 +281,9 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
                 Some(h) => h.await.ok().flatten(),
                 None => None,
             };
-            let resp = assistant::run(st, &raw, selection, &front, screen_text).await?;
+            let mut resp = assistant::run(st, &raw, selection, &front, screen_text).await?;
             save(st, mode, &front.name, &raw, &resp.reply, duration_ms, t0.elapsed().as_millis() as u64);
-            let _ = st.db.insert_assistant(&resp);
+            assistant::log_exchange(st, &mut resp, "notch");
             st.emit(ev::ASSISTANT, resp);
             st.finish(Phase::Done, mode, None);
         }
@@ -351,7 +351,7 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
     if s.stt_provider == "local" {
         let path = stt::model_path(&st.models_dir, &s.stt_model).ok_or_else(|| anyhow!("Unknown speech model {}", s.stt_model))?;
         let w = st.whisper.clone();
-        *w.auto_langs.lock() = s.auto_languages.clone();
+        *w.auto_langs.lock() = stt::allowed_languages(&s.auto_languages);
         let lang = lang_override.clone().unwrap_or_else(|| s.language.clone());
         let samples = audio::trim_silence(&samples);
         tokio::task::spawn_blocking(move || w.transcribe(&path, &samples, &lang, &prompt)).await?

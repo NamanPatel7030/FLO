@@ -2,6 +2,7 @@ import type {
   Analytics,
   AssistantMode,
   AssistantResponse,
+  AssistantThread,
   AttentionStatus,
   ClaudeEvent,
   ClaudeHookStatus,
@@ -82,11 +83,15 @@ export const api = {
   cancelSession: () => call<void>("cancel_session"),
   /** first-run setup's try-out: keep dictations made in Flo's own window inside Flo (no paste) */
   setSetupCapture: (on: boolean) => call<void>("set_setup_capture", { on }),
-  askAssistant: (text: string, mode: AssistantMode = "quick") => call<AssistantResponse>("ask_assistant", { text, mode }),
+  askAssistant: (text: string, mode: AssistantMode = "quick", thread?: { threadId?: string; newThread?: boolean }) =>
+    call<AssistantResponse>("ask_assistant", { text, mode, ...(thread ?? {}) }),
   /** re-ask a previous answer: deep = reads the focused window, detailed; web = web search + sources */
   assistantFollowup: (id: string, mode: "deep" | "web") => call<AssistantResponse>("assistant_followup", { id, mode }),
   /** Not in original contract; falls back to [] if backend lacks it. */
   listAssistant: () => call<AssistantResponse[]>("list_assistant").catch(() => [] as AssistantResponse[]),
+  /** one page of history, oldest first: the newest `limit` exchanges older than `before` (an id) */
+  listAssistantPage: (opts: { threadId?: string; before?: string; limit?: number } = {}) => call<AssistantResponse[]>("list_assistant_page", opts),
+  listAssistantThreads: (opts: { limit?: number; query?: string } = {}) => call<AssistantThread[]>("list_assistant_threads", opts),
 
   listHistory: (limit = 200) => call<Dictation[]>("list_history", { limit }),
   getAnalytics: (days = 30) => call<Analytics>("get_analytics", { days }),

@@ -71,9 +71,9 @@ pub async fn run_and_deliver(st: &Shared, k: &Skill) -> Result<AssistantResponse
     RUNNING.lock().get_or_insert_with(HashSet::new).remove(&k.id);
     let notify_on = st.settings().system_notifications;
     match out {
-        Ok(resp) => {
+        Ok(mut resp) => {
             let _ = st.db.bump_skill_use(&k.id);
-            let _ = st.db.insert_assistant(&resp);
+            crate::assistant::log_exchange(st, &mut resp, "skill");
             if !resp.reply.trim().is_empty() && k.mode != "do" {
                 let n = Note {
                     id: db::new_id(),
@@ -160,6 +160,8 @@ async fn run_headless(st: &Shared, k: &Skill) -> Result<AssistantResponse> {
         created_at: Local::now().to_rfc3339(),
         mode: "quick".into(),
         sources: vec![],
+        thread_id: None,
+        source: None,
     })
 }
 

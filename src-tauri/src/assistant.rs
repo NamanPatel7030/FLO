@@ -89,6 +89,116 @@ fn without_clock(system: &str) -> String {
 /// A pending "Add MCP server" form for the dashboard (set by a voice request, taken once).
 pub static MCP_PREFILL: parking_lot::Mutex<Option<serde_json::Value>> = parking_lot::Mutex::new(None);
 
+/// Earlier turns of the thread a typed follow-up continues (most recent last), at most this many.
+pub const THREAD_CONTEXT_TURNS: u32 = 6;
+/// Characters kept per earlier answer in that context.
+const THREAD_REPLY_CHARS: usize = 600;
+
+tokio::task_local! {
+    /// The selected thread's recent (question, answer) turns while answering a follow-up typed on
+    /// the Assistant page, so "and the other one?" has its context.
+    static THREAD_TURNS: Vec<(String, String)>;
+}
+
+/// Answer with the earlier turns of a thread as context.
+pub async fn with_thread<F: std::future::Future>(turns: Vec<(String, String)>, f: F) -> F::Output {
+    THREAD_TURNS.scope(turns, f).await
+}
+
+fn thread_turns() -> Vec<(String, String)> {
+    THREAD_TURNS.try_with(|t| t.clone()).unwrap_or_default()
+}
+
+/// Pure (unit-tested): the system-prompt section with a thread's earlier turns ("" when none).
+pub fn thread_note(turns: &[(String, String)]) -> String {
+    if turns.is_empty() {
+        return String::new();
+    }
+    let skip = turns.len().saturating_sub(THREAD_CONTEXT_TURNS as usize);
+    let mut s = String::from("\n\nEarlier in this conversation (oldest first; use it to understand follow-ups like \"that\" or \"the other one\", don't repeat it):\n");
+    for (q, a) in &turns[skip..] {
+        s.push_str(&format!("User: {}\nFlo: {}\n", text::truncate_chars(q.trim(), 300), text::truncate_chars(a.trim(), THREAD_REPLY_CHARS)));
+    }
+    s
+}
+
+/// The language a request is written in, as far as the reply goes: "hi" / "gu" for Devanagari /
+/// Gujarati script, "hinglish" for Hindi in Roman letters, else "en". Speech recognition sometimes
+/// turns English into another language ("Suurin suurin kautta."): that is not a reason to answer
+/// in Finnish, so anything else counts as English.
+pub fn request_language(query: &str) -> &'static str {
+    let (mut deva, mut guj, mut letters) = (0usize, 0usize, 0usize);
+    for ch in query.chars() {
+        match ch as u32 {
+            0x0900..=0x097F => deva += 1,
+            0x0A80..=0x0AFF => guj += 1,
+            _ if ch.is_alphabetic() => letters += 1,
+            _ => {}
+        }
+    }
+    let total = deva + guj + letters;
+    if total > 0 && guj * 3 >= total {
+        return "gu";
+    }
+    if total > 0 && deva * 3 >= total {
+        return "hi";
+    }
+    const HINGLISH: &[&str] = &[
+        "hai", "hain", "kya", "kyun", "kaise", "nahi", "nahin", "mujhe", "mera", "meri", "mere", "tum", "aap", "karo", "karna",
+        "kar", "kal", "aaj", "abhi", "bhi", "batao", "bata", "chahiye", "kuch", "kaun", "kahan", "yaar", "accha", "acha", "theek",
+        "haan", "matlab", "wala", "wali", "raha", "rahi", "hoga", "dena", "lena", "sab", "kitna", "kab", "ka", "ki", "ke", "ko",
+        "mein",
+    ];
+    let words: Vec<String> = query.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect();
+    let hits = words.iter().filter(|w| HINGLISH.contains(&w.as_str())).count();
+    if hits >= 2 || (hits == 1 && words.len() <= 3) {
+        return "hinglish";
+    }
+    "en"
+}
+
+/// System-prompt rule for the reply's language (the UI is English).
+pub fn reply_language_note(query: &str) -> &'static str {
+    match request_language(query) {
+        "hi" => "\n\nReply language: the request is in Hindi; reply in Hindi (Devanagari).",
+        "gu" => "\n\nReply language: the request is in Gujarati; reply in Gujarati.",
+        "hinglish" => "\n\nReply language: the request is in Hinglish; reply in Hinglish (Hindi in Roman letters) unless it asks for another language.",
+        _ => "\n\nReply language: English, even when the request looks like another language (speech recognition sometimes mis-hears English as Finnish, Dutch, etc.); if it doesn't make sense, say so in English. Use another language only for text the user explicitly asks to be written or translated in it.",
+    }
+}
+
+/// Add an exchange to the Assistant history, labelled with where it came from
+/// (notch | typed | phone | agent | skill), and tell the dashboard. Callers that also show it in
+/// the notch emit `ev::ASSISTANT` themselves.
+pub fn log_exchange(st: &Shared, resp: &mut AssistantResponse, source: &str) {
+    if resp.source.is_none() {
+        resp.source = Some(source.into());
+    }
+    match st.db.insert_assistant(resp) {
+        Ok(()) => st.emit(ev::ASSISTANT_LOG, resp.clone()),
+        Err(e) => log::warn!("assistant: couldn't save the exchange: {e:#}"),
+    }
+}
+
+/// A phone Ask the computer answered (phone.rs), shown on the Assistant page labelled "Phone".
+/// Not shown in the notch: the user is away from the Mac.
+#[allow(dead_code)] // wired from phone.rs `handle` (Plan::Ask) by its owner
+pub fn log_phone_ask(st: &Shared, question: &str, answer: &str) {
+    let mut resp = AssistantResponse {
+        id: db::new_id(),
+        query: question.into(),
+        reply: answer.into(),
+        actions: vec![],
+        results: vec![],
+        created_at: db::now(),
+        mode: "quick".into(),
+        sources: vec![],
+        thread_id: None,
+        source: None,
+    };
+    log_exchange(st, &mut resp, "phone");
+}
+
 tokio::task_local! {
     /// Set while answering a request that came from the paired phone (phone.rs): the user isn't at
     /// the Mac, so nothing may type into, open or take over the Mac's screen.
@@ -131,7 +241,15 @@ fn remember(id: &str, c: Ctx) {
 
 /// Re-ask a previous question in "deep" (screenshot + detailed) or "web" (search) mode.
 pub async fn followup(st: &Shared, id: &str, mode: &str) -> Result<AssistantResponse> {
-    let c = RECENT.lock().iter().rev().find(|(i, _)| i == id).map(|(_, c)| c.clone()).ok_or_else(|| anyhow!("That answer expired. Ask again."))?;
+    let recent = RECENT.lock().iter().rev().find(|(i, _)| i == id).map(|(_, c)| c.clone());
+    // older answers (another session, or the Assistant page's history): re-ask the logged question
+    let c = match recent {
+        Some(c) => c,
+        None => {
+            let q = st.db.assistant_query(id)?.ok_or_else(|| anyhow!("That answer expired. Ask again."))?;
+            Ctx { query: q, selection: None, front: st.last_front.lock().clone(), screen: None }
+        }
+    };
     run_mode(st, &c.query, c.selection, &c.front, c.screen, mode).await
 }
 
@@ -205,6 +323,8 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
                 created_at: chrono::Local::now().to_rfc3339(),
                 mode: "quick".into(),
                 sources: vec![],
+                thread_id: None,
+                source: None,
             });
         }
     }
@@ -248,6 +368,8 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
                 created_at: chrono::Local::now().to_rfc3339(),
                 mode: mode.into(),
                 sources: vec![],
+                thread_id: None,
+                source: None,
             });
         }
     }
@@ -275,6 +397,8 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
             created_at: chrono::Local::now().to_rfc3339(),
             mode: "web".into(),
             sources: vec![],
+            thread_id: None,
+            source: None,
         });
     }
     // a screenshot for deep answers, and for drafts so the model reads the conversation it replies to
@@ -293,6 +417,8 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
     let context = build_context(st, query, selection.as_deref(), front, screen.as_deref());
     let mut system = prompts::assistant_system(&context);
     system.push_str(prompts::assistant_mode_note(mode));
+    system.push_str(reply_language_note(query));
+    system.push_str(&thread_note(&thread_turns()));
     if drafting {
         system.push_str(prompts::DRAFTING_NOTE);
     }
@@ -379,6 +505,8 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
         created_at: chrono::Local::now().to_rfc3339(),
         mode: mode.into(),
         sources,
+        thread_id: None,
+        source: None,
     })
 }
 
@@ -453,6 +581,8 @@ async fn run_skill_with_tools(
         created_at: chrono::Local::now().to_rfc3339(),
         mode: mode.into(),
         sources: vec![],
+        thread_id: None,
+        source: None,
     })
 }
 
@@ -646,6 +776,8 @@ mod cache_tests {
             created_at: String::new(),
             mode: "quick".into(),
             sources: vec![],
+            thread_id: None,
+            source: None,
         }
     }
 
@@ -681,5 +813,40 @@ mod cache_tests {
         assert_eq!(super::llm_timeout("deep").as_secs(), 150);
         assert!(super::TOOLS_TIMEOUT > super::llm_timeout("web"));
         assert!(!super::too_slow(super::llm_timeout("quick")).to_string().contains('—'));
+    }
+}
+
+#[cfg(test)]
+mod thread_and_language_tests {
+    use super::*;
+
+    #[test]
+    fn thread_note_keeps_the_last_turns_and_caps_long_answers() {
+        assert_eq!(thread_note(&[]), "");
+        let turns: Vec<(String, String)> = (0..8).map(|i| (format!("question {i}"), if i == 7 { "x".repeat(2000) } else { format!("answer {i}") })).collect();
+        let n = thread_note(&turns);
+        assert!(!n.contains("question 1\n") && !n.contains("question 0\n"), "only the last {THREAD_CONTEXT_TURNS} turns");
+        assert!(n.contains("User: question 2\nFlo: answer 2"));
+        assert!(n.find("question 2").unwrap() < n.find("question 6").unwrap(), "oldest first");
+        assert!(n.chars().count() < 2000, "long answers are cut");
+    }
+
+    #[test]
+    fn misheard_english_is_answered_in_english() {
+        // the screenshot: dictation came out as Finnish → the reply must still be English
+        assert_eq!(request_language("Suurin suurin kautta."), "en");
+        assert!(reply_language_note("Suurin suurin kautta.").contains("English"));
+        assert_eq!(request_language("What's blocked across my projects?"), "en");
+    }
+
+    #[test]
+    fn hindi_gujarati_and_hinglish_requests_get_their_language() {
+        assert_eq!(request_language("आज मेरे क्या काम हैं?"), "hi");
+        assert_eq!(request_language("આજે મારે શું કરવાનું છે?"), "gu");
+        assert_eq!(request_language("aaj mujhe kya karna hai"), "hinglish");
+        assert_eq!(request_language("Apollo ka status batao"), "hinglish");
+        // an English sentence with one Hindi-looking word stays English
+        assert_eq!(request_language("Send the deck to Kal Penn by Friday afternoon"), "en");
+        assert!(reply_language_note("आज मेरे क्या काम हैं?").contains("Hindi"));
     }
 }

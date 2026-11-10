@@ -24,6 +24,56 @@ pub fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// An exchange more than this long after the previous one starts a new Assistant thread.
+pub const THREAD_GAP_MINUTES: i64 = 30;
+
+/// `next` is at most `THREAD_GAP_MINUTES` after `prev` (unparseable times never join).
+pub fn within_thread_gap(prev: &str, next: &str) -> bool {
+    match (DateTime::parse_from_rfc3339(prev), DateTime::parse_from_rfc3339(next)) {
+        (Ok(p), Ok(n)) => n.signed_duration_since(p) <= Duration::minutes(THREAD_GAP_MINUTES),
+        _ => false,
+    }
+}
+
+/// Pure (unit-tested): thread ids for rows that have none, by the time-gap rule. `rows` are
+/// (id, created_at, thread_id) oldest first; returns (id, thread_id) for the rows that lacked one.
+/// A row joins the previous row's thread when it came within the gap, else starts its own.
+pub fn assign_threads(rows: &[(String, String, Option<String>)]) -> Vec<(String, String)> {
+    let mut out = vec![];
+    let mut prev: Option<(&str, String)> = None; // (created_at, thread)
+    for (id, at, t) in rows {
+        let thread = match (t, &prev) {
+            (Some(t), _) => t.clone(),
+            (None, Some((pat, pt))) if within_thread_gap(pat, at) => pt.clone(),
+            (None, _) => id.clone(),
+        };
+        if t.is_none() {
+            out.push((id.clone(), thread.clone()));
+        }
+        prev = Some((at.as_str(), thread));
+    }
+    out
+}
+
+/// Give every assistant_log row without a thread one (old rows, rows synced from an older peer).
+fn backfill_threads(c: &Connection) -> Result<()> {
+    let missing: i64 = c.query_row("SELECT COUNT(*) FROM assistant_log WHERE thread_id IS NULL", [], |r| r.get(0))?;
+    if missing == 0 {
+        return Ok(());
+    }
+    let rows = {
+        let mut st = c.prepare("SELECT id, created_at, thread_id FROM assistant_log ORDER BY created_at, id")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    let tx = c.unchecked_transaction()?;
+    for (id, t) in assign_threads(&rows) {
+        tx.execute("UPDATE assistant_log SET thread_id = ?2 WHERE id = ?1", params![id, t])?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 impl Db {
     /// Open (or create) the encrypted database. `key_hex` = 64 hex chars.
     pub fn open(path: &Path, key_hex: Option<&str>) -> Result<Self> {
@@ -122,9 +172,14 @@ impl Db {
             "ALTER TABLE skills ADD COLUMN schedule TEXT",
             "ALTER TABLE skills ADD COLUMN last_run TEXT",
             "ALTER TABLE todos ADD COLUMN note_id TEXT",
+            // Assistant threads: rows written before this get one by the time-gap rule (below)
+            "ALTER TABLE assistant_log ADD COLUMN thread_id TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_assistant_created ON assistant_log(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_assistant_thread ON assistant_log(thread_id, created_at)",
         ] {
             let _ = conn.execute(sql, []);
         }
+        backfill_threads(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -1082,22 +1137,107 @@ impl Db {
     }
 
     // ── assistant log ───────────────────────────────────────────────────────
-    pub fn insert_assistant(&self, r: &AssistantResponse) -> Result<()> {
-        self.conn.lock().execute(
-            "INSERT OR REPLACE INTO assistant_log VALUES (?1,?2,?3)",
-            params![r.id, r.created_at, serde_json::to_string(r)?],
+    /// Log an exchange. Without a `thread_id` it joins the thread of the previous exchange when that
+    /// was at most `THREAD_GAP_MINUTES` earlier, else it starts a thread (id = its own id). The
+    /// chosen thread is written back into `r` so the emitted event carries it.
+    pub fn insert_assistant(&self, r: &mut AssistantResponse) -> Result<()> {
+        let c = self.conn.lock();
+        backfill_threads(&c)?;
+        if r.thread_id.is_none() {
+            let prev: Option<(String, Option<String>)> = c
+                .query_row(
+                    "SELECT created_at, thread_id FROM assistant_log WHERE id != ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
+                    [&r.id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            r.thread_id = Some(match prev {
+                Some((at, Some(t))) if within_thread_gap(&at, &r.created_at) => t,
+                _ => r.id.clone(),
+            });
+        }
+        c.execute(
+            "INSERT OR REPLACE INTO assistant_log(id, created_at, json, thread_id) VALUES (?1,?2,?3,?4)",
+            params![r.id, r.created_at, serde_json::to_string(r)?, r.thread_id],
         )?;
         Ok(())
     }
 
+    /// The newest `limit` exchanges, oldest first.
     pub fn list_assistant(&self, limit: u32) -> Result<Vec<AssistantResponse>> {
+        self.list_assistant_page(None, None, limit)
+    }
+
+    /// One page of exchanges (all, or one thread), oldest first: the newest `limit` that are older
+    /// than the exchange `before` (an id; None = the latest). Load older history by passing the
+    /// first id of the previous page.
+    pub fn list_assistant_page(&self, thread: Option<&str>, before: Option<&str>, limit: u32) -> Result<Vec<AssistantResponse>> {
         let c = self.conn.lock();
-        let mut st = c.prepare("SELECT json FROM assistant_log ORDER BY created_at DESC LIMIT ?1")?;
+        backfill_threads(&c)?;
+        let mut st = c.prepare(
+            "SELECT json, thread_id FROM assistant_log
+             WHERE (?1 IS NULL OR thread_id = ?1)
+               AND (?2 IS NULL
+                    OR created_at < (SELECT created_at FROM assistant_log WHERE id = ?2)
+                    OR (created_at = (SELECT created_at FROM assistant_log WHERE id = ?2) AND id < ?2))
+             ORDER BY created_at DESC, id DESC LIMIT ?3",
+        )?;
         let rows = st
-            .query_map([limit], |r| r.get::<_, String>(0))?
-            .filter_map(|j| j.ok().and_then(|j| serde_json::from_str(&j).ok()))
+            .query_map(params![thread, before, limit], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
+            .filter_map(|row| {
+                let (j, t) = row.ok()?;
+                let mut a: AssistantResponse = serde_json::from_str(&j).ok()?;
+                a.thread_id = t.or(a.thread_id);
+                Some(a)
+            })
             .collect::<Vec<AssistantResponse>>();
         Ok(rows.into_iter().rev().collect())
+    }
+
+    /// Threads, most recently active first. `query` keeps threads where any question or answer
+    /// contains it (case-insensitive for ASCII).
+    pub fn list_assistant_threads(&self, limit: u32, query: Option<&str>) -> Result<Vec<AssistantThread>> {
+        let c = self.conn.lock();
+        backfill_threads(&c)?;
+        let pattern = query.map(str::trim).filter(|q| !q.is_empty()).map(|q| {
+            let esc = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            format!("%{esc}%")
+        });
+        let mut st = c.prepare(
+            "SELECT thread_id, MIN(created_at), MAX(created_at), COUNT(*),
+               (SELECT json_extract(f.json, '$.query') FROM assistant_log f
+                 WHERE f.thread_id = a.thread_id ORDER BY f.created_at, f.id LIMIT 1)
+             FROM assistant_log a
+             WHERE thread_id IS NOT NULL
+             GROUP BY thread_id
+             HAVING ?2 IS NULL OR SUM((COALESCE(json_extract(json, '$.query'), '') || ' ' || COALESCE(json_extract(json, '$.reply'), '')) LIKE ?2 ESCAPE '\\') > 0
+             ORDER BY MAX(created_at) DESC LIMIT ?1",
+        )?;
+        let rows = st
+            .query_map(params![limit, pattern], |r| {
+                Ok(AssistantThread {
+                    id: r.get(0)?,
+                    created_at: r.get(1)?,
+                    updated_at: r.get(2)?,
+                    count: r.get(3)?,
+                    title: crate::text::truncate_chars(r.get::<_, Option<String>>(4)?.unwrap_or_default().trim(), 80),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// The question of a logged exchange.
+    pub fn assistant_query(&self, id: &str) -> Result<Option<String>> {
+        let c = self.conn.lock();
+        let j: Option<String> = c.query_row("SELECT json FROM assistant_log WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(j.and_then(|j| serde_json::from_str::<AssistantResponse>(&j).ok()).map(|a| a.query))
+    }
+
+    /// The thread an exchange belongs to.
+    pub fn assistant_thread_of(&self, id: &str) -> Result<Option<String>> {
+        let c = self.conn.lock();
+        Ok(c.query_row("SELECT thread_id FROM assistant_log WHERE id = ?1", [id], |r| r.get::<_, Option<String>>(0)).optional()?.flatten())
     }
 
     // ── analytics ───────────────────────────────────────────────────────────
@@ -1602,11 +1742,135 @@ mod tests {
         assert!(frac.len() >= 3 && frac[..3].chars().all(|c| c.is_ascii_digit()) && !frac[3..4].chars().all(|c| c.is_ascii_digit()));
     }
 
+    fn ask(q: &str, at: &str) -> AssistantResponse {
+        AssistantResponse {
+            id: new_id(),
+            query: q.to_string(),
+            reply: format!("reply to {q}"),
+            actions: vec![],
+            results: vec![],
+            created_at: at.to_string(),
+            mode: "quick".into(),
+            sources: vec![],
+            thread_id: None,
+            source: None,
+        }
+    }
+
+    fn queries(l: &[AssistantResponse]) -> Vec<&str> {
+        l.iter().map(|r| r.query.as_str()).collect()
+    }
+
+    #[test]
+    fn assistant_threads_start_after_a_30_minute_gap() {
+        let db = Db::open_in_memory().unwrap();
+        let mut a = ask("a", "2026-11-05T10:00:00.000+05:30");
+        let mut b = ask("b", "2026-11-05T10:29:00.000+05:30");
+        let mut c = ask("c", "2026-11-05T11:00:00.000+05:30"); // 31 min after b
+        for r in [&mut a, &mut b, &mut c] {
+            db.insert_assistant(r).unwrap();
+        }
+        assert_eq!(a.thread_id.as_deref(), Some(a.id.as_str()));
+        assert_eq!(b.thread_id, a.thread_id);
+        assert_eq!(c.thread_id.as_deref(), Some(c.id.as_str()));
+        let t = db.list_assistant_threads(10, None).unwrap();
+        assert_eq!(t.len(), 2);
+        // newest thread first, titled by its first question
+        assert_eq!((t[0].title.as_str(), t[0].count), ("c", 1));
+        assert_eq!((t[1].title.as_str(), t[1].count), ("a", 2));
+        assert_eq!(t[1].updated_at, "2026-11-05T10:29:00.000+05:30");
+    }
+
+    #[test]
+    fn assistant_explicit_thread_wins_over_the_gap_rule() {
+        let db = Db::open_in_memory().unwrap();
+        let mut a = ask("a", "2026-11-05T10:00:00.000+05:30");
+        db.insert_assistant(&mut a).unwrap();
+        // "New thread": the caller starts a thread 1 minute later
+        let mut b = ask("b", "2026-11-05T10:01:00.000+05:30");
+        b.thread_id = Some(b.id.clone());
+        db.insert_assistant(&mut b).unwrap();
+        // a follow-up typed into the older thread a day later stays in it
+        let mut c = ask("c", "2026-11-06T10:00:00.000+05:30");
+        c.thread_id = a.thread_id.clone();
+        db.insert_assistant(&mut c).unwrap();
+        assert_eq!(queries(&db.list_assistant_page(a.thread_id.as_deref(), None, 10).unwrap()), vec!["a", "c"]);
+        assert_eq!(queries(&db.list_assistant_page(b.thread_id.as_deref(), None, 10).unwrap()), vec!["b"]);
+        assert_eq!(db.assistant_thread_of(&c.id).unwrap(), a.thread_id);
+    }
+
+    #[test]
+    fn assistant_page_is_newest_n_oldest_first_and_pages_backwards() {
+        let db = Db::open_in_memory().unwrap();
+        let mut ids = vec![];
+        for i in 0..7 {
+            let mut r = ask(&format!("q{i}"), &format!("2026-11-05T10:0{i}:00.000+05:30"));
+            db.insert_assistant(&mut r).unwrap();
+            ids.push(r.id);
+        }
+        // the newest 3, shown oldest-first so the latest is at the bottom
+        let p1 = db.list_assistant_page(None, None, 3).unwrap();
+        assert_eq!(queries(&p1), vec!["q4", "q5", "q6"]);
+        let p2 = db.list_assistant_page(None, Some(&p1[0].id), 3).unwrap();
+        assert_eq!(queries(&p2), vec!["q1", "q2", "q3"]);
+        let p3 = db.list_assistant_page(None, Some(&p2[0].id), 3).unwrap();
+        assert_eq!(queries(&p3), vec!["q0"]);
+        assert!(db.list_assistant_page(None, Some(&p3[0].id), 3).unwrap().is_empty());
+        // rows carry their thread id
+        assert!(p1.iter().all(|r| r.thread_id.is_some()));
+    }
+
+    #[test]
+    fn assistant_threads_backfill_old_rows_by_the_gap_rule() {
+        let db = Db::open_in_memory().unwrap();
+        // rows written before threads existed: no thread_id column value, json without it
+        db.with_conn(|c| {
+            for (id, at) in [("o1", "2026-11-01T09:00:00.000+05:30"), ("o2", "2026-11-01T09:10:00.000+05:30"), ("o3", "2026-11-02T09:00:00.000+05:30")] {
+                let r = AssistantResponse { id: id.into(), ..ask(id, at) };
+                c.execute("INSERT INTO assistant_log(id, created_at, json) VALUES (?1,?2,?3)", params![id, at, serde_json::to_string(&r).unwrap()]).unwrap();
+            }
+        });
+        let t = db.list_assistant_threads(10, None).unwrap();
+        assert_eq!(t.iter().map(|t| (t.id.as_str(), t.count)).collect::<Vec<_>>(), vec![("o3", 1), ("o1", 2)]);
+        // a new ask 5 minutes after the last old one joins its thread
+        let mut n = ask("n", "2026-11-02T09:05:00.000+05:30");
+        db.insert_assistant(&mut n).unwrap();
+        assert_eq!(n.thread_id.as_deref(), Some("o3"));
+    }
+
+    #[test]
+    fn assistant_threads_search_questions_and_answers() {
+        let db = Db::open_in_memory().unwrap();
+        let mut a = ask("What's blocked on Apollo?", "2026-11-01T09:00:00.000+05:30");
+        let mut b = ask("Weather in Pune", "2026-11-03T09:00:00.000+05:30");
+        db.insert_assistant(&mut a).unwrap();
+        db.insert_assistant(&mut b).unwrap();
+        let hit = db.list_assistant_threads(10, Some("apollo")).unwrap();
+        assert_eq!(hit.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), vec!["What's blocked on Apollo?"]);
+        assert_eq!(db.list_assistant_threads(10, Some("reply to weather")).unwrap().len(), 1);
+        assert_eq!(db.list_assistant_threads(10, Some("50%")).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn assistant_thread_assignment_is_pure_and_keeps_existing_ids() {
+        let rows = vec![
+            ("a".to_string(), "2026-11-01T09:00:00+05:30".to_string(), None),
+            ("b".to_string(), "2026-11-01T09:30:00+05:30".to_string(), None), // exactly 30 min: same thread
+            ("c".to_string(), "2026-11-01T10:01:00+05:30".to_string(), Some("x".to_string())),
+            ("d".to_string(), "2026-11-01T10:02:00+05:30".to_string(), None),
+            ("e".to_string(), "not a date".to_string(), None),
+        ];
+        assert_eq!(
+            assign_threads(&rows),
+            vec![("a".into(), "a".into()), ("b".into(), "a".into()), ("d".into(), "x".into()), ("e".into(), "e".into())]
+        );
+    }
+
     #[test]
     fn assistant_log_oldest_first() {
         let db = Db::open_in_memory().unwrap();
         for (i, q) in ["first", "second"].iter().enumerate() {
-            db.insert_assistant(&AssistantResponse {
+            db.insert_assistant(&mut AssistantResponse {
                 id: new_id(),
                 query: q.to_string(),
                 reply: "ok".into(),
@@ -1615,6 +1879,8 @@ mod tests {
                 created_at: format!("2026-11-05T10:0{i}:00+05:30"),
                 mode: "quick".into(),
                 sources: vec![],
+                thread_id: None,
+                source: None,
             })
             .unwrap();
         }

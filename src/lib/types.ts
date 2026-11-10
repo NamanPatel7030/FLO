@@ -274,6 +274,20 @@ export interface AssistantResponse {
   mode: AssistantMode;
   /** web sources (web mode) */
   sources?: { title: string; url: string }[];
+  /** conversation thread (a new one starts after 30 min of quiet, or on New thread) */
+  threadId?: string;
+  /** where the request came from: notch | typed | phone | agent | skill (absent on old exchanges) */
+  source?: string;
+}
+
+/** One Assistant conversation thread, most recently active first in lists. */
+export interface AssistantThread {
+  id: string;
+  /** its first question */
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  count: number;
 }
 
 export interface MeetingSegment {
@@ -703,6 +717,8 @@ export const EV = {
   level: "flo://level",
   transcript: "flo://transcript",
   assistant: "flo://assistant",
+  /** an exchange was added to the Assistant history (any source: notch, typed, phone, agent, skill) */
+  assistantLog: "flo://assistant-log",
   meeting: "flo://meeting",
   todos: "flo://todos-changed",
   projects: "flo://projects-changed",
@@ -765,7 +781,11 @@ export interface HandsfreeEvent {
  *  get_island_geometry() -> IslandGeometry
  *  island_resize({width,height})         open_dashboard({route?})
  *  start_session({mode})                 stop_session()       cancel_session()
- *  ask_assistant({text, mode?}) -> AssistantResponse     (mode: quick | deep | web)
+ *  ask_assistant({text, mode?, threadId?, newThread?}) -> AssistantResponse     (mode: quick | deep | web)
+ *     threadId continues that thread (its recent turns are context); newThread starts one
+ *  list_assistant_page({threadId?, before?, limit?}) -> AssistantResponse[]  — newest `limit` older than
+ *     the exchange `before`, oldest first (latest at the bottom)
+ *  list_assistant_threads({limit?, query?}) -> AssistantThread[]  — most recently active first
  *  assistant_followup({id, mode: "deep"|"web"}) -> AssistantResponse  — re-ask a previous answer
  *     deep = screenshot of the focused window + detailed markdown; web = provider web search + sources
  *     (non-web providers: opens Perplexity and says so)

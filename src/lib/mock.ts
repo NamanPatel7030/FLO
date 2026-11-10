@@ -356,25 +356,71 @@ const netlog: NetworkLogEntry[] = [
 ];
 
 const assistantLog: AssistantResponse[] = [
+  // an older thread (4 days ago, from the notch)
   {
-    id: "a1",
-    query: "What's blocked across my projects?",
-    reply: "Only Hermes API is blocked, it's waiting on Stripe webhook keys from Priya. Apollo and Flo are on track.",
+    id: "a0",
+    query: "Recap my Tuesday",
+    reply: "You closed 4 to-dos on Apollo and recorded the Design sync.",
     actions: [],
     results: [],
-    createdAt: iso(90),
+    createdAt: iso(4 * 1440 + 20),
     mode: "quick",
+    threadId: "a0",
+    source: "notch",
   },
+  {
+    id: "a0b",
+    query: "And what's left for tomorrow?",
+    reply: "The Northwind deck and the Hermes webhook test.",
+    actions: [],
+    results: [],
+    createdAt: iso(4 * 1440 + 10),
+    mode: "quick",
+    threadId: "a0",
+    source: "notch",
+  },
+  // today's thread
   {
     id: "a2",
     query: "Add a to-do to Apollo: send the deck by Friday",
     reply: "Added to Apollo, due Friday.",
     actions: [{ type: "add_todo", title: "Send Apollo deck to Northwind", project: "Apollo", due: inDays(2) }],
     results: ["✓ To-do added to Apollo"],
-    createdAt: iso(120),
+    createdAt: iso(40),
     mode: "quick",
+    threadId: "a2",
+    source: "typed",
+  },
+  {
+    id: "a1",
+    query: "What's blocked across my projects?",
+    reply: "Only Hermes API is blocked, it's waiting on Stripe webhook keys from Priya. Apollo and Flo are on track.",
+    actions: [],
+    results: [],
+    createdAt: iso(20),
+    mode: "quick",
+    threadId: "a2",
+    source: "notch",
   },
 ];
+
+const byTime = (a: AssistantResponse, b: AssistantResponse) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.id < b.id ? -1 : 1);
+
+/** Mirror db.rs insert_assistant: label the source and pick the thread (30-min gap rule). */
+function logAssistant(r: AssistantResponse, source: string, opts: { threadId?: string; newThread?: boolean } = {}): AssistantResponse {
+  if (assistantLog.some((x) => x.id === r.id)) return r;
+  r.source ??= source;
+  if (opts.newThread) r.threadId = r.id;
+  else if (opts.threadId) r.threadId = opts.threadId;
+  else if (!r.threadId) {
+    const sorted = [...assistantLog].sort(byTime);
+    const prev = sorted[sorted.length - 1];
+    r.threadId = prev && Date.parse(r.createdAt) - Date.parse(prev.createdAt) <= 30 * 60_000 ? prev.threadId : r.id;
+  }
+  assistantLog.push(r);
+  mockEmit(EV.assistantLog, r);
+  return r;
+}
 
 const claudeEvents: ClaudeEvent[] = [
   { id: "c1", kind: "stop", sessionId: "s1", project: "Flo", cwd: "/Users/parth/Flo", message: "Built the island UI and glass dashboard; all 15 tests pass.", at: iso(4), seen: false },
@@ -612,7 +658,6 @@ function fakeAssistant(text: string): AssistantResponse {
   } else {
     res.reply = "I'm running in demo mode. Connect a model in Settings → AI and I'll answer for real.";
   }
-  assistantLog.unshift(res);
   return res;
 }
 
@@ -904,7 +949,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       setTimeout(() => mockEmit(EV.state, { phase: "thinking", mode }), 450);
       setTimeout(() => {
         if (mode === "assistant") {
-          const r = fakeAssistant("What's blocked across my projects?");
+          const r = logAssistant(fakeAssistant("What's blocked across my projects?"), "notch");
           mockEmit(EV.assistant, r);
           mockEmit(EV.state, { phase: "idle", mode });
         } else {
@@ -940,12 +985,12 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
           mode: "quick",
           sources: [],
         } as unknown as AssistantResponse;
-        assistantLog.unshift(r);
+        logAssistant(r, "typed", { threadId: args.threadId, newThread: args.newThread });
         mockEmit(EV.assistant, r);
         return r;
       }
       const r = args.mode && args.mode !== "quick" ? fakeDepth(args.text, args.mode) : fakeAssistant(args.text);
-      assistantLog.unshift(r);
+      logAssistant(r, "typed", { threadId: args.threadId, newThread: args.newThread });
       mockEmit(EV.assistant, r);
       return r;
     }
@@ -953,12 +998,31 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       await sleep(900);
       const prev = assistantLog.find((x) => x.id === args.id);
       const r = fakeDepth(prev?.query ?? "that", args.mode);
-      assistantLog.unshift(r);
+      logAssistant(r, "typed", { threadId: prev?.threadId });
       mockEmit(EV.assistant, r);
       return r;
     }
     case "list_assistant":
-      return [...assistantLog];
+      return [...assistantLog].sort(byTime).slice(-(args.limit ?? 100));
+    case "list_assistant_page": {
+      const all = [...assistantLog].sort(byTime).filter((x) => !args.threadId || x.threadId === args.threadId);
+      const end = args.before ? all.findIndex((x) => x.id === args.before) : all.length;
+      const limit = args.limit ?? 30;
+      return end < 0 ? [] : all.slice(Math.max(0, end - limit), end);
+    }
+    case "list_assistant_threads": {
+      const q = String(args.query ?? "").trim().toLowerCase();
+      const groups = new Map<string, AssistantResponse[]>();
+      for (const x of [...assistantLog].sort(byTime)) {
+        const k = x.threadId ?? x.id;
+        groups.set(k, [...(groups.get(k) ?? []), x]);
+      }
+      return [...groups.entries()]
+        .filter(([, xs]) => !q || xs.some((x) => `${x.query} ${x.reply}`.toLowerCase().includes(q)))
+        .map(([id, xs]) => ({ id, title: xs[0].query.slice(0, 80), createdAt: xs[0].createdAt, updatedAt: xs[xs.length - 1].createdAt, count: xs.length }))
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+        .slice(0, args.limit ?? 50);
+    }
     case "list_history":
       return history.slice(0, args.limit ?? 100);
     case "get_analytics":
@@ -1038,7 +1102,7 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
         createdAt: new Date().toISOString(),
         mode: "quick",
       };
-      assistantLog.push(resp);
+      logAssistant(resp, "skill");
       mockEmit(EV.assistant, resp);
       mockEmit(EV.toast, { kind: "success", text: `${k.name} ran` });
       return resp;
@@ -1431,6 +1495,9 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
       claudeSessions.splice(0, claudeSessions.length, ...list);
       emitSessions();
     },
+    /** log an Assistant exchange like the backend does (thread by the 30-min rule) and emit it */
+    assistantExchange: (r: Partial<AssistantResponse> & { query: string }, source = "notch", opts: { threadId?: string; newThread?: boolean } = {}) =>
+      logAssistant({ id: uid("a"), reply: `Answer to ${r.query}`, actions: [], results: [], createdAt: new Date().toISOString(), mode: "quick", ...r } as AssistantResponse, source, opts),
     confirm: mockConfirm,
     permission: mockPermission,
     confirms: confirmLog,
