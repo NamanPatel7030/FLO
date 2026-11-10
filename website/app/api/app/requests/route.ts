@@ -5,7 +5,8 @@ export const runtime = "nodejs";
 /**
  * Desktop: take pending phone requests (each is handed out once) → {requests: [...]}. With
  * `?actions=1` (desktop apps that understand them) it also hands out pending phone actions →
- * {requests, actions}, so one poll covers both.
+ * {requests, actions}, so one poll covers both. An ask may carry `context`: the phone's visible screen
+ * text (bubble Ask only), which the desktop adds to the prompt.
  */
 export async function GET(req: Request) {
   const c = await desktopCaller(req);

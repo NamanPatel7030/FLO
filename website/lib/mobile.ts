@@ -257,55 +257,120 @@ export function cleanData(v: unknown): Record<string, string> | null | "invalid"
 
 export type RequestMode = "ask" | "todo" | "note";
 export const REQUEST_MODES: readonly RequestMode[] = ["ask", "todo", "note"];
-export type MobileRequest = { id: number; mode: RequestMode; text: string; status: string; answer: string | null; createdAt: string };
+export type AnsweredBy = "computer" | "cloud";
+export type MobileRequest = {
+  id: number;
+  mode: RequestMode;
+  text: string;
+  status: string;
+  answer: string | null;
+  createdAt: string;
+  /** Who answered: the user's computer, or the server's cloud AI while the computer was off. */
+  answeredBy: AnsweredBy | null;
+};
+/** For the desktop: plus the phone's screen text (bubble Ask only). */
+export type TakenRequest = MobileRequest & { context: string | null };
+/** For the server's own decisions (the cloud fallback). */
+export type StoredRequest = TakenRequest & { cloudTriedAt: string | null };
 
-const toRequest = (r: { id: string | number; mode: RequestMode; text: string; status: string; answer: string | null; created_at: Date }): MobileRequest => ({
+type RequestRow = {
+  id: string | number;
+  mode: RequestMode;
+  text: string;
+  status: string;
+  answer: string | null;
+  created_at: Date;
+  answered_by?: string | null;
+  context?: string | null;
+  cloud_tried_at?: Date | null;
+};
+
+const toRequest = (r: RequestRow): MobileRequest => ({
   id: Number(r.id),
   mode: r.mode,
   text: r.text,
   status: r.status,
   answer: r.answer,
   createdAt: new Date(r.created_at).toISOString(),
+  answeredBy: r.answered_by === "cloud" || r.answered_by === "computer" ? r.answered_by : null,
 });
+const toTaken = (r: RequestRow): TakenRequest => ({ ...toRequest(r), context: r.context ?? null });
+const toStored = (r: RequestRow): StoredRequest => ({ ...toTaken(r), cloudTriedAt: r.cloud_tried_at ? toIso(r.cloud_tried_at) : null });
 
-/** Phone: queue a request for the Mac. Old requests (7 days) are cleaned up on the way. */
-export async function queueRequest(userId: string, deviceId: string | null, mode: RequestMode, text: string): Promise<MobileRequest> {
+/**
+ * Phone: queue a request for the Mac. `context` is the phone's visible screen text, sent only when the
+ * user holds Ask in the bubble (never with Dictate, never password fields). Old requests (7 days) are
+ * cleaned up on the way.
+ */
+export async function queueRequest(userId: string, deviceId: string | null, mode: RequestMode, text: string, context: string | null = null): Promise<MobileRequest> {
   const db = sql();
   await db`delete from app.mobile_requests where user_id = ${userId} and created_at < now() - interval '7 days'`;
-  const [r] = await db`
-    insert into app.mobile_requests (user_id, device_id, mode, text) values (${userId}, ${deviceId}, ${mode}, ${text})
-    returning id, mode, text, status, answer, created_at`;
-  return toRequest(r as never);
+  const [r] = await db<RequestRow[]>`
+    insert into app.mobile_requests (user_id, device_id, mode, text, context) values (${userId}, ${deviceId}, ${mode}, ${text}, ${mode === "ask" ? context : null})
+    returning id, mode, text, status, answer, created_at, answered_by`;
+  return toRequest(r);
 }
 
-/** Phone: one of its own requests. */
-export async function getRequest(userId: string, id: number): Promise<MobileRequest | null> {
-  const rows = await sql()`select id, mode, text, status, answer, created_at from app.mobile_requests where user_id = ${userId} and id = ${id}`;
-  return rows[0] ? toRequest(rows[0] as never) : null;
+/** Phone (and the cloud fallback): one of the user's requests. */
+export async function getRequest(userId: string, id: number): Promise<StoredRequest | null> {
+  const rows = await sql()<RequestRow[]>`
+    select id, mode, text, status, answer, created_at, answered_by, context, cloud_tried_at
+      from app.mobile_requests where user_id = ${userId} and id = ${id}`;
+  return rows[0] ? toStored(rows[0]) : null;
 }
 
-/** Mac: take up to `limit` pending requests (each is handed out once; stale 'taken' ones retry after 2 minutes). */
-export async function takeRequests(userId: string, limit = 5): Promise<MobileRequest[]> {
-  const rows = await sql()`
+/**
+ * Mac: take up to `limit` pending requests (each is handed out once; stale 'taken' ones retry after 2
+ * minutes). Asks expire after an hour; to-dos and notes wait for the computer (kept 7 days).
+ */
+export async function takeRequests(userId: string, limit = 5): Promise<TakenRequest[]> {
+  const rows = await sql()<RequestRow[]>`
     update app.mobile_requests set status = 'taken', taken_at = now()
      where id in (
        select id from app.mobile_requests
         where user_id = ${userId}
-          and (status = 'pending' or (status = 'taken' and taken_at < now() - interval '2 minutes'))
-          and created_at > now() - interval '1 hour'
+          and (status = 'pending' or (status = 'taken' and taken_at < now() - interval '2 minutes' and answered_by is null))
+          and (created_at > now() - interval '1 hour' or mode in ('todo', 'note'))
         order by id limit ${limit}
         for update skip locked)
-    returning id, mode, text, status, answer, created_at`;
-  return rows.map((r) => toRequest(r as never)).sort((a, b) => a.id - b.id);
+    returning id, mode, text, status, answer, created_at, answered_by, context`;
+  return rows.map(toTaken).sort((a, b) => a.id - b.id);
 }
 
-/** Mac: finish a request with its answer. Returns false if it isn't this user's. */
+/** Mac: finish a request with its answer. Returns null if it isn't this user's. */
 export async function finishRequest(userId: string, id: number, ok: boolean, answer: string): Promise<MobileRequest | null> {
-  const rows = await sql()`
-    update app.mobile_requests set status = ${ok ? "done" : "failed"}, answer = ${answer}, done_at = now()
+  const rows = await sql()<RequestRow[]>`
+    update app.mobile_requests set status = ${ok ? "done" : "failed"}, answer = ${answer}, done_at = now(), answered_by = 'computer'
      where user_id = ${userId} and id = ${id}
-    returning id, mode, text, status, answer, created_at`;
-  return rows[0] ? toRequest(rows[0] as never) : null;
+    returning id, mode, text, status, answer, created_at, answered_by`;
+  return rows[0] ? toRequest(rows[0]) : null;
+}
+
+/** Cloud fallback: claim a pending ask once (atomic: of several concurrent polls only one wins). */
+export async function claimForCloud(userId: string, id: number): Promise<StoredRequest | null> {
+  const rows = await sql()<RequestRow[]>`
+    update app.mobile_requests set status = 'taken', taken_at = now(), cloud_tried_at = now()
+     where user_id = ${userId} and id = ${id} and status = 'pending' and mode = 'ask' and cloud_tried_at is null
+    returning id, mode, text, status, answer, created_at, answered_by, context, cloud_tried_at`;
+  return rows[0] ? toStored(rows[0]) : null;
+}
+
+/** Cloud fallback: the answer is in. */
+export async function finishInCloud(userId: string, id: number, answer: string): Promise<MobileRequest | null> {
+  const rows = await sql()<RequestRow[]>`
+    update app.mobile_requests set status = 'done', answer = ${answer}, done_at = now(), answered_by = 'cloud'
+     where user_id = ${userId} and id = ${id} and status = 'taken' and answered_by is null
+    returning id, mode, text, status, answer, created_at, answered_by`;
+  return rows[0] ? toRequest(rows[0]) : null;
+}
+
+/** Cloud fallback failed (no credits, timeout): hand it back to the computer for when it's online. */
+export async function releaseFromCloud(userId: string, id: number): Promise<MobileRequest | null> {
+  const rows = await sql()<RequestRow[]>`
+    update app.mobile_requests set status = 'pending', taken_at = null
+     where user_id = ${userId} and id = ${id} and status = 'taken' and answered_by is null
+    returning id, mode, text, status, answer, created_at, answered_by`;
+  return rows[0] ? toRequest(rows[0]) : null;
 }
 
 // ── the computer's state for the phone (to-dos, approvals, settings) ─────────

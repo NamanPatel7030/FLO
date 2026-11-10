@@ -45,5 +45,12 @@ Migration `0006_computer_state.sql`. The phone never talks to the computer direc
 - `GET /api/app/requests?actions=1` (desktop) → `{ requests, actions }`: pending actions are handed out once (retried after 1 min if not finished, dropped after 10 min). Without `?actions=1` (older desktops) actions are left alone.
 - `POST /api/app/actions/:id` (desktop) `{ ok, message? }`. The computer re-checks everything: unknown to-dos, closed questions and non-editable settings fail with a message the phone shows.
 
+## Ask from the phone (screen context, cloud fallback)
+Migrations `0005_mobile_ask.sql`, `0007_request_context.sql`.
+
+- `POST /api/mobile/ask` (mobile) `{ mode: ask | todo | note, text, context? }` → 202 `{ request }`. `context` is the visible text of the phone screen, sent by the voice bubble only while the user holds **Ask** (never Dictate, never password fields): `"App: <label> (<package>)\nWindow: <title>\nAlready in the field: <text>\n\n<screen lines>"`. Kept for asks only, line breaks kept, capped at 6000 characters (newest/bottom lines win).
+- `GET /api/app/requests?actions=1` (desktop) hands the ask out with `context`; the desktop answers with one plain-text call (`src-tauri/src/phone.rs` `direct_answer`): the answer is the text itself, inserted into the phone's field. Asks expire after 1 hour; to-dos and notes wait for the computer (7 days).
+- `GET /api/mobile/ask/:id` (mobile) → `{ request: { id, mode, text, status, answer, createdAt, answeredBy: computer | cloud | null }, hint? }`. If an ask is still pending after 8 s and the computer looks offline (no snapshot in 12 min), the server claims it once and answers with cloud AI (Vercel AI Gateway, `anthropic/claude-sonnet-5.5`, same prompt) during this call (up to ~20 s), marking `answeredBy: "cloud"`. If the gateway fails it goes back to the computer and the usual hint shows. Pending to-dos / notes with the computer off get `hint: { reason: "queued", text: "Saved. Your computer will add it when it's back online." }`. `FLO_CLOUD_ANSWERS=off` disables the fallback.
+
 ## Payload size / privacy
 Titles/bodies are short summaries (e.g. "Claude finished in api — 3 files changed"), never transcripts or code.
