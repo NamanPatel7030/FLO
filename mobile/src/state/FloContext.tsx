@@ -3,7 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { AppState, Platform } from 'react-native';
 import { bubble } from '../lib/bubble';
 import { ApiError, claimPairing, createHttpApi, type FloApi } from '../api/client';
-import { createMockApi, isMockMode, MOCK_SESSION, mockStartScreen } from '../api/mock';
+import { createMockApi, isMockMode, MOCK_SESSION, mockOffline, mockStartScreen } from '../api/mock';
 import type { InboxItem, Presence, PresenceStatus, Session } from '../api/types';
 import { latestId, mergeInbox } from '../lib/inbox';
 import { isMuted, type KindGroup } from '../lib/kinds';
@@ -45,6 +45,8 @@ interface FloState {
   banner: Banner | null;
   focusId: string | null;
   error: string | null;
+  /** the last try to reach Flo's server failed for lack of a connection (saved data is showing) */
+  offline: boolean;
   pairedNotice: string | null;
 }
 
@@ -85,6 +87,7 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
   const [banner, setBanner] = useState<Banner | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [offline, setOffline] = useState(() => mockOffline());
   const [pairedNotice, setPairedNotice] = useState<string | null>(null);
 
   const inboxRef = useRef(inbox);
@@ -110,7 +113,7 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
       setMutes(m);
       if (mock) {
         const screen = mockStartScreen();
-        const wantsPaired = screen === 'home' || screen === 'settings' || screen === null;
+        const wantsPaired = screen === 'home' || screen === 'settings' || screen === 'bubble' || screen === 'speech' || (screen === 'voice' && mockOffline()) || screen === null;
         setSession(wantsPaired ? MOCK_SESSION : null);
         setPermission({ state: 'granted', canAskAgain: true });
       } else {
@@ -134,6 +137,11 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
     (e: unknown) => {
       if (e instanceof ApiError && e.isUnauthorized) {
         void signOutLocally('This phone was unpaired from your computer. Pair again to keep getting updates.');
+        return;
+      }
+      // no connection: a calm offline state (the app shows what it saved), not an error
+      if (e instanceof ApiError && e.status === 0) {
+        setOffline(true);
         return;
       }
       setError(e instanceof Error ? e.message : String(e));
@@ -164,6 +172,7 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
     try {
       await Promise.all([fetchPresence(), fetchInbox(true)]);
       setError(null);
+      if (!mock) setOffline(false);
     } catch (e) {
       handleError(e);
     } finally {
@@ -178,7 +187,12 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
     // Only while Flo is on screen: in the background the app does no network work at all
     // (push notifications and the voice bubble don't need it).
     let timer: ReturnType<typeof setInterval> | null = null;
-    const poll = () => void Promise.all([fetchPresence(), fetchInbox(false)]).catch(handleError);
+    const poll = () =>
+      void Promise.all([fetchPresence(), fetchInbox(false)])
+        .then(() => {
+          if (!mock) setOffline(false);
+        })
+        .catch(handleError);
     const start = () => {
       if (!timer) timer = setInterval(poll, POLL_MS);
     };
@@ -356,6 +370,7 @@ export function FloProvider({ children }: { children: React.ReactNode }) {
     banner,
     focusId,
     error,
+    offline,
     pairedNotice,
     pair,
     refresh,

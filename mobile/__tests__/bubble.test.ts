@@ -1,4 +1,4 @@
-import { bubbleState, enableStep, type EnableFacts } from '../src/lib/bubble';
+import { appLink, bubbleState, enableStep, parseHistory, type EnableFacts } from '../src/lib/bubble';
 
 jest.mock('../modules/flo-bubble', () => ({ __esModule: true, default: null }));
 
@@ -44,5 +44,34 @@ describe('enableStep', () => {
   });
   it('moves on to Accessibility once restricted settings are allowed', () => {
     expect(enableStep({ ...base, restricted: 'allowed', triedAccessibility: true })).toBe('accessibility');
+  });
+});
+
+describe('appLink', () => {
+  it('opens the bubble and offline speech screens from the bubble notifications', () => {
+    expect(appLink('flo-pair://bubble')).toBe('bubble');
+    expect(appLink('flo-pair://speech?from=notif')).toBe('speech');
+    expect(appLink('FLO-PAIR://Bubble/')).toBe('bubble');
+  });
+  it('leaves pairing links alone', () => {
+    expect(appLink('flo-pair://flo.hellonaman.com/483920')).toBeNull();
+    expect(appLink('flo-pair://bubbles.example.com/123456')).toBeNull();
+  });
+});
+
+describe('parseHistory', () => {
+  it('reads the bubble Recent list and drops junk', () => {
+    const raw = JSON.stringify([
+      { kind: 'ask', text: 'q', answer: 'a', cloud: true, at: 5 },
+      { kind: 'dictate', text: 'hello', at: 4 },
+      { kind: 'weird', text: 'x', at: 3 },
+      { kind: 'copied' },
+    ]);
+    expect(parseHistory(raw)).toEqual([
+      { kind: 'ask', text: 'q', answer: 'a', cloud: true, at: 5 },
+      { kind: 'dictate', text: 'hello', at: 4 },
+    ]);
+    expect(parseHistory('nope')).toEqual([]);
+    expect(parseHistory(null)).toEqual([]);
   });
 });

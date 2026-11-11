@@ -3,7 +3,11 @@ import * as Clipboard from 'expo-clipboard';
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { describeError } from '../api/client';
+import { ApiError, describeError } from '../api/client';
+import { speechLang } from '../lib/bubbleSettings';
+import { useBubbleSettings } from '../state/BubbleSettings';
+import { useOffline } from '../state/Offline';
+import { OfflinePill } from '../ui/OfflinePill';
 import type { AskMode, AskRequest } from '../api/types';
 import { useVoice } from '../lib/voice';
 import { usePrefs } from '../state/Prefs';
@@ -45,9 +49,12 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
   const insets = useSafeAreaInsets();
   const flo = useFlo();
   const { prefs } = usePrefs();
-  const voice = useVoice(flo.mock);
+  const off = useOffline();
+  const { settings: bubbleSettings } = useBubbleSettings();
+  const voice = useVoice(flo.mock, { lang: speechLang(bubbleSettings.language).tag, offline: !off.online, device: bubbleSettings.engine === 'device' });
   const [mode, setMode] = useState<AskMode>(initialMode);
-  const [phase, setPhase] = useState<'idle' | 'sending' | 'waiting' | 'answered' | 'failed'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'sending' | 'waiting' | 'answered' | 'failed' | 'saved'>('idle');
+  const [saved, setSaved] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [answer, setAnswer] = useState<string>('');
   const [fromCloud, setFromCloud] = useState(false);
@@ -87,11 +94,24 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
     setErr(null);
     setAnswer('');
     setFromCloud(false);
+    setSaved(null);
+    // offline: keep it on the phone; it's sent (and answered) when the phone is back online
+    const keep = () => {
+      setSaved(off.keep(mode, text));
+      setPhase('saved');
+    };
+    if (!off.online && flo.session) return keep();
     setPhase('sending');
     try {
       const api = flo.api;
       if (!api) throw new Error('Pair with your computer first.');
-      const r = await api.ask(mode, text);
+      let r: AskRequest;
+      try {
+        r = await api.ask(mode, text);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 0) return keep();
+        throw e;
+      }
       setHint(null);
       setPhase('waiting');
       const done = await waitForAnswer((id) => api.getAsk(id), r.id, () => cancelled.current, setHint);
@@ -120,6 +140,8 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
     ? 'Listening…'
     : phase === 'sending'
       ? 'Sending to your computer…'
+      : phase === 'saved'
+        ? 'Saved for when you are back online'
       : phase === 'waiting'
         ? hint ?? 'Your computer is on it…'
         : phase === 'answered'
@@ -141,6 +163,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
           <Icon name="close" color={colors.ink} />
         </IconButton>
       </View>
+      <OfflinePill style={{ alignSelf: 'center', marginBottom: 10 }} />
 
       <View style={styles.hero}>
         <Notchling mood={mood} size={150} avatar={prefs.avatar} accent={colors.sky} />
@@ -191,6 +214,16 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
         <View style={styles.error}>
           <Text style={styles.errorText}>{voice.error || err}</Text>
         </View>
+      )}
+
+      {phase === 'saved' && !!saved && (
+        <GlassCard radius={radius.lg} style={styles.answer} tint={colors.amber}>
+          <Text style={type.micro}>Kept on this phone</Text>
+          <Text style={styles.answerText} testID="voice-saved">
+            {saved}
+          </Text>
+          {off.pending > 1 && <Text style={type.small}>{off.pending} things are waiting to send.</Text>}
+        </GlassCard>
       )}
 
       {phase === 'answered' && !!answer && (
@@ -245,7 +278,7 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
         <PrimaryButton
           testID="send"
           style={{ flex: 1.4 }}
-          label={mode === 'ask' ? 'Ask your computer' : mode === 'todo' ? 'Add to-do' : 'Save note'}
+          label={!off.online ? 'Save for later' : mode === 'ask' ? 'Ask your computer' : mode === 'todo' ? 'Add to-do' : 'Save note'}
           loading={busy}
           disabled={!voice.text.trim() || voice.listening || !flo.session}
           onPress={() => void send()}

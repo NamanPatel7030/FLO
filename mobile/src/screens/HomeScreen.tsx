@@ -17,6 +17,7 @@ import { Pressable } from 'react-native';
 import { tap } from '../ui/Buttons';
 import { colors, fonts, type, themed } from '../ui/theme';
 import { InboxRow } from './InboxRow';
+import { OfflinePill } from '../ui/OfflinePill';
 import { PresenceCard } from './PresenceCard';
 import { layoutNext } from '../ui/motion';
 
@@ -97,6 +98,8 @@ export function HomeScreen({ onSettings, onVoice, onNeedsYou, onTodos }: { onSet
               <Icon name="gear" size={20} color={colors.inkSoft} />
             </IconButton>
           </View>
+
+          <OfflinePill style={{ marginBottom: 12 }} />
 
           {!!flo.error && (
             <View style={styles.error}>

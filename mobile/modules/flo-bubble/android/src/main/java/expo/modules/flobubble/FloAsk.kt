@@ -12,6 +12,9 @@ import java.net.URL
 internal class FloAsk(private val server: String, private val token: String) {
   class Failed(message: String) : Exception(message)
 
+  /** Flo's server couldn't be reached at all (no network, or it's down): keep the question for later. */
+  class Offline : Exception("offline")
+
   /** [cloud]: answered by the server's cloud AI because your computer was off. */
   data class Answer(val text: String, val cloud: Boolean)
 
@@ -41,17 +44,19 @@ internal class FloAsk(private val server: String, private val token: String) {
    * Returns the answer. While the computer hasn't picked the question up, [waiting] gets the server's
    * reason (no computer signed in to this account, computer offline since…, busy) each time it changes.
    */
-  fun ask(question: String, screen: String?, waiting: (String) -> Unit, cancelled: () -> Boolean): Answer {
+  /** [sent]: the server's request id, as soon as the question is queued there (for answers that come late). */
+  fun ask(question: String, screen: String?, waiting: (String) -> Unit, cancelled: () -> Boolean, sent: (String) -> Unit = {}): Answer {
     val (code, json) = try {
       val body = JSONObject().put("mode", "ask").put("text", question)
       if (!screen.isNullOrBlank()) body.put("context", screen)
       call("POST", "/api/mobile/ask", body)
     } catch (e: IOException) {
-      throw Failed("Couldn't reach Flo. Check your internet connection.")
+      throw Offline()
     }
     if (code == 401) throw Failed("This phone isn't paired anymore. Open Flo to pair again.")
     if (code !in 200..299) throw Failed(json?.optString("error")?.takeIf { it.isNotBlank() } ?: "Flo had a problem ($code). Try again.")
     val id = json?.optJSONObject("request")?.opt("id")?.toString() ?: throw Failed("Flo sent an unexpected reply.")
+    sent(id)
     val start = System.currentTimeMillis()
     var hint: String? = null
     while (System.currentTimeMillis() - start < 90_000) {

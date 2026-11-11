@@ -16,7 +16,14 @@ src/lib/inbox.ts            inbox normalise / merge / dedupe
 src/lib/kinds.ts            kind → group, colour, Android channel
 src/notifications/push.ts   channels, POST_NOTIFICATIONS, FCM token, listeners
 src/state/FloContext.tsx    app state, polling, token refresh, in-app banners
-src/screens/*               Welcome, Scan, Enter code, Home, Settings
+src/screens/*               Welcome, Scan, Enter code, Home, Settings, Voice bubble, Offline speech
+src/lib/bubbleSettings.ts   voice bubble settings: modes, gesture map, look, speech (pure, tested)
+src/lib/offlineQueue.ts     questions said offline, sent when back online (pure, tested)
+src/lib/offlineSpeech.ts    on-device speech pack status (pure, tested)
+src/state/BubbleSettings.tsx, Offline.tsx   persistence + hand-off to the bubble service, offline flush
+modules/flo-bubble/         native voice bubble (accessibility service, Kotlin): FloOrb (drawing),
+                            FloBubble (windows, drag, tuck, Hide target, caption), FloSpeech (offline
+                            recognition), FloNet, FloNotify, FloIsland (Ask answers), Prefs, BubbleConfig
 __tests__/*                 jest (jest-expo preset)
 ```
 
@@ -30,7 +37,9 @@ npm run typecheck    # tsc --noEmit
 npm run web          # visual preview → open http://localhost:8081/?mock
 ```
 
-Mock URLs for the web preview: `?mock&screen=welcome|scan|code|home|settings`. Add `&empty` for an empty inbox or `&banner` to see a sample in-app banner.
+Mock URLs for the web preview: `?mock&screen=welcome|scan|code|home|settings|bubble|speech|voice`. Add `&empty` for an empty inbox, `&banner` to see a sample in-app banner, `&offline` to see the phone offline (with two questions waiting), `&orb=idle|tucked|listening|thinking|done|error|offline` for the bubble preview state, and `&bubble=off|paused` for the bubble card.
+
+Note: with `CI=1` Metro does not watch files; restart `expo start --web` after edits.
 
 ## 1. Firebase setup (one time; needed for push)
 
@@ -115,10 +124,13 @@ LAN hosts (`192.168.*`, `10.*`, `*.local`, `localhost`) are assumed to be plain 
 
 ## Behaviour notes
 
+- **Voice bubble.** A 40/46/52 dp orb (Settings > Voice bubble). Tap / hold / double-tap each map to Dictate, Ask or nothing; Dictation and Assistant modes can be turned off (both off hides it). Settings are saved in AsyncStorage (`flo.bubble.v1`) and handed to the service as JSON (`FloBubble.setConfig`, SharedPreferences), which applies them live. Drag onto **Hide** to pause it (turn it back on in Settings).
+- **Offline.** Dictation uses Android's on-device recognizer when offline (`createOnDeviceSpeechRecognizer`, Android 12+) or `EXTRA_PREFER_OFFLINE`; Settings > Voice bubble > Offline speech shows installed / downloadable packs (Android 13+) and links to the system screen. Ask offline: kept on the phone and sent the moment the network is back (bubble: ConnectivityManager callback, answer as a notification; app: `flo.askQueue.v1`, flushed while the app is open). The inbox and the last computer snapshot are cached, so the app opens offline.
+
 - **Channels.** The app creates Android channels `claude` (high), `todos`, `reminders` (high), `skills`, `meetings` and `default`. FCM pushes without a `channel_id` land in `default`. To route each kind to its own channel (so users can silence one in Android settings), the server should send `android.notification.channel_id` = the channel for that kind (see `src/lib/kinds.ts`).
 - **Foreground.** While the app is open, the system heads-up is suppressed and an in-app banner is shown instead. Muted kinds show nothing, and the inbox refreshes.
 - **Mutes** live on the device. They filter the inbox and silence in-app banners. Lock-screen pushes for a kind can be silenced through its Android channel ("Android notification settings" in Settings).
 - **Token refresh.** When FCM rotates the token, the app calls `POST /api/mobile/device { pushToken }`. On each launch the current token is compared with the last one sent.
 - **401 from the server** (device removed on the Mac) signs the phone out and returns to the pairing screen.
 - **Polling.** Presence and the inbox (`?after=<newest id>`) refresh every 30 s while the app is in the foreground, on resume, and on pull to refresh.
-- **Security.** The device token is stored in the Android Keystore through `expo-secure-store`. The camera is used only to scan the QR code. `RECORD_AUDIO` and storage permissions are stripped from the manifest.
+- **Security.** The device token is stored in the Android Keystore through `expo-secure-store`. The camera is used only to scan the QR code. Storage permissions are stripped from the manifest; `RECORD_AUDIO` is used only while you talk (in-app or to the bubble). The bubble adds `ACCESS_NETWORK_STATE` (online check) and a launcher-intent `<queries>` (the hide-in-apps list), not `QUERY_ALL_PACKAGES`.

@@ -1,14 +1,24 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
   <uses-permission android:name="android.permission.INTERNET" />
+  <!-- is the phone online? (offline dictation and questions kept for later) -->
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <queries>
     <intent>
       <action android:name="android.speech.RecognitionService" />
     </intent>
+    <!-- "Hide the bubble in these apps": lists apps with a launcher icon (no QUERY_ALL_PACKAGES) -->
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+    <!-- the Google app's offline speech pack screen -->
+    <package android:name="com.google.android.googlequicksearchbox" />
   </queries>
   <application>
-    <!-- The Flo voice bubble: appears next to a text field you tap in any app. Only the system can
-         bind it (BIND_ACCESSIBILITY_SERVICE), and only after the user turns it on in Accessibility. -->
+    <!-- The Flo voice bubble: a small orb on the screen edge for dictation and Ask in any app. Only
+         the system can bind it (BIND_ACCESSIBILITY_SERVICE), and only after the user turns it on in
+         Accessibility. -->
     <service
       android:name="expo.modules.flobubble.FloBubbleService"
       android:label="@string/flo_bubble_label"

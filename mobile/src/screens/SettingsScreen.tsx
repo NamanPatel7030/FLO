@@ -17,6 +17,10 @@ import { KindIcon } from '../ui/KindIcon';
 import { Toggle } from '../ui/Toggle';
 import { BubbleCard } from '../ui/BubbleCard';
 import { bubble } from '../lib/bubble';
+import { bubbleVisible, effectiveGestures, isDictationOnly } from '../lib/bubbleSettings';
+import { useBubbleSettings } from '../state/BubbleSettings';
+import { OfflinePill } from '../ui/OfflinePill';
+import { OrbPreview } from '../ui/OrbPreview';
 import { TAB_BAR_SPACE } from '../ui/TabBar';
 import { useComputer } from '../state/Computer';
 import { computerName, freshness } from '../lib/computer';
@@ -77,8 +81,17 @@ function ThemePicker({ value, onChange }: { value: ThemeMode; onChange: (t: Them
   );
 }
 
-export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: () => void; onCustomize: () => void; onComputer: () => void }) {
+export function SettingsScreen({ onBack, onCustomize, onComputer, onBubble }: { onBack?: () => void; onCustomize: () => void; onComputer: () => void; onBubble: () => void }) {
   const insets = useSafeAreaInsets();
+  const { settings: bs, accent: bubbleAccent } = useBubbleSettings();
+  const bg = effectiveGestures(bs);
+  const bubbleSummary = !bubbleVisible(bs)
+    ? 'Hidden: Dictation and Assistant are both off'
+    : [
+        isDictationOnly(bs) ? 'Dictation only' : bs.assistant && !bs.dictation ? 'Assistant only' : 'Dictate and Ask',
+        `tap to ${bg.tap === 'ask' ? 'ask' : bg.tap === 'dictate' ? 'dictate' : 'do nothing'}`,
+        `${bs.size === 's' ? 'small' : bs.size === 'l' ? 'large' : 'medium'} size`,
+      ].join(', ');
   const flo = useFlo();
   const computer = useComputer();
   const pc = computer.state;
@@ -116,6 +129,7 @@ export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: (
       ) : (
         <Text style={styles.tabTitle}>Settings</Text>
       )}
+      <OfflinePill style={{ marginBottom: 14, marginLeft: 4 }} />
 
       {/* Account */}
       <GlassCard style={styles.account} radius={26}>
@@ -195,8 +209,24 @@ export function SettingsScreen({ onBack, onCustomize, onComputer }: { onBack?: (
       </GlassCard>
       <Text style={styles.footnote}>Saved on this phone and applied right away. Your computer keeps its own settings.</Text>
 
-      {bubble.state() !== 'unavailable' && <Text style={styles.section}>Voice bubble</Text>}
-      <BubbleCard />
+      {bubble.state() !== 'unavailable' && (
+        <>
+          <Text style={styles.section}>Voice bubble</Text>
+          <BubbleCard />
+          <Pressable testID="open-bubble-settings" accessibilityRole="button" onPress={onBubble} style={{ marginTop: 10 }}>
+            <GlassCard style={styles.rowCard}>
+              <OrbPreview size={32} pad={5} accent={bubbleAccent} animate={false} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>Customize the bubble</Text>
+                <Text style={type.small} numberOfLines={2}>
+                  {bubbleSummary}
+                </Text>
+              </View>
+              <Icon name="chevron" size={18} color={colors.inkMuted} />
+            </GlassCard>
+          </Pressable>
+        </>
+      )}
 
       <Text style={styles.section}>Your computer</Text>
       <Pressable testID="open-computer-settings" accessibilityRole="button" onPress={onComputer}>

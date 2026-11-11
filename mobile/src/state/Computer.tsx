@@ -10,6 +10,7 @@ import { ApiError, describeError } from '../api/client';
 import type { ActionKind, ActionValue, ClaudeSessionView, ComputerState } from '../api/types';
 import { finishedSince, finishedText, liveApprovals, needsYouCount as countNeedsYou, overlay, pendingKey, reconcile, type Pending } from '../lib/computer';
 import { useFlo } from './FloContext';
+import { loadComputerCache, saveComputerCache } from '../lib/storage';
 
 interface ComputerCtx {
   /** the snapshot with the phone's own changes on top (null until the computer has published) */
@@ -76,6 +77,8 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
       const snap = await api.getComputer();
       setRaw(snap.state);
       setUpdatedAt(snap.updatedAt);
+      // kept for offline: to-dos and computer settings still open without a connection
+      if (!flo.mock && snap.state) void saveComputerCache({ state: snap.state, updatedAt: snap.updatedAt });
       const at = Date.now();
       const r = reconcile(pendingRef.current, snap, at);
       setPending(r.pending);
@@ -96,7 +99,9 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
       setError(null);
     } catch (e) {
       // an unpaired phone is handled by the inbox poll (FloContext signs out)
-      if (!(e instanceof ApiError && e.isUnauthorized)) setError(describeError(e));
+      // no connection: keep showing the saved snapshot (the offline pill says why it's not fresh)
+      if (e instanceof ApiError && e.status === 0) setError(null);
+      else if (!(e instanceof ApiError && e.isUnauthorized)) setError(describeError(e));
     } finally {
       setLoading(false);
       setLoaded(true);
@@ -113,6 +118,18 @@ export function ComputerProvider({ children }: { children: React.ReactNode }) {
     setSent({});
     setFinished(null);
     sessionsRef.current = null;
+    if (!api || flo.mock) return;
+    // show the last snapshot at once (and offline), until the first fresh one arrives
+    let live = true;
+    void loadComputerCache().then((c) => {
+      if (!live || !c) return;
+      setRaw((cur) => cur ?? c.state);
+      setUpdatedAt((cur) => cur ?? c.updatedAt);
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
   useEffect(() => {

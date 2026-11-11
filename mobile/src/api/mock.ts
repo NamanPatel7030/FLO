@@ -33,6 +33,51 @@ export function mockEmptyInbox(): boolean {
   return query()?.has('empty') === true;
 }
 
+/** `?mock&offline`: the phone has no connection (offline pill, questions kept for later). */
+export function mockOffline(): boolean {
+  return query()?.has('offline') === true;
+}
+
+/** `?mock&bubble=on|off|paused`: the voice bubble's state in the web preview (default on). */
+export function mockBubbleState(): 'on' | 'off' | 'paused' | null {
+  const q = query();
+  if (!q?.has('mock')) return null;
+  const b = q.get('bubble');
+  return b === 'off' || b === 'paused' ? b : 'on';
+}
+
+/** `?mock&orb=idle|listening|thinking|done|error`: which bubble state the preview starts on. */
+export function mockOrbState(): string | null {
+  return query()?.get('orb') ?? null;
+}
+
+/** Sample bubble history for the web preview (FloBubble.history() JSON). */
+export function mockBubbleHistory(): string {
+  const at = (min: number) => Date.now() - min * 60_000;
+  return JSON.stringify([
+    { kind: 'dictate', text: 'Running 10 minutes late, start without me', at: at(3) },
+    { kind: 'queued', text: 'What time is my dentist appointment tomorrow?', at: at(9) },
+    { kind: 'ask', text: 'How do I reply to Priya about Friday?', answer: 'Say yes to Friday at 4 and offer to bring the deck.', at: at(42) },
+    { kind: 'copied', text: 'Kal subah 9 baje call karte hain', at: at(120) },
+  ]);
+}
+
+/** Sample offline speech support for the web preview. */
+export function mockSpeechSupport(): string {
+  return JSON.stringify({ api: 'full', onDevice: true, installed: ['en-US', 'en-IN'], pending: ['hi-IN'], supported: ['en-IN', 'en-US', 'hi-IN', 'gu-IN'], online: [] });
+}
+
+export const MOCK_APPS = [
+  { pkg: 'com.android.chrome', label: 'Chrome' },
+  { pkg: 'com.google.android.gm', label: 'Gmail' },
+  { pkg: 'com.instagram.android', label: 'Instagram' },
+  { pkg: 'com.google.android.apps.maps', label: 'Maps' },
+  { pkg: 'com.google.android.apps.messaging', label: 'Messages' },
+  { pkg: 'com.slack', label: 'Slack' },
+  { pkg: 'com.whatsapp', label: 'WhatsApp' },
+  { pkg: 'com.google.android.youtube', label: 'YouTube' },
+];
+
 /** `?mock&stress`: long names and titles plus Hindi / Gujarati copy, for layout review. */
 const stress = (): boolean => query()?.has('stress') === true;
 

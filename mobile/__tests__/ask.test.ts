@@ -1,6 +1,22 @@
 import { ApiError, createHttpApi, describeError, parseAsk } from '../src/api/client';
 import { DEFAULT_SERVER } from '../src/lib/pairing';
-import { voiceError } from '../src/lib/voice';
+import { startOptions, voiceError } from '../src/lib/voice';
+
+describe('voice startOptions', () => {
+  it('uses the chosen language and the online recognizer when connected', () => {
+    const o = startOptions({ lang: 'hi-IN' });
+    expect(o.lang).toBe('hi-IN');
+    expect(o.requiresOnDeviceRecognition).toBe(false);
+    expect(o.androidIntentOptions).not.toHaveProperty('EXTRA_PREFER_OFFLINE');
+  });
+  it('insists on on-device recognition offline (or when chosen)', () => {
+    for (const o of [startOptions({ offline: true }), startOptions({ device: true })]) {
+      expect(o.requiresOnDeviceRecognition).toBe(true);
+      expect(o.androidIntentOptions).toHaveProperty('EXTRA_PREFER_OFFLINE', true);
+    }
+    expect(startOptions({ lang: null }).lang).toBe('en-IN');
+  });
+});
 
 describe('parseAsk', () => {
   it('reads a request', () => {

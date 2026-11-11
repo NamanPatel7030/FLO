@@ -9,8 +9,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import org.json.JSONArray
+import org.json.JSONObject
 
 class FloBubbleModule : Module() {
   private val ctx: Context
@@ -45,6 +48,72 @@ class FloBubbleModule : Module() {
 
     /** The Android API level, for the enable flow. */
     Function("sdkInt") { Build.VERSION.SDK_INT }
+
+    // ── settings (src/lib/bubbleSettings.ts toNative) ──────────────────────────
+
+    /** The bubble's settings as JSON; the service applies them at once. */
+    Function("setConfig") { json: String -> Prefs.setConfig(ctx, json) }
+
+    /** Flo was opened: a bubble waiting since the restart ("Start on boot" off) can come back. */
+    Function("clearBootPause") { Prefs.setBootPaused(ctx, false) }
+
+    // ── offline ────────────────────────────────────────────────────────────────
+
+    Function("isOnline") { FloNet.online(ctx) }
+
+    /** Questions the bubble kept while offline: [{id, text, at}] */
+    Function("queued") { Prefs.queued(ctx) }
+
+    /** The same, removed (the app sends them itself while the bubble service is off). */
+    Function("takeQueued") { Prefs.takeAll(ctx) }
+
+    /** Questions sent from the bubble whose answer came too late for it: [{requestId, text, at}] */
+    Function("takeLate") { Prefs.takeLate(ctx) }
+
+    /** Recent dictations and answers from the bubble, newest first. */
+    Function("history") { Prefs.history(ctx) }
+
+    Function("clearHistory") { Prefs.clearHistory(ctx) }
+
+    // ── offline speech ─────────────────────────────────────────────────────────
+
+    /** On-device speech recognition exists on this phone (Android 12+). */
+    Function("onDeviceSpeech") { FloSpeech.onDeviceAvailable(ctx) }
+
+    /** JSON: which offline language packs are installed / downloading / downloadable (offlineSpeech.ts). */
+    AsyncFunction("speechSupport") { lang: String?, promise: Promise ->
+      FloSpeech.support(ctx, lang) { promise.resolve(it) }
+    }
+
+    /** Android 13+: start downloading the offline pack for [lang]. False when the phone can't. */
+    AsyncFunction("downloadSpeech") { lang: String, promise: Promise ->
+      FloSpeech.download(ctx, lang) { promise.resolve(it) }
+    }
+
+    /** Opens the system screen with offline speech packs; returns which one opened. */
+    Function("openSpeechSettings") { FloSpeech.openSettings(ctx) }
+
+    // ── hide in apps ───────────────────────────────────────────────────────────
+
+    /** Apps with a launcher icon, as JSON [{pkg, label}] sorted by name (for "Hide in these apps"). */
+    AsyncFunction("launchableApps") {
+      val pm = ctx.packageManager
+      val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+      @Suppress("DEPRECATION")
+      val found = pm.queryIntentActivities(i, 0)
+      val seen = HashSet<String>()
+      val out = ArrayList<Pair<String, String>>()
+      for (r in found) {
+        val pkg = r.activityInfo?.packageName ?: continue
+        if (pkg == ctx.packageName || !seen.add(pkg)) continue
+        val label = runCatching { r.loadLabel(pm).toString() }.getOrNull()?.takeIf { it.isNotBlank() } ?: pkg
+        out.add(pkg to label)
+      }
+      out.sortBy { it.second.lowercase() }
+      val a = JSONArray()
+      for ((pkg, label) in out) a.put(JSONObject().put("pkg", pkg).put("label", label))
+      a.toString()
+    }
   }
 
   private fun openAccessibility(c: Context) {

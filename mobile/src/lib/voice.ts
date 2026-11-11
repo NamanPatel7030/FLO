@@ -25,7 +25,7 @@ export function voiceError(code: string, message?: string): string {
     case 'speech-timeout':
       return "I didn't hear anything. Tap the mic and talk.";
     case 'network':
-      return 'Speech recognition needs a connection on this phone. Try again when you are online.';
+      return 'No connection, and this language is not downloaded for offline use. Settings, Voice bubble, Offline speech shows how.';
     case 'language-not-supported':
     case 'service-not-allowed':
       return 'This phone has no speech recognizer turned on. Install or enable Google speech services.';
@@ -36,7 +36,31 @@ export function voiceError(code: string, message?: string): string {
   }
 }
 
-export function useVoice(mock = false): Voice {
+export interface VoiceOptions {
+  /** BCP-47 tag; null = the phone's language */
+  lang?: string | null;
+  /** no connection: insist on the on-device recognizer */
+  offline?: boolean;
+  /** the user wants on-device recognition even online */
+  device?: boolean;
+}
+
+/** The recognizer options for a start (unit-tested). */
+export function startOptions(o: VoiceOptions) {
+  const onDevice = !!(o.offline || o.device);
+  return {
+    lang: o.lang || 'en-IN',
+    interimResults: true,
+    continuous: false,
+    addsPunctuation: true,
+    requiresOnDeviceRecognition: onDevice,
+    androidIntentOptions: { EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 1800, ...(onDevice ? { EXTRA_PREFER_OFFLINE: true } : {}) },
+  };
+}
+
+export function useVoice(mock = false, options: VoiceOptions = {}): Voice {
+  const opts = useRef(options);
+  opts.current = options;
   const mod = useRef<Module | null>(null);
   const [listening, setListening] = useState(false);
   const [text, setText] = useState('');
@@ -93,13 +117,7 @@ export function useVoice(mock = false): Voice {
     if (!M) return setError('Voice input works in the Android app.');
     const perm = await M.requestPermissionsAsync();
     if (!perm.granted) return setError(voiceError('not-allowed'));
-    M.start({
-      lang: 'en-US',
-      interimResults: true,
-      continuous: false,
-      addsPunctuation: true,
-      androidIntentOptions: { EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 1800 },
-    });
+    M.start(startOptions(opts.current));
   }, [mock]);
 
   const stop = useCallback(() => {

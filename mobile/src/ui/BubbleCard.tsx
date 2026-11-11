@@ -88,7 +88,7 @@ export function BubbleCard() {
         <View style={{ flex: 1 }}>
           <Text style={type.heading}>Voice bubble</Text>
           <Text style={[type.small, { marginTop: 2 }]}>
-            {state === 'on' ? 'Bubble is on. Tap a text field in any app.' : state === 'paused' ? 'Paused.' : 'Off.'}
+            {state === 'on' ? 'On. Tap a text field in any app.' : state === 'paused' ? 'Hidden. Switch it on to bring it back.' : 'Off.'}
           </Text>
         </View>
         {state !== 'off' && (
@@ -103,7 +103,7 @@ export function BubbleCard() {
         )}
       </View>
       <Text style={[type.body, { marginTop: 10 }]}>
-        Tap any text field and the Flo dock appears near your thumb. Drag it anywhere. Hold Dictate and speak to type, or hold Ask and speak to ask Flo. While Flo listens or answers, a small island shows at the top of the screen.
+        Tap a text field in any app and a small Flo bubble appears on the edge of the screen. Tap it to dictate or hold it to ask Flo (change this in Customize the bubble). Dictation works without internet.
       </Text>
       {state === 'off' && (
         <>
@@ -140,7 +140,7 @@ export function BubbleCard() {
             </View>
           ) : (
             <Text style={[type.small, { marginTop: 10 }]}>
-              Flo only reads the field you are typing in, never passwords, and only listens while you hold a button.
+              Flo only reads the field you are typing in, never passwords, and only listens while you talk to the bubble.
             </Text>
           )}
           {micDenied && <Text style={[type.small, { marginTop: 8, color: colors.amber }]}>Flo needs the microphone for this. Allow it in Android settings, then try again.</Text>}

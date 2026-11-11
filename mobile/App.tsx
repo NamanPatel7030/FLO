@@ -11,6 +11,11 @@ import { ActivityIndicator, Animated, BackHandler, Easing, Linking, Platform, St
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mockStartScreen, mockStartTab } from './src/api/mock';
 import { parsePairPayload, type PairTarget } from './src/lib/pairing';
+import { appLink } from './src/lib/bubble';
+import { BubbleSettingsScreen } from './src/screens/BubbleSettingsScreen';
+import { OfflineSpeechScreen } from './src/screens/OfflineSpeechScreen';
+import { BubbleSettingsProvider } from './src/state/BubbleSettings';
+import { OfflineProvider } from './src/state/Offline';
 import { EnterCodeScreen } from './src/screens/EnterCodeScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ScanScreen } from './src/screens/ScanScreen';
@@ -34,7 +39,7 @@ import { Icon } from './src/ui/Icons';
 import { colors, fonts, themed } from './src/ui/theme';
 import { spring, timing } from './src/ui/motion';
 
-type Route = 'welcome' | 'scan' | 'code' | Tab | 'computer' | 'customize' | 'voice';
+type Route = 'welcome' | 'scan' | 'code' | Tab | 'computer' | 'customize' | 'voice' | 'bubble' | 'speech';
 const TABS: readonly Route[] = ['home', 'todos', 'needs', 'settings'];
 const isTab = (r: Route): r is Tab => TABS.includes(r);
 const native = Platform.OS !== 'web';
@@ -126,13 +131,13 @@ function Root() {
           ? r
           : t === 'todos' || t === 'needs' || t === 'settings' || t === 'computer'
             ? t
-            : m === 'settings' || m === 'customize' || m === 'voice'
+            : m === 'settings' || m === 'customize' || m === 'voice' || m === 'bubble' || m === 'speech'
               ? m
               : 'home',
       );
     } else {
       const s = flo.mock ? mockStartScreen() : null;
-      setRoute(s === 'scan' || s === 'code' || s === 'customize' || s === 'voice' ? s : 'welcome');
+      setRoute(s === 'scan' || s === 'code' || s === 'customize' || s === 'voice' || s === 'bubble' || s === 'speech' ? s : 'welcome');
     }
   }, [flo.booting, flo.session, flo.mock]);
 
@@ -140,6 +145,12 @@ function Root() {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const handle = (url: string | null | undefined) => {
+      // the bubble's own notifications: flo-pair://bubble (answers) and flo-pair://speech (offline packs)
+      const inApp = url ? appLink(url) : null;
+      if (inApp) {
+        setRoute(inApp);
+        return;
+      }
       const t = url ? parsePairPayload(url) : null;
       if (t && !flo.session) {
         setPrefill(t);
@@ -154,7 +165,8 @@ function Root() {
   // Android back button.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (route === 'customize' || route === 'computer') return setRoute(flo.session ? 'settings' : 'welcome'), true;
+      if (route === 'speech') return setRoute('bubble'), true;
+      if (route === 'customize' || route === 'computer' || route === 'bubble') return setRoute(flo.session ? 'settings' : 'welcome'), true;
       if (route === 'voice') return setRoute(flo.session ? lastTab.current : 'welcome'), true;
       if (route === 'settings' || route === 'todos' || route === 'needs') return setRoute(flo.session ? 'home' : 'welcome'), true;
       if (route === 'scan' || route === 'code') return setRoute('welcome'), true;
@@ -210,7 +222,13 @@ function Root() {
       screen = <NeedsYouScreen />;
       break;
     case 'settings':
-      screen = <SettingsScreen onCustomize={() => setRoute('customize')} onComputer={() => setRoute('computer')} />;
+      screen = <SettingsScreen onCustomize={() => setRoute('customize')} onComputer={() => setRoute('computer')} onBubble={() => setRoute('bubble')} />;
+      break;
+    case 'bubble':
+      screen = <BubbleSettingsScreen onBack={() => setRoute(flo.session ? 'settings' : 'welcome')} onSpeech={() => setRoute('speech')} />;
+      break;
+    case 'speech':
+      screen = <OfflineSpeechScreen onBack={() => setRoute('bubble')} />;
       break;
     case 'computer':
       screen = <ComputerSettingsScreen onBack={() => setRoute('settings')} />;
@@ -267,11 +285,15 @@ function Themed() {
     <UpdatesProvider disabled={Platform.OS === 'web'}>
       <StatusBar style={dark ? 'light' : 'dark'} />
       <FloProvider>
-        <ComputerProvider>
-          <View style={[styles.app, { backgroundColor: colors.bg }]}>
-            <Root />
-          </View>
-        </ComputerProvider>
+        <OfflineProvider>
+          <BubbleSettingsProvider>
+            <ComputerProvider>
+              <View style={[styles.app, { backgroundColor: colors.bg }]}>
+                <Root />
+              </View>
+            </ComputerProvider>
+          </BubbleSettingsProvider>
+        </OfflineProvider>
       </FloProvider>
     </UpdatesProvider>
   );
