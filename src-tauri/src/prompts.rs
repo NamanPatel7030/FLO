@@ -174,15 +174,44 @@ Keep the transcript's language. Do not invent facts. No em dashes."
     )
 }
 
+/// Attention's one model call per screen change. The model lists candidate tasks and grades each
+/// one (kind, importance, who must act, already done); `capture::select` then keeps only what the
+/// user's Task capture level allows, with fixed thresholds, so the level never depends on wording.
 pub fn attention_system(user_name: &str, today: &str) -> String {
     let who = if user_name.is_empty() { "the user".to_string() } else { user_name.to_string() };
     format!(
-        "You read text captured from {who}'s screen and find things {who} still needs to DO: unanswered requests addressed to them, promised follow-ups, deadlines, bills, meetings to prepare for.\n\
-Ignore: things already done, generic UI text, ads, news, code, things addressed to other people.\n\
+        "You read text captured from {who}'s screen and decide which items are real tasks {who} still needs to do.\n\
+Use the app and window title to judge what the screen is:\n\
+- Team chat channel: only messages that name or @mention {who}, or ask {who} directly, are addressed to them. Other people's conversations are not.\n\
+- Email inbox list: a subject line alone is not a task unless it is a direct request, an invoice or bill, or has a deadline. Newsletters and promotions are noise.\n\
+- Code editor or terminal: TODO or FIXME comments, compiler output and logs are minor unless they are assigned to {who}.\n\
+- Shopping sites, ads, offers, cookie banners, notifications, menus and settings screens are noise.\n\
+Only lines under \"New text on screen\" may produce tasks. \"Rest of the screen\" is context only.\n\
+For each candidate return:\n\
+- title: imperative, specific (who and what), max 10 words, e.g. 'Reply to Rahul about the invoice'\n\
+- reason: a short quote or why it matters\n\
+- person: who asked or is waiting, or null\n\
+- due: YYYY-MM-DD or null\n\
+- kind: request (someone asked {who} to do something), commitment ({who} promised it), deadline (bill, payment, submission, anything with a due date), meeting (prepare for or join a scheduled meeting), next_step (a concrete step in {who}'s own work), minor (small, routine or optional), noise (UI text, ads, notifications, other people's tasks)\n\
+- importance: 1 to 5. 5 = real consequence soon (deadline, money, a client or manager waiting). 4 = a direct ask or a promise to someone. 3 = a useful concrete next step. 2 = small or optional. 1 = trivial\n\
+- forUser: true only if {who} is the one who must act\n\
+- done: true if it is already handled (replied, paid, merged, checked off)\n\
+- confidence: 0.0 to 1.0 that this is a real task\n\
 Today is {today}.\n\
-Respond with ONLY JSON: {{\"todos\":[{{\"title\":\"<imperative, max 10 words, e.g. 'Reply to Rahul about invoice'>\",\"reason\":\"<short quote or why>\",\"person\":\"<name or null>\",\"due\":\"<YYYY-MM-DD or null>\",\"confidence\":0.0-1.0}}]}}.\n\
-Return {{\"todos\":[]}} if nothing is clearly actionable. Precision over recall."
+Respond with ONLY JSON: {{\"todos\":[{{\"title\":\"...\",\"reason\":\"...\",\"person\":null,\"due\":null,\"kind\":\"request\",\"importance\":4,\"forUser\":true,\"done\":false,\"confidence\":0.9}}]}}, at most 6 items, most important first.\n\
+Return {{\"todos\":[]}} if nothing is actionable. Never invent tasks."
     )
+}
+
+/// The user message for `attention_system`: where the text came from, the new lines, and a little of
+/// the rest of the window so the model can tell a direct ask from a busy channel.
+pub fn attention_user(app: &str, window: &str, fresh: &str, rest: &str) -> String {
+    let mut u = format!("App: {app}\nWindow: {window}\nNew text on screen:\n{}", crate::text::truncate_chars(fresh, 3000));
+    let rest = rest.trim();
+    if !rest.is_empty() {
+        u.push_str(&format!("\n\nRest of the screen (context only):\n{}", crate::text::truncate_chars(rest, 600)));
+    }
+    u
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -240,7 +269,44 @@ pub struct ExtractedTodo {
     pub reason: Option<String>,
     pub person: Option<String>,
     pub due: Option<String>,
+    #[serde(deserialize_with = "lenient_f64")]
     pub confidence: Option<f64>,
+    /// 1 to 5, graded by the model (see `attention_system`)
+    #[serde(deserialize_with = "lenient_f64")]
+    pub importance: Option<f64>,
+    /// request | commitment | deadline | meeting | next_step | minor | noise
+    pub kind: Option<String>,
+    /// the user is the one who must act
+    #[serde(alias = "forUser", alias = "for_you", alias = "forYou", deserialize_with = "lenient_bool")]
+    pub for_user: Option<bool>,
+    /// already handled
+    #[serde(deserialize_with = "lenient_bool")]
+    pub done: Option<bool>,
+}
+
+/// Small models write numbers as strings ("4", "0.8"); accept both, and null.
+fn lenient_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match v {
+        Some(serde_json::Value::Number(n)) => n.as_f64(),
+        Some(serde_json::Value::String(s)) => s.trim().parse().ok(),
+        _ => None,
+    })
+}
+
+/// true / "true" / "yes" / 1; anything else unknown.
+fn lenient_bool<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match v {
+        Some(serde_json::Value::Bool(b)) => Some(b),
+        Some(serde_json::Value::String(s)) => match s.trim().to_lowercase().as_str() {
+            "true" | "yes" | "1" => Some(true),
+            "false" | "no" | "0" => Some(false),
+            _ => None,
+        },
+        Some(serde_json::Value::Number(n)) => n.as_f64().map(|f| f != 0.0),
+        _ => None,
+    })
 }
 
 pub fn parse_attention(raw: &str, min_confidence: f64) -> Vec<ExtractedTodo> {
@@ -423,6 +489,34 @@ mod tests {
         let t = parse_attention(raw, 0.6);
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].title, "Reply to Rahul");
+    }
+
+    #[test]
+    fn attention_parses_grades_leniently() {
+        let raw = r#"{"todos":[{"title":"Pay the electricity bill","importance":"5","kind":"deadline","forUser":"yes","done":false,"confidence":"0.9","person":null},{"title":"Reply to Asha","importance":4,"for_user":false,"done":"true"}]}"#;
+        let t = parse_attention(raw, 0.0);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].importance, Some(5.0));
+        assert_eq!(t[0].confidence, Some(0.9));
+        assert_eq!(t[0].kind.as_deref(), Some("deadline"));
+        assert_eq!(t[0].for_user, Some(true));
+        assert_eq!(t[0].done, Some(false));
+        assert_eq!(t[1].for_user, Some(false));
+        assert_eq!(t[1].done, Some(true));
+    }
+
+    #[test]
+    fn attention_prompt_asks_for_grades_and_screen_context() {
+        let p = attention_system("Parth", "2026-11-11 (Wednesday)");
+        for k in ["importance", "kind", "forUser", "done", "confidence", "Team chat channel", "Code editor", "Shopping sites", "context only"] {
+            assert!(p.contains(k), "missing {k}: {p}");
+        }
+        assert!(p.contains("Parth") && p.contains("2026-11-11"));
+        assert!(!p.contains('\u{2014}'), "no em dashes");
+        let u = attention_user("Slack", "#general", "Parth can you send the deck?", "Earlier: lunch at 1?");
+        assert!(u.starts_with("App: Slack\nWindow: #general\nNew text on screen:\nParth can you send the deck?"), "{u}");
+        assert!(u.contains("Rest of the screen (context only):\nEarlier: lunch at 1?"));
+        assert!(!attention_user("Slack", "#general", "x", "  ").contains("Rest of the screen"));
     }
 
     #[test]

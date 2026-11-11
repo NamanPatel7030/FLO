@@ -20,6 +20,7 @@ mod handsfree;
 mod hotkey;
 mod island_pos;
 mod cache;
+mod capture;
 mod intents;
 mod livetx;
 mod llm;

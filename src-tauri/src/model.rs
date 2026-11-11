@@ -68,6 +68,9 @@ pub struct Settings {
     pub attention_interval_sec: u64,
     pub attention_denylist: Vec<String>,
     pub attention_cloud_allowed: bool,
+    /// Task capture: how selective Flo is when it notes to-dos by itself (screen, meetings).
+    /// "essential" | "balanced" | "comprehensive" (capture::CaptureLevel)
+    pub task_capture: String,
     pub play_sounds: bool,
     pub typing_wpm: u32,
     pub user_name: String,
@@ -222,6 +225,7 @@ impl Default for Settings {
                 "System Settings".into(),
             ],
             attention_cloud_allowed: false,
+            task_capture: "balanced".into(),
             play_sounds: true,
             typing_wpm: 40,
             user_name: String::new(),

@@ -4,6 +4,7 @@ use crate::egress::Purpose;
 use crate::llm::{self, ChatRequest, LlmConfig};
 use crate::model::*;
 use crate::state::Shared;
+use crate::capture::{self, CaptureLevel};
 use crate::{platform, prompts, text};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -70,7 +71,7 @@ pub fn status(st: &Shared) -> AttentionStatus {
 
 fn denied(app: &str, denylist: &[String]) -> bool {
     let a = app.to_lowercase();
-    a.is_empty() || a == "flo" || a.contains("flo flow") || a == "flo-flow" || denylist.iter().any(|d| !d.trim().is_empty() && a.contains(&d.to_lowercase()))
+    a.is_empty() || crate::capture::is_flo_window(app, "") || a.contains("flo flow") || denylist.iter().any(|d| !d.trim().is_empty() && a.contains(&d.to_lowercase()))
 }
 
 pub fn spawn(st: Shared) {
@@ -100,7 +101,7 @@ pub fn spawn(st: Shared) {
                 continue;
             }
             let Ok(Some((app, title, screen))) = tokio::task::spawn_blocking(capture_focused_text).await else { continue };
-            if denied(&app, &s.attention_denylist) {
+            if denied(&app, &s.attention_denylist) || capture::is_flo_window(&app, &title) {
                 continue;
             }
             st.attention_captures.fetch_add(1, Ordering::SeqCst);
@@ -144,7 +145,9 @@ async fn process(st: &Shared, app: &str, title: &str, screen: &str) -> anyhow::R
         }
         map.insert(app.to_string(), std::time::Instant::now());
     }
-    let user = format!("App: {app}\nWindow: {title}\nNew text on screen:\n{}", text::truncate_chars(&fresh_text, 3000));
+    // a little of the rest of the window, so the model can tell a direct ask from a busy channel
+    let rest: Vec<&str> = screen.lines().map(str::trim).filter(|l| !l.is_empty() && !fresh.iter().any(|f| f == l)).collect();
+    let user = prompts::attention_user(app, title, &fresh_text, &rest.join("\n"));
     let raw = llm::chat(
         &st.egress,
         &cfgl,
@@ -155,20 +158,27 @@ async fn process(st: &Shared, app: &str, title: &str, screen: &str) -> anyhow::R
             json: true,
             purpose: Purpose::Attention,
             cloud_allowed: s.attention_cloud_allowed,
-            max_tokens: 400,
+            max_tokens: 700,
         },
     )
     .await?;
-    let found = prompts::parse_attention(&raw, 0.6);
+    // the model grades; the user's Task capture level decides, with fixed thresholds (capture.rs)
+    let level = CaptureLevel::parse(&s.task_capture);
+    let found = prompts::parse_attention(&raw, 0.0);
     if found.is_empty() {
         return Ok(());
     }
-    let mut existing = st.db.open_todo_titles()?;
-    let mut added = 0;
-    for t in found.into_iter().take(5) {
-        if text::is_duplicate_todo(&t.title, &existing) {
-            continue;
-        }
+    let now = chrono::Utc::now().timestamp();
+    let room = RATE.lock().room(now, level);
+    let existing = st.db.capture_seen_titles()?;
+    let candidates = found.len();
+    let picked = capture::select(found, level, &existing, room);
+    log::info!("attention: task capture {} kept {} of {candidates} from {app}", level.as_str(), picked.len());
+    if picked.is_empty() {
+        return Ok(());
+    }
+    RATE.lock().record(now, picked.len());
+    for t in picked {
         let todo = Todo {
             id: crate::db::new_id(),
             title: t.title.clone(),
@@ -183,15 +193,14 @@ async fn process(st: &Shared, app: &str, title: &str, screen: &str) -> anyhow::R
             ..Default::default()
         };
         st.db.insert_todo(&todo)?;
-        existing.push(t.title.clone());
-        added += 1;
         st.toast("info", format!("New to-do from {app}: {}", t.title));
     }
-    if added > 0 {
-        st.emit(ev::TODOS, ());
-    }
+    st.emit(ev::TODOS, ());
     Ok(())
 }
+
+/// To-dos Attention added in the last hour (Task capture's hourly limit).
+static RATE: parking_lot::Mutex<capture::RateWindow> = parking_lot::Mutex::new(capture::RateWindow::new());
 
 #[cfg(test)]
 mod tests {

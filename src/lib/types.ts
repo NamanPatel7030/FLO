@@ -83,6 +83,8 @@ export interface Settings {
   attentionDenylist: string[];
   /** Allow Attention text (never images) to reach a cloud LLM. Default false. */
   attentionCloudAllowed: boolean;
+  /** How selective Flo is when it notes to-dos by itself (screen, meeting action items). Default "balanced". */
+  taskCapture: TaskCaptureLevel;
   playSounds: boolean;
   /** hover panels size: small | big | bigger | biggest */
   notchSize?: NotchSize;
@@ -195,6 +197,8 @@ export interface PushResult {
 
 export type ThemeMode = "dark" | "light" | "system";
 export type NotchSize = "small" | "big" | "bigger" | "biggest";
+/** Task capture levels (src-tauri/src/capture.rs CaptureLevel) */
+export type TaskCaptureLevel = "essential" | "balanced" | "comprehensive";
 export type NotchStyle =
   | "ribbon"
   | "wave"

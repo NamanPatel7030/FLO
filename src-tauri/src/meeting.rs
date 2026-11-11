@@ -556,13 +556,17 @@ pub fn split_owner(item: &str) -> (Option<String>, String) {
 /// Turn a meeting's action items into to-dos linked to the note: the owner becomes the to-do's
 /// person, a deadline in the words dates it (and arms a reminder, via `insert_todo`), and the
 /// meeting is the "why". Your own items read as plain tasks; others' keep "Owner: task".
-/// Returns how many were added (duplicates of open to-dos are skipped).
-pub fn file_action_items(db: &crate::db::Db, n: &Note, items: &[String]) -> Result<usize> {
+/// Returns how many were added (duplicates of open to-dos are skipped). Task capture: Essential
+/// files only your own (or unowned) items; every level skips vague ones like "follow up".
+pub fn file_action_items(db: &crate::db::Db, n: &Note, items: &[String], level: crate::capture::CaptureLevel) -> Result<usize> {
     let mut existing = db.open_todo_titles()?;
     let mut added = 0;
     for item in items {
         let (owner, task) = split_owner(item);
         let mine = owner.as_deref().map(|o| o.eq_ignore_ascii_case(YOU) || o.eq_ignore_ascii_case("me")).unwrap_or(true);
+        if !crate::capture::keep_meeting_item(mine, &task, level) {
+            continue;
+        }
         let title = if mine { task.clone() } else { format!("{}: {task}", owner.as_deref().unwrap_or_default()) };
         if title.is_empty() || text::is_duplicate_todo(&title, &existing) || text::is_duplicate_todo(&task, &existing) {
             continue;
@@ -818,7 +822,7 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64, summarized_upto: usi
         if n.project_id.is_none() {
             n.project_id = st.db.project_for(&format!("{} {}", n.title, n.summary));
         }
-        let _ = file_action_items(&st.db, &n, &s.action_items);
+        let _ = file_action_items(&st.db, &n, &s.action_items, crate::capture::CaptureLevel::parse(&st.settings().task_capture));
         if !s.action_items.is_empty() {
             st.emit(ev::TODOS, ());
             st.emit(ev::PROJECTS, ());
@@ -870,6 +874,25 @@ mod tests {
     }
 
     #[test]
+    fn essential_capture_keeps_only_your_meeting_items() {
+        let db = crate::db::Db::open_in_memory().unwrap();
+        let n = note("n2", "Weekly sync");
+        let items = vec![
+            "You: send the revised estimate to Acme by Friday".to_string(),
+            "Rahul: update the pricing page".to_string(),
+            "book the offsite venue".to_string(),
+            "You: follow up".to_string(),
+        ];
+        assert_eq!(file_action_items(&db, &n, &items, crate::capture::CaptureLevel::Essential).unwrap(), 2);
+        let titles: Vec<String> = db.todos_for_note("n2").unwrap().into_iter().map(|t| t.title).collect();
+        assert!(titles.contains(&"send the revised estimate to Acme by Friday".to_string()), "{titles:?}");
+        assert!(titles.contains(&"book the offsite venue".to_string()));
+        // Comprehensive also tracks what others owe, but never a vague "follow up"
+        let db = crate::db::Db::open_in_memory().unwrap();
+        assert_eq!(file_action_items(&db, &n, &items, crate::capture::CaptureLevel::Comprehensive).unwrap(), 3);
+    }
+
+    #[test]
     fn action_items_become_dated_linked_todos_with_owners() {
         let db = crate::db::Db::open_in_memory().unwrap();
         let n = note("n1", "Pricing sync");
@@ -879,7 +902,7 @@ mod tests {
             "update the roadmap".to_string(),
             "You: review the PR tomorrow at 3pm".to_string(), // duplicate
         ];
-        assert_eq!(file_action_items(&db, &n, &items).unwrap(), 3);
+        assert_eq!(file_action_items(&db, &n, &items, crate::capture::CaptureLevel::Balanced).unwrap(), 3);
         let todos = db.todos_for_note("n1").unwrap();
         assert_eq!(todos.len(), 3);
         let mine = todos.iter().find(|t| t.title == "review the PR tomorrow at 3pm").expect("own item is a plain task");

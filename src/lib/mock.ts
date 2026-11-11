@@ -87,6 +87,7 @@ const settings: Settings = {
   attentionIntervalSec: 20,
   attentionDenylist: ["1Password", "Keychain Access", "Banking"],
   attentionCloudAllowed: false,
+  taskCapture: "balanced",
   playSounds: true,
   notchSize: "big",
   soundPack: "chime",

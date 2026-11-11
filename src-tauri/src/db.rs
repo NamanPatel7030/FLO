@@ -178,6 +178,8 @@ impl Db {
             "CREATE INDEX IF NOT EXISTS idx_assistant_thread ON assistant_log(thread_id, created_at)",
             // Connect with Google: the calendar cache (local only, never synced; cleared on disconnect)
             "CREATE TABLE IF NOT EXISTS google_cache(key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL)",
+            // Task capture: titles of auto-added to-dos the user deleted, so Attention doesn't re-add them
+            "CREATE TABLE IF NOT EXISTS dismissed_todos(title TEXT PRIMARY KEY, at TEXT NOT NULL)",
         ] {
             let _ = conn.execute(sql, []);
         }
@@ -676,8 +678,31 @@ impl Db {
     }
 
     pub fn delete_todo(&self, id: &str) -> Result<()> {
-        self.conn.lock().execute("DELETE FROM todos WHERE id=?1", [id])?;
+        let c = self.conn.lock();
+        // deleting a to-do Flo added by itself means "not a task": remember it (Task capture)
+        let _ = c.execute(
+            "INSERT OR REPLACE INTO dismissed_todos(title, at) SELECT title, ?2 FROM todos WHERE id=?1 AND source IN ('attention','meeting')",
+            params![id, now()],
+        );
+        c.execute("DELETE FROM todos WHERE id=?1", [id])?;
         Ok(())
+    }
+
+    /// What Attention must not add again: open or snoozed to-dos, ones done in the last 30 days, and
+    /// auto-added ones deleted in the last 30 days.
+    pub fn capture_seen_titles(&self) -> Result<Vec<String>> {
+        let cutoff = (Local::now() - Duration::days(30)).to_rfc3339();
+        let mut out: Vec<String> = self
+            .list_todos()?
+            .into_iter()
+            .filter(|t| t.status != "done" || t.completed_at.as_deref().is_some_and(|c| c > cutoff.as_str()))
+            .map(|t| t.title)
+            .collect();
+        let c = self.conn.lock();
+        let _ = c.execute("DELETE FROM dismissed_todos WHERE at < ?1", [&cutoff]);
+        let mut st = c.prepare("SELECT title FROM dismissed_todos")?;
+        out.extend(st.query_map([], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()));
+        Ok(out)
     }
 
     // ── notes ───────────────────────────────────────────────────────────────
@@ -1607,6 +1632,24 @@ mod tests {
         let ra = all.iter().find(|t| t.id == a.id).unwrap().remind_at.clone().expect("reminder for tomorrow");
         assert!(ra.contains("T09:55"), "{ra}");
         assert!(all.iter().find(|t| t.id == b.id).unwrap().remind_at.is_none());
+    }
+
+    #[test]
+    fn auto_capture_remembers_open_done_and_deleted_todos() {
+        let db = Db::open_in_memory().unwrap();
+        let open = db.add_todo("Reply to Rahul about the invoice", "attention", None, None).unwrap();
+        let done = db.add_todo("Pay the electricity bill", "attention", None, None).unwrap();
+        db.update_todo(&done.id, Some("done"), None, None).unwrap();
+        let noise = db.add_todo("Update your Slack status", "attention", None, None).unwrap();
+        let mine = db.add_todo("Buy milk", "voice", None, None).unwrap();
+        db.delete_todo(&noise.id).unwrap();
+        db.delete_todo(&mine.id).unwrap();
+        let seen = db.capture_seen_titles().unwrap();
+        assert!(seen.contains(&open.title) && seen.contains(&done.title), "{seen:?}");
+        // an auto to-do you deleted does not come back the next time it is on screen
+        assert!(seen.contains(&"Update your Slack status".to_string()), "{seen:?}");
+        // deleting your own to-do teaches nothing
+        assert!(!seen.contains(&"Buy milk".to_string()));
     }
 
     #[test]

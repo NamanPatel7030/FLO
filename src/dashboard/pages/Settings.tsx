@@ -8,7 +8,7 @@ import { formatHotkey, formatNumber, hotkeyOptions, hotkeyWords, relativeTime, s
 import { deviceWord, keyStoreName, os, settingsApp } from "../../lib/os";
 import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, pickLanguage, progressText, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
 import { useSpeechModels, type Download as SpeechDownload } from "../useSpeechModels";
-import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type ThemeMode } from "../../lib/types";
+import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type TaskCaptureLevel, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
 import { useStore } from "../store";
@@ -1160,6 +1160,43 @@ function ClearCacheRow() {
   );
 }
 
+const TASK_CAPTURE: { id: TaskCaptureLevel; label: string; hint: string }[] = [
+  { id: "essential", label: "Essential", hint: "Only clear requests, commitments and deadlines that need you." },
+  { id: "balanced", label: "Balanced", hint: "Essential items plus concrete next steps that matter." },
+  { id: "comprehensive", label: "Comprehensive", hint: "Everything actionable, including small items." },
+];
+
+/** How selective Flo is when it notes to-dos by itself (Attention and meeting action items). */
+function TaskCaptureRow({ s, set }: P) {
+  const level: TaskCaptureLevel = s.taskCapture === "essential" || s.taskCapture === "comprehensive" ? s.taskCapture : "balanced";
+  return (
+    <div className="py-3" data-testid="task-capture">
+      <div className="text-[13.5px] font-medium">Task capture</div>
+      <div className="mt-0.5 text-[12px] text-muted">How selective Flo is when it adds to-dos from your screen and meetings. Notifications, ads, finished items and other people's work are always left out.</div>
+      <div className="mt-2.5 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Task capture">
+        {TASK_CAPTURE.map((o) => (
+          <button
+            key={o.id}
+            role="radio"
+            aria-checked={level === o.id}
+            aria-label={o.label}
+            aria-describedby={`task-capture-${o.id}-hint`}
+            onClick={() => set({ taskCapture: o.id })}
+            data-testid={`task-capture-${o.id}`}
+            className={clsx("rounded-xl border px-3 py-2.5 text-left transition", level === o.id ? "border-[var(--accent)] glass-strong" : "border-[var(--border)] glass hover:glass-strong")}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold">{o.label}</span>
+              {level === o.id && <Check size={14} className="shrink-0 text-[var(--accent)]" />}
+            </div>
+            <div id={`task-capture-${o.id}-hint`} className="mt-0.5 text-[11.5px] leading-snug text-muted">{o.hint}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Privacy({ s, set }: P) {
   const [log, setLog] = useState<NetworkLogEntry[] | null>(null);
   const [deny, setDeny] = useState("");
@@ -1230,6 +1267,7 @@ function Privacy({ s, set }: P) {
             <Toggle label="Let Attention use cloud models" hint="Off = screen text is only processed by your local model. Screenshots never leave the device either way." checked={s.attentionCloudAllowed} onChange={(v) => set({ attentionCloudAllowed: v })} />
           </>
         )}
+        <TaskCaptureRow s={s} set={set} />
       </Card>
       <Card className="p-5">
         <CardTitle>Network log</CardTitle>
