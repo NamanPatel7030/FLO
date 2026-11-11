@@ -25,7 +25,7 @@ fn tts_to_16k(text_in: &str, dir: &Path, name: &str) -> anyhow::Result<Vec<f32>>
     tts_voice_to_16k(text_in, None, dir, name)
 }
 
-fn tts_voice_to_16k(text_in: &str, voice: Option<&str>, dir: &Path, name: &str) -> anyhow::Result<Vec<f32>> {
+pub(crate) fn tts_voice_to_16k(text_in: &str, voice: Option<&str>, dir: &Path, name: &str) -> anyhow::Result<Vec<f32>> {
     let aiff = dir.join(format!("{name}.aiff"));
     let wav = dir.join(format!("{name}.wav"));
     let mut cmd = std::process::Command::new("say");

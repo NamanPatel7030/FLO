@@ -39,9 +39,15 @@ pub struct Segmenter {
 impl Segmenter {
     /// Feed one slice (its duration and RMS); returns what to do now.
     pub fn push(&mut self, slice_ms: u64, rms: f32) -> Action {
+        self.push_voiced(slice_ms, rms >= SPEECH_RMS)
+    }
+
+    /// Same as `push`, with the speech decision made by the caller (meetpipe adapts it to the
+    /// track's noise floor, so a quiet mic still counts as speech).
+    pub fn push_voiced(&mut self, slice_ms: u64, voiced: bool) -> Action {
         self.pending_ms += slice_ms;
         self.since_partial_ms += slice_ms;
-        if rms >= SPEECH_RMS {
+        if voiced {
             self.speech_ms += slice_ms;
             self.quiet_ms = 0;
         } else {
@@ -56,6 +62,12 @@ impl Segmenter {
             return Action::None;
         }
         let enough = self.speech_ms >= MIN_SPEECH_MS;
+        if !enough && self.quiet_ms >= PAUSE_MS {
+            // a blip (cough, click) and then a pause: drop it now. Waiting for MAX_SEGMENT_MS
+            // glued it to the next sentence and cut that sentence in half.
+            self.reset();
+            return Action::Discard;
+        }
         if (enough && self.quiet_ms >= PAUSE_MS) || self.pending_ms >= MAX_SEGMENT_MS {
             let a = if enough { Action::Final } else { Action::Discard };
             self.reset();
@@ -116,6 +128,18 @@ mod tests {
         let mut v = vec![(300, 0.05); 1]; // 0.3 s blip
         v.extend(vec![(300, 0.0); 30]);
         assert!(!run(&mut s, &v).contains(&Action::Final));
+    }
+
+    #[test]
+    fn blip_then_pause_is_dropped_before_the_next_sentence() {
+        let mut s = Segmenter::default();
+        let mut v = vec![(100, 0.05); 2]; // 0.2 s click
+        v.extend(vec![(100, 0.0); 8]); // pause
+        assert_eq!(run(&mut s, &v), vec![Action::Discard]);
+        // the next sentence starts fresh (not glued to the blip, not cut at 8 s)
+        let mut v = vec![(100, 0.05); 30];
+        v.extend(vec![(100, 0.0); 8]);
+        assert_eq!(run(&mut s, &v).last(), Some(&Action::Final));
     }
 
     #[test]

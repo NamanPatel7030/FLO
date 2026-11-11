@@ -5,13 +5,14 @@
 //! - **call audio** (Core Audio process tap, see `sysaudio.rs`) → "Others", split into
 //!   "Speaker 1/2/3" by on-device voice embeddings (`speakers.rs`), or a remembered name.
 //!
-//! Each track is VAD-chunked and transcribed on its own, then merged by timestamp. On laptop
-//! speakers the mic also hears the call → mic chunks that are an echo of the call are dropped
-//! (energy-envelope gate before STT + text match after). No call audio (older macOS, permission
-//! refused, tap failure) → mic-only, as before, with the reason shown in the note.
-use crate::audio::{self, Recorder};
+//! Each track is VAD-chunked and transcribed on its own, then merged by timestamp. The audio
+//! pipeline itself (timeline, VAD, echo handling, dedupe, speaker labels) is `meetpipe.rs`, so the
+//! simulator (`meeting_sim.rs`) tests exactly what runs live. No call audio (older macOS,
+//! permission refused, tap failure) → mic-only, as before, with the reason shown in the note.
+use crate::audio::Recorder;
 use crate::egress::Purpose;
 use crate::llm::{self, ChatRequest, LlmConfig};
+use crate::meetpipe::{self, CallSeg, Capture, Change, Job, Processor, Transcriber};
 use crate::model::*;
 use crate::speakers::{self, Cluster, Embedder, Voice};
 use crate::state::{MeetingHandle, Shared};
@@ -19,8 +20,8 @@ use crate::sysaudio::SystemTap;
 use crate::{db, prompts, session, settings as cfg, stt, text};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -31,11 +32,6 @@ pub const YOU: &str = "You";
 pub const OTHERS: &str = "Others";
 pub const CAPTURE_DUAL: &str = "mic+call";
 pub const CAPTURE_MIC: &str = "mic";
-/// 20 ms energy frames for echo detection
-const FRAME: usize = (audio::TARGET_RATE / 50) as usize;
-/// Call audio kept for later embedding while the voice model downloads: at most 10 min
-/// (≈ 38 MB of f32). Beyond that, clips inherit the previous speaker instead of growing memory.
-const MAX_KEPT_AUDIO_SECS: f32 = 600.0;
 
 static MODEL_DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
@@ -158,7 +154,7 @@ pub fn start_with_attendees(st: Shared, title: Option<String>, project_id: Optio
     let task = tauri::async_runtime::spawn(run_loop(st.clone(), note.id.clone(), recorder, tap, stop.clone()));
     *st.meeting.lock() = Some(MeetingHandle { note_id: note.id.clone(), stop, task });
     st.emit(ev::NOTES, ());
-    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: 0.0, live: true, partial: None });
+    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: 0.0, live: true, partial: None, partial_speaker: None });
     st.state(Phase::Listening, Mode::Meeting, Some(note.title.clone()));
     Ok(note)
 }
@@ -171,8 +167,9 @@ fn ensure_speaker_model(st: &Shared) {
     let st = st.clone();
     tauri::async_runtime::spawn(async move {
         log::info!("downloading speaker model");
-        if let Err(e) = speakers::download_model(&st.egress, &st.models_dir).await {
-            log::warn!("speaker model download failed: {e}");
+        match speakers::download_model(&st.egress, &st.models_dir).await {
+            Ok(()) => log::info!("speaker model ready"),
+            Err(e) => log::warn!("speaker model download failed: {e}"),
         }
         MODEL_DOWNLOADING.store(false, Ordering::SeqCst);
     });
@@ -196,7 +193,7 @@ pub async fn stop(st: Shared) -> Result<Note> {
     note.live = false;
     st.db.upsert_note(&note)?;
     st.emit(ev::NOTES, ());
-    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: note.duration_sec, live: false, partial: None });
+    st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: note.duration_sec, live: false, partial: None, partial_speaker: None });
     st.state(Phase::Thinking, Mode::Meeting, Some("Writing summary…".into()));
     let st2 = st.clone();
     tauri::async_runtime::spawn(async move {
@@ -206,99 +203,59 @@ pub async fn stop(st: Shared) -> Result<Note> {
     Ok(note)
 }
 
-// ── tracks ─────────────────────────────────────────────────────────────────
+// ── capture loop + transcription worker ────────────────────────────────────
 
-/// One audio source being chunked and transcribed.
-struct Track {
-    mic: bool,
-    seg: crate::livetx::Segmenter,
-    pending: Vec<f32>,
-    seg_start: f64,
-    last_text: String,
-    /// lock the spoken language after the first clear chunk so it stops drifting into English
-    locked_lang: Option<String>,
+/// Messages to the transcription worker.
+enum Msg {
+    Job(Job),
+    Finish(tokio::sync::oneshot::Sender<(Vec<CallSeg>, Vec<Cluster>, meetpipe::Stats)>),
 }
 
-impl Track {
-    fn new(mic: bool, lang: Option<String>) -> Self {
-        Self { mic, seg: Default::default(), pending: vec![], seg_start: 0.0, last_text: String::new(), locked_lang: lang }
+/// The app's speech engine for the worker thread (on-device Whisper or the cloud STT).
+struct AppStt(Shared);
+
+impl Transcriber for AppStt {
+    fn transcribe(&mut self, samples: &[f32], context: &str, lang: Option<&str>) -> Result<String> {
+        tauri::async_runtime::block_on(session::transcribe_lang(&self.0, samples.to_vec(), context, lang.map(String::from)))
+    }
+    fn detected_lang(&self) -> Option<String> {
+        if self.0.settings().stt_provider == "local" { self.0.whisper.detected_lang() } else { None }
     }
 }
 
-/// A call-track segment kept for the post-call speaker pass.
-struct CallSeg {
-    t: f64,
-    secs: f32,
-    emb: Option<Vec<f32>>,
-    /// audio kept only while no embedding could be computed yet (model still downloading)
-    audio: Option<Vec<f32>>,
-}
-
-/// Recently committed segment (for echo matching between the tracks).
-#[derive(Debug, Clone)]
-struct Recent {
-    t0: f64,
-    t1: f64,
-    text: String,
-    mic: bool,
-}
-
-/// Rolling 20 ms energy envelope with timestamps (last ~30 s).
-#[derive(Default)]
-struct Envelope {
-    frames: VecDeque<(f64, f32)>,
-}
-
-impl Envelope {
-    fn push(&mut self, t0: f64, samples: &[f32]) {
-        for (i, c) in samples.chunks(FRAME).enumerate() {
-            self.frames.push_back((t0 + (i * FRAME) as f64 / audio::TARGET_RATE as f64, audio::rms(c)));
-        }
-        while self.frames.len() > 1500 {
-            self.frames.pop_front();
-        }
-    }
-    /// frame energies aligned to [t0, t0 + n frames)
-    fn window(&self, t0: f64, n: usize) -> Vec<f32> {
-        let step = FRAME as f64 / audio::TARGET_RATE as f64;
-        let mut out = vec![0.0f32; n];
-        for (t, e) in &self.frames {
-            let k = ((t - t0) / step).round();
-            if k >= 0.0 && (k as usize) < n {
-                out[k as usize] = *e;
-            }
-        }
-        out
-    }
-}
-
+/// Capture never waits for speech-to-text: every 300 ms it drains both devices, cuts sentences
+/// (meetpipe::Capture) and queues them for the worker thread, which transcribes, removes echoes,
+/// labels speakers and writes the note. A slow clip only delays text, never timing or VAD.
 async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<SystemTap>, stop: Arc<AtomicBool>) {
-    use crate::livetx::{Action, SLICE_MS};
     let started = Instant::now();
     let mut last_summary = Instant::now();
-    let mut segs_since_summary = 0;
     let mut summarized_upto = 0usize; // transcript segments already folded into the summary
+    let mut committed_at_summary = 0usize;
     let dual = tap.is_some();
     let recorder = Arc::new(parking_lot::Mutex::new(Some(recorder)));
     let tap = Arc::new(parking_lot::Mutex::new(tap));
-    let lang = { let l = st.settings().language; (l != "auto" && !l.is_empty()).then_some(l) };
-    let mut tracks = vec![Track::new(true, lang.clone())];
-    if dual {
-        tracks.push(Track::new(false, lang));
-    }
-    let mut call_env = Envelope::default();
-    let mut recent: VecDeque<Recent> = VecDeque::new();
-    let mut call_segs: Vec<CallSeg> = vec![];
-    let mut clusters: Vec<Cluster> = vec![];
-    let voices = load_voices(&st);
-    let mut embedder: Option<Arc<Embedder>> = None;
-    let mut next_embedder_try = Instant::now();
-    let mut heard_call = false;
-    let mut kept_audio_secs = 0.0f32;
+    let settings = st.settings();
+    let lang = { let l = settings.language.clone(); (l != "auto" && !l.is_empty()).then_some(l) };
     // live previews only with on-device STT (cloud previews would cost per call)
-    let local = st.settings().stt_provider == "local";
+    let local = settings.stt_provider == "local";
+    if local {
+        // load the model now: the first sentence must not wait for a cold load
+        if let Some(path) = stt::model_path(&st.models_dir, &settings.stt_model) {
+            let w = st.whisper.clone();
+            tauri::async_runtime::spawn_blocking(move || w.warm(&path));
+        }
+    }
+    let inflight = Arc::new(AtomicUsize::new(0));
+    let committed = Arc::new(AtomicUsize::new(0));
+    let (tx, rx) = std::sync::mpsc::channel::<Msg>();
+    if let Err(e) = spawn_worker(st.clone(), note_id.clone(), dual, lang, rx, inflight.clone(), committed.clone(), stop.clone(), started) {
+        log::error!("meeting worker didn't start: {e}");
+    }
+    let mut capture = Capture::new(dual);
+    let mut heard_call = false;
+    let mut max_queue = 0usize;
     loop {
-        tokio::time::sleep(Duration::from_millis(SLICE_MS)).await;
+        tokio::time::sleep(Duration::from_millis(crate::livetx::SLICE_MS)).await;
         let stopping = stop.load(Ordering::SeqCst);
         let mic_slice = {
             let mut g = recorder.lock();
@@ -310,248 +267,182 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
         };
         let call_slice = if dual {
             let mut g = tap.lock();
+            heard_call |= g.as_ref().map(|t| t.heard_anything()).unwrap_or(false);
             if stopping {
-                let t = g.take();
-                heard_call |= t.as_ref().map(|t| t.heard_anything()).unwrap_or(false);
-                t.map(|t| t.stop()).unwrap_or_default()
+                g.take().map(|t| t.stop()).unwrap_or_default()
             } else {
-                heard_call |= g.as_ref().map(|t| t.heard_anything()).unwrap_or(false);
                 g.as_ref().map(|t| t.take_samples()).unwrap_or_default()
             }
         } else {
             vec![]
         };
         let elapsed = started.elapsed().as_secs_f64();
-        if dual {
-            call_env.push((elapsed - call_slice.len() as f64 / audio::TARGET_RATE as f64).max(0.0), &call_slice);
-            // the voice model may finish downloading mid-meeting
-            if embedder.is_none() && speakers::supported() && Instant::now() >= next_embedder_try {
-                next_embedder_try = Instant::now() + Duration::from_secs(10);
-                let dir = st.models_dir.clone();
-                embedder = tokio::task::spawn_blocking(move || Embedder::load(&dir)).await.ok().flatten().map(Arc::new);
-            }
+        let mut jobs = capture.push(&mic_slice, &call_slice, elapsed);
+        if stopping {
+            jobs.extend(capture.flush());
         }
-
-        let mut partial_done = false;
-        // call track first: its segments are what mic echoes get compared against
-        for ti in (0..tracks.len()).rev() {
-            let slice = if tracks[ti].mic { &mic_slice } else { &call_slice };
-            let tr = &mut tracks[ti];
-            if tr.pending.is_empty() {
-                tr.seg_start = (elapsed - slice.len() as f64 / audio::TARGET_RATE as f64).max(0.0);
+        for job in jobs {
+            // a preview only when the worker is idle (finals always go first, nothing piles up)
+            if job.chunk.partial && (!local || stopping || inflight.load(Ordering::SeqCst) > 0) {
+                continue;
             }
-            tr.pending.extend_from_slice(slice);
-            let slice_ms = (slice.len() as u64 * 1000) / audio::TARGET_RATE as u64;
-            let action = if stopping { tr.seg.flush() } else { tr.seg.push(slice_ms.max(1), audio::rms(slice)) };
-            match action {
-                Action::Partial if local && !stopping && !partial_done => {
-                    if audio::voiced_ms(&tr.pending) < 200 {
-                        continue;
-                    }
-                    // a mic preview while the call is talking is most likely the call's echo
-                    if tr.mic && dual && is_echo_by_energy(&tr.pending, &call_env.window(tr.seg_start, tr.pending.len().div_ceil(FRAME))) {
-                        continue;
-                    }
-                    partial_done = true;
-                    if let Ok(t) = session::transcribe_lang(&st, tr.pending.clone(), &tr.last_text, tr.locked_lang.clone()).await {
-                        if !t.trim().is_empty() && !stt::is_degenerate(&t) {
-                            st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: None, elapsed_sec: elapsed, live: true, partial: Some(t) });
-                        }
-                    }
-                }
-                Action::Final => {
-                    let seg_secs = tr.pending.len() as f32 / audio::TARGET_RATE as f32;
-                    let seg_samples = std::mem::take(&mut tr.pending);
-                    let seg_t0 = tr.seg_start;
-                    if audio::voiced_ms(&seg_samples) < 250 {
-                        continue; // no real speech in this stretch → don't invent text
-                    }
-                    if tr.mic && dual && is_echo_by_energy(&seg_samples, &call_env.window(seg_t0, seg_samples.len().div_ceil(FRAME))) {
-                        log::info!("meeting: dropped mic chunk at {seg_t0:.1}s (echo of call audio)");
-                        continue;
-                    }
-                    // a quick back-and-forth on the call (no 700 ms pause) is one VAD segment:
-                    // cut it where the voice changes so each turn is transcribed and labelled
-                    let pieces: Vec<(f64, Vec<f32>)> = match (&embedder, tr.mic) {
-                        (Some(e), false) if seg_secs >= speakers::MIN_SPLIT_SECS => {
-                            let (e, s) = (e.clone(), seg_samples.clone());
-                            let ranges = tokio::task::spawn_blocking(move || speakers::split_turns(&s, audio::TARGET_RATE, |w| e.embed(w))).await.unwrap_or_default();
-                            if ranges.len() > 1 {
-                                log::info!("meeting: split call segment at {seg_t0:.1}s into {} turns", ranges.len());
-                                ranges.into_iter().map(|r| (seg_t0 + r.start as f64 / audio::TARGET_RATE as f64, seg_samples[r].to_vec())).collect()
-                            } else {
-                                vec![(seg_t0, seg_samples)]
-                            }
-                        }
-                        _ => vec![(seg_t0, seg_samples)],
-                    };
-                    for (t0, samples) in pieces {
-                    let audio_secs = samples.len() as f32 / audio::TARGET_RATE as f32;
-                    let t1 = t0 + audio_secs as f64;
-                    if audio::voiced_ms(&samples) < 250 {
-                        continue;
-                    }
-                    let res = session::transcribe_lang(&st, samples.clone(), &tr.last_text, tr.locked_lang.clone()).await;
-                    let t = match res {
-                        Ok(t) if !stt::is_hallucination(&t, audio_secs) && !stt::is_degenerate(&t) => t,
-                        Ok(_) => continue,
-                        Err(e) => {
-                            log::warn!("meeting segment STT failed: {e}");
-                            st.toast("error", format!("Meeting transcription: {e}"));
-                            continue;
-                        }
-                    };
-                    if tr.locked_lang.is_none() {
-                        tr.locked_lang = st.whisper.detected_lang();
-                    }
-                    tr.last_text = text::truncate_chars(&t, 200);
-                    let speaker = if tr.mic {
-                        if recent.iter().any(|r| !r.mic && overlaps(t0, t1, r.t0, r.t1, 1.5) && is_echo_text(&t, &r.text)) {
-                            log::info!("meeting: dropped mic segment at {t0:.1}s (same words as the call)");
-                            continue;
-                        }
-                        YOU.to_string()
-                    } else {
-                        // who on the call: voice embedding → cluster → "Speaker N" / remembered name
-                        let emb = match &embedder {
-                            Some(e) => {
-                                let (e, s) = (e.clone(), samples.clone());
-                                tokio::task::spawn_blocking(move || e.embed(&s)).await.ok().flatten()
-                            }
-                            None => None,
-                        };
-                        let label = emb
-                            .as_ref()
-                            .and_then(|e| speakers::assign(&mut clusters, e, audio_secs, &voices))
-                            .map(|i| clusters[i].label.clone())
-                            .unwrap_or_else(|| prev_call_label(&st, &note_id).unwrap_or_else(|| OTHERS.into()));
-                        let keep_audio = emb.is_none() && speakers::supported() && kept_audio_secs + audio_secs <= MAX_KEPT_AUDIO_SECS;
-                        if keep_audio {
-                            kept_audio_secs += audio_secs;
-                        }
-                        call_segs.push(CallSeg { t: t0, secs: audio_secs, emb, audio: keep_audio.then_some(samples) });
-                        label
-                    };
-                    let segm = MeetingSegment { t: t0, text: t.clone(), speaker: Some(speaker) };
-                    let mut removed_echo = false;
-                    if let Ok(Some(mut n)) = st.db.get_note(&note_id) {
-                        if !tr.mic {
-                            // the mic may have committed the same words a moment earlier (speakers, no headphones)
-                            for r in recent.iter().filter(|r| r.mic && overlaps(t0, t1, r.t0, r.t1, 1.5) && is_echo_text(&r.text, &t)) {
-                                let before = n.transcript.len();
-                                n.transcript.retain(|s| !(s.speaker.as_deref() == Some(YOU) && s.t == r.t0 && s.text == r.text));
-                                removed_echo |= n.transcript.len() != before;
-                            }
-                        }
-                        insert_sorted(&mut n.transcript, segm.clone());
-                        if stop.load(Ordering::SeqCst) {
-                            n.live = false; // never resurrect a stopped meeting (checked at write time)
-                        }
-                        n.duration_sec = elapsed;
-                        let _ = st.db.upsert_note(&n);
-                    }
-                    if removed_echo {
-                        recent.retain(|r| !(r.mic && overlaps(t0, t1, r.t0, r.t1, 1.5) && is_echo_text(&r.text, &t)));
-                        st.emit(ev::NOTES, ());
-                    }
-                    recent.push_back(Recent { t0, t1, text: t, mic: tr.mic });
-                    while recent.front().is_some_and(|r| r.t1 < elapsed - 30.0) {
-                        recent.pop_front();
-                    }
-                    segs_since_summary += 1;
-                    st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: Some(segm), summary: None, elapsed_sec: elapsed, live: !stopping, partial: Some(String::new()) });
-                    }
-                }
-                Action::Discard => tr.pending.clear(),
-                _ => {}
+            let q = inflight.fetch_add(1, Ordering::SeqCst) + 1;
+            if q > max_queue && q >= 4 {
+                max_queue = q;
+                log::warn!("meeting: transcription is {q} chunks behind");
+            }
+            if tx.send(Msg::Job(job)).is_err() {
+                inflight.fetch_sub(1, Ordering::SeqCst);
             }
         }
 
         if stopping {
+            let (otx, orx) = tokio::sync::oneshot::channel();
+            let done = if tx.send(Msg::Finish(otx)).is_ok() { orx.await.ok() } else { None };
+            let (call_segs, clusters, stats) = done.unwrap_or_default();
+            log::info!("meeting: finished after {elapsed:.0}s: {}", serde_json::to_string(&stats).unwrap_or_default());
             if dual {
-                speaker_pass(&st, &note_id, call_segs, clusters, &voices, heard_call).await;
+                speaker_pass(&st, &note_id, call_segs, clusters, heard_call).await;
             }
-            finalize(&st, &note_id, elapsed).await;
+            finalize(&st, &note_id, elapsed, summarized_upto).await;
             break;
         }
-        if segs_since_summary >= 2 && last_summary.elapsed() >= Duration::from_secs(SUMMARY_EVERY_SECS) {
+        let n = committed.load(Ordering::SeqCst);
+        if n >= committed_at_summary + 2 && last_summary.elapsed() >= Duration::from_secs(SUMMARY_EVERY_SECS) {
             if let Some((sum, upto)) = summarize_incremental(&st, &note_id, summarized_upto).await {
                 summarized_upto = upto;
                 if let Ok(Some(mut n)) = st.db.get_note(&note_id) {
                     n.summary = sum.summary.clone();
+                    // early action items survive into long meetings' final pass
+                    n.action_items = merge_action_items(&n.action_items, &sum.action_items);
                     let _ = st.db.upsert_note(&n);
                 }
-                st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: Some(sum.summary), elapsed_sec: elapsed, live: true, partial: None });
+                st.emit(ev::MEETING, MeetingEvent { note_id: note_id.clone(), segment: None, summary: Some(sum.summary), elapsed_sec: elapsed, live: true, partial: None, partial_speaker: None });
             }
             last_summary = Instant::now();
-            segs_since_summary = 0;
+            committed_at_summary = n;
         }
     }
 }
 
-/// Short call clips without a usable embedding keep the previous call speaker (turn continuity).
-fn prev_call_label(st: &Shared, note_id: &str) -> Option<String> {
-    let n = st.db.get_note(note_id).ok()??;
-    n.transcript.iter().rev().find(|s| s.speaker.as_deref().is_some_and(|w| w != YOU)).and_then(|s| s.speaker.clone())
+#[allow(clippy::too_many_arguments)]
+fn spawn_worker(
+    st: Shared,
+    note_id: String,
+    dual: bool,
+    lang: Option<String>,
+    rx: std::sync::mpsc::Receiver<Msg>,
+    inflight: Arc<AtomicUsize>,
+    committed: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    started: Instant,
+) -> std::io::Result<()> {
+    std::thread::Builder::new().name("flo-meeting-stt".into()).spawn(move || {
+        let mut p = Processor::new(AppStt(st.clone()), dual, load_voices(&st), lang);
+        let mut next_embedder_try = Instant::now();
+        let mut last_error_toast: Option<Instant> = None;
+        while let Ok(msg) = rx.recv() {
+            match msg {
+                Msg::Job(job) => {
+                    // the voice model may finish downloading mid-meeting
+                    if dual && p.embedder.is_none() && speakers::supported() && Instant::now() >= next_embedder_try {
+                        next_embedder_try = Instant::now() + Duration::from_secs(10);
+                        p.embedder = Embedder::load(&st.models_dir).map(Arc::new);
+                        if p.embedder.is_some() {
+                            log::info!("meeting: speaker model loaded");
+                        }
+                    }
+                    let changes = p.handle(job);
+                    apply_changes(&st, &note_id, &stop, started.elapsed().as_secs_f64(), changes, &committed, &mut last_error_toast);
+                    inflight.fetch_sub(1, Ordering::SeqCst);
+                }
+                Msg::Finish(reply) => {
+                    let _ = reply.send((std::mem::take(&mut p.call_segs), std::mem::take(&mut p.clusters), p.stats.clone()));
+                    break;
+                }
+            }
+        }
+    })?;
+    Ok(())
+}
+
+/// Write the worker's results into the note and tell the UI.
+fn apply_changes(st: &Shared, note_id: &str, stop: &AtomicBool, elapsed: f64, changes: Vec<Change>, committed: &AtomicUsize, last_error_toast: &mut Option<Instant>) {
+    for ch in changes {
+        let stopped = stop.load(Ordering::SeqCst);
+        match ch {
+            Change::Add(segm) => {
+                if let Ok(Some(mut n)) = st.db.get_note(note_id) {
+                    insert_sorted(&mut n.transcript, segm.clone());
+                    if stopped {
+                        n.live = false; // never resurrect a stopped meeting (checked at write time)
+                    }
+                    n.duration_sec = n.duration_sec.max(elapsed);
+                    let _ = st.db.upsert_note(&n);
+                }
+                committed.fetch_add(1, Ordering::SeqCst);
+                st.emit(ev::MEETING, MeetingEvent { note_id: note_id.to_string(), segment: Some(segm), summary: None, elapsed_sec: elapsed, live: !stopped, partial: Some(String::new()), partial_speaker: None });
+            }
+            Change::Remove(segm) => {
+                if let Ok(Some(mut n)) = st.db.get_note(note_id) {
+                    n.transcript.retain(|s| !(s.t == segm.t && s.text == segm.text && s.speaker == segm.speaker));
+                    let _ = st.db.upsert_note(&n);
+                }
+                st.emit(ev::NOTES, ());
+            }
+            Change::Partial { text, speaker } => {
+                if !stopped {
+                    st.emit(ev::MEETING, MeetingEvent { note_id: note_id.to_string(), segment: None, summary: None, elapsed_sec: elapsed, live: true, partial: Some(text), partial_speaker: Some(speaker) });
+                }
+            }
+            Change::Error(e) => {
+                // once a minute at most: a broken engine must not bury the screen in toasts
+                if last_error_toast.is_none_or(|t| t.elapsed() >= Duration::from_secs(60)) {
+                    *last_error_toast = Some(Instant::now());
+                    st.toast("error", format!("Meeting transcription: {e}"));
+                }
+            }
+        }
+    }
 }
 
 /// After the call: re-cluster all call segments (better than the live, greedy assignment), name
 /// clusters from remembered voices, relabel the transcript and store the clusters for renaming.
-async fn speaker_pass(st: &Shared, note_id: &str, mut segs: Vec<CallSeg>, live_clusters: Vec<Cluster>, voices: &[Voice], heard_call: bool) {
+async fn speaker_pass(st: &Shared, note_id: &str, mut segs: Vec<CallSeg>, live_clusters: Vec<Cluster>, heard_call: bool) {
     let mut meta = load_meta(st, note_id).unwrap_or_else(|| MeetingMeta { capture: CAPTURE_DUAL.into(), ..Default::default() });
     if !heard_call {
         meta.capture_note = Some("Call audio was silent. If others spoke, allow Flo in System Settings → Privacy & Security → Screen & System Audio Recording.".into());
     }
+    let voices = load_voices(st);
     // embeddings for clips recorded before the voice model was ready
     if segs.iter().any(|s| s.emb.is_none() && s.audio.is_some()) {
         let dir = st.models_dir.clone();
-        let todo: Vec<(usize, Vec<f32>)> = segs.iter_mut().enumerate().filter_map(|(i, s)| s.audio.take().map(|a| (i, a))).collect();
-        let done = tokio::task::spawn_blocking(move || {
-            let Some(e) = Embedder::load(&dir) else { return vec![] };
-            todo.into_iter().map(|(i, a)| (i, e.embed(&a))).collect::<Vec<_>>()
+        segs = tokio::task::spawn_blocking(move || {
+            if let Some(e) = Embedder::load(&dir) {
+                meetpipe::fill_embeddings(&mut segs, &e);
+            }
+            segs
         })
         .await
         .unwrap_or_default();
-        for (i, e) in done {
-            segs[i].emb = e;
-        }
     }
-    let with: Vec<&CallSeg> = segs.iter().filter(|s| s.emb.is_some() && s.secs >= speakers::MIN_EMBED_SECS).collect();
-    if with.is_empty() {
+    let Some((final_labels, clusters)) = meetpipe::recluster(&segs, &voices) else {
         meta.speakers = live_clusters;
         save_meta(st, note_id, &meta);
         return;
-    }
-    let embs: Vec<Vec<f32>> = with.iter().map(|s| s.emb.clone().unwrap_or_default()).collect();
-    let weights: Vec<f32> = with.iter().map(|s| s.secs).collect();
-    let ids = speakers::agglomerate(&embs, &weights, speakers::SAME_SPEAKER);
-    let k = ids.iter().max().map(|m| m + 1).unwrap_or(0);
-    let mut cents: Vec<(Vec<f32>, u32)> = vec![(vec![], 0); k];
-    for (e, id) in embs.iter().zip(&ids) {
-        let (c, n) = &mut cents[*id];
-        *c = speakers::blend(c, *n, e, 1);
-        *n += 1;
-    }
-    let centroids: Vec<Vec<f32>> = cents.iter().map(|c| c.0.clone()).collect();
-    let labels = speakers::label_clusters(&centroids, voices);
-    // every call segment → final label: own cluster, else nearest centroid, else previous speaker
-    let label_for = |s: &CallSeg| -> Option<String> {
-        let e = s.emb.as_ref()?;
-        centroids.iter().enumerate().map(|(i, c)| (i, speakers::cosine(c, e))).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| labels[i].clone())
     };
-    let final_labels: Vec<(f64, Option<String>)> = segs.iter().map(|s| (s.t, label_for(s))).collect();
     if let Ok(Some(mut n)) = st.db.get_note(note_id) {
         apply_call_labels(&mut n.transcript, &final_labels);
         let _ = st.db.upsert_note(&n);
     }
-    meta.speakers = centroids.into_iter().zip(labels).zip(cents.iter().map(|c| c.1)).map(|((centroid, label), count)| Cluster { label, centroid, count }).collect();
+    meta.speakers = clusters;
     save_meta(st, note_id, &meta);
     st.emit(ev::NOTES, ());
 }
 
 /// Relabel call segments (matched by start time; mic segments untouched). Segments without a
 /// label inherit the previous call speaker.
-fn apply_call_labels(transcript: &mut [MeetingSegment], labels: &[(f64, Option<String>)]) {
+pub fn apply_call_labels(transcript: &mut [MeetingSegment], labels: &[(f64, Option<String>)]) {
     let mut prev: Option<String> = None;
     for s in transcript.iter_mut() {
         if s.speaker.as_deref() == Some(YOU) {
@@ -637,88 +528,6 @@ fn rename_note_todos(db: &crate::db::Db, note_id: &str, from: &str, to: &str) ->
 pub fn insert_sorted(v: &mut Vec<MeetingSegment>, s: MeetingSegment) {
     let at = v.iter().rposition(|x| x.t <= s.t).map(|i| i + 1).unwrap_or(0);
     v.insert(at, s);
-}
-
-/// Do two time spans overlap (with `slack` seconds of tolerance)?
-pub fn overlaps(a0: f64, a1: f64, b0: f64, b1: f64, slack: f64) -> bool {
-    a0 <= b1 + slack && b0 <= a1 + slack
-}
-
-fn words(s: &str) -> Vec<String> {
-    s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect()
-}
-
-/// The mic text is the call's words heard through the speakers: most of the shorter text's words
-/// appear in the other (Whisper hears the echo slightly differently, so not exact equality).
-pub fn is_echo_text(mic: &str, call: &str) -> bool {
-    let (a, b) = (words(mic), words(call));
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-    if a.len() < 3 || b.len() < 3 {
-        return a == b;
-    }
-    let (short, long) = if a.len() <= b.len() { (&a, &b) } else { (&b, &a) };
-    let mut pool = long.clone();
-    let mut common = 0;
-    for w in short {
-        if let Some(i) = pool.iter().position(|x| x == w) {
-            pool.swap_remove(i);
-            common += 1;
-        }
-    }
-    common as f32 / short.len() as f32 >= 0.6
-}
-
-/// Energy gate: the mic chunk is an echo when (nearly) every voiced mic frame coincides with call
-/// audio and the two loudness contours move together (up to 160 ms apart: capture jitter). When
-/// you talk, the mic has energy while the call is quiet → not an echo.
-pub fn is_echo_by_energy(mic: &[f32], call_env: &[f32]) -> bool {
-    let mic_env: Vec<f32> = mic.chunks(FRAME).map(audio::rms).collect();
-    let n = mic_env.len().min(call_env.len());
-    if n < 15 {
-        return false;
-    }
-    let mut sorted = mic_env.clone();
-    sorted.sort_by(|a, b| a.total_cmp(b));
-    let floor = sorted[sorted.len() / 5];
-    let voiced = |e: f32| e > (floor * 3.0).max(0.01);
-    let voiced_idx: Vec<usize> = (0..n).filter(|i| voiced(mic_env[*i])).collect();
-    if voiced_idx.len() < 10 {
-        return false;
-    }
-    let call_on = |e: f32| e > 0.004;
-    (0..=8usize).any(|lag| {
-        let pairs: Vec<(f32, f32)> = voiced_idx.iter().filter(|i| **i >= lag).map(|i| (mic_env[*i], call_env[*i - lag])).collect();
-        if pairs.len() < 10 {
-            return false;
-        }
-        let covered = pairs.iter().filter(|(_, c)| call_on(*c)).count() as f32 / pairs.len() as f32;
-        if covered < 0.9 {
-            return false;
-        }
-        // loudness contours correlate (log energy, Pearson)
-        let all: Vec<(f32, f32)> = (lag..n).map(|i| ((mic_env[i] + 1e-5).ln(), (call_env[i - lag] + 1e-5).ln())).collect();
-        pearson(&all) >= 0.6
-    })
-}
-
-fn pearson(p: &[(f32, f32)]) -> f32 {
-    let n = p.len() as f32;
-    if n < 2.0 {
-        return 0.0;
-    }
-    let (mx, my) = (p.iter().map(|x| x.0).sum::<f32>() / n, p.iter().map(|x| x.1).sum::<f32>() / n);
-    let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
-    for (x, y) in p {
-        sxy += (x - mx) * (y - my);
-        sxx += (x - mx) * (x - mx);
-        syy += (y - my) * (y - my);
-    }
-    if sxx <= 1e-9 || syy <= 1e-9 {
-        return 0.0;
-    }
-    sxy / (sxx.sqrt() * syy.sqrt())
 }
 
 /// "Rahul: send the deck by Friday" → (Some("Rahul"), "send the deck by Friday").
@@ -902,21 +711,39 @@ async fn summarize_incremental(st: &Shared, note_id: &str, from: usize) -> Optio
     Some((parsed, n.transcript.len()))
 }
 
-async fn summarize(st: &Shared, note_id: &str, final_pass: bool) -> Option<(prompts::ParsedSummary, String)> {
+/// Final pass. Returns the summary, the raw output and whether this was a long meeting (rolling
+/// summary + the lines after it, instead of the whole transcript).
+async fn summarize(st: &Shared, note_id: &str, summarized_upto: usize) -> Option<(prompts::ParsedSummary, String, bool)> {
     let n = st.db.get_note(note_id).ok()??;
     if n.transcript.is_empty() {
         return None;
     }
     let full = transcript_text(&n);
-    let user = if full.len() <= FULL_TRANSCRIPT_MAX_CHARS || n.summary.trim().is_empty() {
+    let long = full.len() > FULL_TRANSCRIPT_MAX_CHARS && !n.summary.trim().is_empty();
+    let user = if !long {
         text::truncate_chars(&full, 60_000)
     } else {
-        // long meeting: the rolling summary already covers most of it → summary + last ~4k chars
-        let tail: String = full.chars().rev().take(4000).collect::<Vec<_>>().into_iter().rev().collect();
-        prompts::meeting_update_user(&n.summary, &tail)
+        // long meeting: the rolling summary covers everything up to `summarized_upto` → send it,
+        // the action items found so far, and every line after it (the newest 12k chars at most)
+        let from = summarized_upto.min(n.transcript.len());
+        let rest = n.transcript[from..].iter().map(seg_line).collect::<Vec<_>>().join("\n");
+        let tail: String = rest.chars().rev().take(FULL_TRANSCRIPT_MAX_CHARS).collect::<Vec<_>>().into_iter().rev().collect();
+        prompts::meeting_final_long_user(&n.summary, &n.action_items, &tail)
     };
     let attendees = load_meta(st, note_id).map(|m| m.attendees).unwrap_or_default();
-    summarize_with(st, &user, final_pass, 1200, &attendees).await
+    summarize_with(st, &user, true, 1200, &attendees).await.map(|(p, raw)| (p, raw, long))
+}
+
+/// Action items of a long meeting: the final pass's list plus earlier ones it didn't repeat.
+pub fn merge_action_items(earlier: &[String], latest: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = latest.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    for e in earlier {
+        let e = e.trim();
+        if !e.is_empty() && !text::is_duplicate_todo(e, &out) {
+            out.push(e.to_string());
+        }
+    }
+    out
 }
 
 /// Returns the parsed summary and the raw model output (final pass: also carries `speakerNames`).
@@ -959,12 +786,20 @@ async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u
     }
 }
 
-async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
-    let sum = summarize(st, note_id, true).await;
+async fn finalize(st: &Shared, note_id: &str, elapsed: f64, summarized_upto: usize) {
+    let sum = summarize(st, note_id, summarized_upto).await;
     let Ok(Some(mut n)) = st.db.get_note(note_id) else { return };
     n.live = false;
     n.duration_sec = elapsed;
-    if let Some((s, raw)) = sum {
+    if n.transcript.is_empty() {
+        st.toast("info", "No speech was captured in this meeting. Check the microphone in Settings → Voice.");
+    } else if sum.is_none() && !LlmConfig::from_settings(&st.settings()).is_configured() {
+        st.toast("info", "Transcript saved. Add an AI model in Settings → AI for a summary and action items.");
+    }
+    if let Some((mut s, raw, long)) = sum {
+        if long {
+            s.action_items = merge_action_items(&n.action_items, &s.action_items);
+        }
         let names = speaker_name_suggestions(&raw, &n.transcript);
         if !names.is_empty() {
             if let Some(mut meta) = load_meta(st, note_id) {
@@ -997,7 +832,7 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64) {
         st.emit(ev::VAULT, ());
     }
     st.emit(ev::NOTES, ());
-    st.emit(ev::MEETING, MeetingEvent { note_id: n.id.clone(), segment: None, summary: Some(n.summary.clone()), elapsed_sec: elapsed, live: false, partial: None });
+    st.emit(ev::MEETING, MeetingEvent { note_id: n.id.clone(), segment: None, summary: Some(n.summary.clone()), elapsed_sec: elapsed, live: false, partial: None, partial_speaker: None });
     st.toast("success", format!("Notes ready: {}", n.title));
     crate::push::notify(st, crate::push::meeting_payload(&n.title, &n.id, n.action_items.len())); // phone, only while Away
 }
@@ -1096,58 +931,16 @@ mod tests {
     }
 
     #[test]
-    fn overlap_with_slack() {
-        assert!(overlaps(0.0, 2.0, 1.0, 3.0, 0.0));
-        assert!(!overlaps(0.0, 2.0, 3.0, 4.0, 0.5));
-        assert!(overlaps(0.0, 2.0, 3.0, 4.0, 1.5));
-    }
-
-    #[test]
-    fn echo_text_matching() {
-        // the mic heard the call through the speakers, slightly mis-transcribed
-        assert!(is_echo_text("we should ship the build on friday", "We should ship the new build on Friday."));
-        assert!(is_echo_text("ship it on friday", "Okay, so ship it on Friday then, right?"));
-        // different sentences → both kept
-        assert!(!is_echo_text("I'll send the deck tonight", "Can you share the pricing sheet?"));
-        // very short: only exact
-        assert!(is_echo_text("Okay.", "okay"));
-        assert!(!is_echo_text("Yes", "No"));
-        assert!(!is_echo_text("", "anything"));
-    }
-
-    fn tone(secs: f32, amp: f32) -> Vec<f32> {
-        (0..(secs * 16_000.0) as usize).map(|i| (i as f32 / 7.0).sin() * amp).collect()
-    }
-
-    fn env(s: &[f32]) -> Vec<f32> {
-        s.chunks(FRAME).map(audio::rms).collect()
-    }
-
-    #[test]
-    fn energy_gate_detects_echo_but_not_double_talk() {
-        // call: speech bursts with gaps; mic: the same bursts, quieter and 100 ms late
-        let mut call = vec![];
-        for k in 0..6 {
-            call.extend(tone(0.4, 0.2 + 0.05 * k as f32));
-            call.extend(vec![0.0; 3200]);
-        }
-        let mut mic = vec![0.0; 1600];
-        mic.extend(call.iter().map(|x| x * 0.3));
-        mic.truncate(call.len());
-        assert!(is_echo_by_energy(&mic, &env(&call)));
-        // you talk while the call is silent → not an echo
-        let silent_call = vec![0.0f32; call.len()];
-        assert!(!is_echo_by_energy(&mic, &env(&silent_call)));
-        // you talk in the call's gaps → not an echo
-        let mut you = vec![];
-        for _ in 0..6 {
-            you.extend(vec![0.0; 6400]);
-            you.extend(tone(0.2, 0.3));
-        }
-        you.truncate(call.len());
-        assert!(!is_echo_by_energy(&you, &env(&call)));
-        // too short to judge
-        assert!(!is_echo_by_energy(&tone(0.1, 0.2), &env(&tone(0.1, 0.2))));
+    fn long_meetings_keep_early_action_items() {
+        let earlier = vec!["Speaker 1: send the pricing deck by Friday".to_string(), "You: book the venue".to_string()];
+        // the final pass only saw the last part of the meeting
+        let latest = vec!["You: book the venue tomorrow".to_string(), "Speaker 2: share the roadmap".to_string()];
+        let m = merge_action_items(&earlier, &latest);
+        assert_eq!(m, vec!["You: book the venue tomorrow", "Speaker 2: share the roadmap", "Speaker 1: send the pricing deck by Friday"]);
+        assert!(merge_action_items(&[], &[]).is_empty());
+        let p = prompts::meeting_final_long_user("- pricing", &earlier, "[10:00] You: ok");
+        assert!(p.contains("send the pricing deck") && p.contains("[10:00] You: ok") && p.contains("ALL action items"));
+        assert!(!p.contains('\u{2014}'), "no em dashes");
     }
 
     #[test]

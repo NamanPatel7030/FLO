@@ -81,6 +81,8 @@ export interface MeetingInfo {
   lines?: { speaker?: string; text: string }[];
   /** live, still-changing line while someone talks */
   partial?: string;
+  /** who is speaking the live line */
+  partialSpeaker?: string;
   summary?: string;
 }
 
@@ -436,6 +438,7 @@ export default function Island() {
             ? [...(m.lines ?? []), { speaker: e.segment.speaker, text: e.segment.text }].slice(-8)
             : m.lines,
           partial: e.partial !== undefined ? e.partial : e.segment ? "" : m.partial,
+          partialSpeaker: e.partial ? e.partialSpeaker : e.partial !== undefined || e.segment ? undefined : m.partialSpeaker,
           summary: e.summary ?? m.summary,
         }));
       }),

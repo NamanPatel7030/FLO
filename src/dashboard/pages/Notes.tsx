@@ -308,6 +308,7 @@ function LiveNote({ note }: { note: Note }) {
   useEffect(() => setSegs(note.transcript), [note.transcript]);
   const info = useMeetingInfo(note.id, null);
   const [partial, setPartial] = useState("");
+  const [partialWho, setPartialWho] = useState<string | undefined>();
   const [summary, setSummary] = useState(note.summary);
   const [elapsed, setElapsed] = useState(note.durationSec);
   const scroller = useRef<HTMLDivElement>(null);
@@ -325,8 +326,10 @@ function LiveNote({ note }: { note: Note }) {
           return;
         }
         if (e.segment) setSegs((s) => insertSorted(s, e.segment!));
-        if (e.partial !== undefined) setPartial(e.partial);
-        else if (e.segment) setPartial("");
+        if (e.partial !== undefined) {
+          setPartial(e.partial);
+          setPartialWho(e.partial ? e.partialSpeaker : undefined);
+        } else if (e.segment) setPartial("");
         setElapsed(e.elapsedSec);
       }),
     [note.id],
@@ -364,7 +367,13 @@ function LiveNote({ note }: { note: Note }) {
             <div>
               <div className="text-[17px] font-semibold">{note.title}</div>
               <div className="flex items-center gap-2 font-mono text-[13px] tabular-nums text-muted">
-                {formatClock(elapsed)} <CaptureBadge info={info} />
+                <span
+                  data-testid="recording-state"
+                  className={clsx("font-sans text-[11px] font-semibold uppercase tracking-wider", stopping ? "text-brand-500 dark:text-brand-300" : "text-red-500")}
+                >
+                  {stopping ? "Writing summary" : "Recording"}
+                </span>
+                <span data-testid="meeting-timer">{formatClock(elapsed)}</span> <CaptureBadge info={info} />
               </div>
             </div>
           </div>
@@ -393,7 +402,17 @@ function LiveNote({ note }: { note: Note }) {
           </AnimatePresence>
           <div className="flex gap-3" data-testid="live-line">
             <span className="w-11 shrink-0 pt-[1px] font-mono text-[11.5px] tabular-nums text-brand-300/70">{formatClock(elapsed)}</span>
-            <LiveLine text={partial} placeholder={segs.length === 0 ? "Waiting for someone to speak" : ""} />
+            {partial && partialWho && (
+              <span className="w-[3px] shrink-0 rounded-full opacity-40" style={{ background: speakerPalette(segs.map((x) => x.speaker))(partialWho) }} aria-hidden />
+            )}
+            <div className="min-w-0">
+              {partial && partialWho && (
+                <div data-testid="live-speaker" className="text-[12px] font-semibold opacity-80" style={{ color: speakerPalette(segs.map((x) => x.speaker))(partialWho) }}>
+                  {shownName(partialWho, me)}
+                </div>
+              )}
+              <LiveLine text={partial} placeholder={stopping ? "" : segs.length === 0 ? "Listening. Lines appear here as people talk" : ""} />
+            </div>
           </div>
         </div>
         <AnimatePresence>
@@ -439,8 +458,29 @@ function LiveLine({ text, placeholder }: { text: string; placeholder: string }) 
   );
 }
 
+/** True from Stop until the backend's final event (summary + action items written). */
+function useSummaryPending(note: Note) {
+  const [pending, setPending] = useState(() => isStopped(note.id) && !note.summary);
+  useEffect(() => {
+    if (!pending) return;
+    const off = on<MeetingEvent>(EV.meeting, (e) => {
+      if (e.noteId === note.id && !e.live && e.summary !== undefined) setPending(false);
+    });
+    const t = setTimeout(() => setPending(false), 120_000); // never spin forever
+    return () => {
+      off();
+      clearTimeout(t);
+    };
+  }, [note.id, pending]);
+  useEffect(() => {
+    if (note.summary) setPending(false);
+  }, [note.summary]);
+  return pending;
+}
+
 function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "success" | "info" | "error"; text: string }) => void }) {
   const { go, refreshNotes } = useStore();
+  const writing = useSummaryPending(note);
   const [added, setAdded] = useState<Set<number>>(new Set());
   const info = useMeetingInfo(note.id, note.transcript);
   const me = useStore((s) => s.settings?.userName);
@@ -499,7 +539,19 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
           <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-brand-500 dark:text-brand-300">
             <Sparkles size={12} /> Summary
           </div>
-          <p className="text-[13.5px] leading-relaxed selectable">{note.summary}</p>
+          {writing ? (
+            <div data-testid="summary-writing" className="flex flex-col gap-2 py-1" aria-live="polite">
+              <span className="text-[13px] text-muted">Writing the summary and action items…</span>
+              <span className="h-2.5 w-11/12 animate-pulse rounded-full bg-[var(--glass-strong,rgba(127,127,127,0.18))]" />
+              <span className="h-2.5 w-3/4 animate-pulse rounded-full bg-[var(--glass-strong,rgba(127,127,127,0.18))]" />
+            </div>
+          ) : note.summary ? (
+            <p className="text-[13.5px] leading-relaxed selectable">{note.summary}</p>
+          ) : (
+            <p data-testid="summary-empty" className="text-[13px] text-faint">
+              {note.transcript.length ? "No summary for this meeting. With an AI model set in Settings → AI, Flo writes one when you stop." : "Nothing was said in this meeting."}
+            </p>
+          )}
         </div>
         {note.actionItems.length > 0 && (
           <div className="mt-4">

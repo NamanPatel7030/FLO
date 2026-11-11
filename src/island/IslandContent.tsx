@@ -8,6 +8,7 @@ import type { AssistantResponse, ClaudeEvent, Dictation, IslandGeometry, Mode, P
 import { FlowWave, Waveform } from "./Waveform";
 import type { MeetingInfo } from "./Island";
 import { copyText } from "../lib/clipboard";
+import { speakerPalette } from "../lib/speakers";
 import { CardRow } from "./CardRow";
 import { isSignInError } from "../lib/account";
 import { NotchViz } from "./Ribbon";
@@ -507,19 +508,40 @@ export function IslandContent(p: Props) {
               <div className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-brand-300">
                 <Radio size={11} /> Live transcript
               </div>
-              <div className="flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden">
-                {(p.meeting.lines ?? []).slice(-4).map((ln, i) => (
-                  <p key={i} className="line-clamp-2 text-[12.5px] leading-snug text-white/85">
-                    {ln.speaker && <span className="mr-1 font-semibold text-brand-300">{ln.speaker}:</span>}
-                    {ln.text}
-                  </p>
-                ))}
-                {(p.meeting.partial || (!p.meeting.lines?.length && p.meeting.lastLine)) && (
-                  <p className="line-clamp-2 text-[12.5px] leading-snug text-white/55">
-                    {p.meeting.partial || p.meeting.lastLine}
-                    <span className="flo-caret" aria-hidden />
-                  </p>
-                )}
+              <div className="flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden" data-testid="island-transcript">
+                {(() => {
+                  const shown = (p.meeting.lines ?? []).slice(-4);
+                  const color = speakerPalette([...(p.meeting.lines ?? []).map((l) => l.speaker), p.meeting.partialSpeaker]);
+                  // the name only where the speaker changes (like the app's transcript)
+                  const rows = shown.map((ln, i) => (
+                    <p key={i} className="line-clamp-2 text-[12.5px] leading-snug text-white/85" data-testid="island-transcript-line">
+                      {ln.speaker && (i === 0 || shown[i - 1].speaker !== ln.speaker) && (
+                        <span className="mr-1 font-semibold" style={{ color: color(ln.speaker) }} data-speaker={ln.speaker}>
+                          {ln.speaker}
+                        </span>
+                      )}
+                      {ln.text}
+                    </p>
+                  ));
+                  const last = shown[shown.length - 1]?.speaker;
+                  const live = p.meeting.partial || (!p.meeting.lines?.length && p.meeting.lastLine);
+                  return (
+                    <>
+                      {rows}
+                      {live && (
+                        <p className="line-clamp-2 text-[12.5px] leading-snug text-white/55" data-testid="island-partial">
+                          {p.meeting.partial && p.meeting.partialSpeaker && p.meeting.partialSpeaker !== last && (
+                            <span className="mr-1 font-semibold opacity-80" style={{ color: color(p.meeting.partialSpeaker) }}>
+                              {p.meeting.partialSpeaker}
+                            </span>
+                          )}
+                          {p.meeting.partial || p.meeting.lastLine}
+                          <span className="flo-caret" aria-hidden />
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
                 {!p.meeting.lines?.length && !p.meeting.partial && !p.meeting.lastLine && (
                   <p className="text-[12px] text-white/40">Listening… the full summary is in the app.</p>
                 )}

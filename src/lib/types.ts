@@ -329,6 +329,8 @@ export interface MeetingEvent {
   live: boolean;
   /** live, still-changing line while someone is talking (cleared/replaced by the next segment) */
   partial?: string;
+  /** who is speaking the live line ("You", "Speaker 2", …) */
+  partialSpeaker?: string;
 }
 
 export interface ModelProgressEvent {

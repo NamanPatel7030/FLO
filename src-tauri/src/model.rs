@@ -567,6 +567,9 @@ pub struct MeetingEvent {
     /// live, still-changing line (replaced by the next partial or a final segment)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub partial: Option<String>,
+    /// who is speaking the live line ("You", "Speaker 2", …)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial_speaker: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

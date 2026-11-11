@@ -23,6 +23,8 @@ mod intents;
 mod livetx;
 mod llm;
 mod meeting;
+mod meeting_sim;
+mod meetpipe;
 mod reminders;
 mod cron;
 mod scheduler;
@@ -517,6 +519,12 @@ pub fn run() {
         let secs = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(10.0);
         let out = args.get(i + 2).cloned().unwrap_or_else(|| "/tmp/flo-tap.wav".into());
         sysaudio::probe(secs, &out);
+        return;
+    }
+    // `--meeting-sim mic.wav call.wav|- out.json` → run the meeting pipeline on recorded tracks
+    if let Some(i) = args.iter().position(|a| a == "--meeting-sim") {
+        let get = |k: usize| args.get(i + k).cloned().unwrap_or_default();
+        meeting_sim::run_files(&get(1), &get(2), &get(3));
         return;
     }
     if let Some(i) = args.iter().position(|a| a == "--bench-stt") {

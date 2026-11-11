@@ -98,6 +98,76 @@ test("notes: Stop switches to Summarizing and ignores late events", async ({ pag
   expect(n.live).toBe(false);
 });
 
+test("live meeting: the live line names who is talking, with the recording state and timer", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/#/notes");
+  await mock(page);
+  await freeze(page);
+  const note = await invoke(page, "start_meeting", { title: "Pricing sync" });
+  await page.goto(`/#/notes/${note.id}`);
+  await expect(page.getByTestId("recording-state")).toHaveText("Recording");
+  await emit(page, "flo://meeting", { noteId: note.id, segment: { t: 2, text: "Let's start with pricing.", speaker: "You" }, partial: "", elapsedSec: 4, live: true });
+  await emit(page, "flo://meeting", { noteId: note.id, partial: "Our conversion went", partialSpeaker: "Speaker 2", elapsedSec: 6, live: true });
+  const who = page.getByTestId("live-speaker");
+  await expect(who).toHaveText("Speaker 2");
+  // Speaker 2's colour (#f59e0b), the same one their committed lines get
+  expect(await who.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(245, 158, 11)");
+  await expect(page.getByTestId("meeting-timer")).toHaveText("0:06");
+  await emit(page, "flo://meeting", { noteId: note.id, segment: { t: 5, text: "Our conversion went up twelve percent.", speaker: "Speaker 2" }, partial: "", elapsedSec: 8, live: true });
+  await expect(who).toHaveCount(0);
+  const tag = page.locator('[data-testid="live-transcript"] [data-testid="speaker-tag"][data-speaker="Speaker 2"]');
+  await expect(tag).toBeVisible();
+  expect(await tag.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(245, 158, 11)");
+  // lines stay in time order even when the call's line arrives after yours
+  await emit(page, "flo://meeting", { noteId: note.id, segment: { t: 3, text: "Quick note before that.", speaker: "Speaker 1" }, partial: "", elapsedSec: 9, live: true });
+  await expect(page.locator('[data-testid="live-transcript"] [data-testid="transcript-row"]')).toHaveText([/start with pricing/, /Quick note/, /twelve percent/]);
+});
+
+test("meeting stop: the note shows the summary being written, then the summary and owned action items", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/#/notes");
+  await mock(page);
+  await freeze(page);
+  const note = await invoke(page, "start_meeting", { title: "Launch review" });
+  await page.goto(`/#/notes/${note.id}`);
+  await emit(page, "flo://meeting", { noteId: note.id, segment: { t: 1, text: "I'll write the release notes.", speaker: "You" }, partial: "", elapsedSec: 3, live: true });
+  await page.getByRole("button", { name: /stop & summarize/i }).click();
+  await expect(page.getByTestId("summary-writing")).toBeVisible();
+  await page.clock.runFor(1200);
+  await expect(page.getByTestId("summary-writing")).toHaveCount(0);
+  await expect(page.getByText("Short meeting, no major decisions captured.")).toBeVisible();
+  const owners = page.getByTestId("action-owner");
+  await expect(owners).toHaveCount(2);
+  await expect(owners.nth(1)).toHaveText("Speaker 1");
+});
+
+test("notch: the expanded meeting view colours speakers and names the live speaker", async ({ page }) => {
+  await page.clock.install();
+  await page.goto("/?nh=38&nw=200#/island");
+  await mock(page);
+  await page.locator('[aria-label="todos"]').waitFor();
+  await freeze(page);
+  const note = await invoke(page, "start_meeting", { title: "Standup" });
+  await emit(page, "flo://meeting", { noteId: note.id, segment: { t: 1, text: "Morning everyone.", speaker: "You" }, partial: "", elapsedSec: 2, live: true });
+  await emit(page, "flo://meeting", { noteId: note.id, segment: { t: 3, text: "Morning! Quick update from me.", speaker: "Speaker 1" }, partial: "", elapsedSec: 4, live: true });
+  await emit(page, "flo://meeting", { noteId: note.id, segment: { t: 5, text: "The build is green.", speaker: "Speaker 1" }, partial: "", elapsedSec: 6, live: true });
+  await page.clock.runFor(800);
+  await page.locator('[data-testid="island-live-line"]').click();
+  await page.clock.runFor(800);
+  // (after the clock ran: the mock's own demo partials would replace it)
+  await emit(page, "flo://meeting", { noteId: note.id, partial: "Great, then let's", partialSpeaker: "You", elapsedSec: 7, live: true });
+  const lines = page.getByTestId("island-transcript-line");
+  await expect(lines).toHaveCount(3);
+  // a speaker's name only where the speaker changes
+  await expect(page.locator('[data-testid="island-transcript"] [data-speaker]')).toHaveText(["You", "Speaker 1"]);
+  const you = page.locator('[data-testid="island-transcript"] [data-speaker="You"]');
+  const s1 = page.locator('[data-testid="island-transcript"] [data-speaker="Speaker 1"]');
+  expect(await you.evaluate((el) => getComputedStyle(el).color)).not.toBe(await s1.evaluate((el) => getComputedStyle(el).color));
+  await expect(page.getByTestId("island-partial")).toContainText("You");
+  await expect(page.getByTestId("island-partial")).toContainText("Great, then let's");
+  await invoke(page, "stop_meeting");
+});
+
 const wordsOnScreen = (page: Page) => page.locator("[data-word]").evaluateAll((els) => els.map((e) => e.textContent ?? ""));
 
 test("typing test: one wrong letter only marks that word", async ({ page }) => {

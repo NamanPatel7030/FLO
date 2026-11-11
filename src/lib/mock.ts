@@ -572,13 +572,15 @@ function startMockMeeting(title?: string, projectId?: string): Note {
     const elapsedSec = Math.round((Date.now() - t0) / 1000);
     liveNote.durationSec = elapsedSec;
     const line = MEETING_LINES[i % MEETING_LINES.length].split(" ");
+    // like a real call: you, then the people on the call (voices told apart on the Mac)
+    const speaker = ["You", "Speaker 1", "Speaker 2"][i % 3];
     if (words === 0) lineStart = elapsedSec;
     words++;
     if (words < line.length) {
-      mockEmit(EV.meeting, { noteId: liveNote.id, partial: line.slice(0, words).join(" "), elapsedSec, live: true });
+      mockEmit(EV.meeting, { noteId: liveNote.id, partial: line.slice(0, words).join(" "), partialSpeaker: speaker, elapsedSec, live: true });
       return;
     }
-    const seg = { t: lineStart, text: line.join(" ") };
+    const seg = { t: lineStart, text: line.join(" "), speaker };
     liveNote.transcript.push(seg);
     i++;
     words = 0;
@@ -596,9 +598,14 @@ function stopMockMeeting(): Note | null {
   const n = liveNote;
   if (n) {
     n.live = false;
-    n.summary ||= "Short meeting, no major decisions captured.";
-    n.actionItems = ["Test Windows bottom-right positioning", "Write release notes"];
-    mockEmit(EV.meeting, { noteId: n.id, summary: n.summary, elapsedSec: n.durationSec, live: false });
+    // like the app: recording stops at once, the summary + action items arrive a moment later
+    mockEmit(EV.meeting, { noteId: n.id, elapsedSec: n.durationSec, live: false });
+    setTimeout(() => {
+      n.summary ||= "Short meeting, no major decisions captured.";
+      n.actionItems = ["You: Test Windows bottom-right positioning", "Speaker 1: Write release notes by Friday"];
+      mockEmit(EV.meeting, { noteId: n.id, summary: n.summary, elapsedSec: n.durationSec, live: false });
+      mockEmit(EV.notes, {});
+    }, 900);
   }
   liveNote = null;
   mockEmit(EV.state, { phase: "done", mode: "meeting", message: "Notes saved" });

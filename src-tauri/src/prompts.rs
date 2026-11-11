@@ -136,6 +136,16 @@ pub fn meeting_update_user(previous_summary: &str, new_lines: &str) -> String {
     }
 }
 
+/// Final pass of a long meeting: the rolling summary, the action items found so far and the
+/// lines after the last rolling update (the whole transcript would not fit).
+pub fn meeting_final_long_user(previous_summary: &str, items_so_far: &[String], new_lines: &str) -> String {
+    let items = if items_so_far.is_empty() { "(none yet)".to_string() } else { items_so_far.iter().map(|i| format!("- {i}")).collect::<Vec<_>>().join("\n") };
+    format!(
+        "Summary so far:\n{previous_summary}\n\nAction items so far:\n{items}\n\nLast part of the transcript:\n{new_lines}\n\n\
+Return the final summary of the whole meeting, and ALL action items: keep the ones so far that still apply and add new ones."
+    )
+}
+
 /// Extra instructions for "Go deeper" / "Search the web" follow-ups.
 pub fn assistant_mode_note(mode: &str) -> &'static str {
     match mode {
