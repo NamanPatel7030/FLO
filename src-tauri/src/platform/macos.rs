@@ -661,7 +661,7 @@ pub fn island_geometry() -> IslandGeometry {
         let screens: *mut NSArray<AnyObject> = msg_send![class!(NSScreen), screens];
         let count: usize = if screens.is_null() { 0 } else { msg_send![screens, count] };
         if count == 0 {
-            return IslandGeometry { platform: "macos".into(), has_notch: false, notch_width: 200.0, notch_height: 32.0, screen_width: 1440.0 };
+            return IslandGeometry { platform: "macos".into(), has_notch: false, notch_width: 200.0, notch_height: 32.0, screen_width: 1440.0, opaque: false };
         }
         // screens[0] is the one with the menu bar
         let s: *mut AnyObject = msg_send![screens, objectAtIndex: 0usize];
@@ -678,7 +678,7 @@ pub fn island_geometry() -> IslandGeometry {
             let mb = (frame.size.height - visible.size.height - visible.origin.y + frame.origin.y).max(24.0);
             (200.0, mb)
         };
-        IslandGeometry { platform: "macos".into(), has_notch, notch_width: notch_w, notch_height: notch_h, screen_width: frame.size.width }
+        IslandGeometry { platform: "macos".into(), has_notch, notch_width: notch_w, notch_height: notch_h, screen_width: frame.size.width, opaque: false }
     }
 }
 
@@ -760,7 +760,7 @@ mod island_tests {
     use super::*;
 
     fn geo(has_notch: bool) -> IslandGeometry {
-        IslandGeometry { platform: "macos".into(), has_notch, notch_width: 185.0, notch_height: 32.0, screen_width: 1512.0 }
+        IslandGeometry { platform: "macos".into(), has_notch, notch_width: 185.0, notch_height: 32.0, screen_width: 1512.0, opaque: false }
     }
 
     #[test]
@@ -906,6 +906,7 @@ pub fn permissions() -> Permissions {
             hotkey_active: HOTKEY_ACTIVE.load(Ordering::SeqCst),
             accessibility_stale: crate::tcc::accessibility_stale(ax),
             hotkey_problem: None,
+            checks: Vec::new(),
         }
     }
 }

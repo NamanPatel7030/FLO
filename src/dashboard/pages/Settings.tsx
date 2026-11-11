@@ -6,7 +6,8 @@ import { api, on } from "../../lib/api";
 import { permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyOptions, hotkeyWords, relativeTime, sameHotkey } from "../../lib/format";
 import { deviceWord, keyStoreName, os, settingsApp } from "../../lib/os";
-import { LANGUAGE_CHOICES, pickLanguage, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
+import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, pickLanguage, progressText, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
+import { useSpeechModels, type Download as SpeechDownload } from "../useSpeechModels";
 import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
@@ -23,6 +24,7 @@ import { UpdateSettingsRow } from "../UpdateCard";
 import { AvatarEditor } from "../AvatarEditor";
 import { PresenceSettings } from "../Presence";
 import { SyncCard } from "../SyncCard";
+import { PlatformChecks } from "../PlatformChecks";
 import { AutoContinueSettings } from "../AutoContinue";
 import { formatZoneTime, hourDiffLabel, loadZones, MAX_ZONES, onZonesChange, saveZones, searchCities, type ClockZone, type ZoneCity } from "../../lib/timezones";
 
@@ -281,7 +283,7 @@ function HexField({ value, onChange }: { value: string; onChange: (hex: string) 
 function Appearance({ s, set }: P) {
   return (
     <div className="space-y-6">
-      <Section first title="Theme" hint="How Flo's window looks. The notch stays black: it's part of your Mac.">
+      <Section first title="Theme" hint={os() === "macos" ? "How Flo's window looks. The notch stays black: it's part of your Mac." : "How Flo's window looks. The pill stays dark so it reads over any app."}>
         <ThemeCard s={s} set={set} />
       </Section>
       <Section title="Your avatar" hint="Flo's little face lives in your notch and reacts as you work. Make it yours.">
@@ -773,7 +775,7 @@ function General({ s, set }: P) {
       <Section first title="Account" hint={`Who's signed in on this ${deviceWord()}.`}>
         <AccountTab />
       </Section>
-      <Section title="Presence & phone" hint="Active means you're at your Mac. Away sends short notifications to your phone.">
+      <Section title="Presence & phone" hint={`Active means you're at your ${deviceWord()}. Away sends short notifications to your phone.`}>
         <PresenceSettings s={s} set={set} />
       </Section>
       <Section title="Preferences">
@@ -805,24 +807,85 @@ function General({ s, set }: P) {
 const STT_PROVIDER_LABEL: Record<Exclude<SttProvider, "local">, string> = { groq: "Groq", openai: "OpenAI", sarvam: "Sarvam AI" };
 
 function defaultSttModel(p: SttProvider): string {
-  return p === "local" ? "large-v3-turbo-q5_0" : p === "groq" ? "whisper-large-v3-turbo" : p === "sarvam" ? "saaras:v3" : "gpt-4o-mini-transcribe";
+  return p === "local" ? DEFAULT_MODEL : p === "groq" ? "whisper-large-v3-turbo" : p === "sarvam" ? "saaras:v3" : "gpt-4o-mini-transcribe";
+}
+
+/** One on-device model: size, speed and accuracy notes, live download progress, Download / Try
+ *  again, Use this model, delete. */
+function ModelRow({ m, active, dl, onUse, onDownload, onDelete }: { m: LocalModel; active: boolean; dl?: SpeechDownload; onUse: () => void; onDownload: () => void; onDelete: () => void }) {
+  const downloading = !!dl?.active;
+  const pct = dl && dl.total > 0 ? Math.round((dl.received / dl.total) * 100) : 0;
+  return (
+    <div data-testid="model-row" data-model={m.id} className={clsx("flex items-center gap-4 rounded-xl p-3 transition", active ? "glass-strong ring-1 ring-brand-400/40" : "bg-[var(--glass)]")}>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[13.5px] font-medium">
+          {m.label}
+          {active && <span className="rounded-full bg-brand-500/20 px-1.5 text-[10.5px] text-brand-500 dark:text-brand-300">In use</span>}
+        </div>
+        <div className="text-[12px] text-faint">
+          {m.sizeMb} MB · {m.speed} · {m.accuracy}
+        </div>
+        <div className="text-[11.5px] text-faint">{m.languages}</div>
+        {downloading && (
+          <>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--glass-strong)]" role="progressbar" aria-label={`${m.label} download`} aria-valuenow={pct}>
+              <motion.div className="h-full accent-gradient" animate={{ width: `${pct}%` }} />
+            </div>
+            {dl.total > 0 && <div className="mt-1 text-[11.5px] text-muted" data-testid="model-row-progress">{progressText(dl.received, dl.total, dl.bps)}</div>}
+          </>
+        )}
+        {!downloading && dl?.error && !m.installed && <div className="mt-1 text-[11.5px] text-red-500">{dl.error}</div>}
+      </div>
+      {m.installed ? (
+        <div className="flex gap-1.5">
+          {!active && (
+            <Button size="sm" onClick={onUse}>
+              Use this model
+            </Button>
+          )}
+          {!active && <Button size="sm" variant="ghost" aria-label={`Delete ${m.label}`} icon={<Trash2 size={13} />} onClick={onDelete} />}
+        </div>
+      ) : (
+        <Button size="sm" variant="primary" disabled={downloading} icon={<Download size={13} />} onClick={onDownload}>
+          {downloading ? `${pct}%` : dl?.error ? "Try again" : "Download"}
+        </Button>
+      )}
+    </div>
+  );
 }
 
 function Voice({ s, set }: P) {
-  const [models, setModels] = useState<LocalModel[] | null>(null);
-  const [progress, setProgress] = useState<Record<string, ModelProgressEvent>>({});
+  const { models, dl, download, remove, refresh } = useSpeechModels();
   const toast = useStore((x) => x.toast);
-  useEffect(() => {
-    api.listModels().then(setModels);
-    return on<ModelProgressEvent>(EV.modelProgress, (e) => {
-      setProgress((p) => ({ ...p, [e.id]: e }));
-      if (e.done) {
-        api.listModels().then(setModels);
+  useEffect(
+    () =>
+      on<ModelProgressEvent>(EV.modelProgress, (e) => {
+        if (!e.done) return;
         if (e.error) toast({ kind: "error", text: e.error });
         else toast({ kind: "success", text: "Model ready" });
-      }
-    });
-  }, [toast]);
+      }),
+    [toast],
+  );
+  // switching takes effect on the next dictation (the old model is unloaded on save); loading the
+  // new one right away makes that first dictation quick too
+  const pickModel = (id: string) => {
+    set({ sttModel: id });
+    api.loadSpeechModel(id).catch(() => {});
+  };
+  const row = (m: LocalModel) => (
+    <ModelRow
+      key={m.id}
+      m={m}
+      active={s.sttModel === m.id}
+      dl={dl[m.id]}
+      onUse={() => pickModel(m.id)}
+      onDownload={() => download(m.id)}
+      onDelete={() => remove(m.id).catch((err) => toast({ kind: "error", text: String(err?.message ?? err) }))}
+    />
+  );
+  const starters = models?.filter((m) => m.tier === "starter") ?? [];
+  const advanced = models ? advancedModels(models) : [];
+  const light = models?.filter((m) => m.tier === "light") ?? [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -928,7 +991,7 @@ function Voice({ s, set }: P) {
                 icon={<Trash2 size={13} />}
                 onClick={() =>
                   api.removeUnusedModels().then((freed) => {
-                    api.listModels().then(setModels);
+                    refresh();
                     toast({ kind: "success", text: `Freed ${freed} MB` });
                   })
                 }
@@ -937,46 +1000,23 @@ function Voice({ s, set }: P) {
               </Button>
             </div>
           )}
-          <div className="flex flex-col gap-2">
+          <FieldHelp>The starter model is small and quick. Bigger models hear accents, Hindi and names better, but take more space and memory. Switch any time, no restart needed.</FieldHelp>
+          <div className="mt-3 flex flex-col gap-2">
             {!models && <Skeleton className="h-28" />}
-            {models?.map((m) => {
-              const pr = progress[m.id];
-              const downloading = pr && !pr.done;
-              const active = s.sttModel === m.id;
-              return (
-                <div key={m.id} className={clsx("flex items-center gap-4 rounded-xl p-3 transition", active ? "glass-strong ring-1 ring-brand-400/40" : "bg-[var(--glass)]")}>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 text-[13.5px] font-medium">
-                      {m.label}
-                      {active && <span className="rounded-full bg-brand-500/20 px-1.5 text-[10.5px] text-brand-500 dark:text-brand-300">In use</span>}
-                    </div>
-                    <div className="text-[12px] text-faint">
-                      {m.languages} · {m.sizeMb} MB
-                    </div>
-                    {downloading && (
-                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--glass-strong)]">
-                        <motion.div className="h-full accent-gradient" animate={{ width: `${(pr.received / Math.max(1, pr.total)) * 100}%` }} />
-                      </div>
-                    )}
-                  </div>
-                  {m.installed ? (
-                    <div className="flex gap-1.5">
-                      {!active && (
-                        <Button size="sm" onClick={() => set({ sttModel: m.id })}>
-                          Use
-                        </Button>
-                      )}
-                      {!active && <Button size="sm" variant="ghost" icon={<Trash2 size={13} />} onClick={() => api.deleteModel(m.id).then(() => api.listModels().then(setModels))} />}
-                    </div>
-                  ) : (
-                    <Button size="sm" variant="primary" disabled={!!downloading} icon={<Download size={13} />} onClick={() => api.downloadModel(m.id)}>
-                      {downloading ? `${Math.round((pr.received / Math.max(1, pr.total)) * 100)}%` : "Download"}
-                    </Button>
-                  )}
-                </div>
-              );
-            })}
+            {starters.map(row)}
           </div>
+          {advanced.length > 0 && (
+            <div className="mt-5" data-testid="advanced-models">
+              <div className="mb-2 text-[13px] font-semibold">Advanced models</div>
+              <div className="flex flex-col gap-2">{advanced.map(row)}</div>
+            </div>
+          )}
+          {light.length > 0 && (
+            <div className="mt-5">
+              <div className="mb-2 text-[13px] font-semibold">Other models</div>
+              <div className="flex flex-col gap-2">{light.map(row)}</div>
+            </div>
+          )}
         </Card>
       )}
     </div>
@@ -993,7 +1033,7 @@ function AI({ s, set }: P) {
         <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
             <div className="mb-1 text-[12.5px] font-semibold">On-device (Ollama / LM Studio)</div>
-            <p className="text-[12px] leading-relaxed text-muted">Everything stays on your Mac. Free and private, works offline. Needs a one-time setup and a reasonably capable machine, and can be a little slower.</p>
+            <p className="text-[12px] leading-relaxed text-muted">Everything stays on your {deviceWord()}. Free and private, works offline. Needs a one-time setup and a reasonably capable machine, and can be a little slower.</p>
           </div>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--glass)] p-3">
             <div className="mb-1 text-[12.5px] font-semibold">Bring your own cloud key</div>
@@ -1140,7 +1180,7 @@ function Privacy({ s, set }: P) {
       </Card>
       <SyncCard />
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
-        <Toggle label="Assistant may use your cloud AI (BYOK)" hint="On: your question, any selected text and screen text are sent to the cloud provider you chose (with your key). Off: the assistant uses a local model only and nothing leaves this Mac." checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
+        <Toggle label="Assistant may use your cloud AI (BYOK)" hint={`On: your question, any selected text and screen text are sent to the cloud provider you chose (with your key). Off: the assistant uses a local model only and nothing leaves this ${deviceWord()}.`} checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
         <Toggle label="Assistant can see the active window" hint="On: when you ask, a screenshot of the front window is read for context (sent to the cloud only if the toggle above is on). Off: the assistant never looks at your screen." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />
         <Toggle
           label="Reuse recent answers"
@@ -1272,7 +1312,10 @@ function PermissionsTab() {
       )}
       <Card className="flex flex-col gap-2 p-4">
         {!p && <Skeleton className="h-44" />}
-        {p &&
+        {/* Windows / Linux: everything Flo relies on there, each with a live status and a fix */}
+        {p?.checks?.length ? (
+          <PlatformChecks checks={p.checks} />
+        ) : p &&
           permissionItems().map((it) => (
             <div key={it.key} className="flex items-center gap-4 rounded-xl bg-[var(--glass)] p-3">
               <span className={clsx("flex h-8 w-8 items-center justify-center rounded-full", p[it.key] ? "bg-brand-400/15 text-brand-300" : "bg-amber-500/15 text-amber-400")}>
@@ -1296,7 +1339,7 @@ function PermissionsTab() {
               )}
             </div>
           ))}
-        {os() !== "macos" && p?.hotkeyProblem && (
+        {os() !== "macos" && p?.hotkeyProblem && !p.checks?.length && (
           <div className="rounded-xl border border-amber-400/25 bg-amber-500/[0.06] p-3 text-[12px] leading-relaxed text-muted">
             <span className="font-medium text-[var(--fg)]">Your Flo key can't be read.</span> {p.hotkeyProblem}
           </div>

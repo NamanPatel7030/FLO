@@ -7,9 +7,16 @@ describe("onboarding flow", () => {
     expect(flat).toEqual([...STEPS]);
   });
 
-  it("is short and focused: hello, permissions, try, voice and AI, two questions, ready", () => {
-    expect([...STEPS]).toEqual(["welcome", "permissions", "try", "setup", "role", "uses", "done"]);
-    expect(STEPS.length).toBeLessThanOrEqual(7);
+  it("is short and focused: hello, the speech model, permissions, try, voice and AI, two questions, ready", () => {
+    expect([...STEPS]).toEqual(["welcome", "model", "permissions", "try", "setup", "role", "uses", "done"]);
+    expect(STEPS.length).toBeLessThanOrEqual(8);
+  });
+
+  it("downloads the speech model first, before the try-out", () => {
+    expect(stepIndex("model")).toBe(1);
+    expect(stepIndex("model")).toBeLessThan(stepIndex("try"));
+    expect(headline("model", "").title).toBeTruthy();
+    expect(headline("model", "").sub).not.toMatch(/[—–]/);
   });
 
   it("asks for permissions before the first dictation (the mic and the Flo key must work)", () => {

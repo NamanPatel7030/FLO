@@ -2,6 +2,7 @@ import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
 import { isTauri } from "./lib/api";
+import { applyPlatformClass, os } from "./lib/os";
 
 // Separate chunks: the always-on island window must stay tiny (no recharts etc.).
 const Island = lazy(() => import("./island/Island"));
@@ -14,6 +15,7 @@ const isGuide = location.hash.startsWith("#/perm-guide");
 if (isIsland) document.documentElement.classList.add("island");
 if (isGuide) document.documentElement.classList.add("perm-guide");
 if (isTauri) document.documentElement.classList.add("tauri");
+applyPlatformClass(os());
 // Pause CSS animations while the window is hidden (lightweight when Flo sits in the background).
 const syncVisibility = () => document.documentElement.classList.toggle("hidden-doc", document.hidden);
 document.addEventListener("visibilitychange", syncVisibility);

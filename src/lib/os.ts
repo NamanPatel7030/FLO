@@ -18,8 +18,21 @@ const previewOS = (): Platform => {
 let current: Platform = inApp && typeof navigator !== "undefined" ? osFromUserAgent(navigator.userAgent) : previewOS();
 
 export const os = (): Platform => current;
+
+/** `platform-macos` / `platform-windows` / `platform-linux` on <html>: Windows / Linux draw the
+ *  dashboard opaque (no vibrancy behind it there), and Linux drops effects WebKitGTK renders
+ *  slowly (backdrop blur, blend modes, always-running animations). index.html sets a first guess
+ *  from the user agent before the stylesheet paints. */
+export function applyPlatformClass(p: Platform = current, el: HTMLElement | null = typeof document !== "undefined" ? document.documentElement : null) {
+  if (!el) return;
+  for (const k of ["macos", "windows", "linux"] as const) el.classList.toggle(`platform-${k}`, k === p);
+}
+
 export const setOS = (p: Platform | undefined | null) => {
-  if (p === "macos" || p === "windows" || p === "linux") current = p;
+  if (p !== "macos" && p !== "windows" && p !== "linux") return;
+  const changed = p !== current;
+  current = p;
+  if (changed) applyPlatformClass(p);
 };
 export const isMac = (p: Platform = current) => p === "macos";
 

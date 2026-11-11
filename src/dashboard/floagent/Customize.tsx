@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Lock, MousePointerClick, Plug, Zap } from "lucide-react";
 import type { AgentConfig } from "../../lib/floAgent";
 import { useStore } from "../store";
+import { deviceWord } from "../../lib/os";
 import { Button, Card, CardTitle, PageHeader, Skeleton, Toggle } from "../ui";
 
 const PERSONAS = ["Calm and precise. Short answers, no filler.", "Friendly and upbeat, like a helpful teammate.", "Formal and thorough. Explain what you did."];
@@ -61,7 +62,7 @@ export function Customize({ cfg, save }: { cfg: AgentConfig | null; save: (c: Ag
           <Card className="px-5 pb-2 pt-5">
             <CardTitle>What it can use</CardTitle>
             <Row icon={<MousePointerClick size={14} />}>
-              <Toggle checked={draft.allowScreen} onChange={(v) => flip({ allowScreen: v })} label="Screen control" hint="Open apps and pages, click, type and scroll on your Mac." />
+              <Toggle checked={draft.allowScreen} onChange={(v) => flip({ allowScreen: v })} label="Screen control" hint={`Open apps and pages, click, type and scroll on your ${deviceWord()}.`} />
             </Row>
             <Row icon={<Plug size={14} />}>
               <Toggle checked={draft.allowTools} onChange={(v) => flip({ allowTools: v })} label="Connected apps" hint="Use the tools of your MCP servers when you name the app." />

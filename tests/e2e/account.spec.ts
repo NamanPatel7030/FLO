@@ -9,6 +9,14 @@ const invoke = (page: Page, cmd: string, args: Record<string, unknown> = {}) =>
 const calls = (page: Page, cmd: string) => page.evaluate((c) => (window as any).__floMock.calls.filter((x: any) => x.cmd === c).map((x: any) => x.args), cmd);
 const step = (page: Page, s: string) => expect(page.locator('[data-testid="onboarding"]')).toHaveAttribute("data-step", s);
 
+/** Step 2: wait for the small speech model to download and load, then move on. */
+async function modelReady(page: Page) {
+  const ob = page.locator('[data-testid="onboarding"]');
+  await step(page, "model");
+  await expect(ob.getByTestId("model-progress")).toHaveText("Ready. I work offline from now on.", { timeout: 15_000 });
+  await ob.getByRole("button", { name: "Continue", exact: true }).click();
+}
+
 /** Hold the try-out's mic button like a person would (press, talk, let go). */
 async function holdToTalk(page: Page, ms = 900) {
   const mic = page.locator('[data-testid="onboarding"]').getByTestId("try-mic");
@@ -50,6 +58,9 @@ test("sign in → hello → permissions → a real first dictation → voice & A
   await expect(ob.locator('[data-testid="onboard-guide"]')).toBeVisible();
   await expect(ob.getByLabel("Your name")).toHaveValue("Priya");
   await btn("Let's begin").click();
+
+  // the small speech model downloads first (the try-out needs it)
+  await modelReady(page);
 
   // permissions come BEFORE the try-out: just two, the microphone and Accessibility, in one card
   // (no Input Monitoring: the Flo key runs on Accessibility alone; no Screen Recording in setup)
@@ -130,6 +141,7 @@ test("try-out on a fresh Mac: no mic yet → clear fix right there; silence → 
   const ob = page.locator('[data-testid="onboarding"]');
   const btn = (name: string) => ob.getByRole("button", { name, exact: true });
   await btn("Let's begin").click();
+  await modelReady(page);
   await step(page, "permissions");
   await expect(ob.locator('[data-testid="perm-row"][data-granted="false"]')).toHaveCount(2);
   await btn("I'll do this later").click();
@@ -231,6 +243,7 @@ test("permissions: an update left a stale Accessibility switch → one click res
   await mock(page);
   const ob = page.locator('[data-testid="onboarding"]');
   await ob.getByRole("button", { name: "Let's begin" }).click();
+  await modelReady(page);
   await step(page, "permissions");
   const fix = ob.getByTestId("ax-reset");
   await expect(fix).toContainText("An update reset");
@@ -260,11 +273,12 @@ test("onboarding: no Back on step 1; Back and a progress dot jump to earlier ste
   await step(page, "welcome");
   await expect(ob.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
   await ob.getByRole("button", { name: "Let's begin" }).click();
-  await step(page, "permissions");
+  await step(page, "model");
   await ob.getByRole("button", { name: "Back", exact: true }).click();
   await step(page, "welcome");
-  // advance past permissions and the try-out, then a progress dot jumps back to the first step
+  // advance past the model, permissions and the try-out, then a progress dot jumps back to the first step
   await ob.getByRole("button", { name: "Let's begin" }).click();
+  await modelReady(page);
   await ob.getByRole("button", { name: "Continue", exact: true }).click(); // both already allowed in the mock
   await step(page, "try");
   await ob.getByRole("button", { name: "I'll try it later" }).click();

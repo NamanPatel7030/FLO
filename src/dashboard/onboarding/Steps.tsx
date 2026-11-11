@@ -63,7 +63,21 @@ const BARS = 22;
 /** The first dictation. Real end to end: the mic, the speech model and the AI cleanup all run,
  *  and the words come back here as an event (setup capture), not pasted into some other app. Hold
  *  the Flo key or the big button; the bars show the mic is hearing you. */
-export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: string; keyWord?: string; onSuccess: () => void; setMood: (m: NotchlingMood | null) => void }) {
+export function TryDemo({
+  keyLabel,
+  keyWord,
+  onSuccess,
+  setMood,
+  gate,
+}: {
+  keyLabel: string;
+  keyWord?: string;
+  onSuccess: () => void;
+  setMood: (m: NotchlingMood | null) => void;
+  /** shown while the speech model isn't downloaded and loaded yet; the demo is locked until then */
+  gate?: React.ReactNode;
+}) {
+  const locked = !!gate;
   const perms = usePermissions(1500);
   const [mode, setMode] = useState<RibbonMode | null>(null);
   const [text, setText] = useState("");
@@ -130,7 +144,7 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
   }, [done]);
 
   const press = () => {
-    if (holding.current !== null) return;
+    if (holding.current !== null || locked) return;
     if (!micOk) {
       setError({ text: "Allow the microphone first, then hold the button again.", fixMic: true });
       return;
@@ -178,7 +192,7 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
             : null;
 
   return (
-    <div className="flex w-full flex-col items-center text-center" data-testid="demo" data-done={done ? "true" : "false"}>
+    <div className="flex w-full flex-col items-center text-center" data-testid="demo" data-done={done ? "true" : "false"} data-locked={locked ? "true" : "false"}>
       <Heading title="Now say something" />
       <Stagger className="flex w-full flex-col items-center">
         <Rise className="mt-3 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[17px] text-[#5b6678]">
@@ -187,9 +201,12 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
           <span className="font-semibold text-[#0b1220]">"{PHRASE}"</span>
         </Rise>
 
+        {/* the speech model first: the demo is locked until it's downloaded and loaded */}
+        {gate}
+
         {/* what's missing, with the fix right here */}
         <AnimatePresence initial={false}>
-          {perms && (!micOk || !keyOk) && (
+          {!locked && perms && (!micOk || !keyOk) && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
@@ -253,6 +270,8 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
                 aria-label="Hold to talk"
                 data-testid="try-mic"
                 data-live={listening ? "true" : "false"}
+                disabled={locked}
+                title={locked ? "Available once the speech model is ready" : undefined}
                 onPointerDown={(e) => {
                   try {
                     e.currentTarget.setPointerCapture(e.pointerId); // keep the release even if the pointer drifts off
@@ -277,6 +296,7 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
                 transition={{ type: "spring", stiffness: 420, damping: 22 }}
                 className={clsx(
                   "flex h-[88px] w-[88px] touch-none select-none items-center justify-center rounded-full transition-colors",
+                  locked && "cursor-not-allowed opacity-40",
                   listening
                     ? "bg-gradient-to-br from-[#2f8cff] to-[#7a6cff] text-white shadow-[0_18px_40px_-14px_rgb(80_100_255/0.8)]"
                     : "bg-[#0b1220] text-white shadow-[0_14px_30px_-12px_rgb(11_18_32/0.6)]",
@@ -284,7 +304,7 @@ export function TryDemo({ keyLabel, keyWord, onSuccess, setMood }: { keyLabel: s
               >
                 <Mic size={36} />
               </motion.button>
-              <span className="text-[13.5px] font-medium text-[#8a94a6]">{listening ? "Listening" : "Hold to talk"}</span>
+              <span className="text-[13.5px] font-medium text-[#8a94a6]">{listening ? "Listening" : locked ? "Almost ready" : "Hold to talk"}</span>
             </div>
             <Meter levels={levels} live={listening} />
           </div>

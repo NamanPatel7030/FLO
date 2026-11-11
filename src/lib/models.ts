@@ -5,6 +5,48 @@ export function unusedModelMb(models: LocalModel[], inUse: string): number {
   return models.filter((m) => m.installed && m.id !== inUse).reduce((sum, m) => sum + m.sizeMb, 0);
 }
 
+/** What a fresh install uses (mirrors stt::DEFAULT_MODEL): Whisper Small, quantized, 190 MB. */
+export const DEFAULT_MODEL = "small-q5_1";
+
+/** The bigger, more precise downloads offered after setup, smallest first. */
+export function advancedModels(models: LocalModel[]): LocalModel[] {
+  return models.filter((m) => m.tier === "advanced").sort((a, b) => a.sizeMb - b.sizeMb);
+}
+
+/** The model setup gets ready (mirrors stt::setup_model): the chosen one when it's on disk,
+ *  otherwise the small starter. */
+export function setupTarget(models: LocalModel[], selected: string): string {
+  return models.some((m) => m.id === selected && m.installed) ? selected : DEFAULT_MODEL;
+}
+
+const mb = (bytes: number) => Math.round(bytes / 1_000_000);
+
+/** "42 of 190 MB · 5.2 MB/s" (speed left out until there is one). */
+export function progressText(received: number, total: number, bps: number): string {
+  const base = `${mb(received)} of ${mb(total)} MB`;
+  return bps > 0 ? `${base} · ${(bps / 1_000_000).toFixed(1)} MB/s` : base;
+}
+
+export interface Speed {
+  at: number;
+  bytes: number;
+  bps: number;
+}
+
+/** Download speed from successive progress events, smoothed so the number doesn't jump around. */
+export function nextSpeed(prev: Speed | null, at: number, bytes: number): Speed {
+  if (!prev || bytes < prev.bytes) return { at, bytes, bps: 0 };
+  const dt = (at - prev.at) / 1000;
+  if (dt <= 0) return prev;
+  const now = (bytes - prev.bytes) / dt;
+  return { at, bytes, bps: prev.bps === 0 ? now : prev.bps * 0.6 + now * 0.4 };
+}
+
+/** Setup's first dictation only unlocks once the on-device model is downloaded and loaded. */
+export function demoReady(s: { sttProvider: string; installed: boolean; loaded: boolean }): boolean {
+  return s.sttProvider !== "local" || (s.installed && s.loaded);
+}
+
 /** The languages "Auto" chooses from unless the settings file says otherwise. */
 export const AUTO_LANGUAGES = ["en", "hi", "gu"];
 

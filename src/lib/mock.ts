@@ -27,6 +27,7 @@ import type {
 import { DEFAULT_GOOGLE_SETTINGS, EV, type CalendarEvent, type GoogleStatus, type MeetingAlert, type ThemeMode } from "./types";
 import { countWords } from "./format";
 import { codeMock, UNHANDLED } from "./mockCode";
+import { mockChecks, mockFix } from "./mockPlatform";
 import { mediaControl, mediaSample, mediaSet } from "./mockMedia";
 import { presenceMock } from "./mockPresence";
 import { autoContinueMock } from "./mockAutoContinue";
@@ -73,7 +74,7 @@ const settings: Settings = {
   accountUrl: "http://localhost:3000",
   onboarded: typeof location === "undefined" || !new URLSearchParams(location.search).has("onboard"),
   sttProvider: "local",
-  sttModel: "large-v3-turbo-q5_0",
+  sttModel: "small-q5_1",
   language: "auto",
   autoLanguages: ["en", "hi", "gu"],
   llmProvider: "ollama",
@@ -345,11 +346,24 @@ const dictionary: DictionaryEntry[] = [
   { id: "w3", word: "Northwind", replacement: "north wind" },
 ];
 
+// mirrors stt::MODELS. ?onboard=1 is a fresh install: nothing downloaded yet, so setup really
+// downloads the starter. ?dl=hold pauses every download at 50% until __floMock.releaseDownloads();
+// ?dl=fail cuts the first download off at 40% (a retry resumes from there).
+const freshInstall = typeof location !== "undefined" && new URLSearchParams(location.search).has("onboard");
 const models: LocalModel[] = [
-  { id: "parakeet-tdt-0.6b-v3", label: "Parakeet v3 · fastest", sizeMb: 640, languages: "English + 24 EU", installed: false },
-  { id: "large-v3-turbo-q5_0", label: "Whisper Large v3 Turbo", sizeMb: 574, languages: "99 languages", installed: true },
-  { id: "small-q5_1", label: "Whisper Small · light", sizeMb: 190, languages: "99 languages", installed: false },
+  { id: "small-q5_1", label: "Whisper Small (starter)", sizeMb: 190, languages: "99 languages incl. Hindi", installed: !freshInstall, tier: "starter", speed: "Fast", accuracy: "Good for everyday dictation" },
+  { id: "large-v3-turbo-q5_0", label: "Whisper Large v3 Turbo", sizeMb: 574, languages: "99 languages incl. Hindi, Gujarati", installed: false, tier: "advanced", speed: "A little slower", accuracy: "Much better with accents, Hindi and names" },
+  { id: "large-v3-turbo", label: "Whisper Large v3 Turbo (full precision)", sizeMb: 1624, languages: "99 languages", installed: false, tier: "advanced", speed: "Slowest, uses the most memory", accuracy: "Best. Only slightly ahead of Turbo" },
+  { id: "small", label: "Whisper Small (full precision)", sizeMb: 488, languages: "99 languages", installed: false, tier: "light", speed: "Fast", accuracy: "About the same as the starter, more space" },
+  { id: "base.en", label: "Whisper Base English", sizeMb: 148, languages: "English", installed: false, tier: "light", speed: "Instant", accuracy: "English only" },
 ];
+const dlMode = () => (typeof location === "undefined" ? null : new URLSearchParams(location.search).get("dl"));
+/** bytes already on disk per model (a cut-off download resumes from here) */
+const dlPartial: Record<string, number> = {};
+const dlActive = new Set<string>();
+let dlFailedOnce = false;
+let dlHeld = dlMode() === "hold";
+let loadedModel: string | null = null;
 
 const netlog: NetworkLogEntry[] = [
   { at: iso(2), host: "localhost:11434", purpose: "LLM cleanup (Ollama)", allowed: true, bytes: 1840 },
@@ -957,7 +971,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       const p = new URLSearchParams(location.search).get("platform");
       const geo: IslandGeometry =
         p === "windows" || p === "linux"
-          ? { platform: p, hasNotch: false, notchWidth: 0, notchHeight: 0, screenWidth: 1920 }
+          ? // ?opaque=1: a Linux desktop without a compositor (no transparent windows)
+            { platform: p, hasNotch: false, notchWidth: 0, notchHeight: 0, screenWidth: 1920, ...(new URLSearchParams(location.search).get("opaque") ? { opaque: true } : {}) }
           : (() => {
               // ?nh=38 previews the taller notch of 14"/16" MacBook Pros
               const q = new URLSearchParams(location.search);
@@ -974,6 +989,9 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       resizeLog.push({ w: args.width, h: args.height, at: Date.now() });
       return null;
     case "island_focus":
+    case "island_drag_start":
+    case "island_drag_move":
+    case "island_drag_end":
       return null;
     case "open_dashboard":
       return null;
@@ -1345,23 +1363,52 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return models.map((m) => ({ ...m }));
     case "download_model": {
       const m = models.find((x) => x.id === args.id);
-      if (!m) return null;
-      const total = m.sizeMb * 1_048_576;
-      let received = 0;
-      const timer = setInterval(() => {
-        received = Math.min(total, received + total / 25);
-        const done = received >= total;
-        mockEmit(EV.modelProgress, { id: m.id, received, total, done });
-        if (done) {
-          m.installed = true;
-          clearInterval(timer);
-        }
-      }, 120);
+      // like the backend: a second request for a running download joins it
+      if (!m || m.installed || dlActive.has(m.id)) return null;
+      dlActive.add(m.id);
+      const total = m.sizeMb * 1_000_000;
+      let received = dlPartial[m.id] ?? 0;
+      mockEmit(EV.modelProgress, { id: m.id, received, total, done: false });
+      return new Promise<null>((resolve, reject) => {
+        const timer = setInterval(() => {
+          if (dlHeld && received >= total / 2) return;
+          if (dlMode() === "fail" && !dlFailedOnce && received >= total * 0.4) {
+            dlFailedOnce = true;
+            dlPartial[m.id] = received;
+            dlActive.delete(m.id);
+            clearInterval(timer);
+            const error = "The download stopped early. Check your connection and try again.";
+            mockEmit(EV.modelProgress, { id: m.id, received: 0, total: 0, done: true, error });
+            reject(error);
+            return;
+          }
+          received = Math.min(total, received + total / 25);
+          const done = received >= total;
+          if (done) {
+            m.installed = true;
+            delete dlPartial[m.id];
+            dlActive.delete(m.id);
+            clearInterval(timer);
+            resolve(null);
+          }
+          mockEmit(EV.modelProgress, { id: m.id, received, total, done });
+        }, 120);
+      });
+    }
+    case "load_speech_model": {
+      const m = models.find((x) => x.id === args.id);
+      if (!m?.installed) throw "Speech model not downloaded yet.";
+      await new Promise((r) => setTimeout(r, 300));
+      loadedModel = m.id;
       return null;
     }
+    case "setup_speech_model":
+      return models.some((m) => m.id === settings.sttModel && m.installed) ? settings.sttModel : "small-q5_1";
     case "delete_model": {
       const m = models.find((x) => x.id === args.id);
+      if (m && settings.sttProvider === "local" && settings.sttModel === m.id) throw "This model is in use. Pick another one first.";
       if (m) m.installed = false;
+      if (loadedModel === m?.id) loadedModel = null;
       return null;
     }
     case "remove_unused_models": {
@@ -1383,9 +1430,11 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
     case "check_permissions": {
       // Windows / Linux have no Accessibility / Screen Recording grants: always on
       const pc = ["windows", "linux"].includes(new URLSearchParams(location.search).get("platform") ?? "");
-      return pc ? { ...perms, accessibility: true, screen: true, hotkeyActive: perms.microphone || perms.hotkeyActive } : { ...perms };
+      const platform = new URLSearchParams(location.search).get("platform") as "windows" | "linux";
+      return pc ? { ...perms, accessibility: true, screen: true, hotkeyActive: perms.microphone || perms.hotkeyActive, checks: mockChecks(platform, perms.microphone) } : { ...perms };
     }
     case "open_permission_settings": {
+      mockFix(String(args.kind));
       // simulate the user granting it in System Settings a moment later
       const k = args.kind === "input" ? "inputMonitoring" : (args.kind as "microphone" | "accessibility" | "screen");
       // a stale switch doesn't take until it's reset
@@ -1675,6 +1724,11 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     meetingDetected: mockMeetingDetected,
     resizes: resizeLog,
     calls: callLog,
+    /** ?dl=hold: let paused model downloads finish */
+    releaseDownloads: () => {
+      dlHeld = false;
+    },
+    loadedModel: () => loadedModel,
     /** finish a pending "Continue with Google" like the deep link would */
     completeGoogle: () => {
       account.signedIn = true;

@@ -1,4 +1,4 @@
-import { setOS } from "../lib/os";
+import { os, setOS } from "../lib/os";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { settleConfirmedCard } from "./confirmCard";
 import { AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react";
@@ -142,6 +142,8 @@ export default function Island() {
   // a notchless Mac draws a fake notch: normalise so every child lays out against it
   const applyGeometry = useCallback((g: IslandGeometry | null) => {
     setOS(g?.platform);
+    // Linux: the web view's own pointer events drive hover (see backendHover)
+    if (g) backendHover.current = isTauri && g.platform !== "linux";
     setGeo(g && notchStyle(g) ? { ...g, notchWidth: notchBox(g).width, notchHeight: notchBox(g).height } : g);
   }, []);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -189,12 +191,18 @@ export default function Island() {
   const tipRef = useRef(-1);
   const hotTileRef = useRef(-1);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Windows / Linux: a press on the pill that may become a drag (see onPointerDown) */
+  const dragRef = useRef<{ x: number; y: number; id: number; on: boolean; raf: number } | null>(null);
+  const draggedRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
   const dwellRef = useRef(false);
   const pendingTip = useRef<{ t: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   /** flo://hover is the single source of truth once the backend speaks (always inside Tauri).
    *  WebKit fires DOM mouseleave/mouseenter when the window resizes under a resting cursor,
    *  which used to open/close the peek menu in a loop. DOM hover is a browser-preview fallback only. */
-  const backendHover = useRef(isTauri);
+  // Linux has no backend tracker: X11 delivers pointer enter / leave to the unfocused island
+  // window, and Wayland has no global cursor to poll, so the DOM events are the source there.
+  const backendHover = useRef(isTauri && os() !== "linux");
   const geomRef = useRef<{ notch: boolean; slots: { cx: number; side: "left" | "right"; index: number }[]; shown: IslandVariant; winW: number; pillW: number; nh: number; tipH: (i: number) => number }>({
     notch: false,
     slots: [],
@@ -304,6 +312,8 @@ export default function Island() {
 
   const handleHover = useCallback(
     (e: HoverEvent) => {
+      // carrying the pill: never open the panel under the cursor mid-drag
+      if (dragRef.current?.on && e?.inside) return;
       if (!e || typeof e !== "object" || !e.inside) {
         if (!leaveTimer.current && hoverRef.current) leaveTimer.current = setTimeout(leaveNow, LEAVE_GRACE_MS);
         return;
@@ -895,6 +905,61 @@ export default function Island() {
   };
   useEffect(() => () => cancelAnimationFrame(moveRaf.current), []);
 
+  // Windows / Linux: there's no notch to hang from, so the pill can be dragged anywhere. A press
+  // does nothing until the pointer moves 4 px; then the backend follows the cursor (physical
+  // pixels, right on mixed-DPI monitors), snaps on release and remembers the spot per monitor.
+  // The click that ends a drag is swallowed so it never opens the dashboard. macOS: no-op.
+  const onPointerDown = (e: React.PointerEvent) => {
+    draggedRef.current = false;
+    if (notch || e.button !== 0) return;
+    if ((e.target as Element).closest?.("input, textarea, select, [contenteditable=true], [data-no-drag]")) return;
+    dragRef.current = { x: e.clientX, y: e.clientY, id: e.pointerId, on: false, raf: 0 };
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d || e.pointerId !== d.id) return;
+    if (!d.on) {
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) return;
+      d.on = true;
+      draggedRef.current = true;
+      setDragging(true);
+      try {
+        (e.currentTarget as Element).setPointerCapture(e.pointerId);
+      } catch {
+        /* capture unsupported: the drag still follows while the pointer is over the pill */
+      }
+      // carry the pill, not an open panel
+      leaveNow();
+      void api.islandDragStart().catch(() => {});
+      return;
+    }
+    if (d.raf) return;
+    d.raf = requestAnimationFrame(() => {
+      d.raf = 0;
+      void api.islandDragMove().catch(() => {});
+    });
+  };
+  const endDrag = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d || e.pointerId !== d.id) return;
+    dragRef.current = null;
+    cancelAnimationFrame(d.raf);
+    if (!d.on) return;
+    setDragging(false);
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    void api.islandDragEnd().catch(() => {});
+  };
+  const swallowDragClick = (e: React.MouseEvent) => {
+    if (!draggedRef.current) return;
+    draggedRef.current = false;
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
   // last pill size drawn (picks the open vs close easing); declared before the early return
   // (compared against the last COMMITTED pill: StrictMode renders twice, so a render-time write
   // would make every close look like an open)
@@ -912,6 +977,9 @@ export default function Island() {
   const EAR = ISLAND_EAR;
   const compact = shown === "done";
   const stage = !isTauri; // browser preview: draw a fake desktop behind
+  // Linux without a compositor: transparent pixels draw black, so the pill fills its window as a
+  // solid tile (no floating edge or shadow that would show as a dark box around it)
+  const opaque = !notch && !!geo.opaque;
   const win = winSize.current ?? size;
   const showTray = ["tray", "trayTooltip", "peek"].includes(shown) && trayItems.all.length > 0;
   const trayW = layout?.width ?? 0;
@@ -927,7 +995,9 @@ export default function Island() {
           : shown === "trayTooltip"
             ? { width: trayW - 2 * EAR, height: geo.notchHeight }
             : { width: size.width - EAR * 2, height: size.height }
-    : { width: size.width - 24, height: size.height - 24 };
+    : opaque
+      ? { width: size.width, height: size.height }
+      : { width: size.width - 24, height: size.height - 24 };
   // whole points at rest (crisp edges at 1x; the collapsed shape keeps the hardware notch's size)
   const pill = collapsed ? rawPill : { width: Math.round(rawPill.width), height: Math.round(rawPill.height) };
   const bigCard = ["card", "claude", "reminder", "meetingSoon", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm", "agent"].includes(shown);
@@ -944,11 +1014,13 @@ export default function Island() {
           : compact || shown === "tray" || shown === "trayTooltip" || swollen || shown === "listening" || shown === "working"
             ? `0 0 ${NOTCH_R.row}px ${NOTCH_R.row}px`
             : `0 0 ${NOTCH_R.tall}px ${NOTCH_R.tall}px`
-    : panelOpen
-      ? "26px"
-      : bigCard
-        ? "22px"
-        : "999px";
+    : opaque
+      ? "0px"
+      : panelOpen
+        ? "26px"
+        : bigCard
+          ? "22px"
+          : "999px";
   // easing per direction (no overshoot either way); the shape leads, content follows
   const growing = pill.width * pill.height >= lastPill.current.width * lastPill.current.height;
   drawnPill.current = pill;
@@ -986,9 +1058,16 @@ export default function Island() {
         display: "flex",
         justifyContent: notch ? "center" : "flex-end",
         alignItems: notch ? "flex-start" : "flex-end",
-        padding: notch ? 0 : 12,
+        padding: notch || opaque ? 0 : 12,
         boxSizing: "border-box",
+        ...(opaque ? { background: "#05080d" } : {}),
+        ...(!notch ? { cursor: dragging ? "grabbing" : undefined, touchAction: "none" } : {}),
       }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onClickCapture={swallowDragClick}
       onMouseEnter={(e) => onMouseMove(e)}
       onMouseMove={onMouseMove}
       onMouseLeave={() => {
@@ -1003,6 +1082,7 @@ export default function Island() {
         animate={{ width: pill.width, height: pill.height, borderRadius: radius }}
         transition={morph}
         className={notch ? "relative bg-black text-white" : "relative text-white"}
+        data-testid="island-pill"
         style={
           notch
             ? {
@@ -1020,9 +1100,12 @@ export default function Island() {
             : {
                 // no backdrop-filter: the window is transparent over the desktop, so a blur here
                 // only cost GPU time on every frame of the morph without blurring anything
-                background: "linear-gradient(180deg, rgba(12,18,26,0.92), rgba(3,5,9,0.95))",
+                // solid: with no blur behind it, a see-through panel let the app underneath bleed into the text
+                background: opaque ? "#05080d" : "linear-gradient(180deg, rgb(12,18,26), rgb(3,5,9))",
                 border: `1px solid ${hover ? "rgba(147,221,255,0.30)" : "rgba(147,221,255,0.14)"}`,
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.09), 0 14px 36px -10px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(0,0,0,0.6)",
+                // the window is the pill + 12 px on every side: the drop shadow must end inside it
+                // (a shadow cut by the window edge drew a dark box around the pill)
+                boxShadow: opaque ? "inset 0 1px 0 rgba(255,255,255,0.09)" : "inset 0 1px 0 rgba(255,255,255,0.09), 0 5px 10px -5px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(0,0,0,0.6)",
                 overflow: "hidden",
                 transition: "border-color 160ms ease",
               }

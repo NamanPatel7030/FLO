@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { animate, AnimatePresence, motion, useInView, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import { Clock3, Flame, Globe, Mic, ShieldCheck, Type } from "lucide-react";
 import { api } from "../lib/api";
+import { deviceWord } from "../lib/os";
 import { formatDuration, formatNumber } from "../lib/format";
 import type { Analytics } from "../lib/types";
 import { LogoMark } from "./Logo";
@@ -492,7 +493,7 @@ export function About() {
           >
             {version && <span className="rounded-full border border-[var(--border-strong)] bg-[var(--glass)] px-[13px] py-[5px] text-[12px] tabular-nums text-muted" data-testid="about-version">Version {version}</span>}
             <span className="inline-flex items-center gap-1.5 rounded-full px-[13px] py-[5px] text-[12px] text-muted" style={{ background: "rgb(var(--accent-rgb) / 0.10)" }}>
-              <ShieldCheck size={13} className="text-brand-300" /> Local-first. Your data stays on your Mac.
+              <ShieldCheck size={13} className="text-brand-300" /> Local-first. Your data stays on your {deviceWord()}.
             </span>
           </motion.div>
         </div>

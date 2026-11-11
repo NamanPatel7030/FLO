@@ -132,7 +132,7 @@ export function CodeSection({ p }: { p: Project }) {
               </div>
               <div className="min-w-0">
                 <div className="text-[13.5px] font-medium">Add your code</div>
-                <div className="mt-0.5 text-[12px] leading-snug text-muted">Clone the repo or link a folder on your Mac, then ask Claude, ChatGPT or Gemini to build features in it.</div>
+                <div className="mt-0.5 text-[12px] leading-snug text-muted">Clone the repo or link a folder on your {deviceWord()}, then ask Claude, ChatGPT or Gemini to build features in it.</div>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2">

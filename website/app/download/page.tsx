@@ -5,7 +5,7 @@ import { Apple, Download, KeyRound, LogIn, MonitorDown, MousePointerClick, Shiel
 import { Logo } from "@/components/Logo";
 import { SignOutButton } from "@/components/SignOutButton";
 import { PastelBackdrop } from "@/components/site/Backdrop";
-import { downloadUrl, gatedHref, type DownloadOS } from "@/lib/downloads";
+import { downloadUrl, gatedHref, linuxDownload, type DownloadOS } from "@/lib/downloads";
 import { latestRelease } from "@/lib/release-info";
 import { getUser } from "@/lib/supabase/server";
 
@@ -24,8 +24,41 @@ const BUILDS: { os: DownloadOS; label: string; sub: string; icon: typeof Apple; 
   { os: "mac", label: "macOS", sub: "Apple silicon (M1 or later) · macOS 13+", icon: Apple, tint: "from-[#a9dcff] to-[#d8ccff]" },
   { os: "android", label: "Android", sub: "Pair with your computer by QR · alerts while you're away", icon: Smartphone, tint: "from-[#c4f0e2] to-[#a9dcff]" },
   { os: "windows", label: "Windows", sub: "Windows 10 and 11 · beta", icon: MonitorDown, tint: "from-[#ffd6c4] to-[#ffc6dc]" },
-  { os: "linux", label: "Linux", sub: ".deb and AppImage · beta", icon: Terminal, tint: "from-[#e8dcff] to-[#ffd6c4]" },
+  { os: "linux", label: "Linux", sub: "Ubuntu 24.04+, Debian 13+ and other x86-64 distros · beta", icon: Terminal, tint: "from-[#e8dcff] to-[#ffd6c4]" },
 ];
+
+type Step = [typeof Download, string, string];
+const TALK: Step = [KeyRound, "Talk", "Follow the short setup. Add your own AI key or use a local model, then hold your Flo key and talk."];
+const SIGN_IN: Step = [LogIn, "Sign in", "Open Flo and sign in with this account: Continue with Google, or the same email and password."];
+/** First-run steps for the OS this page was opened on. */
+const STEPS: Record<Exclude<DownloadOS, "android">, { steps: Step[]; note?: string }> = {
+  mac: {
+    steps: [
+      [Download, "Install", "Open the .dmg and drag Flo into Applications."],
+      [ShieldCheck, "Allow it once", "Flo isn't notarized by Apple yet, so macOS blocks the first launch. Open System Settings → Privacy & Security, scroll down and click Open Anyway next to Flo."],
+      SIGN_IN,
+      [KeyRound, "Talk", "Follow the short setup. Add your own AI key or use a local model, then hold ⌃ control and talk."],
+    ],
+    note: "On macOS 14 or older you can also right-click Flo in Applications and choose Open.",
+  },
+  windows: {
+    steps: [
+      [Download, "Install", "Run Flo-windows-x64-setup.exe. It installs for you only, no admin needed."],
+      [ShieldCheck, "Allow it once", "Flo isn't signed yet, so SmartScreen may warn you. Click More info, then Run anyway."],
+      SIGN_IN,
+      [KeyRound, "Talk", "Follow the short setup, then hold Ctrl and talk. Ctrl + Win asks the assistant."],
+    ],
+  },
+  linux: {
+    steps: [
+      [Download, "Install", "Open the .deb with App Center, or run sudo apt install ./Flo-linux-amd64.deb in a terminal. On other distros, make the AppImage executable and run it."],
+      [ShieldCheck, "Let Flo hear your Flo key", "On Wayland (Ubuntu's default), run sudo usermod -aG input $USER, then log out and back in. On X11 nothing is needed."],
+      SIGN_IN,
+      TALK,
+    ],
+    note: "Settings → Permissions in Flo shows what else your desktop needs (like ydotool for typing on Wayland), with the command to copy.",
+  },
+};
 
 export default async function DownloadPage() {
   const user = await getUser();
@@ -36,6 +69,9 @@ export default async function DownloadPage() {
   const rel = await latestRelease();
   const date = rel ? new Date(rel.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
   const versionOf = (os: DownloadOS) => (rel ? (os === "android" ? (rel.android?.version ?? rel.version) : rel.version) : null);
+  const guide = STEPS[os === "android" ? "mac" : os];
+  // Linux: the .deb is the main button (Ubuntu / Debian); the AppImage is offered beside it
+  const appImage = !!linuxDownload("appimage");
 
   return (
     <div className="v2 min-h-dvh px-4 py-6 sm:px-6">
@@ -70,7 +106,7 @@ export default async function DownloadPage() {
 
         <div className="mt-12 grid gap-3 sm:grid-cols-2" data-testid="downloads">
           {builds.map((b, i) => {
-            const ready = !!downloadUrl(b.os);
+            const ready = b.os === "linux" ? !!linuxDownload("deb") : !!downloadUrl(b.os);
             const primary = i === 0;
             return (
               <div key={b.os} className={`g relative flex flex-col overflow-hidden rounded-[30px] p-6 ${primary ? "sm:col-span-2 sm:flex-row sm:items-center sm:gap-6 sm:p-8" : ""}`} data-os={b.os}>
@@ -91,8 +127,19 @@ export default async function DownloadPage() {
                     </p>
                   )}
                 </div>
-                <div className="mt-5 sm:mt-0">
-                  {ready ? (
+                <div className="mt-5 flex flex-col items-start gap-2 sm:mt-0 sm:items-end">
+                  {ready && b.os === "linux" ? (
+                    <>
+                      <a href={gatedHref("linux")} data-launch="Linux .deb" className={`btn ${primary ? "btn-primary h-14 px-7 text-[15px]" : "btn-glass h-11 px-5 text-[14px] ink"}`} data-testid="download-linux">
+                        <Download size={17} /> Download .deb{primary ? " for Ubuntu / Debian" : ""}
+                      </a>
+                      {appImage && (
+                        <a href={gatedHref("linux", "appimage")} data-launch="Linux AppImage" className="text-[13px] font-semibold text-[#2f8cff] hover:underline" data-testid="download-linux-appimage">
+                          Other distros: AppImage
+                        </a>
+                      )}
+                    </>
+                  ) : ready ? (
                     <a href={gatedHref(b.os)} data-launch={b.label} className={`btn ${primary ? "btn-primary h-14 px-7 text-[15px]" : "btn-glass h-11 px-5 text-[14px] ink"}`} data-testid={`download-${b.os}`}>
                       <Download size={17} /> Download{primary ? ` for ${b.label}` : ""}
                     </a>
@@ -112,16 +159,7 @@ export default async function DownloadPage() {
             Then, in <span className="serif-i grad-text">four steps</span>
           </h2>
           <ol className="mt-6 grid gap-3 md:grid-cols-2">
-            {[
-              [Download, "Install", "Open the .dmg and drag Flo into Applications."],
-              [
-                ShieldCheck,
-                "Allow it once",
-                "Flo isn't notarized by Apple yet, so macOS blocks the first launch. Open System Settings → Privacy & Security, scroll down and click Open Anyway next to Flo.",
-              ],
-              [LogIn, "Sign in", "Open Flo and sign in with this account: Continue with Google, or the same email and password."],
-              [KeyRound, "Talk", "Follow the short setup. Add your own AI key or use a local model, then hold ⌃ control and talk."],
-            ].map(([I, t, d], k) => {
+            {guide.steps.map(([I, t, d], k) => {
               const Icon = I as typeof Download;
               return (
                 <li key={t as string} className="g-2 flex gap-4 rounded-2xl p-4">
@@ -138,9 +176,11 @@ export default async function DownloadPage() {
               );
             })}
           </ol>
-          <p className="mt-5 flex items-center gap-2 text-[13px] fnt">
-            <MousePointerClick size={14} /> On macOS 14 or older you can also right-click Flo in Applications and choose Open.
-          </p>
+          {guide.note && (
+            <p className="mt-5 flex items-center gap-2 text-[13px] fnt">
+              <MousePointerClick size={14} /> {guide.note}
+            </p>
+          )}
         </section>
       </main>
     </div>

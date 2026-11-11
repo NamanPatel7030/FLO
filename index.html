@@ -15,6 +15,11 @@
         }
         d.dataset.theme = t;
         d.style.colorScheme = t;
+        // before the stylesheet paints: the island window must start see-through (no black
+        // first frame), and Windows / Linux get their opaque, lighter styles (see src/lib/os.ts)
+        if (location.hash.indexOf("#/island") === 0) d.classList.add("island");
+        var ua = navigator.userAgent;
+        d.classList.add(/Windows/i.test(ua) ? "platform-windows" : /Linux|X11|CrOS/i.test(ua) && !/Android/i.test(ua) ? "platform-linux" : "platform-macos");
       })();
     </script>
   </head>

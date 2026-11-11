@@ -204,7 +204,7 @@ impl Default for Settings {
             account_url: option_env!("FLO_ACCOUNT_URL").unwrap_or("https://flo.hellonaman.com").to_string(),
             account_user: None,
             stt_provider: "local".into(),
-            stt_model: "large-v3-turbo-q5_0".into(),
+            stt_model: crate::stt::DEFAULT_MODEL.into(),
             language: "auto".into(),
             auto_languages: vec!["en".into(), "hi".into(), "gu".into()],
             llm_provider: "ollama".into(),
@@ -264,6 +264,10 @@ pub struct IslandGeometry {
     pub notch_width: f64,
     pub notch_height: f64,
     pub screen_width: f64,
+    /// Linux without a compositor: the window can't be see-through, so the pill draws as a solid
+    /// tile filling its window instead of floating with a soft edge (always false on macOS / Windows)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub opaque: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -742,6 +746,10 @@ pub struct LocalModel {
     pub size_mb: u64,
     pub languages: String,
     pub installed: bool,
+    /// "starter" | "advanced" | "light" (stt::Tier)
+    pub tier: String,
+    pub speed: String,
+    pub accuracy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -772,6 +780,49 @@ pub struct Permissions {
     /// why the push-to-talk key can't be read (Linux: "add yourself to the input group")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hotkey_problem: Option<String>,
+    /// Windows / Linux: what Flo needs on this OS, each with a live status (empty on macOS, where
+    /// the fields above are the real system grants)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<PermCheck>,
+}
+
+/// One thing Flo needs (or doesn't) on Windows / Linux, for Settings → Permissions.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PermCheck {
+    /// "microphone" | "keyboard" | "typing" | "screen" | "ocr" | "windows" | "accessibility" |
+    /// "notifications" | "autostart"
+    pub id: String,
+    pub label: String,
+    /// "ok" | "missing" | "limited" (works partly on this desktop) | "notNeeded"
+    pub status: String,
+    /// one line: what it is for, or why it isn't needed here
+    pub detail: String,
+    /// missing and Flo can't do its job without it
+    pub required: bool,
+    /// a terminal command that fixes it (shown with a Copy button)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// open_permission_settings(id) fixes it or opens the right settings page
+    pub can_fix: bool,
+}
+
+impl PermCheck {
+    pub fn new(id: &str, label: &str, status: &str, detail: impl Into<String>) -> Self {
+        PermCheck { id: id.into(), label: label.into(), status: status.into(), detail: detail.into(), required: false, command: None, can_fix: false }
+    }
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+    pub fn command(mut self, c: impl Into<String>) -> Self {
+        self.command = Some(c.into());
+        self
+    }
+    pub fn fixable(mut self) -> Self {
+        self.can_fix = true;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

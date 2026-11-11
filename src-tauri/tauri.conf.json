@@ -41,7 +41,7 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "Flo — your assistant. Voice dictation, assistant, meeting notes and to-dos.",
+    "shortDescription": "Flo, your assistant: voice dictation, meeting notes and to-dos.",
     "macOS": {
       "minimumSystemVersion": "13.0",
       "signingIdentity": "-"

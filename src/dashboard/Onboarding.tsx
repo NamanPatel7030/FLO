@@ -1,9 +1,10 @@
 // First-run setup (after sign-in, while settings.onboarded === false). Always light: airy pastel
 // glass with Notchling hanging from the top edge like a real notch, guiding each step with its
-// mood. Seven steps: hello and your name, permissions, a real first dictation, voice and AI, two
+// mood. Eight steps: hello and your name, the small speech model download, permissions, a real
+// first dictation (locked until that model is loaded), voice and AI, two
 // short questions about you, the keys to remember, then a signature finale before Flo opens. Reopen from Settings → General →
 // "Run setup again". Step list and profile logic live in onboarding/flow.ts (unit-tested).
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import clsx from "clsx";
 import { ArrowRight, Check, ChevronLeft, Volume2, VolumeX } from "lucide-react";
@@ -22,6 +23,8 @@ import { Btn, EASE } from "./onboarding/parts";
 import { Finale } from "./onboarding/Finale";
 import { RoleStep, TryDemo, UsesStep, Welcome } from "./onboarding/Steps";
 import { Done, Permissions, SetupStep } from "./onboarding/SetupSteps";
+import { AdvancedCard, ModelGate, ModelStep } from "./onboarding/ModelStep";
+import { useSetupModel } from "./useSpeechModels";
 import { CHAPTERS, EMPTY_ANSWERS, STEPS, STEP_MOOD, STEP_NAME, clampStep, headline, profileFor, type SetupAnswers, type Step } from "./onboarding/flow";
 import "./onboarding/onboarding.css";
 
@@ -49,27 +52,6 @@ function useLightTheme(active: boolean) {
   }, [active]);
 }
 
-/** Start the speech model download as soon as setup opens, so it's ready (or nearly) by the time the
- *  person has allowed the mic and Accessibility and tries their first dictation. Only for the
- *  on-device engine and only when the chosen model isn't on disk yet; the backend ignores a second
- *  request for a download already running (the Download button on the Voice step). */
-function useBackgroundModel(settings: Settings | null) {
-  const started = useRef(false);
-  const local = settings?.sttProvider === "local";
-  const model = settings?.sttModel;
-  useEffect(() => {
-    if (started.current || !local || !model) return;
-    started.current = true;
-    api
-      .listModels()
-      .then((ms) => {
-        const m = ms.find((x) => x.id === model);
-        if (m && !m.installed) api.downloadModel(m.id).catch(() => {});
-      })
-      .catch(() => {});
-  }, [local, model]);
-}
-
 export function Onboarding() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
@@ -92,7 +74,12 @@ export function Onboarding() {
   const setMood = useCallback((m: NotchlingMood | null) => setMoodOverride(m), []);
   const onPerms = useCallback((ok: boolean) => setPermsOk(ok), []);
   const onTried = useCallback(() => setTried(true), []);
-  useBackgroundModel(settings);
+  // the speech model downloads the moment setup opens (step 2 shows it); the try-out waits for it
+  const setLatest = useCallback((p: Partial<Settings>) => {
+    const cur = useStore.getState().settings;
+    if (cur) setSettings({ ...cur, ...p });
+  }, [setSettings]);
+  const sm = useSetupModel(settings, setLatest);
 
   if (!settings) return null;
   const s = settings;
@@ -154,6 +141,10 @@ export function Onboarding() {
   const forward: { label: string; kind: "primary" | "soft"; disabled?: boolean; icon?: React.ReactNode }[] =
     step === "welcome"
       ? []
+      : step === "model"
+        ? sm.phase === "ready" || sm.phase === "cloud"
+          ? [{ label: "Continue", kind: "primary" }]
+          : [{ label: "Continue while it downloads", kind: "soft" }]
       : step === "try"
         ? tried
           ? [{ label: "Continue", kind: "primary" }]
@@ -214,12 +205,18 @@ export function Onboarding() {
           >
             <div className={clsx("my-auto flex w-full flex-col items-center pb-2", step === "welcome" ? "pt-2" : "pt-1")}>
             {step === "welcome" && <Welcome title={h.title} sub={h.sub} name={answers.name} setName={(name) => patch({ name })} onStart={() => go(1)} />}
+            {step === "model" && <ModelStep title={h.title} sub={h.sub} m={sm} />}
             {step === "permissions" && <Permissions title={h.title} sub={h.sub} setMood={setMood} onStatus={onPerms} onDone={() => go(1)} />}
-            {step === "try" && <TryDemo keyLabel={keys.dict} keyWord={hotkeyWords(s.hotkeyDictation, geo?.platform ?? os())} onSuccess={onTried} setMood={setMood} />}
+            {step === "try" && <TryDemo keyLabel={keys.dict} keyWord={hotkeyWords(s.hotkeyDictation, geo?.platform ?? os())} onSuccess={onTried} setMood={setMood} gate={sm.ready ? null : <ModelGate m={sm} />} />}
             {step === "setup" && <SetupStep title={h.title} sub={h.sub} s={s} set={set} />}
             {step === "role" && <RoleStep title={h.title} sub={h.sub} a={answers} set={patch} onPicked={() => go(1)} />}
             {step === "uses" && <UsesStep title={h.title} sub={h.sub} a={answers} set={patch} />}
-            {step === "done" && <Done title={h.title} sub={h.sub} keys={keys} />}
+            {step === "done" && (
+              <>
+                <Done title={h.title} sub={h.sub} keys={keys} />
+                <AdvancedCard m={sm} s={s} set={set} />
+              </>
+            )}
             </div>
           </motion.div>
         </AnimatePresence>

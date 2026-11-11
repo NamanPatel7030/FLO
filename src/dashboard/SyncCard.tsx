@@ -21,7 +21,7 @@ function KeyBox({ value, onDone, first }: { value: string; onDone: () => void; f
         <KeyRound size={15} className="text-brand-400" /> {first ? "Save your recovery key" : "Your recovery key"}
       </div>
       <p className="mt-1 text-[12px] text-muted">
-        It unlocks your synced data on another Mac. Flo can't recover it for you: keep it in your password manager.
+        It unlocks your synced data on another {deviceWord()}. Flo can't recover it for you: keep it in your password manager.
       </p>
       <code className="mt-3 block select-all break-all rounded-xl bg-[var(--bg-soft,rgba(0,0,0,0.04))] px-3 py-2.5 font-mono text-[13px] tracking-wide" data-testid="sync-recovery-key">
         {value}
@@ -125,9 +125,9 @@ export function SyncCard() {
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
             <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--glass)] p-4" data-testid="sync-join">
               <div className="flex items-center gap-2 text-[13px] font-semibold">
-                <Laptop size={15} className="text-brand-400" /> Set up on another Mac
+                <Laptop size={15} className="text-brand-400" /> Set up on another {deviceWord()}
               </div>
-              <p className="mt-1 text-[12px] text-muted">Your account already syncs from another Mac. Enter the recovery key you saved there.</p>
+              <p className="mt-1 text-[12px] text-muted">Your account already syncs from another {deviceWord()}. Enter the recovery key you saved there.</p>
               <div className="mt-3 flex gap-2">
                 <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="XXXXX-XXXXX-XXXXX-…" aria-label="Recovery key" className="font-mono" />
                 <Button
@@ -181,7 +181,7 @@ export function SyncCard() {
 
       {!st.enabled && !joining && (
         <button type="button" className="mt-3 text-[12.5px] font-medium text-brand-500 hover:underline" onClick={() => setJoining(true)}>
-          Already syncing on another Mac? Set up this one
+          Already syncing on another {deviceWord()}? Set up this one
         </button>
       )}
 

@@ -34,6 +34,32 @@ fn wayland() -> bool {
     super::is_wayland(std::env::var("XDG_SESSION_TYPE").ok().as_deref(), std::env::var("WAYLAND_DISPLAY").ok().as_deref())
 }
 
+/// GTK draws through Wayland itself (not XWayland): windows can't be placed or read back.
+static NATIVE_WAYLAND: AtomicBool = AtomicBool::new(false);
+
+/// Before GTK starts: prefer XWayland on a Wayland session and work around WebKitGTK's DMA-BUF
+/// renderer (see `platform::linux_env_overrides` for why). Runs on the main thread before any
+/// other thread exists, so setting the environment is safe.
+pub fn prepare_env() {
+    let get = |k: &str| std::env::var(k).ok();
+    for (k, v) in super::linux_env_overrides(&get) {
+        log::info!("linux: {k}={v}");
+        std::env::set_var(k, v);
+    }
+    let x11 = std::env::var("GDK_BACKEND").is_ok_and(|b| b.trim().starts_with("x11"));
+    NATIVE_WAYLAND.store(wayland() && !x11, Ordering::SeqCst);
+}
+
+pub fn native_wayland() -> bool {
+    NATIVE_WAYLAND.load(Ordering::SeqCst)
+}
+
+/// Is a compositor running (so a transparent window really is see-through)? Asked on the main
+/// thread (GTK), from island_geometry. Without one the island draws as a solid tile.
+fn composited() -> bool {
+    gtk::gdk::Screen::default().map(|s| s.is_composited()).unwrap_or(true)
+}
+
 /// Is `bin` on PATH?
 fn have(bin: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
@@ -353,8 +379,8 @@ pub fn open_app(name: &str) -> Result<()> {
 }
 
 pub fn island_geometry() -> IslandGeometry {
-    // no notch: a floating pill at the top centre; lib.rs fills in the screen width
-    IslandGeometry { platform: "linux".into(), has_notch: false, notch_width: 0.0, notch_height: 0.0, screen_width: 0.0 }
+    // no notch: a floating pill (top centre unless dragged); lib.rs fills in the screen width
+    IslandGeometry { platform: "linux".into(), has_notch: false, notch_width: 0.0, notch_height: 0.0, screen_width: 0.0, opaque: !composited() }
 }
 
 /// Keep-above and skip-taskbar are set when the window is built (tauri / GTK).
@@ -414,18 +440,80 @@ fn mic_available() -> bool {
 
 pub fn permissions() -> Permissions {
     let hotkey = HOTKEY_ACTIVE.load(Ordering::SeqCst);
-    Permissions { microphone: mic_available(), accessibility: true, input_monitoring: hotkey, screen: true, hotkey_active: hotkey, accessibility_stale: false, hotkey_problem: if hotkey { None } else { hotkey_problem() } }
+    let problem = if hotkey { None } else { hotkey_problem() };
+    let mic = mic_available();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase();
+    let probe = super::LinuxProbe {
+        wayland: wayland(),
+        gnome: desktop.contains("gnome") || desktop.contains("unity"),
+        mic,
+        hotkey_active: hotkey,
+        hotkey_problem: problem.clone(),
+        wtype: have("wtype"),
+        ydotool: have("ydotool"),
+        ydotoold: ydotoold_running(),
+        portal: portal_installed(),
+        tesseract: have("tesseract"),
+        autostart: autostart_file().is_some_and(|f| f.is_file()),
+    };
+    Permissions { microphone: mic, accessibility: true, input_monitoring: hotkey, screen: true, hotkey_active: hotkey, accessibility_stale: false, hotkey_problem: problem, checks: super::linux_checks(&probe) }
 }
 
-/// Open the sound settings (microphone) of whichever desktop is running.
-pub fn open_permission_settings(kind: &str) {
-    if kind != "microphone" {
-        return;
+/// ydotool 1.x talks to its daemon over a socket ($YDOTOOL_SOCKET, else /run/user/UID or /tmp).
+fn ydotoold_running() -> bool {
+    if let Ok(p) = std::env::var("YDOTOOL_SOCKET") {
+        return std::path::Path::new(&p).exists();
     }
-    for (bin, args) in [("gnome-control-center", &["sound"][..]), ("systemsettings", &["kcm_pulseaudio"][..]), ("pavucontrol", &["-t", "4"][..]), ("xfce4-pulseaudio-plugin", &[][..])] {
-        if have(bin) && Command::new(bin).args(args).spawn().is_ok() {
-            return;
+    let runtime = std::env::var("XDG_RUNTIME_DIR").ok().map(|d| std::path::PathBuf::from(d).join(".ydotool_socket"));
+    runtime.into_iter().chain([std::path::PathBuf::from("/tmp/.ydotool_socket")]).any(|p| p.exists())
+}
+
+/// xdg-desktop-portal is D-Bus activatable (its service file is installed).
+fn portal_installed() -> bool {
+    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    dirs.split(':').filter(|d| !d.is_empty()).any(|d| std::path::Path::new(d).join("dbus-1/services/org.freedesktop.portal.Desktop.service").is_file())
+}
+
+/// ~/.config/autostart/flo.desktop
+fn autostart_file() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|d| d.join("autostart").join("flo.desktop"))
+}
+
+/// The command that starts this Flo: the AppImage when run from one, else the installed binary.
+fn launch_command() -> Option<String> {
+    if let Ok(img) = std::env::var("APPIMAGE") {
+        return Some(img);
+    }
+    std::env::current_exe().ok().map(|p| p.display().to_string())
+}
+
+fn enable_autostart() -> Result<()> {
+    let file = autostart_file().ok_or_else(|| anyhow!("no config directory"))?;
+    let exe = launch_command().ok_or_else(|| anyhow!("can't tell where Flo is installed"))?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&file, super::autostart_desktop_entry(&exe))?;
+    Ok(())
+}
+
+/// "Fix" on a check: the sound settings for the microphone; start-at-login writes the autostart
+/// entry. The other checks are fixed with the terminal command shown next to them.
+pub fn open_permission_settings(kind: &str) {
+    match kind {
+        "microphone" => {
+            for (bin, args) in [("gnome-control-center", &["sound"][..]), ("systemsettings", &["kcm_pulseaudio"][..]), ("pavucontrol", &["-t", "4"][..]), ("xfce4-pulseaudio-plugin", &[][..])] {
+                if have(bin) && Command::new(bin).args(args).spawn().is_ok() {
+                    return;
+                }
+            }
         }
+        "autostart" => {
+            if let Err(e) = enable_autostart() {
+                log::warn!("start at login: {e}");
+            }
+        }
+        _ => {}
     }
 }
 
@@ -666,7 +754,11 @@ mod mpris {
 
     fn players(conn: &Connection) -> Vec<Player> {
         let Ok(dbus) = DBusProxy::new(conn) else { return vec![] };
-        let Ok(names) = dbus.list_names() else { return vec![] };
+        let Ok(names) = dbus.list_names() else {
+            // the bus went away (session restart): reconnect next time
+            *BUS.lock() = None;
+            return vec![];
+        };
         names
             .into_iter()
             .map(|n| n.to_string())
@@ -681,9 +773,24 @@ mod mpris {
             .collect()
     }
 
+    /// One session-bus connection for the whole app (a new one per poll cost a full D-Bus
+    /// handshake), with a short method timeout: a hung player (a busy browser) must never stall
+    /// the caller for zbus's default 25 s.
+    static BUS: parking_lot::Mutex<Option<Connection>> = parking_lot::Mutex::new(None);
+
+    fn bus() -> Option<Connection> {
+        let mut g = BUS.lock();
+        if let Some(c) = g.as_ref() {
+            return Some(c.clone());
+        }
+        let c = zbus::blocking::connection::Builder::session().ok()?.method_timeout(std::time::Duration::from_millis(800)).build().ok()?;
+        *g = Some(c.clone());
+        Some(c)
+    }
+
     /// The player to show / control: a playing one first, else a paused one.
     pub fn current() -> Option<Player> {
-        let conn = Connection::session().ok()?;
+        let conn = bus()?;
         let mut ps = players(&conn);
         let i = ps.iter().position(|p| p.status == "Playing").or_else(|| ps.iter().position(|p| p.status == "Paused"))?;
         Some(ps.swap_remove(i))

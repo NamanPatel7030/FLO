@@ -168,7 +168,7 @@ export function AgentCard({ a, onRecheck, checking, compact }: { a: AgentStatus;
   );
 }
 
-export const PRIVACY_NOTE = "Agents run on your Mac with your own Claude, ChatGPT or Gemini subscription. You sign in inside each provider's own CLI; Flo never sees or stores your passwords or tokens.";
+export const PRIVACY_NOTE = `Agents run on your ${deviceWord()} with your own Claude, ChatGPT or Gemini subscription. You sign in inside each provider's own CLI; Flo never sees or stores your passwords or tokens.`;
 
 /** The three agent cards. `compact` = stacked for the project drawer. */
 export function CodingAgents({ compact, state }: { compact?: boolean; state?: ReturnType<typeof useCodingAgents> }) {

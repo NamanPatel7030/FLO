@@ -1375,7 +1375,7 @@ pub async fn hermes_status(st: State<'_, Shared>) -> R<HermesStatus> {
     Ok(status(st.inner()).await)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hermes_export(st: State<Shared>) -> R<ExportSummary> {
     export(st.inner()).map_err(e)
 }
@@ -1393,7 +1393,7 @@ pub async fn hermes_stop(st: State<'_, Shared>) -> R<HermesStatus> {
 }
 
 /// Run the official installer (explicit click only). Progress: EV_INSTALL / EV_INSTALL_LOG.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hermes_install(st: State<Shared>) -> R<InstallState> {
     install(st.inner()).map_err(e)
 }

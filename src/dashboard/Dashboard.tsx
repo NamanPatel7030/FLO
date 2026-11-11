@@ -163,7 +163,7 @@ export default function Dashboard() {
                   <div className="mb-1.5 flex items-center gap-1.5 font-medium text-amber-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Finish setup
                   </div>
-                  {missing.length > 0 ? `Grant ${missing.map((m) => m.label).join(", ")}` : "Restart Flo to activate the fn key"} →
+                  {missing.length > 0 ? `Grant ${missing.map((m) => m.label).join(", ")}` : mac ? "Restart Flo to activate the fn key" : "Set up your Flo key"} →
                 </button>
               )}
             </div>

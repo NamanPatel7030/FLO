@@ -938,7 +938,7 @@ pub async fn repo_info(st: State<'_, Shared>, project_id: String) -> R<Option<Re
 }
 
 /// Forget the link (files stay where they are).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn unlink_code(st: State<Shared>, project_id: String) -> R<()> {
     st.db.set_project_code(&project_id, None, None).map_err(e)?;
     st.emit(ev::PROJECTS, ());
@@ -946,7 +946,7 @@ pub fn unlink_code(st: State<Shared>, project_id: String) -> R<()> {
 }
 
 /// finder | vscode | terminal
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_code(st: State<Shared>, project_id: String, target: String) -> R<()> {
     let (_, dir) = project_dir(st.inner(), &project_id).map_err(e)?;
     let mut c = match target.as_str() {
@@ -988,7 +988,7 @@ pub async fn coding_agents() -> Vec<AgentStatus> {
 }
 
 /// Open Terminal on the agent's own sign-in flow (Flo never handles the credentials).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agent_sign_in(agent: Agent) -> R<()> {
     let bin = find_bin(agent.bin()).ok_or_else(|| format!("{} isn't installed. Install it first: {}", agent.name(), agent.install_command()))?;
     let home = dirs::home_dir().map(|h| h.display().to_string());
@@ -1010,7 +1010,7 @@ pub struct EditRequest {
     pub accept_edits: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn edit_with_ai(st: State<Shared>, req: EditRequest) -> R<CodeRun> {
     let st = st.inner().clone();
     let task = clean_prompt(&req.prompt);
@@ -1052,7 +1052,7 @@ pub fn edit_with_ai(st: State<Shared>, req: EditRequest) -> R<CodeRun> {
     Ok(run)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_code_runs(st: State<Shared>, project_id: String) -> R<Vec<CodeRun>> {
     let mut list = st.db.list_code_runs(&project_id, 20).map_err(e)?;
     let live = runs().lock();
@@ -1070,7 +1070,7 @@ pub fn code_run_log(run_id: String) -> Vec<String> {
     runs().lock().get(&run_id).map(|h| h.log.clone()).unwrap_or_default()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_code_run(run_id: String) -> R<()> {
     match runs().lock().get_mut(&run_id).and_then(|h| h.stop.take()) {
         Some(tx) => {

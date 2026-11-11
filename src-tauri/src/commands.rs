@@ -7,6 +7,12 @@ use tauri::State;
 
 type R<T> = Result<T, String>;
 
+// Threading: Tauri runs a plain `#[tauri::command] fn` on the MAIN thread, the one that draws every
+// window (GTK on Linux, Win32, AppKit). Anything that touches the disk, the database, the keyring,
+// D-Bus or another process is `#[tauri::command(async)]`, which runs the same fn on the async
+// runtime's thread pool, so a slow call can never freeze the windows ("Flo is not responding" on
+// GNOME). Only window commands and trivial in-memory getters stay plain.
+
 fn e<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
 }
@@ -17,7 +23,7 @@ pub fn get_settings(st: State<Shared>) -> Settings {
     st.settings()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_settings(st: State<Shared>, settings: Settings) -> R<()> {
     store_settings(&st, settings).map_err(e)
 }
@@ -57,14 +63,14 @@ pub(crate) fn store_settings(st: &Shared, settings: Settings) -> anyhow::Result<
 }
 
 /// Settings → Privacy → "Clear cached answers": forget reused answers and the account check.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_caches() -> R<()> {
     crate::cache::clear_personal();
     crate::cache::MCP_TOOLS.lock().clear();
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_api_key(provider: String, key: String) -> R<()> {
     secrets::set_api_key(&provider, &key).map_err(e)
 }
@@ -75,7 +81,7 @@ pub async fn has_api_key(provider: String) -> bool {
     matches!(secrets::get_api_key_async(&provider).await, Ok(Some(_)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_api_key(provider: String) -> R<()> {
     secrets::delete_api_key(&provider).map_err(e)
 }
@@ -188,7 +194,7 @@ pub async fn stop_session(st: State<'_, Shared>) -> R<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_session(st: State<Shared>) {
     session::cancel(st.inner());
 }
@@ -226,20 +232,20 @@ pub async fn ask_assistant(st: State<'_, Shared>, text: String, mode: Option<Str
 }
 
 // ── data ────────────────────────────────────────────────────────────────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_assistant(st: State<Shared>, limit: Option<u32>) -> R<Vec<AssistantResponse>> {
     st.db.list_assistant(limit.unwrap_or(100)).map_err(e)
 }
 
 /// One page of Assistant history, oldest first: the newest `limit` exchanges (of one thread, or
 /// all) older than the exchange `before`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_assistant_page(st: State<Shared>, thread_id: Option<String>, before: Option<String>, limit: Option<u32>) -> R<Vec<AssistantResponse>> {
     st.db.list_assistant_page(thread_id.as_deref(), before.as_deref(), limit.unwrap_or(30).min(200)).map_err(e)
 }
 
 /// Assistant threads, most recently active first (optionally only those matching `query`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_assistant_threads(st: State<Shared>, limit: Option<u32>, query: Option<String>) -> R<Vec<AssistantThread>> {
     st.db.list_assistant_threads(limit.unwrap_or(50).min(500), query.as_deref()).map_err(e)
 }
@@ -266,22 +272,22 @@ pub async fn assistant_followup(st: State<'_, Shared>, id: String, mode: String)
     r.map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_history(st: State<Shared>, limit: Option<u32>) -> R<Vec<Dictation>> {
     st.db.list_dictations(limit.unwrap_or(200)).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_analytics(st: State<Shared>, days: Option<u32>) -> R<Analytics> {
     st.db.analytics(days.unwrap_or(30), st.settings().typing_wpm).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_todos(st: State<Shared>) -> R<Vec<Todo>> {
     st.db.list_todos().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_todo(st: State<Shared>, title: String, project_id: Option<String>, due: Option<String>) -> R<Todo> {
     // "+ To-do" on a meeting action item that the meeting already added → the same to-do, not a copy
     if let Some(t) = st.db.list_todos().map_err(e)?.into_iter().find(|t| t.status == "open" && crate::text::is_duplicate_todo(&title, &[t.title.clone()])) {
@@ -293,12 +299,12 @@ pub fn add_todo(st: State<Shared>, title: String, project_id: Option<String>, du
     Ok(t)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_connections(st: State<Shared>) -> R<Vec<crate::model::Connection>> {
     st.db.list_connections().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_connection(st: State<Shared>, connection: crate::model::Connection) -> R<crate::model::Connection> {
     crate::cache::MCP_TOOLS.lock().clear(); // an edited server lists its tools again
     if connection.name.trim().is_empty() {
@@ -309,7 +315,7 @@ pub fn save_connection(st: State<Shared>, connection: crate::model::Connection) 
     Ok(c)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_connection(st: State<Shared>, id: String) -> R<()> {
     crate::cache::MCP_TOOLS.lock().clear();
     st.db.delete_connection(&id).map_err(e)?;
@@ -323,12 +329,12 @@ pub async fn test_connection(st: State<'_, Shared>, connection: crate::model::Co
     crate::mcp::probe(&st, &connection).await.map_err(|err| format!("{err:#}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_skills(st: State<Shared>) -> R<Vec<crate::model::Skill>> {
     st.db.list_skills().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_skill(st: State<Shared>, skill: crate::model::Skill) -> R<crate::model::Skill> {
     if skill.name.trim().is_empty() {
         return Err("Give the skill a name".into());
@@ -336,13 +342,13 @@ pub fn save_skill(st: State<Shared>, skill: crate::model::Skill) -> R<crate::mod
     st.db.save_skill(&skill).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_skill(st: State<Shared>, id: String) -> R<()> {
     st.db.delete_skill(&id).map_err(e)
 }
 
 /// Remind me again in `minutes` (the notch reminder's Snooze).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn snooze_todo(st: State<Shared>, id: String, minutes: u32) -> R<()> {
     let at = (chrono::Local::now() + chrono::Duration::minutes(minutes.clamp(1, 24 * 60) as i64)).to_rfc3339();
     st.db.set_remind(&id, Some(&at)).map_err(e)?;
@@ -350,7 +356,7 @@ pub fn snooze_todo(st: State<Shared>, id: String, minutes: u32) -> R<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_todo(st: State<Shared>, id: String, status: Option<String>, title: Option<String>, project_id: Option<Option<String>>) -> R<()> {
     st.db.update_todo(&id, status.as_deref(), title.as_deref(), project_id).map_err(e)?;
     st.emit(ev::TODOS, ());
@@ -358,7 +364,7 @@ pub fn update_todo(st: State<Shared>, id: String, status: Option<String>, title:
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_todo(st: State<Shared>, id: String) -> R<()> {
     st.db.delete_todo(&id).map_err(e)?;
     st.emit(ev::TODOS, ());
@@ -366,12 +372,12 @@ pub fn delete_todo(st: State<Shared>, id: String) -> R<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects(st: State<Shared>) -> R<Vec<Project>> {
     st.db.list_projects().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_project(st: State<Shared>, name: String, description: Option<String>, client: Option<String>, client_details: Option<String>, keywords: Option<String>) -> R<Project> {
     let p = st.db.create_project(&name, description.as_deref()).map_err(e)?;
     if client.is_some() || client_details.is_some() || keywords.is_some() {
@@ -381,7 +387,7 @@ pub fn create_project(st: State<Shared>, name: String, description: Option<Strin
     Ok(st.db.get_project(&p.id).map_err(e)?.unwrap_or(p))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 pub fn update_project(
     st: State<Shared>,
@@ -401,7 +407,7 @@ pub fn update_project(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_project(st: State<Shared>, id: String) -> R<()> {
     st.db.delete_project(&id).map_err(e)?;
     st.emit(ev::PROJECTS, ());
@@ -409,17 +415,17 @@ pub fn delete_project(st: State<Shared>, id: String) -> R<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_notes(st: State<Shared>) -> R<Vec<Note>> {
     st.db.list_notes().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_note(st: State<Shared>, id: String) -> R<Option<Note>> {
     st.db.get_note(&id).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_note(st: State<Shared>, id: String) -> R<()> {
     st.db.delete_note(&id).map_err(e)?;
     st.emit(ev::NOTES, ());
@@ -438,28 +444,28 @@ pub async fn stop_meeting(st: State<'_, Shared>) -> R<Note> {
 }
 
 /// Capture mode + speakers of a meeting note (None for notes recorded before speaker support).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn meeting_info(st: State<Shared>, note_id: String) -> R<Option<meeting::MeetingInfo>> {
     Ok(meeting::info(st.inner(), &note_id))
 }
 
 /// "Speaker 2" → "Rahul" across the note; Flo remembers the voice for future meetings.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_speaker(st: State<Shared>, note_id: String, from: String, to: String) -> R<Note> {
     meeting::rename_speaker(st.inner(), &note_id, &from, &to).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_dictionary(st: State<Shared>) -> R<Vec<DictionaryEntry>> {
     st.db.list_dictionary().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_dictionary(st: State<Shared>, word: String, replacement: Option<String>) -> R<DictionaryEntry> {
     st.db.add_dictionary(&word, replacement.as_deref()).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_dictionary(st: State<Shared>, id: String) -> R<()> {
     st.db.remove_dictionary(&id).map_err(e)
 }
@@ -470,7 +476,7 @@ pub fn network_log(st: State<Shared>) -> Vec<NetworkLogEntry> {
 }
 
 // ── models ──────────────────────────────────────────────────────────────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_models(st: State<Shared>) -> Vec<LocalModel> {
     stt::list_models(&st.models_dir)
 }
@@ -503,7 +509,7 @@ async fn download_model_inner(st: State<'_, Shared>, id: String) -> R<()> {
     res.map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_model(st: State<Shared>, id: String) -> R<()> {
     let s = st.settings();
     if s.stt_provider == "local" && s.stt_model == id {
@@ -515,14 +521,29 @@ pub fn delete_model(st: State<Shared>, id: String) -> R<()> {
     Ok(())
 }
 
-/// Settings → Voice → "Free up space": every downloaded model except the one in use. MB freed.
+/// Load a downloaded speech model into memory now. Setup waits on this before unlocking the
+/// first dictation; Settings calls it after "Use this model" so the switch is instant.
 #[tauri::command]
+pub async fn load_speech_model(st: State<'_, Shared>, id: String) -> R<()> {
+    let path = stt::model_path(&st.models_dir, &id).ok_or_else(|| format!("Unknown speech model {id}"))?;
+    let w = st.whisper.clone();
+    tauri::async_runtime::spawn_blocking(move || w.load(&path)).await.map_err(e)?.map_err(e)
+}
+
+/// The model setup should get ready: the chosen one if it's on disk, else the small starter.
+#[tauri::command(async)]
+pub fn setup_speech_model(st: State<Shared>) -> String {
+    stt::setup_model(&st.settings().stt_model, &st.models_dir).to_string()
+}
+
+/// Settings → Voice → "Free up space": every downloaded model except the one in use. MB freed.
+#[tauri::command(async)]
 pub fn remove_unused_models(st: State<Shared>) -> u64 {
     stt::remove_unused(&st.models_dir, &st.settings().stt_model)
 }
 
 // ── attention / permissions ─────────────────────────────────────────────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attention_status(st: State<Shared>) -> AttentionStatus {
     attention::status(st.inner())
 }
@@ -532,7 +553,7 @@ pub fn set_attention_paused(st: State<Shared>, paused: bool) {
     st.attention_paused.store(paused, std::sync::atomic::Ordering::SeqCst);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn check_permissions() -> Permissions {
     platform::permissions()
 }
@@ -599,7 +620,7 @@ pub async fn account_login(st: State<'_, Shared>, email: String, password: Strin
     crate::account::login(st.inner(), &email, &password).await.map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn account_google_start(st: State<Shared>) -> R<serde_json::Value> {
     crate::account::allow_host(st.inner());
     let state = crate::account::google_start(st.inner()).map_err(e)?;
@@ -612,13 +633,13 @@ pub async fn account_exchange(st: State<'_, Shared>, code: String, state: Option
     crate::account::exchange(st.inner(), &code, state.as_deref()).await.map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn account_logout(st: State<Shared>) -> R<()> {
     crate::account::logout(st.inner()).map_err(e)
 }
 
 // ── sync your data (end-to-end encrypted, see sync.rs) ─────────────────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_status(st: State<Shared>) -> crate::sync::SyncStatus {
     crate::sync::status(st.inner())
 }
@@ -633,7 +654,7 @@ pub async fn sync_join(st: State<'_, Shared>, recovery_key: String) -> R<()> {
     crate::sync::join(st.inner(), &recovery_key).await.map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_disable(st: State<Shared>) -> R<()> {
     crate::sync::disable(st.inner()).map_err(e)
 }
@@ -643,12 +664,12 @@ pub async fn sync_now(st: State<'_, Shared>) -> R<crate::sync::SyncReport> {
     crate::sync::run(st.inner()).await.map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_set_categories(st: State<Shared>, categories: Vec<String>) -> R<()> {
     crate::sync::set_categories(st.inner(), categories).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_recovery_key() -> R<String> {
     crate::sync::show_recovery_key().map_err(e)
 }
@@ -665,18 +686,18 @@ pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fix_fn_key() -> R<String> {
     platform::fix_fn_key().map_err(e)
 }
 
 // ── Claude Code ─────────────────────────────────────────────────────────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_claude_events(st: State<Shared>, limit: Option<u32>) -> R<Vec<ClaudeEvent>> {
     st.db.list_claude_events(limit.unwrap_or(50)).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mark_claude_seen(st: State<Shared>, id: Option<String>) -> R<()> {
     st.db.mark_claude_seen(id.as_deref()).map_err(e)
 }
@@ -700,7 +721,7 @@ pub async fn open_claude_session(app: tauri::AppHandle, st: State<'_, Shared>, i
     Ok(r)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_claude_sessions(st: State<Shared>) -> R<Vec<ClaudeSession>> {
     claude::settle_idle_sessions(st.inner());
     st.db.list_claude_sessions().map_err(e)
@@ -739,7 +760,7 @@ pub async fn focus_claude_session(st: State<'_, Shared>, session_id: Option<Stri
         .map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn dismiss_claude_session(st: State<Shared>, session_id: String) -> R<()> {
     st.db.dismiss_claude_session(&session_id).map_err(e)?;
     claude::emit_sessions(st.inner());
@@ -775,7 +796,7 @@ pub fn agent_confirm(yes: bool) -> bool {
     crate::agent::answer_confirm(yes)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn now_playing() -> Option<NowPlaying> {
     crate::media::now_playing()
 }
@@ -785,46 +806,46 @@ pub async fn weather(st: State<'_, Shared>) -> R<crate::model::Weather> {
     crate::weather::current(&st).await.map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_control(action: String) -> R<()> {
     crate::media::control(&action).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_volume() -> Option<u8> {
     crate::media::get_volume()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_volume(level: u8) -> R<u8> {
     crate::media::set_volume(level).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_graph(st: State<Shared>) -> R<VaultGraph> {
     st.db.vault_graph().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_note(st: State<Shared>, id: String) -> R<Option<VaultNote>> {
     st.db.vault_get(&id).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_save(st: State<Shared>, title: String, kind: Option<String>, content: String) -> R<String> {
     let id = crate::vault::upsert(st.inner(), &title, kind.as_deref().unwrap_or("note"), &content).map_err(e)?;
     st.emit(ev::VAULT, ());
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_delete(st: State<Shared>, id: String) -> R<()> {
     st.db.vault_delete(&id).map_err(e)?;
     st.emit(ev::VAULT, ());
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn vault_search(st: State<Shared>, query: String) -> R<Vec<VaultNode>> {
     st.db.vault_search(&query).map_err(e)
 }
@@ -843,19 +864,19 @@ pub async fn vault_rebuild(st: State<'_, Shared>) -> R<usize> {
     Ok(n)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_context_docs(st: State<Shared>) -> R<Vec<ContextDoc>> {
     st.db.list_context_docs().map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_context_doc(st: State<Shared>, id: String) -> R<serde_json::Value> {
     let doc = st.db.list_context_docs().map_err(e)?.into_iter().find(|d| d.id == id).ok_or("not found")?;
     let content = st.db.get_context_content(&id).map_err(e)?.unwrap_or_default();
     Ok(serde_json::json!({ "doc": doc, "content": content }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_context_doc(st: State<Shared>, title: String, content: String) -> R<ContextDoc> {
     let content = content.replace("\r\n", "\n");
     if content.trim().is_empty() {
@@ -867,7 +888,7 @@ pub fn add_context_doc(st: State<Shared>, title: String, content: String) -> R<C
     st.db.add_context_doc(&title, &content).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_context_doc(
     st: State<Shared>,
     id: String,
@@ -879,13 +900,13 @@ pub fn update_context_doc(
     st.db.update_context_doc(&id, title.as_deref(), enabled, pinned, content.as_deref()).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_context_doc(st: State<Shared>, id: String) -> R<()> {
     st.db.delete_context_doc(&id).map_err(e)
 }
 
 /// "Save to dictionary" from a correction card.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn accept_correction(st: State<Shared>, heard: String, corrected: String) -> R<DictionaryEntry> {
     let existing = st.db.list_dictionary().map_err(e)?;
     if let Some(d) = existing.iter().find(|d| d.word.eq_ignore_ascii_case(&heard)) {
@@ -895,24 +916,24 @@ pub fn accept_correction(st: State<Shared>, heard: String, corrected: String) ->
 }
 
 /// Undo a correction Flo learned automatically.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undo_correction(st: State<Shared>, heard: String, corrected: String) -> R<()> {
     crate::corrections::undo(&st, &heard, &corrected).map_err(e)
 }
 
 // ── integrations (Claude Code, Codex, Cursor, webhook) + Slack ───────────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_integrations(st: State<Shared>) -> Vec<crate::agents::Integration> {
     crate::agents::list(st.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_integration(st: State<Shared>, id: String) -> R<Vec<crate::agents::Integration>> {
     crate::agents::install(st.inner(), &id).map_err(e)?;
     Ok(crate::agents::list(st.inner()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn uninstall_integration(st: State<Shared>, id: String) -> R<Vec<crate::agents::Integration>> {
     crate::agents::uninstall(st.inner(), &id).map_err(e)?;
     Ok(crate::agents::list(st.inner()))
@@ -985,7 +1006,7 @@ pub async fn google_calendars(st: State<'_, Shared>) -> R<Vec<crate::google::Goo
 }
 
 /// Today + the next 48 h from the local cache (no network).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn google_events(st: State<Shared>) -> Vec<crate::google::CalendarEvent> {
     if crate::google::load_tokens().is_none() {
         return vec![];
@@ -1022,7 +1043,7 @@ pub async fn install_update(app: tauri::AppHandle) -> R<crate::updater::UpdateIn
 }
 
 /// Answer a Claude Code permission question from the notch: "allow" | "deny" | "terminal".
-#[tauri::command]
+#[tauri::command(async)]
 pub fn answer_claude_permission(id: String, decision: String) -> R<()> {
     if crate::claude::answer_permission(&id, &decision) {
         Ok(())
@@ -1043,17 +1064,17 @@ pub async fn confirm_action(st: State<'_, Shared>, id: String, approve: bool) ->
     Ok(r)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn claude_hook_status(st: State<Shared>) -> ClaudeHookStatus {
     claude::status(st.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_claude_hook(st: State<Shared>) -> R<ClaudeHookStatus> {
     claude::install(st.inner()).map_err(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn uninstall_claude_hook(st: State<Shared>) -> R<ClaudeHookStatus> {
     claude::uninstall(st.inner()).map_err(e)
 }

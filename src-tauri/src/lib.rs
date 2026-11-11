@@ -18,6 +18,7 @@ mod floagent;
 mod hermes;
 mod handsfree;
 mod hotkey;
+mod island_pos;
 mod cache;
 mod intents;
 mod livetx;
@@ -134,6 +135,7 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
             notch_width: 200.0,
             notch_height: 32.0,
             screen_width: 1512.0,
+            opaque: false,
         });
         let (x, y) = platform::island_position(&geo, width, height);
         *ISLAND_RECT.lock() = Some((x, y, width, height));
@@ -155,16 +157,25 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
         w.set_position(LogicalPosition::new(x, y))?;
         return Ok(());
     }
-    // Windows / Linux (no notch): a floating pill at the top centre of the primary display's work
-    // area (below a top panel / above nothing on Windows). Computed in physical pixels from that
-    // monitor, so it lands right with mixed DPI across several displays.
+    // Windows / Linux (no notch): a floating pill, by default at the top centre of the primary
+    // display's work area (below a top panel / above nothing on Windows), or wherever it was last
+    // dragged to on that monitor (island_pos). Computed in physical pixels from that monitor, so it
+    // lands right with mixed DPI across several displays.
     #[allow(unreachable_code)]
     {
-        let Some(m) = w.primary_monitor()?.or(w.current_monitor()?) else {
+        if island_pos::dragging() {
+            // mid-drag: the cursor owns the position; island_drag_end settles it
+            w.set_size(LogicalSize::new(width, height))?;
+            if let Some(r) = ISLAND_RECT.lock().as_mut() {
+                (r.2, r.3) = (width, height);
+            }
+            return Ok(());
+        }
+        let Some((m, anchor)) = island_pos::placement(&w)? else {
             w.set_size(LogicalSize::new(width, height))?;
             return Ok(());
         };
-        let (pos, size) = island_rect_on(m.scale_factor(), (m.work_area().position.x, m.work_area().position.y), (m.work_area().size.width, m.work_area().size.height), width, height);
+        let (pos, size) = island_rect_on(m.scale_factor(), (m.work_area().position.x, m.work_area().position.y), (m.work_area().size.width, m.work_area().size.height), Some(anchor), width, height);
         w.set_size(tauri::PhysicalSize::new(size.0, size.1))?;
         w.set_position(tauri::PhysicalPosition::new(pos.0, pos.1))?;
         let s = m.scale_factor();
@@ -173,15 +184,15 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
     }
 }
 
-/// Top-centre island frame in physical pixels for a work area (physical origin + size) at `scale`.
-/// Returns ((x, y), (w, h)).
-fn island_rect_on(scale: f64, origin: (i32, i32), area: (u32, u32), width: f64, height: f64) -> ((i32, i32), (u32, u32)) {
-    const TOP_GAP: f64 = 6.0;
+/// Island frame in physical pixels for a work area (physical origin + size) at `scale`, at
+/// `anchor` (None: top centre). Returns ((x, y), (w, h)).
+fn island_rect_on(scale: f64, origin: (i32, i32), area: (u32, u32), anchor: Option<island_pos::Anchor>, width: f64, height: f64) -> ((i32, i32), (u32, u32)) {
+    let (aw, ah) = (area.0 as f64 / scale, area.1 as f64 / scale);
+    let anchor = anchor.unwrap_or_else(|| island_pos::Anchor::top_centre(aw));
+    let (x, y) = island_pos::frame(aw, ah, anchor, width, height);
     let w = (width * scale).round().max(1.0);
     let h = (height * scale).round().max(1.0);
-    let x = origin.0 as f64 + ((area.0 as f64 - w) / 2.0).max(0.0);
-    let y = origin.1 as f64 + TOP_GAP * scale;
-    ((x.round() as i32, y.round() as i32), (w as u32, h as u32))
+    ((origin.0 + (x * scale).round() as i32, origin.1 + (y * scale).round() as i32), (w as u32, h as u32))
 }
 
 #[cfg(test)]
@@ -189,7 +200,7 @@ mod geometry_watch_tests {
     use super::*;
 
     fn g(w: f64) -> IslandGeometry {
-        IslandGeometry { platform: "macos".into(), has_notch: true, notch_width: 185.0, notch_height: 32.0, screen_width: w }
+        IslandGeometry { platform: "macos".into(), has_notch: true, notch_width: 185.0, notch_height: 32.0, screen_width: w, opaque: false }
     }
 
     #[test]
@@ -200,6 +211,8 @@ mod geometry_watch_tests {
         assert!(!geometry_changed(Some(&g(1800.0)), &g(1800.0)));
     }
 
+    // macOS places the notch itself; Windows / Linux place the pill in place_island (island_pos)
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_island_recentres_for_the_new_width() {
         let (x, _) = platform::island_position(&g(1800.0), 185.0, 32.0);
@@ -212,11 +225,26 @@ mod island_rect_tests {
     #[test]
     fn centres_on_the_work_area_in_physical_pixels() {
         // 1920x1040 work area at 100 %
-        assert_eq!(super::island_rect_on(1.0, (0, 0), (1920, 1040), 200.0, 40.0), ((860, 6), (200, 40)));
+        assert_eq!(super::island_rect_on(1.0, (0, 0), (1920, 1040), None, 200.0, 40.0), ((860, 6), (200, 40)));
         // a 150 % display to the right of the primary one, with a top panel 48 px tall
-        assert_eq!(super::island_rect_on(1.5, (1920, 48), (2560, 1392), 200.0, 40.0), ((1920 + 1130, 57), (300, 60)));
+        assert_eq!(super::island_rect_on(1.5, (1920, 48), (2560, 1392), None, 200.0, 40.0), ((1920 + 1130, 57), (300, 60)));
         // wider than the screen: pinned to the left edge rather than off screen
-        assert_eq!(super::island_rect_on(1.0, (0, 0), (100, 100), 200.0, 40.0).0, (0, 6));
+        assert_eq!(super::island_rect_on(1.0, (0, 0), (100, 100), None, 200.0, 40.0).0, (0, 6));
+    }
+
+    #[test]
+    fn a_dragged_pill_opens_from_its_spot_on_that_monitor() {
+        use crate::island_pos::{settle, Anchor, GAP};
+        // dropped into the bottom-right corner of a 150 % display (logical 1706x928)
+        let a = settle(2560.0 / 1.5, 1392.0 / 1.5, 1600.0, 850.0, 88.0, 64.0);
+        assert_eq!((a.dock, a.grow_up), (1, true));
+        // the open panel grows up and to the left from that corner, in physical px of that display
+        let ((x, y), (w, h)) = super::island_rect_on(1.5, (1920, 48), (2560, 1392), Some(a), 400.0, 300.0);
+        assert_eq!((w, h), (600, 450));
+        assert_eq!(x + w as i32, 1920 + 2560 - (GAP * 1.5) as i32);
+        assert_eq!(y + h as i32, 48 + 1392 - (GAP * 1.5) as i32);
+        // the default spot is the old top centre
+        assert_eq!(super::island_rect_on(1.0, (0, 0), (1920, 1040), Some(Anchor::top_centre(1920.0)), 88.0, 64.0).0, (916, 6));
     }
 }
 
@@ -252,7 +280,10 @@ fn create_island(app: &AppHandle) -> tauri::Result<()> {
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .resizable(false)
+        // Linux: GTK sizes a non-resizable window to its content's minimum and ignores resize
+        // requests, so the island never grew past the collapsed pill (cut-off panels). It has no
+        // decorations, so there is still nothing to drag-resize it with.
+        .resizable(cfg!(target_os = "linux"))
         .shadow(false)
         .focused(false)
         .visible_on_all_workspaces(true);
@@ -344,6 +375,7 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
 /// far away (>400 pt) 250 ms, approaching (>120 pt) 80 ms, close 33 ms. Nobody crosses 400 pt of
 /// screen in under 250 ms and then expects the notch to have opened already, so entering still feels
 /// instant, but an idle Flo wakes ~4×/s instead of 20×/s.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn hover_poll_ms(x: f64, y: f64, ww: f64, wh: f64) -> u64 {
     let dx = if x < 0.0 { -x } else if x > ww { x - ww } else { 0.0 };
     let dy = if y < 0.0 { -y } else if y > wh { y - wh } else { 0.0 };
@@ -372,6 +404,7 @@ mod hover_tests {
 
 /// The island is a non-activating panel, so its web view doesn't get mouse-exit events while
 /// another app is active. Track the cursor here and tell the island when it enters/leaves.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn spawn_hover_tracker(app: AppHandle, st: Shared) {
     tauri::async_runtime::spawn(async move {
         let mut inside = false;
@@ -538,6 +571,9 @@ pub fn run() {
         return;
     }
     init_logging();
+    // Linux: pick the GTK backend / WebKit renderer before GTK starts (see platform::linux_env_overrides)
+    #[cfg(target_os = "linux")]
+    platform::prepare_env();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -562,6 +598,9 @@ pub fn run() {
             commands::get_island_geometry,
             commands::island_resize,
             commands::island_focus,
+            island_pos::island_drag_start,
+            island_pos::island_drag_move,
+            island_pos::island_drag_end,
             commands::open_dashboard,
             commands::take_mcp_prefill,
             commands::clear_caches,
@@ -609,6 +648,8 @@ pub fn run() {
             commands::list_models,
             commands::download_model,
             commands::delete_model,
+            commands::load_speech_model,
+            commands::setup_speech_model,
             commands::remove_unused_models,
             commands::attention_status,
             commands::set_attention_paused,
@@ -753,6 +794,7 @@ pub fn run() {
                 last_front: Mutex::new(Default::default()),
             });
             app.manage(st.clone());
+            island_pos::init(&st.data_dir);
             account::allow_host(&st);
             st.signed_in.store(account::cached_signed_in(&st), std::sync::atomic::Ordering::SeqCst);
             {
@@ -809,6 +851,9 @@ pub fn run() {
             }
             updater::spawn_auto_check(handle.clone());
             media::init(handle.clone());
+            // Linux: the island's own web view gets pointer enter / leave (X11 delivers them to
+            // unfocused windows, and Wayland has no global cursor to poll), so no tracker there
+            #[cfg(not(target_os = "linux"))]
             spawn_hover_tracker(handle.clone(), st.clone());
             stt::set_keep_warm_mins(st.settings().stt_keep_warm_mins);
             stt::spawn_idle_unloader(st.whisper.clone());

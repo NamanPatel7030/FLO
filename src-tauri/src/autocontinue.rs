@@ -1028,13 +1028,13 @@ fn checked(session_id: &str) -> R<()> {
     valid_session_id(session_id).then_some(()).ok_or_else(|| "Unknown session.".to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_auto_continue(st: State<Shared>) -> Vec<View> {
     views(st.inner())
 }
 
 /// Per-session switch on the card (null = follow Settings).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_auto_continue(st: State<Shared>, session_id: String, enabled: Option<bool>) -> R<Vec<View>> {
     checked(&session_id)?;
     let st = st.inner();
@@ -1054,14 +1054,14 @@ pub fn set_auto_continue(st: State<Shared>, session_id: String, enabled: Option<
 }
 
 /// "Continue now": resume right away, whatever the reset time says.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auto_continue_now(st: State<Shared>, session_id: String) -> R<()> {
     checked(&session_id)?;
     start_resume(st.inner(), &session_id).map_err(|e| e.to_string())
 }
 
 /// "Cancel": stop waiting (or stop the running resume).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_auto_continue(st: State<Shared>, session_id: String) -> R<()> {
     checked(&session_id)?;
     if let Some(tx) = RUNS.lock().as_mut().and_then(|m| m.remove(&session_id)) {
@@ -1073,7 +1073,7 @@ pub fn cancel_auto_continue(st: State<Shared>, session_id: String) -> R<()> {
 }
 
 /// Remove a finished entry from the list.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn dismiss_auto_continue(st: State<Shared>, session_id: String) -> R<()> {
     checked(&session_id)?;
     let st = st.inner();
@@ -1089,7 +1089,7 @@ pub fn dismiss_auto_continue(st: State<Shared>, session_id: String) -> R<()> {
 }
 
 /// The resumed run's log (last 400 lines).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn auto_continue_log(st: State<Shared>, session_id: String) -> R<Vec<String>> {
     checked(&session_id)?;
     let text = std::fs::read_to_string(log_path(st.inner(), &session_id)).unwrap_or_default();

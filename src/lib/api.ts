@@ -64,7 +64,7 @@ export function on<T>(event: string, cb: (payload: T) => void): () => void {
 }
 
 export type { Permissions };
-export type PermissionKind = "microphone" | "accessibility" | "input" | "screen";
+export type PermissionKind = "microphone" | "accessibility" | "input" | "screen" | "autostart" | "ocr" | "notifications";
 
 export const api = {
   getSettings: () => call<Settings>("get_settings"),
@@ -82,6 +82,11 @@ export const api = {
   islandResize: (width: number, height: number) => call<void>("island_resize", { width, height }),
   /** Windows / Linux: let the island take keyboard focus while the quick note is typed into. */
   islandFocus: (focus: boolean) => call<void>("island_focus", { focus }),
+  /** Windows / Linux: drag the pill anywhere (the backend follows the cursor, snaps on drop and
+   *  remembers the spot per monitor). No-ops on macOS, where the island hangs from the notch. */
+  islandDragStart: () => call<void>("island_drag_start"),
+  islandDragMove: () => call<void>("island_drag_move"),
+  islandDragEnd: () => call<void>("island_drag_end"),
   openDashboard: (route?: string) => call<void>("open_dashboard", { route }),
 
   startSession: (mode: Mode) => call<void>("start_session", { mode }),
@@ -135,6 +140,10 @@ export const api = {
   listModels: () => call<LocalModel[]>("list_models"),
   downloadModel: (id: string) => call<void>("download_model", { id }),
   deleteModel: (id: string) => call<void>("delete_model", { id }),
+  /** load a downloaded speech model into memory; resolves once it's ready to transcribe */
+  loadSpeechModel: (id: string) => call<void>("load_speech_model", { id }),
+  /** the model setup should get ready: the chosen one if on disk, else the small starter */
+  setupSpeechModel: () => call<string>("setup_speech_model"),
   /** deletes every downloaded speech model except the one in use; returns MB freed */
   removeUnusedModels: () => call<number>("remove_unused_models"),
 

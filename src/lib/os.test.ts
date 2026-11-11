@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { osFromUserAgent, deviceWord, settingsApp, keyStoreName, modKey } from "./os";
+import { applyPlatformClass, osFromUserAgent, deviceWord, settingsApp, keyStoreName, modKey } from "./os";
 import { formatHotkey, hotkeyOptions, hotkeyWords, pcCombo, sameHotkey } from "./format";
 
 describe("OS detection", () => {
@@ -8,6 +8,15 @@ describe("OS detection", () => {
     expect(osFromUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15")).toBe("linux");
     expect(osFromUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")).toBe("macos");
     expect(osFromUserAgent("Mozilla/5.0 (Linux; Android 14)")).toBe("macos");
+  });
+
+  it("tags <html> with exactly one platform class (Windows / Linux get opaque, lighter styles)", () => {
+    const classes = new Set<string>(["tauri", "platform-macos"]);
+    const el = { classList: { toggle: (k: string, on: boolean) => (on ? classes.add(k) : classes.delete(k)) } } as unknown as HTMLElement;
+    applyPlatformClass("linux", el);
+    expect([...classes].sort()).toEqual(["platform-linux", "tauri"]);
+    applyPlatformClass("windows", el);
+    expect([...classes].sort()).toEqual(["platform-windows", "tauri"]);
   });
 
   it("words copy for each OS", () => {

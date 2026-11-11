@@ -46,11 +46,11 @@ pub fn keycode_for(_n: &str) -> Option<u16> { None }
 pub fn scroll_by(_dy: i32) -> Result<()> { Ok(()) }
 pub fn open_bundle(_b: &str, _p: Option<&str>) -> Result<()> { bail!("unsupported OS") }
 pub fn island_geometry() -> IslandGeometry {
-    IslandGeometry { platform: "linux".into(), has_notch: false, notch_width: 64.0, notch_height: 64.0, screen_width: 0.0 }
+    IslandGeometry { platform: "linux".into(), has_notch: false, notch_width: 64.0, notch_height: 64.0, screen_width: 0.0, opaque: false }
 }
 pub fn configure_island(_w: *mut c_void) {}
 pub fn island_position(_g: &IslandGeometry, _w: f64, _h: f64) -> (f64, f64) { (0.0, 0.0) }
-pub fn permissions() -> Permissions { Permissions { microphone: true, accessibility: true, input_monitoring: true, screen: true, hotkey_active: false, accessibility_stale: false, hotkey_problem: None } }
+pub fn permissions() -> Permissions { Permissions { microphone: true, accessibility: true, input_monitoring: true, screen: true, hotkey_active: false, accessibility_stale: false, hotkey_problem: None, checks: Vec::new() } }
 pub fn open_permission_settings(_kind: &str) {}
 pub fn fix_fn_key() -> Result<String> { Ok(String::new()) }
 pub fn ocr(_rgba: &[u8], _w: u32, _h: u32) -> Option<String> { None }

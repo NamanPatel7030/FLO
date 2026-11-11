@@ -603,30 +603,30 @@ pub fn spawn(st: Shared) {
 }
 
 // ── commands ───────────────────────────────────────────────────────────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn flo_agent_config(st: State<Shared>) -> AgentConfig {
     load_config(&st.data_dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn flo_agent_save_config(st: State<Shared>, config: AgentConfig) -> R<AgentConfig> {
     let config = AgentConfig { hermes_playing: load_config(&st.data_dir).hermes_playing, ..config };
     save_config(&st.data_dir, &config).map_err(e)?;
     Ok(load_config(&st.data_dir))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn flo_agent_runs(st: State<Shared>) -> Vec<AgentRun> {
     ensure_loaded(&st.data_dir);
     RUNS.lock().list.clone()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn flo_agent_plan(st: State<Shared>, goal: String) -> RoutePlan {
     plan_for(st.inner(), &goal)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn flo_agent_run(st: State<Shared>, goal: String, source: Option<String>) -> R<AgentRun> {
     start(st.inner(), &goal, source.as_deref().unwrap_or("typed")).map_err(e)
 }
@@ -636,7 +636,7 @@ pub fn flo_agent_stop(st: State<Shared>, id: String) {
     stop(st.inner(), &id);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn flo_agent_clear_runs(st: State<Shared>) {
     ensure_loaded(&st.data_dir);
     RUNS.lock().list.retain(|x| !x.finished());

@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { BellRing, Check, Moon, QrCode, RefreshCw, ShieldCheck, Smartphone, Unlink, X } from "lucide-react";
 import { api } from "../lib/api";
+import { deviceWord } from "../lib/os";
 import { relativeTime } from "../lib/format";
 import { countdown, presenceHint, qrMatrix, qrPath, usePresence } from "../lib/presence";
 import type { PairCode, PhoneDevice, PresenceStatus, Settings } from "../lib/types";
@@ -97,7 +98,7 @@ export function PresenceSidebarCard() {
               <span>{info?.signedIn === false ? "Away · sign in to reach your phone" : "Away · notifications go to your phone"}</span>
             </>
           ) : (
-            <span>At your Mac · no phone alerts</span>
+            <span>At your {deviceWord()} · no phone alerts</span>
           )}
         </motion.div>
       </AnimatePresence>
@@ -273,7 +274,7 @@ function PhonesCard({ signedIn, away }: { signedIn: boolean; away: boolean }) {
               ) : away ? (
                 <span className="text-muted">Check that notifications reach your phone.</span>
               ) : (
-                <span className="text-muted">Works while you're Away: Flo never notifies your phone while you're at your Mac.</span>
+                <span className="text-muted">Works while you're Away: Flo never notifies your phone while you're at your {deviceWord()}.</span>
               )}
             </div>
             <Button size="sm" icon={<BellRing size={13} />} disabled={!away || test.busy || !devices?.length} onClick={sendTest}>
@@ -379,7 +380,7 @@ function PairDialog({ known, onClose }: { known: PhoneDevice[]; onClose: () => v
           <div className="relative">
             <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-300/80">Flo for Android</div>
             <h2 className="mt-1 text-[18px] font-semibold tracking-tight">Pair your Android phone</h2>
-            <p className="mt-1 text-[12.5px] leading-relaxed text-white/60">Open Flo on your phone, tap “Pair with Mac”, and scan this code. Or type the 6 digits.</p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-white/60">Open Flo on your phone, tap “Pair with your computer”, and scan this code. Or type the 6 digits.</p>
 
             <div className="mt-5 flex flex-col items-center">
               <div className="relative rounded-[18px] bg-[#fff] p-3 shadow-[0_12px_40px_-12px_rgba(61,187,255,0.45)]" data-testid="pair-qr">

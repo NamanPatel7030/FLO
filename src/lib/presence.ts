@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import qrcode from "qrcode-generator";
 import { api, on } from "./api";
+import { deviceWord } from "./os";
 import { EV, type PresenceInfo, type PresenceStatus } from "./types";
 
 export function usePresence() {
@@ -39,7 +40,7 @@ export function usePresence() {
 /** One line under the switch. */
 export function presenceHint(info: PresenceInfo | null): string {
   if (!info) return "";
-  if (info.status === "active") return "You're at your Mac. Nothing goes to your phone.";
+  if (info.status === "active") return `You're at your ${deviceWord()}. Nothing goes to your phone.`;
   if (!info.signedIn) return "Away. Sign in to get notifications on your phone.";
   return info.auto ? "Away (screen locked or idle). Notifications go to your phone." : "Away. Notifications go to your phone.";
 }

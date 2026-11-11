@@ -229,6 +229,9 @@ export interface IslandGeometry {
   notchWidth: number;
   notchHeight: number;
   screenWidth: number;
+  /** Linux without a compositor: the window can't be see-through, so the pill draws as a solid
+   *  tile that fills its window (omitted = transparency works) */
+  opaque?: boolean;
 }
 
 export interface StateEvent {
@@ -526,6 +529,10 @@ export interface LocalModel {
   sizeMb: number;
   languages: string;
   installed: boolean;
+  /** starter = what setup downloads first; advanced = bigger, more precise opt-in downloads */
+  tier: "starter" | "advanced" | "light";
+  speed: string;
+  accuracy: string;
 }
 
 export interface AttentionStatus {
@@ -584,6 +591,24 @@ export interface Permissions {
   accessibilityStale?: boolean;
   /** Linux: why the Flo key can't be read (e.g. "add yourself to the input group") */
   hotkeyProblem?: string;
+  /** Windows / Linux: what Flo needs on this OS, each with a live status (absent on macOS) */
+  checks?: PermCheck[];
+}
+
+/** One thing Flo needs (or doesn't) on Windows / Linux, for Settings → Permissions. */
+export interface PermCheck {
+  id: "microphone" | "keyboard" | "typing" | "screen" | "ocr" | "windows" | "accessibility" | "notifications" | "autostart" | string;
+  label: string;
+  /** limited: works partly on this desktop · notNeeded: this OS has no such switch */
+  status: "ok" | "missing" | "limited" | "notNeeded";
+  /** one line: what it's for, or why it isn't needed here */
+  detail: string;
+  /** missing and Flo can't do its job without it */
+  required: boolean;
+  /** a terminal command that fixes it (shown with Copy) */
+  command?: string;
+  /** open_permission_settings({kind: id}) fixes it or opens the right settings page */
+  canFix: boolean;
 }
 
 // ── Claude Code sessions (notch tray) ──────────────────────────────────────
@@ -887,6 +912,8 @@ export interface HandsfreeEvent {
  *  delete_api_key({provider})            test_llm() -> string
  *  get_island_geometry() -> IslandGeometry
  *  island_resize({width,height})         open_dashboard({route?})
+ *  island_drag_start() / island_drag_move() / island_drag_end()   (Windows / Linux: drag the pill;
+ *     the backend follows the cursor, snaps on drop and remembers the spot per monitor; no-op on macOS)
  *  start_session({mode})                 stop_session()       cancel_session()
  *  ask_assistant({text, mode?, threadId?, newThread?}) -> AssistantResponse     (mode: quick | deep | web)
  *     threadId continues that thread (its recent turns are context); newThread starts one
@@ -906,6 +933,7 @@ export interface HandsfreeEvent {
  *  list_dictionary() -> DictionaryEntry[]   add_dictionary({word,replacement?})  remove_dictionary({id})
  *  network_log() -> NetworkLogEntry[]
  *  list_models() -> LocalModel[]         download_model({id})   delete_model({id})
+ *  load_speech_model({id})  (resolves once loaded)   setup_speech_model() -> model id setup gets ready
  *  attention_status() -> AttentionStatus set_attention_paused({paused})
  *  check_permissions() -> Permissions   (inputMonitoring = fn key listener; poll every 2s on the Permissions tab)
  *  repair_permissions()  — macOS: reset Flo's privacy records (tccutil reset All com.flo.flow) + relaunch

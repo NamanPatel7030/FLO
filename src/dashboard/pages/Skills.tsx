@@ -96,7 +96,7 @@ export function SkillsList() {
     <div>
       <PageHeader
         title="Skills"
-        subtitle="Teach Flo something once, then just ask: “use my Upwork proposal skill”. Write skills read your screen and type the result; Do skills operate your Mac."
+        subtitle={`Teach Flo something once, then just ask: “use my Upwork proposal skill”. Write skills read your screen and type the result; Do skills operate your ${deviceWord()}.`}
         actions={
           <Button variant="primary" icon={<Plus size={15} />} onClick={() => setEditing({ ...EMPTY })}>
             New skill
@@ -391,7 +391,7 @@ function ConnectionEditor({ initial, onClose, onSaved }: { initial: Connection; 
               <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="How to reach it">
                 {(
                   [
-                    { id: "stdio", title: "Local command", hint: "Flo starts it on your Mac (npx, uvx, python…)" },
+                    { id: "stdio", title: "Local command", hint: `Flo starts it on your ${deviceWord()} (npx, uvx, python…)` },
                     { id: "http", title: "URL", hint: "A remote server (Streamable HTTP)" },
                   ] as const
                 ).map((t) => (

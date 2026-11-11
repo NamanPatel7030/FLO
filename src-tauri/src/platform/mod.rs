@@ -329,10 +329,244 @@ pub fn pc_keycode_for(name: &str) -> Option<u16> {
     })
 }
 
+// ── Linux session setup and the Windows / Linux permission checks (pure, tested everywhere) ─────
+
+/// Environment for GTK / WebKitGTK, decided before the first window opens. Never overrides a
+/// variable the person set themselves.
+///
+/// * `GDK_BACKEND=x11` on a Wayland session that has XWayland (`DISPLAY`): Wayland gives an app no
+///   way to place its own window, keep it above others or read the pointer, so the floating pill
+///   couldn't sit at the top of the screen, be dragged and remembered, or open on hover. Under
+///   XWayland all of that works. `FLO_NATIVE_WAYLAND=1` opts out.
+/// * `WEBKIT_DISABLE_DMABUF_RENDERER=1` when drawing through X11: WebKitGTK's DMA-BUF renderer
+///   (2.42+) paints transparent windows as solid black, or not at all, on many X11 / XWayland
+///   setups (NVIDIA, VMs, older Mesa). The fallback renderer is still GPU accelerated.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn linux_env_overrides(get: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static str, &'static str)> {
+    let set = |k: &str| get(k).is_some_and(|v| !v.trim().is_empty());
+    let mut out = Vec::new();
+    let wayland = is_wayland(get("XDG_SESSION_TYPE").as_deref(), get("WAYLAND_DISPLAY").as_deref());
+    let x11 = if !wayland {
+        true
+    } else if !set("GDK_BACKEND") && !set("FLO_NATIVE_WAYLAND") && set("DISPLAY") {
+        out.push(("GDK_BACKEND", "x11"));
+        true
+    } else {
+        get("GDK_BACKEND").is_some_and(|b| b.trim().starts_with("x11"))
+    };
+    if x11 && !set("WEBKIT_DISABLE_DMABUF_RENDERER") {
+        out.push(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"));
+    }
+    out
+}
+
+/// What the Linux checks are built from (probed by platform/linux.rs).
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub struct LinuxProbe {
+    pub wayland: bool,
+    /// GNOME (mutter has no virtual-keyboard protocol, so wtype can't type there)
+    pub gnome: bool,
+    pub mic: bool,
+    pub hotkey_active: bool,
+    pub hotkey_problem: Option<String>,
+    pub wtype: bool,
+    pub ydotool: bool,
+    /// the ydotoold socket exists (ydotool 1.x can't type without its daemon)
+    pub ydotoold: bool,
+    /// xdg-desktop-portal is installed (screenshots on Wayland go through it)
+    pub portal: bool,
+    pub tesseract: bool,
+    pub autostart: bool,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn linux_checks(p: &LinuxProbe) -> Vec<crate::model::PermCheck> {
+    use crate::model::PermCheck as C;
+    let mut out = Vec::new();
+    out.push(if p.mic {
+        C::new("microphone", "Microphone", "ok", "Linux has no per-app microphone switch: Flo records from your default input.")
+    } else {
+        C::new("microphone", "Microphone", "missing", "No microphone found. Plug one in or pick an input in Sound settings.").required().fixable()
+    });
+    out.push(if p.hotkey_active {
+        C::new("keyboard", "Flo key", "ok", if p.wayland { "Reads your keyboard directly (you're in the input group)." } else { "Listens through X11. No permission needed." })
+    } else if p.wayland {
+        C::new("keyboard", "Flo key", "missing", "Wayland blocks global keys, so Flo reads the keyboard directly. Add yourself to the input group, then log out and back in. Until then, use the tray menu's Start / stop dictation.")
+            .required()
+            .command("sudo usermod -aG input $USER")
+    } else {
+        C::new("keyboard", "Flo key", "missing", p.hotkey_problem.clone().unwrap_or_else(|| "The key listener isn't running. Restarting Flo usually fixes it.".into())).required()
+    });
+    let typing_ok = !p.wayland || (p.wtype && !p.gnome) || (p.ydotool && p.ydotoold);
+    out.push(if typing_ok {
+        let how = if !p.wayland {
+            "Types into the app you're using through X11 (XTest). No permission needed."
+        } else if p.ydotool && p.ydotoold {
+            "Types into the app you're using with ydotool."
+        } else {
+            "Types into the app you're using with wtype."
+        };
+        C::new("typing", "Typing into apps", "ok", how)
+    } else if p.ydotool {
+        C::new("typing", "Typing into apps", "missing", "ydotool is installed but its daemon isn't running. Start ydotoold (it needs access to /dev/uinput). Until then Flo copies the words and you press Ctrl+V.").command("sudo ydotoold &")
+    } else {
+        let (tool, why) = if p.gnome { ("ydotool", "GNOME on Wayland lets apps type only through ydotool") } else { ("wtype", "Wayland lets apps type only through wtype or ydotool") };
+        C::new("typing", "Typing into apps", "missing", format!("{why}. Without it Flo copies the words and you press Ctrl+V.")).command(format!("sudo apt install {tool}"))
+    });
+    out.push(if !p.wayland {
+        C::new("screen", "Screen", "ok", "For screen-aware answers and Attention. X11 needs no permission. Images stay on this computer.")
+    } else if p.portal {
+        C::new("screen", "Screen", "ok", "For screen-aware answers and Attention. Your desktop asks once in its own dialog. Images stay on this computer.")
+    } else {
+        C::new("screen", "Screen", "missing", "Optional, for screen-aware answers and Attention. Wayland shares the screen only through xdg-desktop-portal.").command(if p.gnome { "sudo apt install xdg-desktop-portal-gnome" } else { "sudo apt install xdg-desktop-portal" })
+    });
+    out.push(if p.tesseract {
+        C::new("ocr", "Reading text on screen", "ok", "Reads screen text on this computer with Tesseract.")
+    } else {
+        C::new("ocr", "Reading text on screen", "missing", "Optional. Lets Attention and screen-aware answers read text, on this computer.").command("sudo apt install tesseract-ocr")
+    });
+    if p.wayland {
+        out.push(C::new("windows", "Window titles", "limited", "Wayland hides other apps' windows, so Flo spots calls from the microphone instead of the window title."));
+    }
+    out.push(C::new("accessibility", "Accessibility", "notNeeded", "Not needed on Linux: there's no Accessibility switch. Typing and the Flo key are covered above."));
+    out.push(C::new("notifications", "Notifications", "notNeeded", "Not needed: Flo shows alerts in its own pill."));
+    out.push(if p.autostart {
+        C::new("autostart", "Start at login", "ok", "Flo opens when you log in.")
+    } else {
+        C::new("autostart", "Start at login", "missing", "Optional. Opens Flo when you log in, so your Flo key always works.").fixable()
+    });
+    out
+}
+
+/// What the Windows checks are built from (probed by platform/windows.rs).
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub struct WindowsProbe {
+    pub mic: bool,
+    pub hotkey_active: bool,
+    pub ocr: bool,
+    pub autostart: bool,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn windows_checks(p: &WindowsProbe) -> Vec<crate::model::PermCheck> {
+    use crate::model::PermCheck as C;
+    vec![
+        if p.mic {
+            C::new("microphone", "Microphone", "ok", "Allowed under Settings > Privacy > Microphone.")
+        } else {
+            C::new("microphone", "Microphone", "missing", "Turn on \"Let desktop apps access your microphone\" under Settings > Privacy > Microphone.").required().fixable()
+        },
+        if p.hotkey_active {
+            C::new("keyboard", "Flo key", "ok", "Uses a standard keyboard hook. No permission needed.")
+        } else {
+            C::new("keyboard", "Flo key", "missing", "The key listener isn't running. Restarting Flo usually fixes it.").required()
+        },
+        C::new("typing", "Typing into apps", "ok", "No permission needed. Windows blocks typing only into apps run as administrator."),
+        C::new("screen", "Screen", "notNeeded", "Not needed: Windows lets desktop apps see the screen. Images stay on this computer."),
+        if p.ocr {
+            C::new("ocr", "Reading text on screen", "ok", "Uses the text recognition built into Windows, on this computer.")
+        } else {
+            C::new("ocr", "Reading text on screen", "missing", "Optional. Add a language with text recognition under Settings > Time & language > Language.").fixable()
+        },
+        C::new("accessibility", "Accessibility", "notNeeded", "Not needed on Windows: there's no Accessibility switch."),
+        C::new("notifications", "Notifications", "notNeeded", "Not needed: Flo shows alerts in its own pill."),
+        if p.autostart {
+            C::new("autostart", "Start at login", "ok", "Flo opens when you sign in.")
+        } else {
+            C::new("autostart", "Start at login", "missing", "Optional. Opens Flo when you sign in, so your Flo key always works.").fixable()
+        },
+    ]
+}
+
+/// ~/.config/autostart entry that opens Flo at login.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn autostart_desktop_entry(exe: &str) -> String {
+    let quoted = if exe.contains(' ') { format!("\"{exe}\"") } else { exe.to_string() };
+    format!("[Desktop Entry]\nType=Application\nName=Flo\nComment=Your assistant\nExec={quoted}\nIcon=flo-flow\nTerminal=false\nX-GNOME-Autostart-enabled=true\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::hotkey::PcKey;
+
+    #[test]
+    fn linux_env_prefers_xwayland_and_never_overrides_the_user() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(a, _)| *a == k).map(|(_, v)| v.to_string());
+        // GNOME on Wayland with XWayland: X11 backend + the DMA-BUF workaround
+        let g = env(&[("XDG_SESSION_TYPE", "wayland"), ("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0")]);
+        assert_eq!(linux_env_overrides(&g), vec![("GDK_BACKEND", "x11"), ("WEBKIT_DISABLE_DMABUF_RENDERER", "1")]);
+        // opted out, or no XWayland: stay on Wayland, leave WebKit alone
+        let g = env(&[("XDG_SESSION_TYPE", "wayland"), ("DISPLAY", ":0"), ("FLO_NATIVE_WAYLAND", "1")]);
+        assert!(linux_env_overrides(&g).is_empty());
+        let g = env(&[("XDG_SESSION_TYPE", "wayland")]);
+        assert!(linux_env_overrides(&g).is_empty());
+        // the person's own choices win
+        let g = env(&[("XDG_SESSION_TYPE", "wayland"), ("DISPLAY", ":0"), ("GDK_BACKEND", "wayland")]);
+        assert!(linux_env_overrides(&g).is_empty());
+        let g = env(&[("XDG_SESSION_TYPE", "x11"), ("WEBKIT_DISABLE_DMABUF_RENDERER", "0")]);
+        assert!(linux_env_overrides(&g).is_empty());
+        // plain X11
+        let g = env(&[("XDG_SESSION_TYPE", "x11"), ("DISPLAY", ":0")]);
+        assert_eq!(linux_env_overrides(&g), vec![("WEBKIT_DISABLE_DMABUF_RENDERER", "1")]);
+    }
+
+    fn check<'a>(v: &'a [crate::model::PermCheck], id: &str) -> &'a crate::model::PermCheck {
+        v.iter().find(|c| c.id == id).unwrap_or_else(|| panic!("no {id} check"))
+    }
+
+    #[test]
+    fn linux_checks_explain_what_each_desktop_needs() {
+        // X11: everything but the optional extras just works
+        let x11 = linux_checks(&LinuxProbe { mic: true, hotkey_active: true, ..Default::default() });
+        assert_eq!(check(&x11, "keyboard").status, "ok");
+        assert_eq!(check(&x11, "typing").status, "ok");
+        assert_eq!(check(&x11, "screen").status, "ok");
+        assert_eq!(check(&x11, "ocr").command.as_deref(), Some("sudo apt install tesseract-ocr"));
+        assert_eq!(check(&x11, "accessibility").status, "notNeeded");
+        assert!(x11.iter().all(|c| c.id != "windows"));
+        // GNOME on Wayland, fresh install: input group + ydotool, never wtype
+        let gnome = linux_checks(&LinuxProbe { wayland: true, gnome: true, mic: true, wtype: true, portal: true, ..Default::default() });
+        let kb = check(&gnome, "keyboard");
+        assert_eq!((kb.status.as_str(), kb.required, kb.command.as_deref()), ("missing", true, Some("sudo usermod -aG input $USER")));
+        let ty = check(&gnome, "typing");
+        assert_eq!((ty.status.as_str(), ty.command.as_deref()), ("missing", Some("sudo apt install ydotool")));
+        assert_eq!(check(&gnome, "screen").status, "ok");
+        assert_eq!(check(&gnome, "windows").status, "limited");
+        // ydotool without its daemon still can't type
+        let half = linux_checks(&LinuxProbe { wayland: true, gnome: true, ydotool: true, ..Default::default() });
+        assert!(check(&half, "typing").detail.contains("ydotoold"));
+        let ready = linux_checks(&LinuxProbe { wayland: true, gnome: true, ydotool: true, ydotoold: true, ..Default::default() });
+        assert_eq!(check(&ready, "typing").status, "ok");
+        // sway: wtype is enough
+        let sway = linux_checks(&LinuxProbe { wayland: true, wtype: true, ..Default::default() });
+        assert_eq!(check(&sway, "typing").status, "ok");
+        // no mic: required and fixable; autostart is offered as a fix
+        let nomic = linux_checks(&LinuxProbe::default());
+        assert!(check(&nomic, "microphone").required && check(&nomic, "microphone").can_fix);
+        assert!(check(&nomic, "autostart").can_fix && !check(&nomic, "autostart").required);
+        // app copy: no em dashes
+        assert!(gnome.iter().chain(x11.iter()).all(|c| !c.detail.contains('\u{2014}')));
+    }
+
+    #[test]
+    fn windows_checks_say_what_is_not_needed() {
+        let w = windows_checks(&WindowsProbe { mic: false, hotkey_active: true, ocr: true, autostart: false });
+        assert!(check(&w, "microphone").required && check(&w, "microphone").can_fix);
+        assert_eq!(check(&w, "keyboard").status, "ok");
+        assert_eq!(check(&w, "screen").status, "notNeeded");
+        assert_eq!(check(&w, "accessibility").status, "notNeeded");
+        assert!(w.iter().all(|c| !c.detail.contains('\u{2014}')));
+    }
+
+    #[test]
+    fn autostart_entry() {
+        let e = autostart_desktop_entry("/usr/bin/flo-flow");
+        assert!(e.starts_with("[Desktop Entry]\n") && e.contains("Exec=/usr/bin/flo-flow\n"));
+        assert!(autostart_desktop_entry("/home/me/Apps/Flo 1.AppImage").contains("Exec=\"/home/me/Apps/Flo 1.AppImage\""));
+    }
 
     #[test]
     fn names_calls_from_window_title_and_mic_users() {

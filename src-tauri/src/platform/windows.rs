@@ -441,7 +441,7 @@ pub fn open_app(name: &str) -> Result<()> {
 
 pub fn island_geometry() -> IslandGeometry {
     // no notch: a floating pill at the top centre; lib.rs fills in the screen width
-    IslandGeometry { platform: "windows".into(), has_notch: false, notch_width: 0.0, notch_height: 0.0, screen_width: 0.0 }
+    IslandGeometry { platform: "windows".into(), has_notch: false, notch_width: 0.0, notch_height: 0.0, screen_width: 0.0, opaque: false }
 }
 
 /// Make the island a tool window that never takes focus: clicking it leaves the keyboard in the
@@ -624,15 +624,59 @@ pub fn focused_text() -> Option<(usize, String)> {
 
 pub fn permissions() -> Permissions {
     let hotkey = HOTKEY_ACTIVE.load(Ordering::SeqCst);
+    let mic = mic_allowed();
     // Windows has no Accessibility / Input Monitoring / Screen Recording grants for desktop apps
-    Permissions { microphone: mic_allowed(), accessibility: true, input_monitoring: hotkey, screen: true, hotkey_active: hotkey, accessibility_stale: false, hotkey_problem: None }
+    let probe = super::WindowsProbe { mic, hotkey_active: hotkey, ocr: ocr_available(), autostart: autostart_enabled() };
+    Permissions { microphone: mic, accessibility: true, input_monitoring: hotkey, screen: true, hotkey_active: hotkey, accessibility_stale: false, hotkey_problem: None, checks: super::windows_checks(&probe) }
+}
+
+/// Text recognition languages only change in Settings: ask WinRT once a minute, not every poll.
+fn ocr_available() -> bool {
+    static CACHE: parking_lot::Mutex<Option<(std::time::Instant, bool)>> = parking_lot::Mutex::new(None);
+    if let Some((t, v)) = *CACHE.lock() {
+        if t.elapsed() < std::time::Duration::from_secs(60) {
+            return v;
+        }
+    }
+    let v = has_native_ocr();
+    *CACHE.lock() = Some((std::time::Instant::now(), v));
+    v
+}
+
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+/// Start at login: a "Flo" value under HKCU\...\Run.
+fn autostart_enabled() -> bool {
+    use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+    reg::Key::open(HKEY_CURRENT_USER, RUN_KEY).and_then(|k| k.string("Flo")).is_some_and(|v| !v.trim().is_empty())
+}
+
+fn enable_autostart() -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let value = format!("\"{}\"", exe.display());
+    let ok = std::process::Command::new("reg")
+        .args(["add", &format!("HKCU\\{RUN_KEY}"), "/v", "Flo", "/t", "REG_SZ", "/d", &value, "/f"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()?
+        .success();
+    if !ok {
+        return Err(anyhow!("couldn't add Flo to startup apps"));
+    }
+    Ok(())
 }
 
 pub fn open_permission_settings(kind: &str) {
+    if kind == "autostart" {
+        if let Err(e) = enable_autostart() {
+            log::warn!("start at login: {e}");
+        }
+        return;
+    }
     let uri = match kind {
         "microphone" => "ms-settings:privacy-microphone",
         "screen" => "ms-settings:privacy-graphicsCaptureProgrammatic",
         "notifications" => "ms-settings:notifications",
+        "ocr" => "ms-settings:regionlanguage",
         _ => "ms-settings:privacy",
     };
     let _ = std::process::Command::new("cmd").args(["/C", "start", "", uri]).creation_flags(CREATE_NO_WINDOW).status();

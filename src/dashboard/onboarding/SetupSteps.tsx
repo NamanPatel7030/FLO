@@ -11,9 +11,10 @@ import { SETUP_PERMS, accessibilityState, nextSetupPerm, setupDone, setupPerms }
 import { deviceWord, os, settingsApp } from "../../lib/os";
 import { AiProviderFields, providerInfo, ProviderKey } from "../AiSetup";
 import { Select } from "../ui";
+import { DEFAULT_MODEL } from "../../lib/models";
 import { Btn, Heading, Key, Rise, Stagger, rise } from "./parts";
 
-const RECOMMENDED = "large-v3-turbo-q5_0";
+const RECOMMENDED = DEFAULT_MODEL;
 
 // ── permissions ─────────────────────────────────────────────────────────────
 
@@ -165,7 +166,8 @@ export function SetupStep({ title, sub, s, set }: { title: string; sub: string; 
       if (e.done) api.listModels().then(setModels);
     });
   }, []);
-  const rec = models?.find((m) => m.id === RECOMMENDED) ?? models?.[0];
+  // the model setup already got ready (step 2), or the small starter
+  const rec = models?.find((m) => m.id === s.sttModel) ?? models?.find((m) => m.id === RECOMMENDED) ?? models?.[0];
   const local = s.sttProvider === "local";
   const pct = pr && !pr.done ? Math.round((pr.received / Math.max(1, pr.total)) * 100) : null;
   const cloud = providerInfo(s.sttProvider === "openai" ? "openai" : "groq")!;

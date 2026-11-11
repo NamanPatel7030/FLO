@@ -9,23 +9,95 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
+/// Starter = the small model setup downloads first; Advanced = bigger, more precise downloads
+/// offered afterwards; Light = other choices (English only, or no real gain over the starter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    Starter,
+    Advanced,
+    Light,
+}
+
+impl Tier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Starter => "starter",
+            Tier::Advanced => "advanced",
+            Tier::Light => "light",
+        }
+    }
+}
+
 pub struct ModelSpec {
     pub id: &'static str,
     pub file: &'static str,
     pub label: &'static str,
+    /// download size in MB (10^6 bytes, as the server reports it)
     pub size_mb: u64,
     pub languages: &'static str,
+    pub tier: Tier,
+    pub speed: &'static str,
+    pub accuracy: &'static str,
 }
 
+/// What a fresh install uses: Whisper Small, 5-bit quantized (190 MB). Multilingual, so English,
+/// Hindi and Hinglish work offline from the first minute; the big models are an opt-in upgrade.
+pub const DEFAULT_MODEL: &str = "small-q5_1";
+
 pub const MODELS: &[ModelSpec] = &[
-    ModelSpec { id: "large-v3-turbo-q5_0", file: "ggml-large-v3-turbo-q5_0.bin", label: "Whisper Large v3 Turbo (recommended)", size_mb: 574, languages: "99 languages incl. Hindi, Gujarati" },
-    ModelSpec { id: "large-v3-turbo", file: "ggml-large-v3-turbo.bin", label: "Whisper Large v3 Turbo (full precision)", size_mb: 1624, languages: "99 languages" },
-    ModelSpec { id: "small", file: "ggml-small.bin", label: "Whisper Small (fast)", size_mb: 488, languages: "99 languages" },
-    ModelSpec { id: "base.en", file: "ggml-base.en.bin", label: "Whisper Base English (tiny & instant)", size_mb: 148, languages: "English" },
+    ModelSpec { id: "small-q5_1", file: "ggml-small-q5_1.bin", label: "Whisper Small (starter)", size_mb: 190, languages: "99 languages incl. Hindi", tier: Tier::Starter, speed: "Fast", accuracy: "Good for everyday dictation" },
+    ModelSpec { id: "large-v3-turbo-q5_0", file: "ggml-large-v3-turbo-q5_0.bin", label: "Whisper Large v3 Turbo", size_mb: 574, languages: "99 languages incl. Hindi, Gujarati", tier: Tier::Advanced, speed: "A little slower", accuracy: "Much better with accents, Hindi and names" },
+    ModelSpec { id: "large-v3-turbo", file: "ggml-large-v3-turbo.bin", label: "Whisper Large v3 Turbo (full precision)", size_mb: 1624, languages: "99 languages", tier: Tier::Advanced, speed: "Slowest, uses the most memory", accuracy: "Best. Only slightly ahead of Turbo" },
+    ModelSpec { id: "small", file: "ggml-small.bin", label: "Whisper Small (full precision)", size_mb: 488, languages: "99 languages", tier: Tier::Light, speed: "Fast", accuracy: "About the same as the starter, more space" },
+    ModelSpec { id: "base.en", file: "ggml-base.en.bin", label: "Whisper Base English", size_mb: 148, languages: "English", tier: Tier::Light, speed: "Instant", accuracy: "English only" },
 ];
 
 pub fn spec(id: &str) -> Option<&'static ModelSpec> {
     MODELS.iter().find(|m| m.id == id)
+}
+
+/// The model setup downloads first.
+pub fn starter() -> &'static ModelSpec {
+    spec(DEFAULT_MODEL).expect("DEFAULT_MODEL is in MODELS")
+}
+
+/// The opt-in upgrades, smallest first.
+pub fn advanced() -> Vec<&'static ModelSpec> {
+    let mut v: Vec<_> = MODELS.iter().filter(|m| m.tier == Tier::Advanced).collect();
+    v.sort_by_key(|m| m.size_mb);
+    v
+}
+
+/// The model setup should get ready: the chosen one when it's already on disk (setup run again),
+/// otherwise the small starter (a fresh install, or an old default that was never downloaded).
+pub fn setup_model(selected: &str, models_dir: &Path) -> &'static str {
+    match spec(selected) {
+        Some(m) if models_dir.join(m.file).exists() => m.id,
+        _ => DEFAULT_MODEL,
+    }
+}
+
+/// Where a retried download continues: after the bytes already on disk, but only when the server
+/// answered the Range request with 206 Partial Content.
+pub fn resume_offset(part_len: u64, status: u16) -> u64 {
+    if status == 206 {
+        part_len
+    } else {
+        0
+    }
+}
+
+/// A download that stopped short of the advertised size is not a model.
+pub fn download_complete(received: u64, expected: Option<u64>) -> bool {
+    match expected {
+        Some(t) => received == t,
+        None => received > 0,
+    }
+}
+
+/// Progress events: every 250 ms or 2 MB, so the UI can show a live speed.
+pub fn should_emit(received: u64, last_bytes: u64, ms_since_last: u128) -> bool {
+    ms_since_last >= 250 || received.saturating_sub(last_bytes) >= 2 * 1024 * 1024
 }
 
 pub fn model_path(models_dir: &Path, id: &str) -> Option<PathBuf> {
@@ -41,36 +113,64 @@ pub fn list_models(models_dir: &Path) -> Vec<LocalModel> {
             size_mb: m.size_mb,
             languages: m.languages.into(),
             installed: models_dir.join(m.file).exists(),
+            tier: m.tier.as_str().into(),
+            speed: m.speed.into(),
+            accuracy: m.accuracy.into(),
         })
         .collect()
 }
 
+/// Download a model into `models_dir`. A failed or cut-off download leaves its `.part` file, and
+/// the next try continues from there (HTTP Range) instead of starting over.
 pub async fn download_model(egress: &Egress, models_dir: &Path, id: &str, progress: impl Fn(ModelProgressEvent)) -> Result<()> {
     let s = spec(id).ok_or_else(|| anyhow!("unknown model {id}"))?;
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}", s.file);
     egress.check(&url, Purpose::ModelDownload, false)?;
     tokio::fs::create_dir_all(models_dir).await?;
     let client = egress.client(Purpose::ModelDownload, false);
-    let resp = client.get(&url).send().await?.error_for_status()?;
-    let total = resp.content_length().unwrap_or(s.size_mb * 1024 * 1024);
     let tmp = models_dir.join(format!("{}.part", s.file));
-    let mut f = tokio::fs::File::create(&tmp).await?;
-    let mut received: u64 = 0;
-    let mut last_emit = 0u64;
+    let part_len = tokio::fs::metadata(&tmp).await.map(|m| m.len()).unwrap_or(0);
+    let mut req = client.get(&url);
+    if part_len > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={part_len}-"));
+    }
+    let resp = req.send().await?;
+    if resp.status().as_u16() == 416 {
+        // the leftover part doesn't fit the file on the server any more: start clean next time
+        let _ = tokio::fs::remove_file(&tmp).await;
+        bail!("The download stopped early. Check your connection and try again.");
+    }
+    let resp = resp.error_for_status()?;
+    let offset = resume_offset(part_len, resp.status().as_u16());
+    let expected = resp.content_length().map(|n| n + offset);
+    let total = expected.unwrap_or(s.size_mb * 1_000_000);
+    let mut f = if offset > 0 {
+        tokio::fs::OpenOptions::new().append(true).open(&tmp).await?
+    } else {
+        tokio::fs::File::create(&tmp).await?
+    };
+    let mut received: u64 = offset;
+    let mut last_bytes = received;
+    let mut last_at = std::time::Instant::now();
+    progress(ModelProgressEvent { id: id.into(), received, total, done: false, error: None });
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         f.write_all(&chunk).await?;
         received += chunk.len() as u64;
-        if received - last_emit > 4 * 1024 * 1024 {
-            last_emit = received;
+        if should_emit(received, last_bytes, last_at.elapsed().as_millis()) {
+            last_bytes = received;
+            last_at = std::time::Instant::now();
             progress(ModelProgressEvent { id: id.into(), received, total, done: false, error: None });
         }
     }
     f.flush().await?;
     drop(f);
+    if !download_complete(received, expected) {
+        bail!("The download stopped early. Check your connection and try again.");
+    }
     tokio::fs::rename(&tmp, models_dir.join(s.file)).await?;
-    egress.record(&url, Purpose::ModelDownload, received);
+    egress.record(&url, Purpose::ModelDownload, received - offset);
     progress(ModelProgressEvent { id: id.into(), received, total, done: true, error: None });
     Ok(())
 }
@@ -712,6 +812,21 @@ impl LocalWhisper {
 
     #[cfg(not(feature = "local-stt"))]
     pub fn warm(&self, _model_file: &Path) {}
+
+    /// Load the model now and say whether it worked (setup waits on this before the first
+    /// dictation, so the try-out never meets a cold or missing model).
+    #[cfg(feature = "local-stt")]
+    pub fn load(&self, model_file: &Path) -> Result<()> {
+        self.context(model_file).map(|_| ())
+    }
+
+    #[cfg(not(feature = "local-stt"))]
+    pub fn load(&self, model_file: &Path) -> Result<()> {
+        if !model_file.exists() {
+            bail!("Speech model not downloaded yet.");
+        }
+        Ok(())
+    }
 
     /// Transcribe a clip.
     ///
@@ -1474,5 +1589,100 @@ mod join_tests {
         assert!(out.contains("Yellow color"));
         // ordinary speech stays
         assert_eq!(join_chunks(&["It is very very good.".into(), "Thanks.".into()]), "It is very very good. Thanks.");
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+
+    fn dir_with(files: &[&str]) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("flo-tiers-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        for f in files {
+            std::fs::write(d.join(f), b"x").unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn the_default_is_the_small_multilingual_starter() {
+        let s = starter();
+        assert_eq!(s.id, DEFAULT_MODEL);
+        assert_eq!(s.tier, Tier::Starter);
+        assert!(s.languages.contains("Hindi"), "the starter must hear Hindi / Hinglish");
+        // smaller than every advanced model, and under 200 MB so setup is quick
+        assert!(s.size_mb < 200);
+        assert!(advanced().iter().all(|m| m.size_mb > s.size_mb));
+        assert_eq!(MODELS.iter().filter(|m| m.tier == Tier::Starter).count(), 1);
+        assert_eq!(crate::model::Settings::default().stt_model, DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn advanced_models_are_bigger_and_listed_smallest_first() {
+        let adv = advanced();
+        assert!(adv.len() >= 2);
+        assert!(adv.iter().any(|m| m.id == "large-v3-turbo-q5_0"));
+        assert!(adv.windows(2).all(|w| w[0].size_mb <= w[1].size_mb));
+        assert!(adv.iter().all(|m| !m.speed.is_empty() && !m.accuracy.is_empty()));
+    }
+
+    #[test]
+    fn every_model_has_a_unique_id_and_file_and_plain_copy() {
+        let mut ids: Vec<_> = MODELS.iter().map(|m| m.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), MODELS.len());
+        for m in MODELS {
+            assert!(m.file.starts_with("ggml-") && m.file.ends_with(".bin"));
+            for t in [m.label, m.speed, m.accuracy, m.languages] {
+                assert!(!t.contains('—') && !t.contains('–'), "no em dashes in app copy: {t}");
+            }
+        }
+    }
+
+    #[test]
+    fn list_models_reports_tier_and_notes() {
+        let d = dir_with(&["ggml-small-q5_1.bin"]);
+        let list = list_models(&d);
+        let s = list.iter().find(|m| m.id == DEFAULT_MODEL).unwrap();
+        assert!(s.installed);
+        assert_eq!(s.tier, "starter");
+        assert!(list.iter().any(|m| m.tier == "advanced" && !m.installed));
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn setup_keeps_an_installed_choice_and_otherwise_falls_back_to_the_starter() {
+        let d = dir_with(&["ggml-large-v3-turbo-q5_0.bin"]);
+        assert_eq!(setup_model("large-v3-turbo-q5_0", &d), "large-v3-turbo-q5_0");
+        // chosen but never downloaded (an old default) → start with the small one
+        assert_eq!(setup_model("large-v3-turbo", &d), DEFAULT_MODEL);
+        assert_eq!(setup_model("nonsense", &d), DEFAULT_MODEL);
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn a_retry_resumes_only_when_the_server_honours_the_range() {
+        assert_eq!(resume_offset(0, 200), 0);
+        assert_eq!(resume_offset(1000, 206), 1000);
+        // the server ignored the Range header and sent the whole file → start over
+        assert_eq!(resume_offset(1000, 200), 0);
+    }
+
+    #[test]
+    fn a_cut_off_download_is_not_complete() {
+        assert!(download_complete(100, Some(100)));
+        assert!(!download_complete(60, Some(100)));
+        assert!(download_complete(100, None));
+        assert!(!download_complete(0, None));
+    }
+
+    #[test]
+    fn progress_is_emitted_often_enough_for_a_live_speed() {
+        // every 250 ms or every 2 MB, whichever comes first
+        assert!(should_emit(3 * 1024 * 1024, 0, 10));
+        assert!(should_emit(1024, 0, 300));
+        assert!(!should_emit(1024, 0, 50));
     }
 }

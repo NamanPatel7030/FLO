@@ -1,7 +1,7 @@
 // The skill editor as a canvas: drop nodes, connect them, and see the skill they generate.
 // Triggers start it, Steps run in arrow order, Platforms / MCP servers / Knowledge docs attach to
 // steps, and the Output says how it ends (write into the field, or do it on screen).
-import { modKey } from "../lib/os";
+import { deviceWord, modKey } from "../lib/os";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   addEdge,
@@ -346,7 +346,7 @@ function OutputNode({ id, data, selected }: NodeProps<FlowNode>) {
           </button>
         ))}
       </div>
-      <div className="mt-1.5 text-[10.5px] leading-snug text-white/40">{mode === "do" ? "Operates your Mac. Asks before sending or buying." : "Types the result where your cursor is."}</div>
+      <div className="mt-1.5 text-[10.5px] leading-snug text-white/40">{mode === "do" ? `Operates your ${deviceWord()}. Asks before sending or buying.` : "Types the result where your cursor is."}</div>
     </Shell>
   );
 }
@@ -849,7 +849,9 @@ export function SkillCanvasEditor(props: { initial: Skill; onSave: (s: Skill) =>
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 8, scale: 0.985 }}
         transition={{ duration: 0.24, ease: [0.2, 0.8, 0.2, 1] }}
-        className="relative h-full overflow-hidden rounded-2xl border border-white/10 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.9)]"
+        // .hw: the canvas is always dark, so in the light theme its text stays light (Tailwind's white
+        // is remapped to ink outside dark surfaces; the name field and prompts read dark on dark)
+        className="hw relative h-full overflow-hidden rounded-2xl border border-white/10 shadow-[0_30px_90px_-20px_rgba(0,0,0,0.9)]"
         style={{ background: "linear-gradient(180deg, #0c1620 0%, #070d14 100%)" }}
       >
         <ReactFlowProvider>

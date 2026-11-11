@@ -5,19 +5,20 @@ import { os, settingsApp } from "../../lib/os";
 import { buildProfile, type Answers, type App, type Lang, type Role, type Use } from "../../lib/profile";
 import type { NotchlingMood } from "../../lib/notchling";
 
-export const STEPS = ["welcome", "permissions", "try", "setup", "role", "uses", "done"] as const;
+export const STEPS = ["welcome", "model", "permissions", "try", "setup", "role", "uses", "done"] as const;
 export type Step = (typeof STEPS)[number];
 
 export const STEP_NAME: Record<Step, string> = {
-  welcome: "Welcome", permissions: "Permissions", try: "Try it", setup: "Voice & AI",
+  welcome: "Welcome", model: "Speech model", permissions: "Permissions", try: "Try it", setup: "Voice & AI",
   role: "What you do", uses: "Where you write", done: "Ready",
 };
 
-/** Chapters group steps in the progress rail. Permissions come before the try-out so the mic,
- *  the Flo key and typing already work when the person first talks. */
+/** Chapters group steps in the progress rail. The speech model downloads first (the try-out stays
+ *  locked until it's loaded), and permissions come before the try-out so the mic, the Flo key and
+ *  typing already work when the person first talks. */
 export const CHAPTERS: { name: string; steps: Step[] }[] = [
   { name: "Hello", steps: ["welcome"] },
-  { name: "Setup", steps: ["permissions", "try", "setup"] },
+  { name: "Setup", steps: ["model", "permissions", "try", "setup"] },
   { name: "You", steps: ["role", "uses"] },
   { name: "Ready", steps: ["done"] },
 ];
@@ -27,7 +28,7 @@ export const clampStep = (n: number) => Math.max(0, Math.min(STEPS.length - 1, n
 
 /** Notchling's default mood on each step (steps with live state override it). */
 export const STEP_MOOD: Record<Step, NotchlingMood> = {
-  welcome: "happy", permissions: "listen", try: "happy", setup: "think", role: "think", uses: "excited", done: "love",
+  welcome: "happy", model: "think", permissions: "listen", try: "happy", setup: "think", role: "think", uses: "excited", done: "love",
 };
 
 export type Tone = "" | "polished" | "friendly" | "crisp" | "playful";
@@ -90,6 +91,7 @@ export function headline(step: Step, name: string, hour = new Date().getHours(),
   const n = name.trim();
   switch (step) {
     case "welcome": return { title: n ? `Hi ${n}, I'm Flo.` : "Hi, I'm Flo.", sub: `${hello(hour)} I live ${platform === "macos" ? "in your notch" : "at the top of your screen"} and turn your voice into words, in any app.` };
+    case "model": return { title: "First, my ears", sub: "A small speech model, so I can hear you. After this one download, I work offline." };
     case "permissions":
       return platform === "macos"
         ? { title: "Let me hear you and type for you", sub: "Two quick yeses: the microphone, and one switch for Accessibility. I'll notice the moment you flip it." }

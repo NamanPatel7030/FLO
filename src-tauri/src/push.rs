@@ -436,12 +436,12 @@ mod idle {
 
 type R<T> = std::result::Result<T, String>;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_presence(st: State<Shared>) -> PresenceInfo {
     info(st.inner())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_presence(st: State<Shared>, status: String) -> R<PresenceInfo> {
     if status != ACTIVE && status != AWAY {
         return Err("status must be \"active\" or \"away\"".into());

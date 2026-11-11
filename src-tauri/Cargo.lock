@@ -1847,6 +1847,7 @@ dependencies = [
  "env_logger",
  "foreign-types 0.5.0",
  "futures-util",
+ "gtk",
  "hound",
  "image",
  "keyring",

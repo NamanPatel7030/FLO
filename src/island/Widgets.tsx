@@ -401,7 +401,7 @@ function TodayWidget({ onOpen }: { onOpen: () => void }) {
             </button>
           );
         })}
-        {todos.length === 0 && <div className="pt-1 text-[12px]" style={{ color: "#8a7c5c" }}>All clear — nothing due.</div>}
+        {todos.length === 0 && <div className="pt-1 text-[12px]" style={{ color: "#8a7c5c" }}>All clear, nothing due.</div>}
       </div>
     </BeigeTile>
   );

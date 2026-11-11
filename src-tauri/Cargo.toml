@@ -77,6 +77,8 @@ x11rb = { version = "=0.13.2", features = ["screensaver"] }
 # MPRIS (now playing / media keys) over the session bus; same version keyring / xcap already use
 zbus = "=5.19.0"
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+# is a compositor running (transparent island or a solid fallback); the same GTK tauri already uses
+gtk = "0.18"
 
 [profile.release]
 codegen-units = 1

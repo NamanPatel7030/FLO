@@ -442,7 +442,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
 
           <div className="mx-auto flex w-full max-w-[380px] flex-col items-center gap-4">
             <p className="text-balance text-center text-[12px] leading-relaxed text-[var(--fg-faint)]">
-              <Lock size={12} className="mr-1.5 inline-block -translate-y-px align-middle" aria-hidden />Your words stay on your Mac. The account only signs you in.
+              <Lock size={12} className="mr-1.5 inline-block -translate-y-px align-middle" aria-hidden />Your words stay on your {deviceWord()}. The account only signs you in.
             </p>
             <button
               type="button"

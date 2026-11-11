@@ -1016,3 +1016,27 @@ html.island .selectable {
 .page-in { animation: page-in 0.14s ease-out; }
 @keyframes page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .page-in { animation: none; } }
+
+/* ── Windows / Linux (html.platform-*, set by index.html + src/lib/os.ts) ─────────────────────
+   No vibrancy behind the dashboard there (tauri.windows/linux.conf.json make the window opaque),
+   so the dark canvas is solid: the macOS tint (86 % black over the blurred desktop) let the
+   desktop show through and the whole page looked ghosted. The island stays see-through. */
+html.tauri:is(.platform-windows, .platform-linux):not(.island):not(.perm-guide) body {
+  background-color: #020408;
+}
+/* Linux: WebKitGTK draws backdrop blur, blend modes and endless animations on the CPU on many
+   setups, and the dashboard stuttered. Over the opaque canvas they add almost nothing visually. */
+html.platform-linux *,
+html.platform-linux *::before,
+html.platform-linux *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.platform-linux .noise::after,
+html.platform-linux [data-testid="ocean-backdrop"] {
+  display: none;
+}
+/* the turning conic border repaints the whole card every frame */
+html.platform-linux .flo-ai-card {
+  animation: none !important;
+}
