@@ -12,6 +12,7 @@ mod commands;
 #[cfg(test)]
 mod contract_tests;
 mod corrections;
+mod cpuwatch;
 mod db;
 mod egress;
 mod floagent;
@@ -856,6 +857,9 @@ pub fn run() {
             // unfocused windows, and Wayland has no global cursor to poll), so no tracker there
             #[cfg(not(target_os = "linux"))]
             spawn_hover_tracker(handle.clone(), st.clone());
+            // Linux: log any thread that keeps a core busy, so a high-CPU report names the culprit
+            #[cfg(target_os = "linux")]
+            cpuwatch::spawn();
             stt::set_keep_warm_mins(st.settings().stt_keep_warm_mins);
             stt::spawn_idle_unloader(st.whisper.clone());
             Ok(())

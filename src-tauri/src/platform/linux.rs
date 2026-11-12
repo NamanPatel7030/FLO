@@ -37,8 +37,8 @@ fn wayland() -> bool {
 /// GTK draws through Wayland itself (not XWayland): windows can't be placed or read back.
 static NATIVE_WAYLAND: AtomicBool = AtomicBool::new(false);
 
-/// Before GTK starts: prefer XWayland on a Wayland session and work around WebKitGTK's DMA-BUF
-/// renderer (see `platform::linux_env_overrides` for why). Runs on the main thread before any
+/// Before GTK starts: prefer XWayland on a Wayland session (see `platform::linux_env_overrides`).
+/// Runs on the main thread before any
 /// other thread exists, so setting the environment is safe.
 pub fn prepare_env() {
     let get = |k: &str| std::env::var(k).ok();
@@ -302,6 +302,15 @@ mod x11 {
     fn cardinals(c: &RustConnection, w: Window, prop: &str, ty: AtomEnum) -> Vec<u32> {
         let Some(a) = atom(c, prop) else { return vec![] };
         c.get_property(false, w, a, ty, 0, 4096).ok().and_then(|r| r.reply().ok()).and_then(|r| r.value32().map(|v| v.collect())).unwrap_or_default()
+    }
+
+    /// The pid of every managed window, from ONE connection with the requests pipelined (one round
+    /// trip in total instead of a connect plus two round trips per window).
+    pub fn window_pids() -> std::collections::HashSet<u32> {
+        let Some((c, root)) = connect() else { return Default::default() };
+        let Some(pid_atom) = atom(&c, "_NET_WM_PID") else { return Default::default() };
+        let cookies: Vec<_> = cardinals(&c, root, "_NET_CLIENT_LIST", AtomEnum::WINDOW).into_iter().filter_map(|w| c.get_property(false, w, pid_atom, AtomEnum::CARDINAL, 0, 1).ok()).collect();
+        cookies.into_iter().filter_map(|ck| ck.reply().ok()).filter_map(|r| r.value32().and_then(|mut v| v.next())).collect()
     }
 
     pub fn windows_of(pid: u32) -> Vec<Window> {
@@ -573,20 +582,17 @@ pub fn hotkey_problem() -> Option<String> {
 }
 
 /// The process's executable (walks up to the first ancestor with a window).
+/// Runs on every Claude / Cursor hook event, which can fire several times a second while an agent
+/// works: it used to open a new X connection and query every window twice for each of up to 16
+/// ancestors. Now one pipelined query of all window pids, then a walk up /proc.
 pub fn host_app_of(pid: i32) -> Option<String> {
-    let mut p = pid as u32;
-    for _ in 0..16 {
-        if !x11::windows_of(p).is_empty() {
-            return std::fs::read_link(format!("/proc/{p}/exe")).ok().map(|x| x.display().to_string());
-        }
+    let windowed = x11::window_pids();
+    let parent = |p: u32| -> Option<u32> {
         let stat = std::fs::read_to_string(format!("/proc/{p}/stat")).ok()?;
-        // pid (comm) state ppid ...: comm may contain spaces, so split after the last ')'
-        p = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()?;
-        if p <= 1 {
-            break;
-        }
-    }
-    None
+        super::parent_pid_from_stat(&stat)
+    };
+    let p = super::first_windowed_ancestor(pid as u32, |p| windowed.contains(&p), parent)?;
+    std::fs::read_link(format!("/proc/{p}/exe")).ok().map(|x| x.display().to_string())
 }
 
 /// First running editor / terminal, used when an event doesn't know where it came from.
@@ -764,7 +770,19 @@ mod mpris {
             .map(|n| n.to_string())
             .filter(|n| n.starts_with(PREFIX))
             .filter_map(|bus| {
-                let proxy = Proxy::new(conn, bus.clone(), PATH, PLAYER).ok()?;
+                // no property cache: a cached proxy fetches every property and subscribes to the
+                // player's change signals (a browser fires them constantly), only to be dropped
+                // a moment later; three plain Gets are all this needs
+                let proxy: Proxy<'static> = zbus::blocking::proxy::Builder::new(conn)
+                    .destination(bus.clone())
+                    .ok()?
+                    .path(PATH)
+                    .ok()?
+                    .interface(PLAYER)
+                    .ok()?
+                    .cache_properties(zbus::proxy::CacheProperties::No)
+                    .build()
+                    .ok()?;
                 let status: String = proxy.get_property("PlaybackStatus").ok()?;
                 let meta: HashMap<String, OwnedValue> = proxy.get_property("Metadata").unwrap_or_default();
                 let position_us: Option<i64> = proxy.get_property("Position").ok();

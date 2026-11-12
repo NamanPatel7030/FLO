@@ -9,6 +9,8 @@ export function usePermissions(intervalMs = 2000): Permissions | null {
   useEffect(() => {
     let alive = true;
     const load = () =>
+      // a hidden window skips the round trip (focus / visibility brings it back up to date)
+      !document.hidden &&
       api
         .checkPermissions()
         .then((x) => alive && setP(x))
@@ -16,10 +18,12 @@ export function usePermissions(intervalMs = 2000): Permissions | null {
     load();
     const t = setInterval(load, intervalMs);
     window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", load);
     return () => {
       alive = false;
       clearInterval(t);
       window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", load);
     };
   }, [intervalMs]);
   return p;

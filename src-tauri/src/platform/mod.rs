@@ -329,6 +329,29 @@ pub fn pc_keycode_for(name: &str) -> Option<u16> {
     })
 }
 
+/// `/proc/<pid>/stat` → the parent pid. The command name can contain spaces and parentheses, so
+/// split after the LAST ')': "pid (comm) state ppid …".
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn parent_pid_from_stat(stat: &str) -> Option<u32> {
+    stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// Walk up from `pid` (at most 16 steps, never to init) to the first process that owns a window.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub fn first_windowed_ancestor(pid: u32, has_window: impl Fn(u32) -> bool, parent: impl Fn(u32) -> Option<u32>) -> Option<u32> {
+    let mut p = pid;
+    for _ in 0..16 {
+        if has_window(p) {
+            return Some(p);
+        }
+        p = parent(p)?;
+        if p <= 1 {
+            return None;
+        }
+    }
+    None
+}
+
 // ── Linux session setup and the Windows / Linux permission checks (pure, tested everywhere) ─────
 
 /// Environment for GTK / WebKitGTK, decided before the first window opens. Never overrides a
@@ -338,24 +361,19 @@ pub fn pc_keycode_for(name: &str) -> Option<u16> {
 ///   way to place its own window, keep it above others or read the pointer, so the floating pill
 ///   couldn't sit at the top of the screen, be dragged and remembered, or open on hover. Under
 ///   XWayland all of that works. `FLO_NATIVE_WAYLAND=1` opts out.
-/// * `WEBKIT_DISABLE_DMABUF_RENDERER=1` when drawing through X11: WebKitGTK's DMA-BUF renderer
-///   (2.42+) paints transparent windows as solid black, or not at all, on many X11 / XWayland
-///   setups (NVIDIA, VMs, older Mesa). The fallback renderer is still GPU accelerated.
+///
+/// WebKit's renderer is left alone. 0.1.7 set `WEBKIT_DISABLE_DMABUF_RENDERER=1` here, but since
+/// WebKitGTK 2.46 there is no other GPU path (the library only has the DMA-BUF and shared-memory
+/// backing stores; Ubuntu 24.04 ships 2.52): the flag switches accelerated compositing off and
+/// every frame of both windows is painted on the CPU. WebKit already falls back to shared memory
+/// by itself where DMA-BUF can't work, and anyone who needs the flag can still set it.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn linux_env_overrides(get: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static str, &'static str)> {
     let set = |k: &str| get(k).is_some_and(|v| !v.trim().is_empty());
     let mut out = Vec::new();
     let wayland = is_wayland(get("XDG_SESSION_TYPE").as_deref(), get("WAYLAND_DISPLAY").as_deref());
-    let x11 = if !wayland {
-        true
-    } else if !set("GDK_BACKEND") && !set("FLO_NATIVE_WAYLAND") && set("DISPLAY") {
+    if wayland && !set("GDK_BACKEND") && !set("FLO_NATIVE_WAYLAND") && set("DISPLAY") {
         out.push(("GDK_BACKEND", "x11"));
-        true
-    } else {
-        get("GDK_BACKEND").is_some_and(|b| b.trim().starts_with("x11"))
-    };
-    if x11 && !set("WEBKIT_DISABLE_DMABUF_RENDERER") {
-        out.push(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"));
     }
     out
 }
@@ -495,9 +513,10 @@ mod tests {
     #[test]
     fn linux_env_prefers_xwayland_and_never_overrides_the_user() {
         let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(a, _)| *a == k).map(|(_, v)| v.to_string());
-        // GNOME on Wayland with XWayland: X11 backend + the DMA-BUF workaround
+        // GNOME on Wayland with XWayland: the X11 backend, and WebKit keeps its GPU renderer
+        // (forcing WEBKIT_DISABLE_DMABUF_RENDERER painted everything on the CPU: 0.1.7's idle load)
         let g = env(&[("XDG_SESSION_TYPE", "wayland"), ("WAYLAND_DISPLAY", "wayland-0"), ("DISPLAY", ":0")]);
-        assert_eq!(linux_env_overrides(&g), vec![("GDK_BACKEND", "x11"), ("WEBKIT_DISABLE_DMABUF_RENDERER", "1")]);
+        assert_eq!(linux_env_overrides(&g), vec![("GDK_BACKEND", "x11")]);
         // opted out, or no XWayland: stay on Wayland, leave WebKit alone
         let g = env(&[("XDG_SESSION_TYPE", "wayland"), ("DISPLAY", ":0"), ("FLO_NATIVE_WAYLAND", "1")]);
         assert!(linux_env_overrides(&g).is_empty());
@@ -508,9 +527,9 @@ mod tests {
         assert!(linux_env_overrides(&g).is_empty());
         let g = env(&[("XDG_SESSION_TYPE", "x11"), ("WEBKIT_DISABLE_DMABUF_RENDERER", "0")]);
         assert!(linux_env_overrides(&g).is_empty());
-        // plain X11
+        // plain X11: nothing to change
         let g = env(&[("XDG_SESSION_TYPE", "x11"), ("DISPLAY", ":0")]);
-        assert_eq!(linux_env_overrides(&g), vec![("WEBKIT_DISABLE_DMABUF_RENDERER", "1")]);
+        assert!(linux_env_overrides(&g).is_empty());
     }
 
     fn check<'a>(v: &'a [crate::model::PermCheck], id: &str) -> &'a crate::model::PermCheck {
@@ -559,6 +578,19 @@ mod tests {
         assert_eq!(check(&w, "screen").status, "notNeeded");
         assert_eq!(check(&w, "accessibility").status, "notNeeded");
         assert!(w.iter().all(|c| !c.detail.contains('\u{2014}')));
+    }
+
+    #[test]
+    fn finds_the_windowed_ancestor_of_a_hook_process() {
+        assert_eq!(parent_pid_from_stat("4242 (node (worker) x) S 4100 4242 4100 0"), Some(4100));
+        assert_eq!(parent_pid_from_stat("garbage"), None);
+        // claude (500) → zsh (400) → cursor helper (300) → cursor (200, has the window) → systemd (1)
+        let parent = |p: u32| Some(match p { 500 => 400, 400 => 300, 300 => 200, 200 => 1, _ => 1 });
+        assert_eq!(first_windowed_ancestor(500, |p| p == 200, parent), Some(200));
+        // no window anywhere: stops at init, never loops
+        assert_eq!(first_windowed_ancestor(500, |_| false, parent), None);
+        let looping = |p: u32| Some(p + 1);
+        assert_eq!(first_windowed_ancestor(10, |_| false, looping), None);
     }
 
     #[test]

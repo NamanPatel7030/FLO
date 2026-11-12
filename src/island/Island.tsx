@@ -975,8 +975,11 @@ export default function Island() {
     const d = dragRef.current;
     if (!d || e.pointerId !== d.id) return;
     dragRef.current = null;
+    // a move still waiting for its frame is sent now, so a quick flick lands where it was let go
+    const pending = d.raf !== 0;
     cancelAnimationFrame(d.raf);
     if (!d.on) return;
+    if (pending) void api.islandDragMove().catch(() => {});
     setDragging(false);
     try {
       (e.currentTarget as Element).releasePointerCapture(e.pointerId);

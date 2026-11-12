@@ -20,6 +20,15 @@ applyPlatformClass(os());
 const syncVisibility = () => document.documentElement.classList.toggle("hidden-doc", document.hidden);
 document.addEventListener("visibilitychange", syncVisibility);
 syncVisibility();
+// Windows / Linux: the dashboard also rests while another app is in front. Behind other windows it
+// still counts as visible, and every frame of a decorative loop there is painted by Flo's own
+// process (the island never takes focus, so it's left out).
+if (!isIsland) {
+  const syncFocus = () => document.documentElement.classList.toggle("unfocused", !document.hasFocus());
+  window.addEventListener("focus", syncFocus);
+  window.addEventListener("blur", syncFocus);
+  syncFocus();
+}
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

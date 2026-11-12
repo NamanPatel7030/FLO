@@ -241,3 +241,61 @@ test("the stopwatch keeps counting when the island closes", async ({ page }) => 
   const label = await page.getByText(/^\d\d:\d\d$/).first().textContent();
   expect(Number(label!.slice(3))).toBeGreaterThanOrEqual(2);
 });
+
+// ── idle cost: nothing keeps drawing while Flo just sits there ─────────────────────────────────
+/** Count animation frames and running CSS animations over one second. */
+async function idleActivity(page: Page) {
+  return page.evaluate(async () => {
+    let frames = 0;
+    const orig = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (cb) => {
+      frames++;
+      return orig(cb);
+    };
+    await new Promise((r) => setTimeout(r, 1000));
+    window.requestAnimationFrame = orig;
+    const running = document.getAnimations().filter((a) => a.playState === "running").length;
+    return { frames, running };
+  });
+}
+
+for (const platform of ["linux", "windows"] as const) {
+  test(`${platform}: the collapsed pill is completely still`, async ({ page }) => {
+    await openPill(page, `platform=${platform}`);
+    await page.mouse.move(5, 600);
+    await page.waitForTimeout(800);
+    expect(await idleActivity(page)).toEqual({ frames: 0, running: 0 });
+  });
+
+  test(`${platform}: a dashboard in the background pauses its animations`, async ({ page }) => {
+    await page.goto(`/?platform=${platform}#/home`);
+    await page.waitForFunction(() => !!(window as any).__floMock);
+    await page.getByTestId("ocean-backdrop").first().waitFor({ state: "attached" });
+    // another app comes to the front
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hasFocus", { value: () => false, configurable: true });
+      window.dispatchEvent(new Event("blur"));
+    });
+    await expect(page.locator("html")).toHaveClass(/unfocused/);
+    await page.waitForTimeout(200);
+    expect((await idleActivity(page)).running).toBe(0);
+    // and resumes when it's back
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hasFocus", { value: () => true, configurable: true });
+      window.dispatchEvent(new Event("focus"));
+    });
+    await expect(page.locator("html")).not.toHaveClass(/unfocused/);
+  });
+}
+
+test("macOS: the dashboard keeps animating in the background (unchanged)", async ({ page }) => {
+  await page.goto("/#/home");
+  await page.waitForFunction(() => !!(window as any).__floMock);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hasFocus", { value: () => false, configurable: true });
+    window.dispatchEvent(new Event("blur"));
+  });
+  await page.waitForTimeout(200);
+  expect((await idleActivity(page)).running).toBeGreaterThan(0);
+});

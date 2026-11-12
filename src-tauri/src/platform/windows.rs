@@ -277,38 +277,33 @@ pub fn diagnostics() -> serde_json::Value {
 }
 
 /// Walk up from `pid` to the GUI app hosting it: the first ancestor with a visible window.
+/// Runs on every Claude / Cursor hook event: one process snapshot for the whole walk (it used to
+/// take a full system snapshot for each of up to 16 ancestors).
 pub fn host_app_of(pid: i32) -> Option<String> {
     let wins = top_windows();
-    let mut p = pid as u32;
-    for _ in 0..16 {
-        if wins.iter().any(|(_, wp, _)| *wp == p) {
-            return process_path(p);
-        }
-        p = parent_pid(p)?;
-    }
-    None
+    let parents = parent_pids();
+    let p = super::first_windowed_ancestor(pid as u32, |p| wins.iter().any(|(_, wp, _)| *wp == p), |p| parents.get(&p).copied().filter(|q| *q != 0 && *q != p))?;
+    process_path(p)
 }
 
-fn parent_pid(pid: u32) -> Option<u32> {
+/// pid → parent pid of every process, from one ToolHelp snapshot.
+fn parent_pids() -> std::collections::HashMap<u32, u32> {
     use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+    let mut out = std::collections::HashMap::new();
     unsafe {
-        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+        let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else { return out };
         let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-        let mut found = None;
         if Process32FirstW(snap, &mut e).is_ok() {
             loop {
-                if e.th32ProcessID == pid {
-                    found = Some(e.th32ParentProcessID);
-                    break;
-                }
+                out.insert(e.th32ProcessID, e.th32ParentProcessID);
                 if Process32NextW(snap, &mut e).is_err() {
                     break;
                 }
             }
         }
         let _ = CloseHandle(snap);
-        found.filter(|p| *p != 0 && *p != pid)
     }
+    out
 }
 
 /// First running editor / terminal (by its window's process), when an event doesn't say where it came from.

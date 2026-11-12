@@ -319,8 +319,9 @@ textarea,
     opacity: 0;
   }
 }
-/* don't burn cycles in hidden windows */
-html.hidden-doc * {
+/* don't burn cycles in hidden windows (or, on Windows / Linux, a dashboard in the background) */
+html.hidden-doc :is(*, *::before, *::after),
+html:is(.platform-windows, .platform-linux).unfocused:not(.island) :is(*, *::before, *::after) {
   animation-play-state: paused !important;
 }
 
