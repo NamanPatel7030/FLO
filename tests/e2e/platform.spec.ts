@@ -175,3 +175,69 @@ test("linux: copy says computer, never Mac", async ({ page }) => {
   await expect(page.getByText(/Do skills operate your computer/)).toBeVisible();
   await expect(page.getByText(/your Mac/)).toHaveCount(0);
 });
+
+// ── Windows / Linux: the pill and its window always agree (no clipped / offset panels) ──────────
+type Box = { x: number; y: number; width: number; height: number };
+const inside = (a: Box, b: Box) => a.x >= b.x - 0.5 && a.y >= b.y - 0.5 && a.x + a.width <= b.x + b.width + 0.5 && a.y + a.height <= b.y + b.height + 0.5;
+
+async function hoverPill(page: Page) {
+  const b = (await page.getByTestId("island-pill").boundingBox())!;
+  await page.mouse.move(b.x + 6, b.y + b.height / 2);
+  await page.mouse.move(b.x + 8, b.y + b.height / 2);
+}
+
+for (const platform of ["linux", "windows"] as const) {
+  test(`${platform}: the open panel fills its window, resizes once each way, and leaves nothing behind`, async ({ page }) => {
+    await openPill(page, `platform=${platform}`);
+    const resizes = () => page.evaluate(() => ((window as any).__floMock.resizes as unknown[]).length);
+    const r0 = await resizes();
+    await hoverPill(page);
+    const tile = page.getByText("Stopwatch", { exact: true });
+    await expect(tile).toBeVisible();
+    await page.waitForTimeout(300);
+    const [pill, root] = [(await page.getByTestId("island-pill").boundingBox())!, (await page.locator("[data-island-root]").boundingBox())!];
+    // the pill is the window minus the 12 px shadow margin on every side
+    expect(Math.abs(pill.x - root.x - 12)).toBeLessThan(1);
+    expect(Math.abs(root.x + root.width - (pill.x + pill.width) - 12)).toBeLessThan(1);
+    expect(Math.abs(root.y + root.height - (pill.y + pill.height) - 12)).toBeLessThan(1);
+    // every widget is drawn whole inside the pill (the clock and the Today tile were cut off)
+    for (const t of ["Stopwatch", "Clock"]) expect(inside((await page.getByText(t, { exact: true }).boundingBox())!, pill), t).toBe(true);
+    // one resize to open: no grow-to-union then shrink
+    expect((await resizes()) - r0).toBe(1);
+
+    // leave: back to the capsule right away, window and pill together, one more resize
+    await page.mouse.move(5, 600);
+    await expect(tile).toHaveCount(0);
+    await expect.poll(async () => Math.round((await page.locator("[data-island-root]").boundingBox())!.height)).toBeLessThan(80);
+    const [p2, r2] = [(await page.getByTestId("island-pill").boundingBox())!, (await page.locator("[data-island-root]").boundingBox())!];
+    expect(Math.round(r2.width - p2.width)).toBe(24);
+    expect(Math.round(r2.height - p2.height)).toBe(24);
+    expect((await resizes()) - r0).toBe(2);
+  });
+
+  test(`${platform}: a hovered tray item's list opens inside the card, under the row`, async ({ page }) => {
+    await openPill(page, `platform=${platform}`);
+    // the second tray item is the to-dos (the first is the stack of agent sessions)
+    await page.getByTestId("island-pill").locator("button").nth(1).hover();
+    const tip = page.locator(".island-tip");
+    await expect(tip).toBeVisible();
+    await page.waitForTimeout(300);
+    const [t, pill] = [(await tip.boundingBox())!, (await page.getByTestId("island-pill").boundingBox())!];
+    expect(inside(t, pill)).toBe(true);
+    // a card, not a giant capsule
+    expect(await page.getByTestId("island-pill").evaluate((el) => getComputedStyle(el).borderRadius)).toBe("22px");
+  });
+}
+
+test("the stopwatch keeps counting when the island closes", async ({ page }) => {
+  await openPill(page, "platform=linux");
+  await hoverPill(page);
+  await page.locator("button", { hasText: /^Start$/ }).click();
+  await page.mouse.move(5, 600);
+  await expect(page.getByText("Stopwatch", { exact: true })).toHaveCount(0);
+  await page.waitForTimeout(2300);
+  await hoverPill(page);
+  await expect(page.locator("button", { hasText: /^Pause$/ })).toBeVisible();
+  const label = await page.getByText(/^\d\d:\d\d$/).first().textContent();
+  expect(Number(label!.slice(3))).toBeGreaterThanOrEqual(2);
+});

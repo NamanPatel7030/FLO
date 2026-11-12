@@ -673,6 +673,9 @@ export default function Island() {
   const shownRef = useRef<IslandVariant>("collapsed");
   shownRef.current = shown;
   const shrinkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Windows / Linux: the window size last applied (the pill fills it) and the latest resize */
+  const [pcWin, setPcWin] = useState<{ width: number; height: number } | null>(null);
+  const pcSeq = useRef(0);
 
   const nh = geo?.notchHeight ?? 0;
   // DOM fallback for non-notch / browser: per-item hover
@@ -756,6 +759,35 @@ export default function Island() {
   useEffect(() => {
     if (!geo) return;
     const next = islandSize(target, geo, content);
+    if (!notchStyle(geo)) {
+      // Windows / Linux: no notch to morph out of, and the pill fills its window (pcWin), so the two
+      // can never disagree. One resize per change, no union-then-shrink and no animated size:
+      // growing resizes first and shows the new content once the window is that big; shrinking
+      // shows the smaller content first (it fits) and then shrinks the window at once. The old
+      // macOS protocol (grow to the union, morph, shrink 300 ms later unless hovered) left the
+      // pill stranded in a corner of a too-big window and the content cut off on WebKitGTK.
+      const cur = winSize.current;
+      if (cur && target === shownRef.current && next.width === cur.width && next.height === cur.height) {
+        setShownContent(content);
+        return;
+      }
+      const seq = ++pcSeq.current;
+      const grows = !cur || next.width > cur.width || next.height > cur.height;
+      winSize.current = next;
+      if (grows) {
+        api.islandResize(next.width, next.height).finally(() => {
+          if (seq !== pcSeq.current) return;
+          setPcWin(next);
+          setShown(target);
+          setShownContent(content);
+        });
+      } else {
+        setShown(target);
+        setShownContent(content);
+        api.islandResize(next.width, next.height).finally(() => seq === pcSeq.current && setPcWin(next));
+      }
+      return;
+    }
     // idempotent: same variant, same size -> no resize, no timers (a re-render on hover is a no-op)
     if (winSize.current && target === shownRef.current && next.width === winSize.current.width && next.height === winSize.current.height) {
       if (shrinkTimer.current) clearTimeout(shrinkTimer.current);
@@ -980,7 +1012,7 @@ export default function Island() {
   // Linux without a compositor: transparent pixels draw black, so the pill fills its window as a
   // solid tile (no floating edge or shadow that would show as a dark box around it)
   const opaque = !notch && !!geo.opaque;
-  const win = winSize.current ?? size;
+  const win = notch ? (winSize.current ?? size) : (pcWin ?? size);
   const showTray = ["tray", "trayTooltip", "peek"].includes(shown) && trayItems.all.length > 0;
   const trayW = layout?.width ?? 0;
 
@@ -996,8 +1028,8 @@ export default function Island() {
             ? { width: trayW - 2 * EAR, height: geo.notchHeight }
             : { width: size.width - EAR * 2, height: size.height }
     : opaque
-      ? { width: size.width, height: size.height }
-      : { width: size.width - 24, height: size.height - 24 };
+      ? { width: win.width, height: win.height }
+      : { width: win.width - 24, height: win.height - 24 };
   // whole points at rest (crisp edges at 1x; the collapsed shape keeps the hardware notch's size)
   const pill = collapsed ? rawPill : { width: Math.round(rawPill.width), height: Math.round(rawPill.height) };
   const bigCard = ["card", "claude", "reminder", "meetingSoon", "meetingExpanded", "peek", "history", "result", "error", "correction", "meetingPrompt", "confirm", "agent"].includes(shown);
@@ -1018,13 +1050,15 @@ export default function Island() {
       ? "0px"
       : panelOpen
         ? "26px"
-        : bigCard
+        : bigCard || shown === "trayTooltip"
           ? "22px"
           : "999px";
   // easing per direction (no overshoot either way); the shape leads, content follows
   const growing = pill.width * pill.height >= lastPill.current.width * lastPill.current.height;
   drawnPill.current = pill;
-  const morph = reduce ? { duration: 0 } : growing ? MORPH_OPEN : MORPH_CLOSE;
+  // Windows / Linux: the window snaps to its new size, so the pill does too (a JS size animation
+  // on WebKitGTK lagged behind the window and read as slow)
+  const morph = reduce || !notch ? { duration: 0 } : growing ? MORPH_OPEN : MORPH_CLOSE;
 
   // keep hit-testing geometry current for the hover handler (refs → no re-render per mouse move)
   geomRef.current = {
@@ -1056,8 +1090,8 @@ export default function Island() {
         width: stage ? win.width : "100vw",
         height: stage ? win.height : "100vh",
         display: "flex",
-        justifyContent: notch ? "center" : "flex-end",
-        alignItems: notch ? "flex-start" : "flex-end",
+        justifyContent: "center",
+        alignItems: notch ? "flex-start" : "center",
         padding: notch || opaque ? 0 : 12,
         boxSizing: "border-box",
         ...(opaque ? { background: "#05080d" } : {}),
@@ -1173,7 +1207,9 @@ export default function Island() {
               // instead of reflowing it every frame.
               // No scale (a scaled panel re-rasterises and reads as a "pop"): a short fade with a
               // few px of drift, starting once the shape has led the way.
-              initial={panelOpen ? { opacity: 0, y: -4 } : { opacity: 0, y: -3 }}
+              // Windows / Linux: shown at once with its window (no frame-driven fade that a
+              // throttled WebKitGTK island could leave half-drawn)
+              initial={!notch ? false : panelOpen ? { opacity: 0, y: -4 } : { opacity: 0, y: -3 }}
               animate={{ opacity: 1, y: 0 }}
               // content fades in WITH the shape (a later start left the growing shape empty and black)
               transition={panelOpen ? { type: "tween", duration: 0.22, delay: 0.04, ease: EASE_OUT } : { type: "tween", duration: 0.18, delay: 0.03, ease: EASE_OUT }}
@@ -1234,7 +1270,10 @@ export default function Island() {
                 <MeetingPromptCard app={detected} notch={notch} geo={geo} onStart={() => startNotes(detected)} onLater={() => setPromptOpen(false)} />
               ) : shown === "tray" || shown === "trayTooltip" ? (
                 notch ? null : (
-                  <WinTray items={trayItems.all} onItem={onTrayItem} onHover={setDomItem} />
+                  // the row keeps the capsule's 40 px; a hovered item's list opens below it
+                  <div style={{ height: shown === "trayTooltip" ? 40 : "100%" }}>
+                    <WinTray items={trayItems.all} onItem={onTrayItem} onHover={setDomItem} />
+                  </div>
                 )
               ) : (
                 <IslandContent
@@ -1330,7 +1369,8 @@ export default function Island() {
             rect={
               notch && layout
                 ? tooltipRect(win.width, layout.slots[tipIdx]?.cx ?? 0, geo.notchHeight, geomRef.current.tipH(tipIdx))
-                : { x: Math.max(8, win.width - 12 - 300), y: 4, w: 300, h: geomRef.current.tipH(tipIdx) }
+                : // Windows / Linux: inside the card, under the tray row (the window is sized for both)
+                  { x: (win.width - pill.width) / 2 + 8, y: (win.height - pill.height) / 2 + 44, w: pill.width - 16, h: geomRef.current.tipH(tipIdx) }
             }
             onOpen={openSession}
             onDismiss={dismissSession}

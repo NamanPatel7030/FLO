@@ -119,16 +119,38 @@ function TileHead({ icon, children }: { icon: React.ReactNode; children: React.R
   );
 }
 
+/** The stopwatch lives outside the widget: the panel unmounts when the island closes, and a
+ *  running stopwatch must keep counting (it used to stop and reset every time the panel closed). */
+export const stopwatch = {
+  /** ms banked before the current run */
+  base: 0,
+  /** Date.now() when the current run started; null while paused */
+  since: null as number | null,
+  elapsed(now = Date.now()) {
+    return this.base + (this.since === null ? 0 : now - this.since);
+  },
+  toggle(now = Date.now()) {
+    if (this.since === null) this.since = now;
+    else {
+      this.base += now - this.since;
+      this.since = null;
+    }
+  },
+  reset() {
+    this.base = 0;
+    this.since = null;
+  },
+};
+
 function StopwatchWidget() {
-  const [ms, setMs] = useState(0);
-  const [running, setRunning] = useState(false);
-  const start = useRef(0);
+  const [, tick] = useState(0);
+  const running = stopwatch.since !== null;
   useEffect(() => {
     if (!running) return;
-    start.current = Date.now() - ms;
-    const t = setInterval(() => setMs(Date.now() - start.current), 200);
+    const t = setInterval(() => tick((n) => n + 1), 200);
     return () => clearInterval(t);
-  }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [running]);
+  const ms = stopwatch.elapsed();
   const s = Math.floor(ms / 1000);
   const label = `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
   return (
@@ -136,13 +158,19 @@ function StopwatchWidget() {
       <TileHead icon={<TimerIcon size={12} />}>Stopwatch</TileHead>
       <div className="font-mono text-[22px] font-semibold tabular-nums text-white/90">{label}</div>
       <div className="flex gap-1.5 text-[11px]">
-        <button onClick={() => setRunning((r) => !r)} className="flex-1 rounded-md bg-white/10 py-1 font-medium hover:bg-white/20">
+        <button
+          onClick={() => {
+            stopwatch.toggle();
+            tick((n) => n + 1);
+          }}
+          className="flex-1 rounded-md bg-white/10 py-1 font-medium hover:bg-white/20"
+        >
           {running ? "Pause" : "Start"}
         </button>
         <button
           onClick={() => {
-            setRunning(false);
-            setMs(0);
+            stopwatch.reset();
+            tick((n) => n + 1);
           }}
           className="rounded-md bg-white/5 px-2 py-1 text-white/60 hover:bg-white/10"
         >
