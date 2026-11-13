@@ -41,7 +41,12 @@
     "active": true,
     "targets": "all",
     "category": "Productivity",
-    "shortDescription": "Flo, your assistant: voice dictation, meeting notes and to-dos.",
+    "shortDescription": "Talk, and it's typed. Voice dictation, meeting notes and to-dos.",
+    "longDescription": "Flo turns your voice into clean text in any app. Hold a key, speak in English, Hindi or Hinglish, and Flo types it where your cursor is. Speech to text runs on your own computer and works offline. Flo also takes meeting notes with speakers, collects to-dos from your screen, Slack and Gmail, and answers questions from a small pill on your screen.",
+    "publisher": "Naman Patel",
+    "copyright": "Copyright 2026 Naman Patel",
+    "homepage": "https://flo.hellonaman.com",
+    "license": "LicenseRef-proprietary",
     "macOS": {
       "minimumSystemVersion": "13.0",
       "signingIdentity": "-"

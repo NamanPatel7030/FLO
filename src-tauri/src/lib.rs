@@ -271,7 +271,15 @@ pub(crate) fn show_dashboard(app: &AppHandle, route: Option<&str>) {
     }
 }
 
-fn create_island(app: &AppHandle) -> tauri::Result<()> {
+/// The pill only appears once you're signed in: before that it can't do anything, and the
+/// dashboard's sign-in screen is the one place to start. Shown on sign-in, hidden on sign-out.
+pub(crate) fn set_island_visible(app: &AppHandle, on: bool) {
+    if let Some(w) = app.get_webview_window("island") {
+        let _ = if on { w.show() } else { w.hide() };
+    }
+}
+
+fn create_island(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     let geo = compute_geometry(app); // setup runs on the main thread
     let (w, h) = if geo.platform == "macos" { (geo.notch_width, geo.notch_height) } else { (88.0, 64.0) };
     let mut b = WebviewWindowBuilder::new(app, "island", WebviewUrl::App("index.html".into()))
@@ -288,6 +296,7 @@ fn create_island(app: &AppHandle) -> tauri::Result<()> {
         .resizable(cfg!(target_os = "linux"))
         .shadow(false)
         .focused(false)
+        .visible(visible)
         .visible_on_all_workspaces(true);
     #[cfg(target_os = "macos")]
     {
@@ -577,6 +586,13 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     platform::prepare_env();
     tauri::Builder::default()
+        // Must come first. One Flo per user: a second launch (Start menu, autostart, or the
+        // flo://auth link the browser opens after Google sign-in, which on Windows and Linux starts
+        // a new process) hands its arguments to the running Flo and quits. Without it every sign-in
+        // spawned a second Flo with its own window, pill and tray icon, and the first never signed in.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_dashboard(app, None);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -812,7 +828,7 @@ pub fn run() {
                     }
                 });
             }
-            create_island(&handle)?;
+            create_island(&handle, st.signed_in.load(std::sync::atomic::Ordering::SeqCst))?;
             watch_geometry(handle.clone());
             build_tray(&handle, st.clone())?;
             {

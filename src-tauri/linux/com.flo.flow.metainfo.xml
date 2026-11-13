@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream data: what App Center / GNOME Software show for Flo once it is installed. -->
+<component type="desktop-application">
+  <id>com.flo.flow</id>
+  <name>Flo</name>
+  <summary>Talk, and it's typed</summary>
+  <developer id="com.hellonaman">
+    <name>Naman Patel</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>Flo turns your voice into clean text in any app. Hold a key, speak in English, Hindi or Hinglish, and Flo types it where your cursor is.</p>
+    <ul>
+      <li>Speech to text runs on your own computer and works offline</li>
+      <li>Meeting notes with who said what, a summary and action items</li>
+      <li>To-dos from your screen, Slack and Gmail, as selective as you choose</li>
+      <li>An assistant and an agent in a small pill you can drag anywhere</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">Flo.desktop</launchable>
+  <icon type="stock">flo-flow</icon>
+  <url type="homepage">https://flo.hellonaman.com</url>
+  <url type="help">https://flo.hellonaman.com/download</url>
+  <categories>
+    <category>Utility</category>
+    <category>Office</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.9" date="2026-11-13">
+      <description>
+        <p>One Flo at a time: Google sign-in no longer opens a second copy. The pill appears after you sign in.</p>
+      </description>
+    </release>
+  </releases>
+</component>

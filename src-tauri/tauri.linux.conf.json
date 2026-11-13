@@ -18,9 +18,13 @@
     ]
   },
   "bundle": {
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/256x256.png", "icons/icon.png"],
     "linux": {
       "deb": {
         "section": "utils",
+        "files": {
+          "/usr/share/metainfo/com.flo.flow.metainfo.xml": "linux/com.flo.flow.metainfo.xml"
+        },
         "depends": [
           "libxdo3",
           "libasound2t64 | libasound2",

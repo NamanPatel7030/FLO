@@ -2,9 +2,46 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Check, Download, MousePointerClick, ShieldCheck, X } from "lucide-react";
+import { Check, Download, KeyRound, MousePointerClick, ShieldCheck, X } from "lucide-react";
 import { Mascot } from "./Mascot";
 import { EASE, Wave } from "./ui";
+
+type Step = ["get" | "trust" | "key" | "go", string];
+
+/** What to do after the download, for the platform on the button that was clicked. */
+export function nextSteps(label: string): Step[] {
+  const l = label.toLowerCase();
+  if (l.includes("android"))
+    return [
+      ["get", "If Chrome asks, tap Download anyway. The file is about 30 MB."],
+      ["trust", "Open it from your notifications or Files > Downloads, then allow installs from your browser."],
+      ["go", "Open Flo and sign in."],
+    ];
+  if (l.includes("windows"))
+    return [
+      ["get", "Open Flo-windows-x64-setup.exe and follow the installer."],
+      ["trust", "If you see “Windows protected your PC”, click More info, then Run anyway."],
+      ["go", "Sign in, then hold Ctrl and speak."],
+    ];
+  if (l.includes("appimage"))
+    return [
+      ["get", "Right-click the AppImage, open Properties and allow it to run as a program. Then open it."],
+      ["key", "On Wayland, run sudo usermod -aG input $USER, then log out and back in."],
+      ["go", "Sign in, then hold Ctrl and speak."],
+    ];
+  if (l.includes("linux"))
+    return [
+      ["get", "Open the .deb with App Center and click Install, or run sudo apt install ./Flo-linux-amd64.deb"],
+      ["trust", "App Center labels apps from outside its store as third party. That is expected."],
+      ["key", "On Wayland, run sudo usermod -aG input $USER, then log out and back in."],
+      ["go", "Sign in, then hold Ctrl and speak."],
+    ];
+  return [
+    ["get", "Open the .dmg and drag Flo into Applications."],
+    ["trust", "On first launch, open System Settings > Privacy & Security and click Open Anyway."],
+    ["go", "Sign in, then hold Control and speak."],
+  ];
+}
 
 /**
  * The download moment. Any link marked `data-launch="<platform label>"` opens this instead of
@@ -56,6 +93,8 @@ export function DownloadLaunch() {
   }, [state]);
 
   const done = state?.phase === "done";
+  // the card grows to fit this platform's steps (header + ~28px per line of steps)
+  const doneHeight = state ? 210 + nextSteps(state.label).reduce((h, [, t]) => h + (t.length > 52 ? 52 : 30), 0) : 330;
   return (
     <AnimatePresence>
       {state && (
@@ -93,8 +132,8 @@ export function DownloadLaunch() {
             initial={{ width: 200, height: 34, borderRadius: "0 0 18px 18px" }}
             animate={
               reduce
-                ? { width: "min(440px, 92vw)", height: done ? 330 : 270, borderRadius: "0 0 34px 34px" }
-                : { width: ["200px", "260px", "min(440px, 92vw)"], height: [34, 34, done ? 330 : 270], borderRadius: ["0 0 18px 18px", "0 0 18px 18px", "0 0 34px 34px"] }
+                ? { width: "min(460px, 92vw)", height: done ? doneHeight : 270, borderRadius: "0 0 34px 34px" }
+                : { width: ["200px", "260px", "min(460px, 92vw)"], height: [34, 34, done ? doneHeight : 270], borderRadius: ["0 0 18px 18px", "0 0 18px 18px", "0 0 34px 34px"] }
             }
             transition={{ duration: reduce ? 0 : 0.75, times: [0, 0.25, 1], ease: EASE }}
           >
@@ -120,29 +159,17 @@ export function DownloadLaunch() {
                       </span>
                       Your download has started
                     </p>
-                    <ul className="mt-5 space-y-2.5 text-left text-[13.5px] text-[rgba(255,255,255,0.75)]">
-                      {state.label === "Android" ? (
-                        <>
-                          <li className="flex gap-2.5">
-                            <Download size={15} className="mt-0.5 shrink-0 text-[#8fd0ff]" /> If Chrome asks, tap Download anyway. The file is about 30 MB.
+                    <ul className="mt-5 space-y-3 text-left text-[14px] leading-[1.45] text-[rgba(255,255,255,0.86)] antialiased">
+                      {nextSteps(state.label).map(([kind, text], i) => {
+                        const Icon = kind === "get" ? Download : kind === "trust" ? ShieldCheck : kind === "key" ? KeyRound : MousePointerClick;
+                        const tint = kind === "get" ? "text-[#8fd0ff]" : kind === "trust" ? "text-[#c9b8ff]" : kind === "key" ? "text-[#ffd08a]" : "text-[#ff9ec4]";
+                        return (
+                          <li key={i} className="flex gap-2.5">
+                            <Icon size={15} className={`mt-[3px] shrink-0 ${tint}`} />
+                            <span>{text}</span>
                           </li>
-                          <li className="flex gap-2.5">
-                            <ShieldCheck size={15} className="mt-0.5 shrink-0 text-[#c9b8ff]" /> Open it from your notifications or Files, Downloads, then allow installs from your browser.
-                          </li>
-                        </>
-                      ) : (
-                        <>
-                          <li className="flex gap-2.5">
-                            <Download size={15} className="mt-0.5 shrink-0 text-[#8fd0ff]" /> Open the .dmg and drag Flo into Applications.
-                          </li>
-                          <li className="flex gap-2.5">
-                            <ShieldCheck size={15} className="mt-0.5 shrink-0 text-[#c9b8ff]" /> First launch: System Settings, Privacy &amp; Security, Open Anyway.
-                          </li>
-                        </>
-                      )}
-                      <li className="flex gap-2.5">
-                        <MousePointerClick size={15} className="mt-0.5 shrink-0 text-[#ff9ec4]" /> Sign in, hold control and talk.
-                      </li>
+                        );
+                      })}
                     </ul>
                     <button type="button" onClick={() => setState(null)} className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full bg-[rgba(255,255,255,0.1)] text-[rgba(255,255,255,0.7)] hover:bg-[rgba(255,255,255,0.2)]" aria-label="Close">
                       <X size={15} />

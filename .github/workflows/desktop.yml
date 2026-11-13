@@ -56,6 +56,13 @@ jobs:
       - name: Install JS deps
         run: npm ci
 
+      # On a version tag, build that version. The Mac release script bumps the version locally
+      # and may tag a commit that doesn't carry the bump yet (0.1.8 shipped Windows/Linux as 0.1.7).
+      - name: Set version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: python3 scripts/set-version.py "${GITHUB_REF_NAME#v}"
+
       - name: Build installers
         run: npx tauri build --bundles ${{ matrix.bundles }}
 

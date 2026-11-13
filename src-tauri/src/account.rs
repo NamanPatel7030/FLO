@@ -81,6 +81,7 @@ fn remember(st: &Shared, token: &str, user: &AccountUser) -> Result<()> {
     settings::save(&st.data_dir, &s)?;
     *st.settings.write() = s;
     st.signed_in.store(true, Ordering::SeqCst);
+    crate::set_island_visible(&st.app, true);
     st.emit(ev::ACCOUNT, json!({ "signedIn": true, "user": user }));
     Ok(())
 }
@@ -99,6 +100,13 @@ pub fn cached_signed_in(st: &Shared) -> bool {
 }
 
 pub async fn status(st: &Shared) -> AccountStatus {
+    let s = status_inner(st).await;
+    // the pill follows the account: hidden while signed out
+    crate::set_island_visible(&st.app, s.signed_in);
+    s
+}
+
+async fn status_inner(st: &Shared) -> AccountStatus {
     let account_url = base(st);
     let cached = st.settings().account_user.clone();
     if !enforced(st) {
@@ -181,6 +189,7 @@ pub fn logout(st: &Shared) -> Result<()> {
     settings::save(&st.data_dir, &s)?;
     *st.settings.write() = s;
     st.signed_in.store(false, Ordering::SeqCst);
+    crate::set_island_visible(&st.app, cached_signed_in(st));
     st.emit(ev::ACCOUNT, json!({ "signedIn": false }));
     Ok(())
 }
