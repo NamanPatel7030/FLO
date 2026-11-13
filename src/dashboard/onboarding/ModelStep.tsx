@@ -96,7 +96,8 @@ export function ModelGate({ m }: { m: SetupModel }) {
   );
 }
 
-/** End of setup: an optional, more precise model. The small one stays the default. */
+/** End of setup: the more precise model, now. Without a click Flo still gets it in the background
+ *  after setup (on a computer that runs it well) and switches once it's downloaded. */
 export function AdvancedCard({ m, s, set }: { m: SetupModel; s: Settings; set: (p: Partial<Settings>) => void }) {
   const best = m.models ? advancedModels(m.models)[0] : undefined;
   if (s.sttProvider !== "local" || !best) return null;
@@ -104,7 +105,7 @@ export function AdvancedCard({ m, s, set }: { m: SetupModel; s: Settings; set: (
   const busy = !!d?.active;
   const inUse = s.sttModel === best.id;
   const use = () => {
-    set({ sttModel: best.id });
+    set({ sttModel: best.id, sttModelExplicit: true });
     api.loadSpeechModel(best.id).catch(() => {});
   };
   return (

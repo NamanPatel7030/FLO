@@ -6,7 +6,7 @@ import { api, on } from "../../lib/api";
 import { permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyOptions, hotkeyWords, relativeTime, sameHotkey } from "../../lib/format";
 import { deviceWord, keyStoreName, os, settingsApp } from "../../lib/os";
-import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, pickLanguage, progressText, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
+import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, languageActive, pickLanguage, progressText, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
 import { useSpeechModels, type Download as SpeechDownload } from "../useSpeechModels";
 import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type TaskCaptureLevel, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
@@ -869,7 +869,8 @@ function Voice({ s, set }: P) {
   // switching takes effect on the next dictation (the old model is unloaded on save); loading the
   // new one right away makes that first dictation quick too
   const pickModel = (id: string) => {
-    set({ sttModel: id });
+    // a model picked here is the user's choice: Flo stops upgrading it by itself
+    set({ sttModel: id, sttModelExplicit: true });
     api.loadSpeechModel(id).catch(() => {});
   };
   const row = (m: LocalModel) => (
@@ -945,11 +946,11 @@ function Voice({ s, set }: P) {
 
       <Card className="p-4">
         <CardTitle icon={<Mic size={15} />}>Language you speak</CardTitle>
-        <FieldHelp>Auto picks English, Hindi or Gujarati for each dictation. English is always written in English letters, Hindi in Devanagari and Gujarati in Gujarati script. Pick Hinglish to get Hindi in Roman letters.</FieldHelp>
+        <FieldHelp>Auto picks English or Hindi for each dictation (Auto + Gujarati adds Gujarati). English is always written in English letters, Hindi in Devanagari and Gujarati in Gujarati script. Pick Hinglish to get Hindi in Roman letters.</FieldHelp>
         {[false, true].map((more) => (
           <div key={String(more)} className={clsx("flex flex-wrap gap-2", more ? "mt-2" : "mt-3")}>
             {LANGUAGE_CHOICES.filter((l) => !!l.more === more).map((l) => {
-              const active = s.language === l.value;
+              const active = languageActive(s, l.value);
               return (
                 <button
                   key={l.value}

@@ -76,7 +76,7 @@ const settings: Settings = {
   sttProvider: "local",
   sttModel: "small-q5_1",
   language: "auto",
-  autoLanguages: ["en", "hi", "gu"],
+  autoLanguages: ["en", "hi"],
   llmProvider: "ollama",
   llmModel: "qwen3:8b",
   localLlmUrl: "http://localhost:11434",

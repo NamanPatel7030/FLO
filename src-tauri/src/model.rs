@@ -53,6 +53,10 @@ pub struct Settings {
     pub account_user: Option<AccountUser>,
     pub stt_provider: String,
     pub stt_model: String,
+    /// the user picked `stt_model` themselves (Settings → Voice, or setup's "Use this model"). Until
+    /// then Flo moves from the small starter to the more accurate Large v3 Turbo by itself once it
+    /// has downloaded in the background (stt::upgrade_target).
+    pub stt_model_explicit: bool,
     pub language: String,
     /// with language "auto": only these languages are considered (stops Hindi being heard as
     /// Urdu/Marathi/Nepali, or short English clips as Welsh or Finnish). Empty = English + Hindi
@@ -208,8 +212,9 @@ impl Default for Settings {
             account_user: None,
             stt_provider: "local".into(),
             stt_model: crate::stt::DEFAULT_MODEL.into(),
+            stt_model_explicit: false,
             language: "auto".into(),
-            auto_languages: vec!["en".into(), "hi".into(), "gu".into()],
+            auto_languages: crate::stt::DEFAULT_AUTO_LANGUAGES.iter().map(|l| l.to_string()).collect(),
             llm_provider: "ollama".into(),
             llm_model: "qwen3:8b".into(),
             local_llm_url: "http://127.0.0.1:11434".into(),

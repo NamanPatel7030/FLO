@@ -77,6 +77,73 @@ pub fn setup_model(selected: &str, models_dir: &Path) -> &'static str {
     }
 }
 
+/// The model a fresh install moves to once it has downloaded in the background: in Flo's
+/// dictation benchmark (`dictation_bench`) it cuts the word error rate of the small starter by
+/// about a third overall and by half on Hindi, at ~0.45 s instead of ~0.2 s per sentence on
+/// Apple Silicon.
+pub const UPGRADE_MODEL: &str = "large-v3-turbo-q5_0";
+
+/// Languages "Auto" chooses from on a fresh install (and when Auto is picked again in Settings).
+pub const DEFAULT_AUTO_LANGUAGES: &[&str] = &["en", "hi"];
+
+/// Can this computer run Large v3 Turbo for dictation without it feeling slow? Apple Silicon
+/// (Metal, unified memory) always; otherwise at least 8 GB of RAM (the model takes ~0.6 GB).
+pub fn can_run_large(ram_gb: f64, apple_silicon: bool) -> bool {
+    apple_silicon || ram_gb >= 7.5
+}
+
+/// Total RAM in GB (0 when unknown).
+pub fn total_ram_gb() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/sbin/sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok())
+            .map(|b| b / 1e9)
+            .unwrap_or(0.0)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|m| m.lines().find(|l| l.starts_with("MemTotal:")).and_then(|l| l.split_whitespace().nth(1)).and_then(|k| k.parse::<f64>().ok()))
+            .map(|kb| kb * 1024.0 / 1e9)
+            .unwrap_or(0.0)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut m = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+        // SAFETY: m is a properly sized MEMORYSTATUSEX with dwLength set, as the API requires
+        if unsafe { GlobalMemoryStatusEx(&mut m) }.is_ok() {
+            m.ullTotalPhys as f64 / 1e9
+        } else {
+            0.0
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        0.0
+    }
+}
+
+/// This computer, for `can_run_large`.
+pub fn this_machine_runs_large() -> bool {
+    can_run_large(total_ram_gb(), cfg!(all(target_os = "macos", target_arch = "aarch64")))
+}
+
+/// The model Flo should move to by itself, if any. The starter is only there so setup's try-out
+/// works within a minute; once setup is done, on a computer that runs it well, an on-device user
+/// who never picked a model themselves gets Large v3 Turbo (downloaded in the background, switched
+/// to when it's on disk). Installs from before this existed have `stt_model_explicit` false too,
+/// so they move up as well; picking any model in Settings stops it for good.
+pub fn upgrade_target(s: &crate::model::Settings, runs_large: bool) -> Option<&'static str> {
+    let starter = spec(&s.stt_model).map(|m| m.tier == Tier::Starter).unwrap_or(false);
+    (s.stt_provider == "local" && s.onboarded && !s.stt_model_explicit && starter && runs_large).then_some(UPGRADE_MODEL)
+}
+
 /// Where a retried download continues: after the bytes already on disk, but only when the server
 /// answered the Range request with 206 Partial Content.
 pub fn resume_offset(part_len: u64, status: u16) -> u64 {
@@ -441,6 +508,7 @@ fn padded(samples: &[f32]) -> Vec<f32> {
 }
 
 /// Highest-scoring language from (code, logit) pairs.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn pick_language(scored: &[(String, f32)]) -> Option<String> {
     scored.iter().filter(|(_, l)| l.is_finite()).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(c, _)| c.clone())
 }
@@ -567,13 +635,70 @@ pub fn cloud_script(text: &str, language: &str, allowed: &[String]) -> String {
 
 /// Pure (unit-tested): the detected language restricted to `allowed`. `scored` are (code, logit or
 /// probability) for any languages, e.g. all 99; when Whisper's top pick isn't allowed, the best
-/// allowed one wins, and when no allowed language was scored, the first allowed one.
+/// allowed one wins, and when no allowed language was scored, the first allowed one. The live path
+/// now ranks all allowed candidates instead (`lang_probs`, `by_decoder`), with the same fallback.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn pick_allowed_language(scored: &[(String, f32)], allowed: &[String]) -> Option<String> {
     if allowed.is_empty() {
         return pick_language(scored);
     }
     let within: Vec<(String, f32)> = scored.iter().filter(|(c, _)| allowed.contains(c)).cloned().collect();
     pick_language(&within).or_else(|| allowed.first().cloned())
+}
+
+/// Below this share of the probability, language detection on a dictation-sized clip is a guess
+/// (`lid_probe`: the clip-sized window gives English speech 1.00 "en" and Hindi 0.83–0.96 "hi",
+/// but a short Hindi command 0.44 "hi" and Romanized Hinglish 0.56–0.83 "hi").
+pub const LID_SURE: f32 = 0.8;
+
+/// Language probabilities grouped by the decoder that would run (Gujarati is decoded by the Hindi
+/// decoder, so "hi" and "gu" are one choice): most likely first, each group named after its most
+/// likely language, with the group's total share.
+pub fn by_decoder(probs: &[(String, f32)]) -> Vec<(String, f32)> {
+    let mut out: Vec<(String, f32)> = vec![];
+    let mut sorted = probs.to_vec();
+    sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
+    for (l, p) in sorted {
+        match out.iter_mut().find(|(o, _)| decoder_lang(o) == decoder_lang(&l)) {
+            Some(g) => g.1 += p,
+            None => out.push((l, p)),
+        }
+    }
+    out.sort_by(|a, b| b.1.total_cmp(&a.1));
+    out
+}
+
+/// How much surer (mean token probability) a decode in another language must be to replace the
+/// language of the previous dictation, when the detector can't tell. A translation of Hindi into
+/// English can score 0.94 against the transcript's 0.86 (Hinglish with its first word cut off).
+pub const STICKY_MARGIN: f32 = 0.1;
+
+/// When the detector is unsure, a decode in the previous dictation's language at least this
+/// confident is kept without trying the other language.
+pub const KEEP_SURE: f32 = 0.85;
+
+/// Of decodes of one clip in different languages (language, (text, mean token probability)),
+/// the one to keep: a real transcript in that language's script, without loops, before anything
+/// else; then the one the model is surer of, with `STICKY_MARGIN` in favour of `previous` (the
+/// language of the last dictation). A decode in the wrong language is a translation or gibberish
+/// and usually scores lower (`lid_probe`: Hindi speech 0.88–0.96 as Hindi, 0.47–0.90 as English).
+pub fn pick_decode(options: &[(String, (String, f32))], previous: Option<&str>) -> usize {
+    let key = |(l, (t, c)): &(String, (String, f32))| {
+        let bonus = if previous.is_some_and(|p| decoder_lang(p) == decoder_lang(l)) { STICKY_MARGIN } else { 0.0 };
+        (plausible(t, decoder_lang(l)) && !is_degenerate(t), *c + bonus)
+    };
+    (0..options.len()).max_by(|&a, &b| key(&options[a]).partial_cmp(&key(&options[b])).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0)
+}
+
+/// Softmax of language logits over the candidates: each language's share of the probability.
+pub fn lang_probs(scored: &[(String, f32)]) -> Vec<(String, f32)> {
+    let max = scored.iter().map(|(_, l)| *l).filter(|l| l.is_finite()).fold(f32::NEG_INFINITY, f32::max);
+    if !max.is_finite() {
+        return vec![];
+    }
+    let exps: Vec<f32> = scored.iter().map(|(_, l)| if l.is_finite() { (l - max).exp() } else { 0.0 }).collect();
+    let sum: f32 = exps.iter().sum();
+    scored.iter().zip(exps).map(|((c, _), e)| (c.clone(), e / sum)).collect()
 }
 
 /// Pure helper (unit-tested): highest-probability candidate whose language id is known.
@@ -738,8 +863,13 @@ pub struct LocalWhisper {
     pub auto_langs: Mutex<Vec<String>>,
     /// last transcribe: timing + confidence (diagnostics / benchmark)
     pub last_timing: Mutex<DecodeTiming>,
+    /// language the last `transcribe` was written in ("en", "hi", "gu", "hi-en"; diagnostics)
+    last_lang: Mutex<String>,
     /// clips the fast decoder lost (re-decoded with the safe one) — diagnostics / benchmark
     pub fast_retries: std::sync::atomic::AtomicU32,
+    /// benchmark knobs: skip the input gain normalization; beam size (0/1 = greedy)
+    no_normalize: std::sync::atomic::AtomicBool,
+    beam: std::sync::atomic::AtomicU32,
     #[cfg(feature = "local-stt")]
     ctx: Mutex<Option<(String, Arc<whisper_rs::WhisperContext>)>>,
     #[cfg(not(feature = "local-stt"))]
@@ -813,6 +943,11 @@ impl LocalWhisper {
     #[cfg(not(feature = "local-stt"))]
     pub fn warm(&self, _model_file: &Path) {}
 
+    #[cfg(not(feature = "local-stt"))]
+    pub fn is_loaded(&self) -> bool {
+        false
+    }
+
     /// Load the model now and say whether it worked (setup waits on this before the first
     /// dictation, so the try-out never meets a cold or missing model).
     #[cfg(feature = "local-stt")]
@@ -826,6 +961,41 @@ impl LocalWhisper {
             bail!("Speech model not downloaded yet.");
         }
         Ok(())
+    }
+
+    /// Accuracy harness only: turn the input normalization off / decode with a beam search.
+    #[cfg(test)]
+    pub fn set_bench_knobs(&self, normalize: bool, beam: u32) {
+        self.no_normalize.store(!normalize, std::sync::atomic::Ordering::Relaxed);
+        self.beam.store(beam, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The Flo key's on-device speech-to-text: the audio front end (silence trimmed, a soft or
+    /// distant voice brought up to a normal level), then `transcribe`. Dictation, the assistant,
+    /// hands-free mode and the accuracy harness all come through here.
+    pub fn dictate(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+        let trimmed = audio::trim_silence(samples);
+        let level = audio::speech_level(&trimmed);
+        let (audio_in, gain) = if self.no_normalize.load(std::sync::atomic::Ordering::Relaxed) { (trimmed, 1.0) } else { audio::normalize_speech(&trimmed) };
+        let t = std::time::Instant::now();
+        let r = self.transcribe(model_file, &audio_in, language, prompt);
+        // what a report needs to be diagnosable, never the words themselves (those only at debug)
+        let model = model_file.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        log::info!(
+            "dictate: model={model} lang={language}→{} audio={:.1}s (of {:.1}s) speech={:.0} dBFS gain={:.1}x decode={} ms conf={:.2} prompt={} chars",
+            self.last_lang.lock().clone(),
+            audio_in.len() as f32 / audio::TARGET_RATE as f32,
+            samples.len() as f32 / audio::TARGET_RATE as f32,
+            audio::dbfs(level),
+            gain,
+            t.elapsed().as_millis(),
+            self.last_timing.lock().confidence,
+            prompt.chars().count(),
+        );
+        if let Ok(text) = &r {
+            log::debug!("dictate text: {text}");
+        }
+        r
     }
 
     /// Transcribe a clip.
@@ -849,8 +1019,10 @@ impl LocalWhisper {
         let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
         let (text, confidence) = if lang_in == HINGLISH {
             let p = if prompt.is_empty() { HINGLISH_PROMPT.to_string() } else { format!("{HINGLISH_PROMPT} {}", prompt_for("en", prompt)) };
+            *self.last_lang.lock() = HINGLISH.into();
             self.decode_checked(model_file, samples, "en", &p, ACCEPT)?.0
         } else if lang_in != "auto" {
+            *self.last_lang.lock() = lang_in.into();
             // Gujarati: the Hindi decoder, rewritten in Gujarati script (see `decoder_lang`)
             let (text, conf) = self.decode_checked(model_file, samples, decoder_lang(lang_in), &whisper_prompt(lang_in, prompt), ACCEPT)?.0;
             (in_script(&text, lang_in), conf)
@@ -862,11 +1034,44 @@ impl LocalWhisper {
             let (first, mut state) = self.decode_with(model_file, samples, &first_dec, &whisper_prompt(&first_lang, prompt), DecodeOpts::FAST)?;
             // which language was that? one decoder step on the encoder output we already have
             let td = std::time::Instant::now();
-            let lid = self.lang_from_state(model_file, &mut state, &cands).unwrap_or_else(|| first_lang.clone());
+            let probs = by_decoder(&self.lang_probs_from_state(model_file, &mut state, &cands));
             timing.detect_ms = td.elapsed().as_millis();
             timing.detected = true;
+            let (mut lid, p) = probs.first().cloned().unwrap_or((first_lang.clone(), 0.0));
             let dec = decoder_lang(&lid).to_string();
-            let (text, conf) = if dec == first_dec {
+            // Unsure detector, but the decode in the language of the last dictation is a clean,
+            // confident transcript: keep it (a second decode costs ~0.3–0.5 s, and translations
+            // of Hindi into English scored 0.47–0.81 in `lid_probe`, rarely above this).
+            let keep_first = p < LID_SURE
+                && sticky.as_deref().is_some_and(|s| decoder_lang(s) == first_dec)
+                && probs.iter().take(2).any(|(l, _)| decoder_lang(l) == first_dec)
+                && accepted(&first, &first_dec, KEEP_SURE, secs);
+            let (text, conf) = if keep_first {
+                lid = first_lang.clone();
+                first
+            } else if p < LID_SURE && probs.len() > 1 {
+                // The detector is guessing: on a clip this short it sometimes calls Hindi English
+                // (0.56 "en" for "कल सुबह नौ बजे मुझे याद दिलाना" in the benchmark), and decoding
+                // Hindi as English yields a fluent, confident *translation*. Decode in both and
+                // keep the transcript the model is surer of (a translation scores lower).
+                let mut options: Vec<(String, (String, f32))> = vec![];
+                for (l, _) in probs.iter().take(2) {
+                    let d = decoder_lang(l);
+                    let fast = if d == first_dec { first.clone() } else { self.decode_with(model_file, samples, d, &whisper_prompt(l, prompt), DecodeOpts::FAST)?.0 };
+                    // a fast decode that came back empty or unsure gets the full window before
+                    // it's compared (an empty Hindi decode once lost to an English translation)
+                    let r = if accepted(&fast, d, ACCEPT, secs) { fast } else { self.decode_accurate(model_file, samples, d, &whisper_prompt(l, prompt))? };
+                    options.push((l.clone(), r));
+                }
+                #[cfg(test)]
+                if std::env::var_os("FLO_DICT_DEBUG").is_some() {
+                    eprintln!("   uncertain {probs:?} sticky {sticky:?} options {options:?}");
+                }
+                let i = pick_decode(&options, sticky.as_deref());
+                let (l, r) = options.swap_remove(i);
+                lid = l;
+                r
+            } else if dec == first_dec {
                 if accepted(&first, &dec, ACCEPT, secs) {
                     first
                 } else {
@@ -879,16 +1084,17 @@ impl LocalWhisper {
             // Hindi or Gujarati? Whisper's detector can't tell; the words can
             let lang = final_language(&lid, &text, &cands);
             *self.detected.lock() = Some(lang.clone());
+            *self.last_lang.lock() = lang.clone();
             (in_script(&text, &lang), conf)
         };
         timing.total_ms = t0.elapsed().as_millis();
         timing.confidence = confidence;
         *self.last_timing.lock() = timing;
         log::info!(
-            "stt: {} ms (detect {} ms) lang={:?} conf={:.2}",
+            "stt: {} ms (detect {} ms) lang={} conf={:.2}",
             timing.total_ms,
             timing.detect_ms,
-            self.detected.lock().clone(),
+            self.last_lang.lock(),
             confidence
         );
         Ok(text)
@@ -924,11 +1130,19 @@ impl LocalWhisper {
     /// Language among `cands` (all if empty) for the clip a state just decoded: one decoder step
     /// after <|startoftranscript|> on the encoder output that decode left in the state. This is
     /// Whisper's own language detector minus its encoder pass (~1 s on a 30 s window).
-    #[cfg(feature = "local-stt")]
+    #[cfg(all(test, feature = "local-stt"))]
     fn lang_from_state(&self, model_file: &Path, state: &mut whisper_rs::WhisperState, cands: &[String]) -> Option<String> {
-        let ctx = self.context(model_file).ok()?;
-        state.decode(&[ctx.token_sot()], 0, threads()).ok()?;
-        let logits = state.get_logits().ok()?;
+        self.lang_probs_from_state(model_file, state, cands).into_iter().next().map(|(l, _)| l)
+    }
+
+    /// Same, as (language, share of probability) for every candidate, most likely first.
+    #[cfg(feature = "local-stt")]
+    fn lang_probs_from_state(&self, model_file: &Path, state: &mut whisper_rs::WhisperState, cands: &[String]) -> Vec<(String, f32)> {
+        let Ok(ctx) = self.context(model_file) else { return vec![] };
+        if state.decode(&[ctx.token_sot()], 0, threads()).is_err() {
+            return vec![];
+        }
+        let Ok(logits) = state.get_logits() else { return vec![] };
         let all: Vec<String>;
         let cands = if cands.is_empty() {
             all = (0..=whisper_rs::get_lang_max_id()).filter_map(|i| whisper_rs::get_lang_str(i).map(String::from)).collect();
@@ -943,7 +1157,18 @@ impl LocalWhisper {
                 logits.get(ctx.token_lang(id) as usize).map(|l| (c.clone(), *l))
             })
             .collect();
-        pick_allowed_language(&scored, cands)
+        #[cfg(test)]
+        if std::env::var_os("FLO_DICT_DEBUG").is_some() {
+            eprintln!("   lid {:?}", lang_probs(&scored));
+        }
+        let mut probs = lang_probs(&scored);
+        probs.sort_by(|a, b| b.1.total_cmp(&a.1));
+        if probs.is_empty() {
+            if let Some(first) = cands.first() {
+                probs.push((first.clone(), 0.0));
+            }
+        }
+        probs
     }
 
     /// Most likely language among `cands` from a full 30 s window (the old detector; ~1 s).
@@ -973,7 +1198,8 @@ impl LocalWhisper {
         let mut state = ctx.create_state().map_err(|e| anyhow!("{e:?}"))?;
         let buf = padded(samples);
         let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
-        let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        let beam = self.beam.load(std::sync::atomic::Ordering::Relaxed) as i32;
+        let mut p = FullParams::new(if beam > 1 { SamplingStrategy::BeamSearch { beam_size: beam, patience: -1.0 } } else { SamplingStrategy::Greedy { best_of: 1 } });
         p.set_language(Some(lang));
         p.set_translate(false);
         p.set_print_progress(false);
@@ -1096,7 +1322,7 @@ pub async fn transcribe_cloud(egress: &Egress, provider: &str, model: &str, key:
 
 #[cfg(all(test, feature = "local-stt"))]
 #[path = "stt_bench.rs"]
-mod bench;
+pub(crate) mod bench;
 
 /// The "Hinglish" language choice: Hindi/English mixed speech, written in Roman letters.
 pub const HINGLISH: &str = "hi-en";
@@ -1228,6 +1454,126 @@ mod latency {
         let warm = t.elapsed().as_millis();
         println!("model {}: first transcription cold {cold} ms, warm {warm} ms", model.file_name().unwrap().to_string_lossy());
         assert!(w.is_loaded());
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    fn s(v: &[(&str, f32)]) -> Vec<(String, f32)> {
+        v.iter().map(|(l, p)| (l.to_string(), *p)).collect()
+    }
+
+    #[test]
+    fn probabilities_from_logits() {
+        let p = lang_probs(&s(&[("en", 2.0), ("hi", 2.0), ("gu", f32::NEG_INFINITY)]));
+        assert!((p[0].1 - 0.5).abs() < 1e-6 && (p[1].1 - 0.5).abs() < 1e-6 && p[2].1 == 0.0);
+        assert!(lang_probs(&[]).is_empty());
+    }
+
+    #[test]
+    fn hindi_and_gujarati_are_one_decoder_choice() {
+        let g = by_decoder(&s(&[("en", 0.45), ("hi", 0.35), ("gu", 0.2)]));
+        assert_eq!(g[0].0, "hi");
+        assert!((g[0].1 - 0.55).abs() < 1e-6);
+        assert_eq!(g[1], ("en".to_string(), 0.45));
+        // Hindi + Gujarati is a sure Indic decode, even though neither alone is
+        let g = by_decoder(&s(&[("hi", 0.5), ("gu", 0.4), ("en", 0.1)]));
+        assert!(g[0].1 >= LID_SURE);
+    }
+
+    #[test]
+    fn a_confident_translation_loses_to_the_real_transcript() {
+        // cmd6 in the dictation benchmark: Hindi speech the detector called English
+        let opts = vec![
+            ("en".to_string(), ("I love you.".to_string(), 0.73)),
+            ("hi".to_string(), ("कल सुबह नौ बजे मुझे याद दिलाना।".to_string(), 0.92)),
+        ];
+        assert_eq!(opts[pick_decode(&opts, None)].0, "hi");
+        // ... even right after an English dictation (the margin for the previous language is small)
+        assert_eq!(opts[pick_decode(&opts, Some("en"))].0, "hi");
+        // English speech: the Hindi decoder's gibberish is less sure, or not in Devanagari at all
+        let opts = vec![
+            ("en".to_string(), ("Add a to do to call Priya tomorrow.".to_string(), 0.70)),
+            ("hi".to_string(), ("".to_string(), 0.84)),
+        ];
+        assert_eq!(opts[pick_decode(&opts, Some("hi"))].0, "en");
+        let opts = vec![
+            ("hi".to_string(), ("Hey team, quick update.".to_string(), 0.94)),
+            ("en".to_string(), ("Hey team, quick update.".to_string(), 0.90)),
+        ];
+        assert_eq!(opts[pick_decode(&opts, None)].0, "en");
+        // a loop never wins
+        let opts = vec![("en".to_string(), ("tri".repeat(30), 0.99)), ("hi".to_string(), ("ठीक है।".to_string(), 0.6))];
+        assert_eq!(opts[pick_decode(&opts, Some("en"))].0, "hi");
+    }
+
+    #[test]
+    fn a_close_call_stays_in_the_previous_language() {
+        // Hinglish with its first word cut off, after Hindi: the English translation scored higher
+        let opts = vec![
+            ("en".to_string(), ("This is the presentation of the day.".to_string(), 0.94)),
+            ("hi".to_string(), ("आपको बोलो की प्रेजेंटेशन कल तक भेज दे.".to_string(), 0.86)),
+        ];
+        assert_eq!(opts[pick_decode(&opts, Some("hi"))].0, "hi");
+        // Gujarati counts as the Hindi decoder's language
+        assert_eq!(opts[pick_decode(&opts, Some("gu"))].0, "hi");
+        // without a previous language the surer one wins
+        assert_eq!(opts[pick_decode(&opts, None)].0, "en");
+    }
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+    use crate::model::Settings;
+
+    fn installed() -> Settings {
+        Settings { onboarded: true, stt_provider: "local".into(), stt_model: DEFAULT_MODEL.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn starter_moves_up_after_setup_on_a_capable_machine() {
+        assert_eq!(upgrade_target(&installed(), true), Some(UPGRADE_MODEL));
+        assert!(spec(UPGRADE_MODEL).is_some_and(|m| m.tier == Tier::Advanced));
+    }
+
+    #[test]
+    fn no_upgrade_during_setup_on_weak_machines_or_for_cloud_engines() {
+        assert_eq!(upgrade_target(&Settings { onboarded: false, ..installed() }, true), None);
+        assert_eq!(upgrade_target(&installed(), false), None);
+        assert_eq!(upgrade_target(&Settings { stt_provider: "groq".into(), ..installed() }, true), None);
+    }
+
+    #[test]
+    fn a_model_the_user_picked_is_never_replaced() {
+        assert_eq!(upgrade_target(&Settings { stt_model_explicit: true, ..installed() }, true), None);
+        for m in ["large-v3-turbo-q5_0", "large-v3-turbo", "base.en", "small"] {
+            assert_eq!(upgrade_target(&Settings { stt_model: m.into(), ..installed() }, true), None, "{m}");
+        }
+    }
+
+    #[test]
+    fn existing_installs_on_the_starter_are_migrated() {
+        // a settings file from 0.1.7 / 0.1.8: no sttModelExplicit key
+        let s: Settings = serde_json::from_str(r#"{"settingsVersion":7,"onboarded":true,"sttProvider":"local","sttModel":"small-q5_1"}"#).unwrap();
+        assert!(!s.stt_model_explicit);
+        assert_eq!(upgrade_target(&s, true), Some(UPGRADE_MODEL));
+    }
+
+    #[test]
+    fn machine_check() {
+        assert!(can_run_large(8.0, false));
+        assert!(can_run_large(4.0, true));
+        assert!(!can_run_large(4.0, false));
+        assert!(!can_run_large(0.0, false)); // unknown RAM on an Intel Mac / PC: stay on the starter
+        assert!(total_ram_gb() > 1.0);
+    }
+
+    #[test]
+    fn auto_defaults_to_english_and_hindi() {
+        assert_eq!(Settings::default().auto_languages, vec!["en".to_string(), "hi".to_string()]);
     }
 }
 

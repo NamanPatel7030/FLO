@@ -14,6 +14,7 @@ mod contract_tests;
 mod corrections;
 mod cpuwatch;
 mod db;
+mod dictation;
 mod egress;
 mod floagent;
 mod hermes;
@@ -878,6 +879,15 @@ pub fn run() {
             cpuwatch::spawn();
             stt::set_keep_warm_mins(st.settings().stt_keep_warm_mins);
             stt::spawn_idle_unloader(st.whisper.clone());
+            {
+                // a starter-model install moves to the more accurate model in the background; wait
+                // a little so the download doesn't compete with startup
+                let st = st.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                    commands::auto_upgrade_model(st).await;
+                });
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

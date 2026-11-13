@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, demoReady, nextSpeed, pickLanguage, progressText, setupTarget, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "./models";
+import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, demoReady, languageActive, nextSpeed, pickLanguage, progressText, setupTarget, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "./models";
 import type { LocalModel } from "./types";
 
 const m = (id: string, sizeMb: number, installed: boolean, tier: LocalModel["tier"] = "advanced"): LocalModel => ({ id, label: id, sizeMb, languages: "", installed, tier, speed: "Fast", accuracy: "Good" });
@@ -59,14 +59,24 @@ describe("unusedModelMb", () => {
 });
 
 describe("language choices", () => {
-  it("offers Auto (English + Hindi + Gujarati), English, Hindi, Gujarati and Hinglish first", () => {
+  it("offers Auto (English + Hindi), English, Hindi, Gujarati and Hinglish first", () => {
     expect(LANGUAGE_CHOICES.slice(0, 5).map((l) => l.value)).toEqual(["auto", "en", "hi", "gu", "hi-en"]);
-    expect(LANGUAGE_CHOICES[0].label).toBe("Auto (English + Hindi + Gujarati)");
+    expect(LANGUAGE_CHOICES[0].label).toBe("Auto (English + Hindi)");
     expect(LANGUAGE_CHOICES.find((l) => l.value === "gu")?.native).toBe("ગુજરાતી");
+    // Gujarati in Auto is opt-in, in the second row
+    expect(LANGUAGE_CHOICES.find((l) => l.value === "auto-gu")).toMatchObject({ label: "Auto + Gujarati", more: true });
   });
   it("picking Auto also resets the languages it chooses from", () => {
-    expect(pickLanguage("auto")).toEqual({ language: "auto", autoLanguages: ["en", "hi", "gu"] });
+    expect(pickLanguage("auto")).toEqual({ language: "auto", autoLanguages: ["en", "hi"] });
+    expect(pickLanguage("auto-gu")).toEqual({ language: "auto", autoLanguages: ["en", "hi", "gu"] });
     expect(pickLanguage("gu")).toEqual({ language: "gu" });
+  });
+  it("marks exactly one chip active, telling the two Autos apart", () => {
+    const on = (s: { language: string; autoLanguages?: string[] }) => LANGUAGE_CHOICES.filter((l) => languageActive(s, l.value)).map((l) => l.value);
+    expect(on({ language: "auto", autoLanguages: ["en", "hi"] })).toEqual(["auto"]);
+    expect(on({ language: "auto", autoLanguages: ["en", "hi", "gu"] })).toEqual(["auto-gu"]);
+    expect(on({ language: "auto" })).toEqual(["auto"]);
+    expect(on({ language: "hi-en", autoLanguages: ["en", "hi", "gu"] })).toEqual(["hi-en"]);
   });
   it("suggests Sarvam AI only when Gujarati is spoken on the on-device engine", () => {
     expect(suggestSarvamForGujarati({ sttProvider: "local", language: "gu" })).toBe(true);

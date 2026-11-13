@@ -4,7 +4,7 @@ use crate::egress::Purpose;
 use crate::llm::{self, ChatRequest, LlmConfig};
 use crate::model::*;
 use crate::state::{ActiveSession, Shared};
-use crate::{assistant, attention, platform, prompts, settings as cfg, stt, text};
+use crate::{assistant, attention, dictation, platform, prompts, settings as cfg, stt, text};
 use anyhow::{anyhow, Result};
 use std::time::Instant;
 
@@ -54,11 +54,16 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
     if guard.is_some() {
         return Ok(());
     }
-    let front = st.target_app();
-    let selection = if mode == Mode::Assistant { platform::copy_selection() } else { None };
+    // the microphone first: reading the selection (a Cmd+C round trip, up to 0.3 s when nothing is
+    // selected) used to run before it, so an assistant command spoken right away lost its first word
+    let t_press = Instant::now();
     let app = st.clone();
     let recorder = Recorder::start(move |rms| app.emit(ev::LEVEL, LevelEvent { rms }))
         .map_err(|e| anyhow!("Microphone unavailable ({e}). Allow Flo in System Settings → Privacy → Microphone."))?;
+    let mic_ms = t_press.elapsed().as_millis();
+    let front = st.target_app();
+    let selection = if mode == Mode::Assistant { platform::copy_selection() } else { None };
+    log::info!("listening ({mode:?}): microphone open {mic_ms} ms after the key, ready {} ms", t_press.elapsed().as_millis());
     let s = st.settings();
     let screen = if mode == Mode::Assistant && s.assistant_screen_context && platform::permissions().screen {
         Some(tauri::async_runtime::spawn_blocking(|| attention::capture_focused_text().map(|(_, _, t)| t)))
@@ -155,7 +160,7 @@ pub async fn stop(st: Shared) {
 /// Background transcriber for a dictation: commits each sentence at a natural pause, so on release
 /// only the last few seconds still need transcribing.
 async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<crate::state::StreamBuf>) {
-    use crate::livetx::{Action, Segmenter, SLICE_MS};
+    use crate::livetx::{Segmenter, SLICE_MS};
     use std::sync::atomic::Ordering;
     let mut seg = Segmenter::default();
     let mut context = String::new();
@@ -171,36 +176,15 @@ async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<
                 _ => break,
             }
         };
-        let ms = (slice.len() as u64 * 1000) / audio::TARGET_RATE as u64;
-        let rms = audio::rms(&slice);
-        buf.pending.lock().extend_from_slice(&slice);
-        match seg.push(ms.max(1), rms) {
-            Action::Final => {
-                let audio_now = std::mem::take(&mut *buf.pending.lock());
-                let secs = audio_now.len() as f32 / audio::TARGET_RATE as f32;
-                // never transcribe a pause that had no real speech (prevents hallucinated text) —
-                // but keep the audio: it used to be dropped here, losing softly spoken words
-                if audio::voiced_ms(&audio_now) < 200 {
-                    let mut p = buf.pending.lock();
-                    let newer = std::mem::replace(&mut *p, audio_now);
-                    p.extend(newer);
-                    continue;
-                }
-                if let Ok(t) = transcribe_with_prompt(&st, audio_now, &context).await {
-                    if !t.trim().is_empty() && !stt::is_hallucination(&t, secs) && !stt::is_degenerate(&t) {
-                        context = text::truncate_chars(&t, 200);
-                        buf.committed.lock().push(t.trim().to_string());
-                    }
+        let ready = dictation::on_slice(&mut seg, &mut buf.pending.lock(), &slice);
+        if let Some(audio_now) = ready {
+            let secs = audio_now.len() as f32 / audio::TARGET_RATE as f32;
+            if let Ok(t) = transcribe_with_prompt(&st, audio_now, &context).await {
+                if dictation::keep_chunk(&t, secs) {
+                    context = text::truncate_chars(&t, 200);
+                    buf.committed.lock().push(t.trim().to_string());
                 }
             }
-            Action::Discard => {
-                // only drop pure silence; a short word before a pause stays for the next sentence
-                let mut p = buf.pending.lock();
-                if audio::voiced_ms(&p) == 0 {
-                    p.clear();
-                }
-            }
-            _ => {}
         }
     }
 }
@@ -223,7 +207,7 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     let committed: Vec<String> = stream.as_ref().map(|b| b.committed.lock().clone()).unwrap_or_default();
     // require real speech; a silent hold must never paste a hallucinated sentence
     let tail_voiced = audio::voiced_ms(&samples);
-    if committed.is_empty() && tail_voiced < 250 {
+    if committed.is_empty() && tail_voiced < dictation::MIN_TAIL_VOICED_MS {
         match silent_hold(duration_ms, audio::is_digital_silence(&samples)) {
             SilentHold::Ignore => {
                 // ctrl held a moment for a shortcut (or ctrl-click) and let go: not a dictation
@@ -240,7 +224,7 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     st.state(Phase::Transcribing, mode, None);
     let t0 = Instant::now();
     let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
-    let tail = if tail_voiced >= 250 {
+    let tail = if tail_voiced >= dictation::MIN_TAIL_VOICED_MS {
         let ctx = committed.last().map(|c| text::truncate_chars(c, 200)).unwrap_or_default();
         tokio::time::timeout(std::time::Duration::from_secs(60), transcribe_with_prompt(st, samples, &ctx))
             .await
@@ -248,14 +232,13 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     } else {
         String::new()
     };
-    let tail = if stt::is_hallucination(&tail, secs) && !committed.is_empty() { String::new() } else { tail };
-    let raw = stt::join_chunks(&committed.into_iter().chain(std::iter::once(tail)).collect::<Vec<_>>());
-    if stt::is_hallucination(&raw, secs.max(1.0)) {
-        return Err(anyhow!("Didn't catch that. Try speaking a bit longer."));
-    }
-    if stt::is_degenerate(&raw) {
-        return Err(anyhow!("The speech model got stuck repeating itself. Try again, or pick a different speech model in Settings → Voice."));
-    }
+    let raw = match dictation::final_transcript(committed, tail, secs) {
+        Ok(raw) => raw,
+        Err(dictation::Empty::Hallucination) => return Err(anyhow!("Didn't catch that. Try speaking a bit longer.")),
+        Err(dictation::Empty::Degenerate) => {
+            return Err(anyhow!("The speech model got stuck repeating itself. Try again, or pick a different speech model in Settings → Voice."))
+        }
+    };
     st.emit(ev::TRANSCRIPT, TranscriptEvent { text: raw.clone(), is_final: false });
 
     match mode {
@@ -341,20 +324,13 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
     let s = st.settings();
     // learned words bias the speech model; newest first and bounded (Whisper keeps ~224 prompt tokens)
     let vocab: Vec<String> = st.db.list_dictionary_recent().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
-    let mut prompt = text::stt_vocab(&vocab, 300);
-    if !context.trim().is_empty() {
-        if !prompt.is_empty() {
-            prompt.push_str(". ");
-        }
-        prompt.push_str(context.trim());
-    }
+    let prompt = dictation::stt_prompt(&vocab, context);
     if s.stt_provider == "local" {
         let path = stt::model_path(&st.models_dir, &s.stt_model).ok_or_else(|| anyhow!("Unknown speech model {}", s.stt_model))?;
         let w = st.whisper.clone();
         *w.auto_langs.lock() = stt::allowed_languages(&s.auto_languages);
         let lang = lang_override.clone().unwrap_or_else(|| s.language.clone());
-        let samples = audio::trim_silence(&samples);
-        tokio::task::spawn_blocking(move || w.transcribe(&path, &samples, &lang, &prompt)).await?
+        tokio::task::spawn_blocking(move || w.dictate(&path, &samples, &lang, &prompt)).await?
     } else {
         // cloud STT bills per second of audio → drop leading/trailing silence
         let samples = audio::trim_silence(&samples);
@@ -379,7 +355,7 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
     let cfg = LlmConfig::from_settings(&s);
     // free local pass unless the transcript actually needs the LLM (fillers, corrections, long text)
     if !s.cleanup_enabled || !cfg.is_configured() || !text::needs_llm_cleanup(&base) {
-        return final_pass(text::basic_cleanup(&base));
+        return dictation::local_cleanup(raw, &dict);
     }
     let mut system = prompts::cleanup_system(app, &vocab, &dict);
     // short personal style notes ride along; long ones would cost tokens on every dictation

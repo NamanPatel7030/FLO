@@ -50,6 +50,8 @@ test("setup downloads the small model first and the try-out stays locked until i
   await expect(ob.getByTestId("try-locked")).toHaveCount(0);
   expect(await calls(page, "load_speech_model")).toEqual([{ id: "small-q5_1" }]);
   expect((await invoke(page, "get_settings")).sttModel).toBe("small-q5_1");
+  // setup's starter isn't the user's pick: Flo may move it to the more accurate model later
+  expect((await invoke(page, "get_settings")).sttModelExplicit).toBeFalsy();
 
   // and the demo really transcribes
   const mic = ob.getByTestId("try-mic");
@@ -113,6 +115,7 @@ test("the end of setup offers a more precise model, optional", async ({ page }) 
   await card.getByRole("button", { name: "Use this model" }).click({ timeout: 10_000 });
   await expect(card).toContainText("In use");
   expect((await invoke(page, "get_settings")).sttModel).toBe("large-v3-turbo-q5_0");
+  expect((await invoke(page, "get_settings")).sttModelExplicit).toBe(true);
 });
 
 test("Settings → Voice: advanced models download with progress, switch without a restart, and delete", async ({ page }) => {
@@ -139,6 +142,8 @@ test("Settings → Voice: advanced models download with progress, switch without
   await use.click();
   await expect(turbo).toContainText("In use");
   await expect.poll(async () => (await invoke(page, "get_settings")).sttModel).toBe("large-v3-turbo-q5_0");
+  // a model picked in Settings stays: Flo never swaps it by itself
+  expect((await invoke(page, "get_settings")).sttModelExplicit).toBe(true);
   // the new model is loaded right away, so the next dictation uses it (no restart)
   await expect.poll(async () => (await calls(page, "load_speech_model")).at(-1)).toEqual({ id: "large-v3-turbo-q5_0" });
 

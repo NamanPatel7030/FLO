@@ -50,10 +50,15 @@ pub(crate) fn store_settings(st: &Shared, settings: Settings) -> anyhow::Result<
     if !settings.reuse_answers {
         crate::cache::ANSWERS.lock().clear();
     }
+    // setup just finished: now get the more accurate speech model (the starter stays until it's in)
+    let setup_done = !st.settings().onboarded && settings.onboarded;
     let approvals_changed = st.settings().claude_approvals != settings.claude_approvals;
     let (share_was, share_now) = (st.settings().share_usage, settings.share_usage);
     *st.settings.write() = settings;
     crate::usage_share::on_settings_changed(st, share_was, share_now);
+    if setup_done {
+        tauri::async_runtime::spawn(auto_upgrade_model(st.clone()));
+    }
     // turning "Allow / Deny from the notch" on or off adds / removes the PermissionRequest hook
     if approvals_changed {
         crate::claude::refresh_if_installed(st);
@@ -487,26 +492,75 @@ static DOWNLOADING: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Ve
 
 #[tauri::command]
 pub async fn download_model(st: State<'_, Shared>, id: String) -> R<()> {
-    {
-        let mut d = DOWNLOADING.lock();
-        if d.contains(&id) {
-            return Ok(());
-        }
-        d.push(id.clone());
-    }
-    let res = download_model_inner(st, id.clone()).await;
-    DOWNLOADING.lock().retain(|x| x != &id);
-    res
+    download_once(st.inner(), &id).await.map(|_| ()).map_err(e)
 }
 
-async fn download_model_inner(st: State<'_, Shared>, id: String) -> R<()> {
-    let st = st.inner().clone();
-    let st2 = st.clone();
-    let res = stt::download_model(&st.egress, &st.models_dir, &id, move |p| st2.emit(ev::MODEL_PROGRESS, p)).await;
-    if let Err(err) = &res {
-        st.emit(ev::MODEL_PROGRESS, ModelProgressEvent { id: id.clone(), received: 0, total: 0, done: true, error: Some(err.to_string()) });
+/// Download a speech model unless that download is already running (setup, the Download button
+/// and the background upgrade share one). Ok(false): someone else's download is in progress.
+pub(crate) async fn download_once(st: &Shared, id: &str) -> anyhow::Result<bool> {
+    {
+        let mut d = DOWNLOADING.lock();
+        if d.iter().any(|x| x == id) {
+            return Ok(false);
+        }
+        d.push(id.to_string());
     }
-    res.map_err(e)
+    let st2 = st.clone();
+    let res = stt::download_model(&st.egress, &st.models_dir, id, move |p| st2.emit(ev::MODEL_PROGRESS, p)).await;
+    DOWNLOADING.lock().retain(|x| x != id);
+    if let Err(err) = &res {
+        st.emit(ev::MODEL_PROGRESS, ModelProgressEvent { id: id.to_string(), received: 0, total: 0, done: true, error: Some(err.to_string()) });
+    }
+    res.map(|_| true)
+}
+
+/// Move a setup-installed starter to the more accurate model (`stt::upgrade_target`): download it
+/// in the background, then switch to it once it's on disk, unless the user picked a model
+/// meanwhile. A failed download is tried again on the next launch.
+pub(crate) async fn auto_upgrade_model(st: Shared) {
+    let runs_large = stt::this_machine_runs_large();
+    let Some(target) = stt::upgrade_target(&st.settings(), runs_large) else { return };
+    let installed = stt::model_path(&st.models_dir, target).is_some_and(|p| p.exists());
+    if !installed {
+        log::info!("speech model: downloading {target} in the background (more accurate than the starter)");
+        match download_once(&st, target).await {
+            Ok(true) => {}
+            Ok(false) => {
+                // already downloading (setup's "Download" button): wait for that one
+                while DOWNLOADING.lock().iter().any(|x| x == target) {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                if !stt::model_path(&st.models_dir, target).is_some_and(|p| p.exists()) {
+                    return;
+                }
+            }
+            Err(err) => {
+                log::warn!("speech model upgrade: download failed ({err}); will try again next launch");
+                return;
+            }
+        }
+    }
+    // the user may have chosen a model (or a cloud engine) while it downloaded
+    let mut s = st.settings();
+    if stt::upgrade_target(&s, runs_large) != Some(target) {
+        return;
+    }
+    let was_loaded = st.whisper.is_loaded();
+    let from = std::mem::replace(&mut s.stt_model, target.to_string());
+    if let Err(err) = store_settings(&st, s) {
+        log::warn!("speech model upgrade: couldn't save settings: {err}");
+        return;
+    }
+    log::info!("speech model: switched {from} → {target}");
+    st.emit(crate::phone_state::SETTINGS_CHANGED, ());
+    st.toast("info", "Flo now uses its more accurate speech model.".to_string());
+    if was_loaded {
+        // the next dictation shouldn't pay for the cold load
+        if let Some(path) = stt::model_path(&st.models_dir, target) {
+            let w = st.whisper.clone();
+            tauri::async_runtime::spawn_blocking(move || w.warm(&path));
+        }
+    }
 }
 
 #[tauri::command(async)]

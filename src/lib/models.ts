@@ -47,8 +47,10 @@ export function demoReady(s: { sttProvider: string; installed: boolean; loaded: 
   return s.sttProvider !== "local" || (s.installed && s.loaded);
 }
 
-/** The languages "Auto" chooses from unless the settings file says otherwise. */
-export const AUTO_LANGUAGES = ["en", "hi", "gu"];
+/** The languages "Auto" chooses from unless the settings file says otherwise (mirrors
+ *  stt::DEFAULT_AUTO_LANGUAGES). Gujarati is opt-in: "Auto + Gujarati". */
+export const AUTO_LANGUAGES = ["en", "hi"];
+export const AUTO_WITH_GUJARATI = ["en", "hi", "gu"];
 
 export interface LanguageChoice {
   value: string;
@@ -61,19 +63,31 @@ export interface LanguageChoice {
 
 /** Settings → Voice → "Language you speak". English, Hindi, Gujarati and Hinglish first. */
 export const LANGUAGE_CHOICES: LanguageChoice[] = [
-  { value: "auto", label: "Auto (English + Hindi + Gujarati)", native: "" },
+  { value: "auto", label: "Auto (English + Hindi)", native: "" },
   { value: "en", label: "English", native: "" },
   { value: "hi", label: "Hindi", native: "हिंदी" },
   { value: "gu", label: "Gujarati", native: "ગુજરાતી" },
   { value: "hi-en", label: "Hinglish", native: "Roman letters" },
+  { value: "auto-gu", label: "Auto + Gujarati", native: "", more: true },
   { value: "es", label: "Spanish", native: "Español", more: true },
   { value: "de", label: "German", native: "Deutsch", more: true },
   { value: "fr", label: "French", native: "Français", more: true },
 ];
 
-/** Settings patch for a language chip. Auto also resets what it picks from (English, Hindi, Gujarati). */
+/** Settings patch for a language chip. Auto also sets what it picks from: English and Hindi, plus
+ *  Gujarati for "Auto + Gujarati". */
 export function pickLanguage(value: string): Partial<Settings> {
-  return value === "auto" ? { language: "auto", autoLanguages: [...AUTO_LANGUAGES] } : { language: value };
+  if (value === "auto") return { language: "auto", autoLanguages: [...AUTO_LANGUAGES] };
+  if (value === "auto-gu") return { language: "auto", autoLanguages: [...AUTO_WITH_GUJARATI] };
+  return { language: value };
+}
+
+/** Is this chip the current setting? The two Auto chips differ by whether Auto includes Gujarati. */
+export function languageActive(s: Pick<Settings, "language" | "autoLanguages">, value: string): boolean {
+  const gu = (s.autoLanguages ?? AUTO_LANGUAGES).includes("gu");
+  if (value === "auto") return s.language === "auto" && !gu;
+  if (value === "auto-gu") return s.language === "auto" && gu;
+  return s.language === value;
 }
 
 /** Gujarati on the on-device engine: Whisper has no usable Gujarati decoder, so Flo transcribes it

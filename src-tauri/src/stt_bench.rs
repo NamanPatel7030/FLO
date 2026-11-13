@@ -81,7 +81,7 @@ pub fn footprint_mb() -> Option<f64> {
     })
 }
 
-fn read_wav(path: &str) -> Vec<f32> {
+pub(crate) fn read_wav(path: &str) -> Vec<f32> {
     let mut r = hound::WavReader::open(path).expect("wav");
     r.samples::<i16>().filter_map(|s| s.ok()).map(|s| s as f32 / i16::MAX as f32).collect()
 }
@@ -426,6 +426,51 @@ fn stt_lang_probe() {
                 let extra = if lang == "hi" { format!(" | as gu: cer {:.2}", cer(expect, &crate::text::devanagari_to_gujarati(&text))) } else { String::new() };
                 println!("   {lang} {oname}: cer {:.2} conf {conf:.2}{extra} | {text}", cer(expect, &text));
             }
+        }
+    }
+}
+
+/// Language identification on dictation-sized clips: Whisper's detector on the clip-sized encoder
+/// window (what `transcribe` uses) vs the full 30 s window, and the confidence of a decode in each
+/// candidate language (a wrong-language decode is a translation, usually less sure of itself).
+/// FLO_DICT_MANIFEST=… FLO_BENCH_MODEL=… cargo test --release --lib lid_probe -- --ignored --nocapture
+#[test]
+#[ignore]
+fn lid_probe() {
+    let (Ok(manifest), Ok(model)) = (std::env::var("FLO_DICT_MANIFEST"), std::env::var("FLO_BENCH_MODEL")) else { return };
+    let clips: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+    let model = PathBuf::from(model);
+    let w = LocalWhisper::default();
+    w.warm(&model);
+    let _ = w.decode_with(&model, &vec![0.0; 16_000], "en", "", DecodeOpts::SAFE);
+    let cands: Vec<String> = vec!["en".into(), "hi".into()];
+    for c in &clips {
+        let name = c["name"].as_str().unwrap();
+        let clean = crate::audio::trim_silence(&read_wav(c["wav"].as_str().unwrap()));
+        for (cond, audio) in [("clean", clean.clone()), ("noisy", add_noise(&clean, 0.02))] {
+            let mut line = format!("{name:8} {cond:6} [{}]", c["lang"].as_str().unwrap());
+            for lang in ["en", "hi"] {
+                let t = std::time::Instant::now();
+                let ((text, conf), mut state) = w.decode_with(&model, &audio, lang, "", DecodeOpts::FAST).unwrap();
+                let ms = t.elapsed().as_millis();
+                if lang == "en" {
+                    let ctx = w.context(&model).unwrap();
+                    state.decode(&[ctx.token_sot()], 0, threads()).unwrap();
+                    let logits = state.get_logits().unwrap();
+                    let scored: Vec<(String, f32)> = cands.iter().map(|l| (l.clone(), logits[ctx.token_lang(whisper_rs::get_lang_id(l).unwrap()) as usize])).collect();
+                    let clip_p = lang_probs(&scored)[0].1;
+                    let t = std::time::Instant::now();
+                    let mut st = ctx.create_state().unwrap();
+                    st.pcm_to_mel(&padded(&audio), threads()).unwrap();
+                    let (_, probs) = st.lang_detect(0, threads()).unwrap();
+                    let full_ms = t.elapsed().as_millis();
+                    let pe = probs[whisper_rs::get_lang_id("en").unwrap() as usize];
+                    let ph = probs[whisper_rs::get_lang_id("hi").unwrap() as usize];
+                    line += &format!(" | clip-LID en {clip_p:.2} | full-LID en {:.2} ({full_ms} ms)", pe / (pe + ph));
+                }
+                line += &format!(" | {lang} conf {conf:.2} {ms} ms {:?}", crate::text::truncate_chars(&text, 40));
+            }
+            println!("{line}");
         }
     }
 }

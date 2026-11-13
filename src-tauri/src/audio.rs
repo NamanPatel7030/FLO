@@ -175,6 +175,61 @@ pub fn trim_silence(s: &[f32]) -> Vec<f32> {
     }
 }
 
+/// Level of the speech in a clip: RMS of its loudest fifth of 20 ms frames (words, not the pauses
+/// between them), so a clip with long silences isn't judged quiet.
+pub fn speech_level(s: &[f32]) -> f32 {
+    let win = (TARGET_RATE / 50) as usize;
+    let mut e: Vec<f32> = s.chunks(win).map(rms).collect();
+    if e.is_empty() {
+        return 0.0;
+    }
+    e.sort_by(|a, b| b.total_cmp(a));
+    let top = &e[..e.len().div_ceil(5)];
+    (top.iter().map(|v| v * v).sum::<f32>() / top.len() as f32).sqrt()
+}
+
+/// dBFS of a linear level (-120 for silence).
+pub fn dbfs(level: f32) -> f32 {
+    if level <= 1e-6 {
+        -120.0
+    } else {
+        20.0 * level.log10()
+    }
+}
+
+/// Speech level the speech model hears best: about -20 dBFS, where a normal voice close to a
+/// laptop mic sits. Whisper's log-mel input is not level-independent, so a soft or distant voice
+/// (-40…-50 dBFS) decodes worse than the same words at a normal level.
+pub const TARGET_SPEECH_LEVEL: f32 = 0.1;
+/// Most gain applied (+30 dB): enough for a voice 30 dB under normal, not so much that the room
+/// noise of a recording without speech is blown up into something that sounds like words.
+pub const MAX_GAIN: f32 = 31.6;
+
+/// Gain for a clip whose speech is at `level` with peak `peak`: up to `TARGET_SPEECH_LEVEL`
+/// (never down: a loud clip is left alone), at most `MAX_GAIN`, and never past full scale.
+pub fn normalize_gain(level: f32, peak: f32) -> f32 {
+    if level <= 1e-6 {
+        return 1.0;
+    }
+    let g = (TARGET_SPEECH_LEVEL / level).clamp(1.0, MAX_GAIN);
+    if peak > 0.0 {
+        g.min(0.98 / peak).max(1.0)
+    } else {
+        g
+    }
+}
+
+/// The clip brought to a normal speech level (see `normalize_gain`). Returns the audio and the
+/// gain used.
+pub fn normalize_speech(s: &[f32]) -> (Vec<f32>, f32) {
+    let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let g = normalize_gain(speech_level(s), peak);
+    if (g - 1.0).abs() < 0.05 {
+        return (s.to_vec(), 1.0);
+    }
+    (s.iter().map(|v| v * g).collect(), g)
+}
+
 /// RMS of a buffer — used to skip silent recordings.
 /// Milliseconds of speech-level audio (voice-activity detection). We only transcribe clips with
 /// real speech so Whisper can't hallucinate a sentence out of silence/background hum.
@@ -316,6 +371,36 @@ mod tests {
         assert!(is_digital_silence(&vec![0.00002; 16_000]));
         assert!(!is_digital_silence(&talking(1.0, 0.005)));
         assert!(is_digital_silence(&[]));
+    }
+
+    #[test]
+    fn quiet_speech_is_brought_up_to_a_normal_level() {
+        let quiet = talking(2.0, 0.003); // -50 dBFS: a soft voice far from the mic
+        let (out, g) = normalize_speech(&quiet);
+        assert!(g > 20.0, "gain {g}");
+        assert!((speech_level(&out) - TARGET_SPEECH_LEVEL).abs() < 0.02, "level {}", speech_level(&out));
+        // gain is capped: a whisper at -70 dBFS is not turned into a shout
+        let (_, g) = normalize_speech(&talking(1.0, 0.0003));
+        assert!((g - MAX_GAIN).abs() < 0.01);
+    }
+
+    #[test]
+    fn loud_speech_and_silence_are_left_alone() {
+        let loud = talking(1.0, 0.2);
+        assert_eq!(normalize_speech(&loud), (loud.clone(), 1.0));
+        let silence = vec![0.0f32; 16_000];
+        assert_eq!(normalize_speech(&silence).1, 1.0);
+        // never clips: a loud peak limits the gain
+        assert!(normalize_gain(0.01, 0.5) <= 0.98 / 0.5 + 1e-6);
+    }
+
+    #[test]
+    fn speech_level_ignores_pauses() {
+        let mut v = vec![0.0f32; 32_000];
+        v.extend(talking(1.0, 0.05));
+        assert!((speech_level(&v) - 0.05).abs() < 0.02, "level {}", speech_level(&v));
+        assert_eq!(dbfs(0.0), -120.0);
+        assert!((dbfs(0.1) + 20.0).abs() < 0.01);
     }
 
     #[test]

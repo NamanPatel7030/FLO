@@ -63,9 +63,12 @@ export interface Settings {
   sttProvider: SttProvider;
   /** local: model id e.g. "large-v3-turbo-q5_0"; cloud: model name e.g. "whisper-large-v3-turbo" */
   sttModel: string;
+  /** the user picked sttModel in Settings (or setup's "Use this model"). Until then Flo moves from
+   *  the small starter to Large v3 Turbo by itself once it has downloaded in the background. */
+  sttModelExplicit?: boolean;
   /** ISO code or "auto" */
   language: string;
-  /** with language "auto": only these are considered (default en, hi, gu) */
+  /** with language "auto": only these are considered (default en, hi; "Auto + Gujarati" adds gu) */
   autoLanguages?: string[];
   llmProvider: LlmProvider;
   llmModel: string;
