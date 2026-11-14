@@ -346,6 +346,14 @@ mod x11 {
             .collect()
     }
 
+    /// Is the primary mouse button held right now (X11 QueryPointer)? None without X11.
+    pub fn button1_down() -> Option<bool> {
+        use x11rb::protocol::xproto::KeyButMask;
+        let (c, root) = connect()?;
+        let r = c.query_pointer(root).ok()?.reply().ok()?;
+        Some(r.mask.contains(KeyButMask::BUTTON1))
+    }
+
     /// Milliseconds since the last keyboard / mouse input (MIT-SCREEN-SAVER).
     pub fn idle_ms() -> Option<u32> {
         use x11rb::protocol::screensaver::ConnectionExt as _;
@@ -353,6 +361,14 @@ mod x11 {
         let info = c.screensaver_query_info(root).ok()?.reply().ok()?;
         Some(info.ms_since_user_input)
     }
+}
+
+/// Is the primary mouse button held (X11)? None on native Wayland / without a display.
+pub fn primary_button_down() -> Option<bool> {
+    if native_wayland() {
+        return None;
+    }
+    x11::button1_down()
 }
 
 pub fn frontmost_app() -> FrontApp {
@@ -483,6 +499,60 @@ fn portal_installed() -> bool {
     dirs.split(':').filter(|d| !d.is_empty()).any(|d| std::path::Path::new(d).join("dbus-1/services/org.freedesktop.portal.Desktop.service").is_file())
 }
 
+/// The flo:// handler entry tauri-plugin-deep-link writes (~/.local/share/applications/
+/// flo-flow-handler.desktop) says `Exec="/usr/bin/flo-flow" %u`. xdg-open's generic mode (every
+/// desktop that isn't GNOME / KDE / XFCE: i3, sway, Hyprland, Openbox, LXDE…) takes the first word
+/// literally, quotes included, finds no such program and fails ("Permission denied"); Chrome hands
+/// external links to xdg-open, so Google sign-in never came back to Flo there. Unquote it when the
+/// path needs no quoting. Call after `register_all` (which rewrites it on every start).
+pub fn fix_url_handler_entry() {
+    let Some(name) = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())) else { return };
+    let Some(file) = dirs::data_dir().map(|d| d.join("applications").join(format!("{name}-handler.desktop"))) else { return };
+    let Ok(text) = std::fs::read_to_string(&file) else { return };
+    if let Some(fixed) = unquote_exec(&text) {
+        match std::fs::write(&file, fixed) {
+            Ok(()) => log::info!("flo:// handler: unquoted Exec in {}", file.display()),
+            Err(e) => log::warn!("flo:// handler: {e}"),
+        }
+    }
+}
+
+/// `Exec="/path/without spaces" %u` → `Exec=/path/without spaces… %u`; None when nothing to change
+/// (already plain, or the path has characters that need the quotes).
+pub(crate) fn unquote_exec(desktop: &str) -> Option<String> {
+    let mut changed = false;
+    let out: Vec<String> = desktop
+        .lines()
+        .map(|l| {
+            if let Some(rest) = l.strip_prefix("Exec=\"") {
+                if let Some((path, tail)) = rest.split_once('"') {
+                    let plain = !path.is_empty() && path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c));
+                    if plain {
+                        changed = true;
+                        return format!("Exec={path}{tail}");
+                    }
+                }
+            }
+            l.to_string()
+        })
+        .collect();
+    changed.then(|| out.join("\n") + if desktop.ends_with('\n') { "\n" } else { "" })
+}
+
+#[cfg(test)]
+mod url_handler_tests {
+    use super::unquote_exec;
+
+    #[test]
+    fn unquotes_a_plain_path_only() {
+        let f = "[Desktop Entry]\nType=Application\nExec=\"/usr/bin/flo-flow\" %u\nMimeType=x-scheme-handler/flo\n";
+        assert_eq!(unquote_exec(f).unwrap(), "[Desktop Entry]\nType=Application\nExec=/usr/bin/flo-flow %u\nMimeType=x-scheme-handler/flo\n");
+        assert_eq!(unquote_exec("Exec=/usr/bin/flo-flow %u\n"), None);
+        // an AppImage in "My Apps" keeps its quotes
+        assert_eq!(unquote_exec("Exec=\"/home/a/My Apps/Flo.AppImage\" %u\n"), None);
+    }
+}
+
 /// ~/.config/autostart/flo.desktop
 fn autostart_file() -> Option<std::path::PathBuf> {
     dirs::config_dir().map(|d| d.join("autostart").join("flo.desktop"))
@@ -560,6 +630,12 @@ pub fn cursor_location() -> Option<(f64, f64)> {
 /// AT-SPI isn't wired up yet, so corrections learning (re-reading the field you dictated into)
 /// is off on Linux.
 pub fn focused_text() -> Option<(usize, String)> {
+    None
+}
+
+/// Without AT-SPI Flo can't tell whether a password field has focus, so it doesn't read the screen
+/// at dictation time on Linux (Attention's own captures still teach it words).
+pub fn focused_window_text(_max_chars: usize) -> Option<super::WindowText> {
     None
 }
 

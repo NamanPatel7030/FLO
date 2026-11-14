@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 import { Bell, CalendarClock, Clock, ExternalLink, FolderKanban, Gauge, MapPin, MessageSquareQuote, User, X } from "lucide-react";
 import type { MeetingSegment, Note, Todo } from "../lib/types";
 import { formatDue, formatWhen } from "../lib/format";
-import { useStore } from "./store";
+import { usePick } from "./store";
 import { SourceBadge } from "./ui";
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -71,7 +71,7 @@ function Row({ icon, label, children }: { icon: React.ReactNode; label: string; 
 }
 
 export function TodoDetails({ todo, onClose }: { todo: Todo; onClose: () => void }) {
-  const { notes, projects, refreshNotes, go } = useStore();
+  const { notes, projects, refreshNotes, go } = usePick("notes", "projects", "refreshNotes", "go");
   useEffect(() => {
     if (!notes) refreshNotes().catch(() => {});
   }, [notes, refreshNotes]);

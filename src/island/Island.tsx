@@ -28,7 +28,7 @@ import {
   type CardContent,
   type IslandVariant,
 } from "../lib/format";
-import { isStuck, sessionsByUrgency } from "../lib/format";
+import { dueDay, isStuck, sessionsByUrgency } from "../lib/format";
 import { toPlainText } from "../lib/markdown";
 import { isSignInError } from "../lib/account";
 import {
@@ -127,7 +127,7 @@ function urgentTodos(todos: Todo[]): Todo[] {
   const today = todayStr();
   const dayAgo = Date.now() - 86_400_000;
   return todos.filter(
-    (t) => t.status === "open" && ((t.due && t.due.slice(0, 10) <= today) || (t.source === "attention" && new Date(t.createdAt).getTime() > dayAgo)),
+    (t) => t.status === "open" && ((t.due && dueDay(t.due) <= today) || (t.source === "attention" && new Date(t.createdAt).getTime() > dayAgo)),
   );
 }
 
@@ -1116,7 +1116,11 @@ export default function Island() {
     >
       <motion.div
         initial={false}
-        animate={{ width: pill.width, height: pill.height, borderRadius: radius }}
+        // Windows / Linux: the size is plain style, applied in the same commit as the window size.
+        // Through `animate` (even with duration 0) motion wrote it a frame later, so for one frame
+        // the old small pill sat in the middle of the already-resized window on open, and a
+        // half-shrunk one on close (a visible jump on every hover)
+        animate={notch ? { width: pill.width, height: pill.height, borderRadius: radius } : undefined}
         transition={morph}
         className={notch ? "relative bg-black text-white" : "relative text-white"}
         data-testid="island-pill"
@@ -1135,6 +1139,9 @@ export default function Island() {
                     : "none", // pure #000 otherwise: no rim, so it reads as the notch itself
               }
             : {
+                width: pill.width,
+                height: pill.height,
+                borderRadius: radius,
                 // no backdrop-filter: the window is transparent over the desktop, so a blur here
                 // only cost GPU time on every frame of the morph without blurring anything
                 // solid: with no blur behind it, a see-through panel let the app underneath bleed into the text

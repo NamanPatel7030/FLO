@@ -28,8 +28,23 @@ impl Tier {
     }
 }
 
+/// The runtime a model needs: whisper.cpp (ggml), or sherpa-onnx (`asr_onnx`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    Whisper,
+    Onnx(crate::asr_onnx::Family),
+}
+
+/// One file of a multi-file (ONNX) model, pinned by size and SHA-256.
+pub struct Part {
+    pub name: &'static str,
+    pub bytes: u64,
+    pub sha256: &'static str,
+}
+
 pub struct ModelSpec {
     pub id: &'static str,
+    /// the file (whisper.cpp) or folder (ONNX) in the models folder
     pub file: &'static str,
     pub label: &'static str,
     /// download size in MB (10^6 bytes, as the server reports it)
@@ -38,6 +53,38 @@ pub struct ModelSpec {
     pub tier: Tier,
     pub speed: &'static str,
     pub accuracy: &'static str,
+    pub engine: Engine,
+    /// Hugging Face repo and pinned revision the files come from
+    pub repo: &'static str,
+    pub rev: &'static str,
+    /// the files of an ONNX model (empty: the single file `file`)
+    pub parts: &'static [Part],
+    /// what it's the best pick for ("English", "Hinglish"); empty = general
+    pub best_for: &'static str,
+    /// the only languages it's used for ("en", "hi-en"); empty = every language it hears. Clips in
+    /// other languages go to a Whisper model (`route_model`).
+    pub only_langs: &'static [&'static str],
+    /// published only as a Hugging Face Whisper fine-tune: `parts` are its safetensors, turned into
+    /// the ggml file `file` after download (`ggml_convert`)
+    pub hf_convert: bool,
+}
+
+impl ModelSpec {
+    #[allow(clippy::too_many_arguments)]
+    const fn whisper(id: &'static str, file: &'static str, label: &'static str, size_mb: u64, languages: &'static str, tier: Tier, speed: &'static str, accuracy: &'static str) -> Self {
+        Self { id, file, label, size_mb, languages, tier, speed, accuracy, engine: Engine::Whisper, repo: "ggerganov/whisper.cpp", rev: "main", parts: &[], best_for: "", only_langs: &[], hf_convert: false }
+    }
+
+    /// Where `name` (a part, or the single file) is downloaded from.
+    pub fn url(&self, name: &str) -> String {
+        // desktop E2E test builds only (inert in release builds; see e2e.rs)
+        crate::e2e::model_url(name).unwrap_or_else(|| format!("https://huggingface.co/{}/resolve/{}/{}", self.repo, self.rev, name))
+    }
+
+    /// Runs in this build (ONNX models need sherpa-onnx: macOS only for now).
+    pub fn available(&self) -> bool {
+        matches!(self.engine, Engine::Whisper) || crate::asr_onnx::supported()
+    }
 }
 
 /// What a fresh install uses: Whisper Small, 5-bit quantized (190 MB). Multilingual, so English,
@@ -45,11 +92,58 @@ pub struct ModelSpec {
 pub const DEFAULT_MODEL: &str = "small-q5_1";
 
 pub const MODELS: &[ModelSpec] = &[
-    ModelSpec { id: "small-q5_1", file: "ggml-small-q5_1.bin", label: "Whisper Small (starter)", size_mb: 190, languages: "99 languages incl. Hindi", tier: Tier::Starter, speed: "Fast", accuracy: "Good for everyday dictation" },
-    ModelSpec { id: "large-v3-turbo-q5_0", file: "ggml-large-v3-turbo-q5_0.bin", label: "Whisper Large v3 Turbo", size_mb: 574, languages: "99 languages incl. Hindi, Gujarati", tier: Tier::Advanced, speed: "A little slower", accuracy: "Much better with accents, Hindi and names" },
-    ModelSpec { id: "large-v3-turbo", file: "ggml-large-v3-turbo.bin", label: "Whisper Large v3 Turbo (full precision)", size_mb: 1624, languages: "99 languages", tier: Tier::Advanced, speed: "Slowest, uses the most memory", accuracy: "Best. Only slightly ahead of Turbo" },
-    ModelSpec { id: "small", file: "ggml-small.bin", label: "Whisper Small (full precision)", size_mb: 488, languages: "99 languages", tier: Tier::Light, speed: "Fast", accuracy: "About the same as the starter, more space" },
-    ModelSpec { id: "base.en", file: "ggml-base.en.bin", label: "Whisper Base English", size_mb: 148, languages: "English", tier: Tier::Light, speed: "Instant", accuracy: "English only" },
+    ModelSpec::whisper("small-q5_1", "ggml-small-q5_1.bin", "Whisper Small (starter)", 190, "99 languages incl. Hindi", Tier::Starter, "Fast", "Good for everyday dictation"),
+    ModelSpec::whisper("large-v3-turbo-q5_0", "ggml-large-v3-turbo-q5_0.bin", "Whisper Large v3 Turbo", 574, "99 languages incl. Hindi, Gujarati", Tier::Advanced, "A little slower", "Much better with accents, Hindi and names"),
+    ModelSpec::whisper("large-v3-turbo", "ggml-large-v3-turbo.bin", "Whisper Large v3 Turbo (full precision)", 1624, "99 languages", Tier::Advanced, "Slowest, uses the most memory", "Best. Only slightly ahead of Turbo"),
+    ModelSpec::whisper("small", "ggml-small.bin", "Whisper Small (full precision)", 488, "99 languages", Tier::Light, "Fast", "About the same as the starter, more space"),
+    ModelSpec::whisper("base.en", "ggml-base.en.bin", "Whisper Base English", 148, "English", Tier::Light, "Instant", "English only"),
+    ModelSpec::whisper("large-v3-q5_0", "ggml-large-v3-q5_0.bin", "Whisper Large v3", 1081, "99 languages incl. Hindi, Gujarati", Tier::Advanced, "Slower: about 1 s per sentence", "Most accurate: a third fewer Hindi errors than Turbo"),
+    // NVIDIA Parakeet TDT 0.6B v2 (CC-BY-4.0), int8 ONNX export by the sherpa-onnx project. English
+    // only: other languages go to the Whisper model next to it.
+    ModelSpec {
+        id: "parakeet-tdt-0.6b-v2",
+        file: "parakeet-tdt-0.6b-v2-int8",
+        label: "NVIDIA Parakeet v2",
+        size_mb: 661,
+        languages: "English. Hindi, Hinglish and Gujarati go to Whisper",
+        tier: Tier::Light,
+        speed: "Runs on the CPU, about 0.9 s per sentence",
+        accuracy: "English only. On par with Turbo in Flo's tests",
+        engine: Engine::Onnx(crate::asr_onnx::Family::NemoTransducer),
+        repo: "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+        rev: "84b478d541cdbf0c296a7ab5f1e20a6f8f998114",
+        parts: &[
+            Part { name: "encoder.int8.onnx", bytes: 652_282_309, sha256: "92a10bd9c23936ea0566c29f963bc57c2a5df4261b6a8921c39abea66557ca8b" },
+            Part { name: "decoder.int8.onnx", bytes: 7_257_753, sha256: "4d097bae3bac5c96018d5293ba39f1b657296102b142affda40378f38b020f41" },
+            Part { name: "joiner.int8.onnx", bytes: 1_739_080, sha256: "77a29f3e5ac7d37074e0af465391b80f314015d5b97f0f90c6c7767f1d56f428" },
+            Part { name: "tokens.txt", bytes: 9_384, sha256: "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d" },
+        ],
+        best_for: "English",
+        only_langs: &["en"],
+        hf_convert: false,
+    },
+    // Oriserve Whisper-Hindi2Hinglish-Apex (Apache-2.0): Large v3 Turbo fine-tuned on Indian-accented
+    // Hindi, written in Roman letters. Used for the Hinglish setting only.
+    ModelSpec {
+        id: "hinglish-apex",
+        file: "ggml-hinglish-apex.bin",
+        label: "Whisper Hinglish (Oriserve Apex)",
+        size_mb: 1618,
+        languages: "Hinglish: Hindi and English in Roman letters",
+        tier: Tier::Advanced,
+        speed: "Like Turbo, uses more memory",
+        accuracy: "Best for Hinglish: a third of Turbo's errors",
+        engine: Engine::Whisper,
+        repo: "Oriserve/Whisper-Hindi2Hinglish-Apex",
+        rev: "f3214eed20b4e4d4144e739982d911f87b9cb223",
+        parts: &[
+            Part { name: "config.json", bytes: 1_194, sha256: "14209b98fb68fc127201bbfebd57cc9f834b0f1a0d0d463a561c8051800af9f4" },
+            Part { name: "model.safetensors", bytes: 1_617_825_448, sha256: "5560830fe8fa09b8cdf1b5926d0cc39a2586eadaad685d809e156432c4ebca80" },
+        ],
+        best_for: "Hinglish",
+        only_langs: &["hi-en"],
+        hf_convert: true,
+    },
 ];
 
 pub fn spec(id: &str) -> Option<&'static ModelSpec> {
@@ -140,8 +234,28 @@ pub fn this_machine_runs_large() -> bool {
 /// to when it's on disk). Installs from before this existed have `stt_model_explicit` false too,
 /// so they move up as well; picking any model in Settings stops it for good.
 pub fn upgrade_target(s: &crate::model::Settings, runs_large: bool) -> Option<&'static str> {
+    upgrade_target_for(s, runs_large, total_ram_gb())
+}
+
+/// The most accurate model for people who speak Hindi or Hinglish, on machines that run it well.
+/// On the dictation bench it made ~24% fewer errors than Turbo overall and ~37% fewer in Hindi,
+/// at about twice the decode time, so English-only users stay on Turbo.
+pub const UPGRADE_MODEL_INDIC: &str = "large-v3-q5_0";
+
+fn speaks_hindi(s: &crate::model::Settings) -> bool {
+    let l = s.language.as_str();
+    l.starts_with("hi") || (l == "auto" && s.auto_languages.iter().any(|a| a.starts_with("hi")))
+}
+
+pub(crate) fn upgrade_target_for(s: &crate::model::Settings, runs_large: bool, ram_gb: f64) -> Option<&'static str> {
+    if s.stt_provider != "local" || !s.onboarded || s.stt_model_explicit || !runs_large {
+        return None;
+    }
+    let target = if ram_gb >= 15.5 && speaks_hindi(s) && spec(UPGRADE_MODEL_INDIC).is_some() { UPGRADE_MODEL_INDIC } else { UPGRADE_MODEL };
     let starter = spec(&s.stt_model).map(|m| m.tier == Tier::Starter).unwrap_or(false);
-    (s.stt_provider == "local" && s.onboarded && !s.stt_model_explicit && starter && runs_large).then_some(UPGRADE_MODEL)
+    // an automatic Turbo upgrade moves on to Large v3 when that is the better fit
+    let auto_turbo = s.stt_model == UPGRADE_MODEL && target == UPGRADE_MODEL_INDIC;
+    (starter || auto_turbo).then_some(target)
 }
 
 /// Where a retried download continues: after the bytes already on disk, but only when the server
@@ -174,6 +288,7 @@ pub fn model_path(models_dir: &Path, id: &str) -> Option<PathBuf> {
 pub fn list_models(models_dir: &Path) -> Vec<LocalModel> {
     MODELS
         .iter()
+        .filter(|m| m.available())
         .map(|m| LocalModel {
             id: m.id.into(),
             label: m.label.into(),
@@ -183,6 +298,8 @@ pub fn list_models(models_dir: &Path) -> Vec<LocalModel> {
             tier: m.tier.as_str().into(),
             speed: m.speed.into(),
             accuracy: m.accuracy.into(),
+            engine: if m.engine == Engine::Whisper { "whisper" } else { "onnx" }.into(),
+            best_for: m.best_for.into(),
         })
         .collect()
 }
@@ -191,7 +308,13 @@ pub fn list_models(models_dir: &Path) -> Vec<LocalModel> {
 /// the next try continues from there (HTTP Range) instead of starting over.
 pub async fn download_model(egress: &Egress, models_dir: &Path, id: &str, progress: impl Fn(ModelProgressEvent)) -> Result<()> {
     let s = spec(id).ok_or_else(|| anyhow!("unknown model {id}"))?;
-    let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}", s.file);
+    if !s.available() {
+        bail!("This model doesn't run on this computer yet.");
+    }
+    if !s.parts.is_empty() {
+        return download_parts(egress, models_dir, s, progress).await;
+    }
+    let url = crate::e2e::model_url(s.file).unwrap_or_else(|| s.url(s.file));
     egress.check(&url, Purpose::ModelDownload, false)?;
     tokio::fs::create_dir_all(models_dir).await?;
     let client = egress.client(Purpose::ModelDownload, false);
@@ -242,6 +365,143 @@ pub async fn download_model(egress: &Egress, models_dir: &Path, id: &str, progre
     Ok(())
 }
 
+/// Total download size of a multi-file model.
+pub fn parts_bytes(parts: &[Part]) -> u64 {
+    parts.iter().map(|p| p.bytes).sum()
+}
+
+/// SHA-256 of a file, hex.
+pub fn sha256_file(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// A multi-file (ONNX) model: every part into `<folder>.part/` (each one resumable, checked
+/// against its pinned size and SHA-256), then the folder renamed into place, so a model folder
+/// that exists is always complete.
+async fn download_parts(egress: &Egress, models_dir: &Path, s: &ModelSpec, progress: impl Fn(ModelProgressEvent)) -> Result<()> {
+    let id = s.id;
+    let staging = models_dir.join(format!("{}.part", s.file));
+    tokio::fs::create_dir_all(&staging).await?;
+    let client = egress.client(Purpose::ModelDownload, false);
+    let total = parts_bytes(s.parts);
+    let mut done_before: u64 = 0;
+    let mut last_bytes = 0u64;
+    let mut last_at = std::time::Instant::now();
+    progress(ModelProgressEvent { id: id.into(), received: 0, total, done: false, error: None });
+    for part in s.parts {
+        let url = crate::e2e::model_url(&format!("{}/{}", s.file, part.name)).unwrap_or_else(|| s.url(part.name));
+        egress.check(&url, Purpose::ModelDownload, false)?;
+        let dest = staging.join(part.name);
+        if let Some(dir) = dest.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        let have = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
+        if have != part.bytes {
+            let mut req = client.get(&url);
+            if have > 0 && have < part.bytes {
+                req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
+            }
+            let resp = req.send().await?;
+            if resp.status().as_u16() == 416 {
+                let _ = tokio::fs::remove_file(&dest).await;
+                bail!("The download stopped early. Check your connection and try again.");
+            }
+            let resp = resp.error_for_status()?;
+            let offset = if have < part.bytes { resume_offset(have, resp.status().as_u16()) } else { 0 };
+            let mut f = if offset > 0 { tokio::fs::OpenOptions::new().append(true).open(&dest).await? } else { tokio::fs::File::create(&dest).await? };
+            let mut received = offset;
+            let mut stream = resp.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                f.write_all(&chunk).await?;
+                received += chunk.len() as u64;
+                let now = done_before + received;
+                if should_emit(now, last_bytes, last_at.elapsed().as_millis()) {
+                    last_bytes = now;
+                    last_at = std::time::Instant::now();
+                    progress(ModelProgressEvent { id: id.into(), received: now, total, done: false, error: None });
+                }
+            }
+            f.flush().await?;
+            drop(f);
+            if received != part.bytes {
+                bail!("The download stopped early. Check your connection and try again.");
+            }
+            egress.record(&url, Purpose::ModelDownload, received - offset);
+        }
+        let d = dest.clone();
+        let sum = tokio::task::spawn_blocking(move || sha256_file(&d)).await??;
+        if sum != part.sha256 {
+            let _ = tokio::fs::remove_file(&dest).await;
+            bail!("The downloaded model didn't check out ({}). Try again.", part.name);
+        }
+        done_before += part.bytes;
+    }
+    let target = models_dir.join(s.file);
+    if s.hf_convert {
+        let (header, hp) = whisper_template(egress, models_dir).await?;
+        let config = tokio::fs::read_to_string(staging.join("config.json")).await?;
+        crate::ggml_convert::check_config(&config, &hp)?;
+        let (st, out) = (staging.join("model.safetensors"), target.clone());
+        let t = std::time::Instant::now();
+        let n = tokio::task::spawn_blocking(move || crate::ggml_convert::convert(&st, &header, &hp, &out)).await??;
+        log::info!("speech model {id}: converted {n} tensors to ggml in {} ms", t.elapsed().as_millis());
+        let _ = tokio::fs::remove_dir_all(&staging).await;
+    } else {
+        if target.exists() {
+            let _ = tokio::fs::remove_dir_all(&target).await;
+        }
+        tokio::fs::rename(&staging, &target).await?;
+    }
+    progress(ModelProgressEvent { id: id.into(), received: total, total, done: true, error: None });
+    Ok(())
+}
+
+/// Header (hparams, mel filters, vocabulary) of the official Large v3 Turbo ggml, for converting a
+/// Turbo fine-tune: from the copy on disk when there is one, else its first MB from Hugging Face.
+async fn whisper_template(egress: &Egress, models_dir: &Path) -> Result<(Vec<u8>, crate::ggml_convert::Hparams)> {
+    const HEAD: usize = 1 << 20;
+    for f in ["ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo.bin"] {
+        let p = models_dir.join(f);
+        if let Ok(mut file) = std::fs::File::open(&p) {
+            use std::io::Read;
+            let mut head = vec![0u8; HEAD];
+            let n = file.read(&mut head)?;
+            if let Ok(t) = crate::ggml_convert::template_header(&head[..n]) {
+                return Ok(t);
+            }
+        }
+    }
+    let s = spec("large-v3-turbo-q5_0").ok_or_else(|| anyhow!("no template model"))?;
+    let url = s.url(s.file);
+    egress.check(&url, Purpose::ModelDownload, false)?;
+    let resp = egress.client(Purpose::ModelDownload, false).get(&url).header(reqwest::header::RANGE, format!("bytes=0-{}", HEAD - 1)).send().await?.error_for_status()?;
+    let head = resp.bytes().await?;
+    egress.record(&url, Purpose::ModelDownload, head.len() as u64);
+    crate::ggml_convert::template_header(&head)
+}
+
+/// Delete a downloaded model: a file (whisper.cpp) or a folder (ONNX).
+pub fn remove_model_path(path: &Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+}
+
 /// The decoder sometimes emits the whole sentence twice in a row ("A. A."); keep one copy.
 /// Only an exact back-to-back repeat of the full text (≥ 3 words) is collapsed.
 pub fn collapse_repeat(text: &str) -> String {
@@ -275,7 +535,31 @@ pub fn join_chunks(chunks: &[String]) -> String {
         }
         kept.push(c);
     }
-    collapse_loops(&kept.join(" "))
+    let mut out = String::new();
+    for c in kept {
+        if !out.is_empty() && !glued(&out, c) {
+            out.push(' ');
+        }
+        out.push_str(c);
+    }
+    collapse_loops(&out)
+}
+
+/// A pause inside a number or address splits it into two chunks, each closed with a period by the
+/// model: "version 2." + "4 on Monday", "priya.sharma@gmail." + "com". Those are one token again.
+fn glued(prev: &str, next: &str) -> bool {
+    let Some(head) = prev.strip_suffix('.') else { return false };
+    let before = head.chars().last();
+    let first = next.chars().next();
+    if before.is_some_and(|c| c.is_ascii_digit()) && first.is_some_and(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    // a lowercase domain ending right after the period ("gmail." + "com and…"); a new sentence
+    // would start with a capital
+    // ("in", "co" and "ai" left out: "…there." + "in the morning" is a sentence, not a domain)
+    const TLDS: &[&str] = &["com", "org", "net", "io", "dev", "edu", "gov"];
+    let word: String = next.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    before.is_some_and(|c| c.is_ascii_alphanumeric()) && TLDS.contains(&word.as_str())
 }
 
 fn norm_words(t: &str) -> Vec<String> {
@@ -309,9 +593,12 @@ pub fn collapse_loops(text: &str) -> String {
     // 1) sentence level
     let mut sentences: Vec<String> = vec![];
     let mut cur = String::new();
-    for ch in text.chars() {
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
         cur.push(ch);
-        if matches!(ch, '.' | '?' | '!' | '।' | '॥') {
+        // a sentence ends at the mark only when a space (or the end) follows: "2.4", "gmail.com"
+        // and "p.m." are one word (they used to come out as "2. 4", "gmail. com")
+        if matches!(ch, '.' | '?' | '!' | '।' | '॥') && chars.peek().is_none_or(|c| c.is_whitespace()) {
             sentences.push(std::mem::take(&mut cur));
         }
     }
@@ -874,6 +1161,82 @@ pub struct LocalWhisper {
     ctx: Mutex<Option<(String, Arc<whisper_rs::WhisperContext>)>>,
     #[cfg(not(feature = "local-stt"))]
     _p: Mutex<Option<Arc<()>>>,
+    /// the ONNX engines (Parakeet, Qwen3-ASR); a model folder goes here instead of whisper.cpp
+    onnx: crate::asr_onnx::OnnxAsr,
+}
+
+/// Whisper models a clip falls back to, best first, when the chosen model can't hear its language.
+pub const FALLBACK_MODELS: &[&str] = &["large-v3-q5_0", "large-v3-turbo-q5_0", "large-v3-turbo", "small-q5_1", "small"];
+
+/// Can the model at `model_file` transcribe `language`? "auto" needs every language Auto picks
+/// from (`auto_langs`; empty = Whisper's 99). Whisper models hear everything (base.en: English).
+pub fn model_hears(model_file: &Path, language: &str, auto_langs: &[String]) -> bool {
+    let name = model_file.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    if let Some(m) = MODELS.iter().find(|m| m.file == name && !m.only_langs.is_empty()) {
+        return match language {
+            "" | "auto" => !auto_langs.is_empty() && auto_langs.iter().all(|l| m.only_langs.contains(&l.as_str())),
+            l => m.only_langs.contains(&l),
+        };
+    }
+    let Some(f) = onnx_family(model_file) else {
+        let english_only = model_file.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.contains(".en"));
+        return !english_only || language == "en";
+    };
+    match language {
+        "" | "auto" => !auto_langs.is_empty() && auto_langs.iter().all(|l| crate::asr_onnx::hears(f, l)),
+        l => crate::asr_onnx::hears(f, l),
+    }
+}
+
+/// The model that transcribes a clip: the chosen one when it hears the language, otherwise the best
+/// Whisper model downloaded next to it. That's the per-language routing: pick Parakeet (English)
+/// and Hindi, Hinglish or Gujarati still go to Whisper; None when nothing downloaded can.
+pub fn route_model(chosen: &Path, language: &str, auto_langs: &[String]) -> Option<PathBuf> {
+    let dir = chosen.parent()?;
+    // a model made for exactly this language (Hinglish), once downloaded, takes its clips
+    if let Some(p) = MODELS.iter().filter(|m| m.only_langs == [language] && m.engine == Engine::Whisper).map(|m| dir.join(m.file)).find(|p| p.exists()) {
+        return Some(p);
+    }
+    if model_hears(chosen, language, auto_langs) {
+        return Some(chosen.to_path_buf());
+    }
+    FALLBACK_MODELS.iter().filter_map(|id| spec(id)).map(|m| dir.join(m.file)).find(|p| p.exists())
+}
+
+/// Does a clip for a Whisper model need `route_model`? Only when a language-specific model is
+/// involved (the chosen one is one, or one for this language is downloaded); otherwise the chosen
+/// Whisper model always transcribes, with no file checks per clip.
+fn needs_routing(model_file: &Path, language: &str) -> bool {
+    let name = model_file.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let dir = model_file.parent();
+    MODELS.iter().any(|m| !m.only_langs.is_empty() && (m.file == name || (m.only_langs == [language] && dir.is_some_and(|d| d.join(m.file).exists()))))
+}
+
+/// The ONNX family of the model at `model_file`, or None for a whisper.cpp model. Known models by
+/// their catalogue entry; any other folder (benchmarks) by its files.
+pub fn onnx_family(model_file: &Path) -> Option<crate::asr_onnx::Family> {
+    use crate::asr_onnx::Family;
+    let name = model_file.file_name()?.to_str()?;
+    if let Some(m) = MODELS.iter().find(|m| m.file == name) {
+        return match m.engine {
+            Engine::Onnx(f) => Some(f),
+            Engine::Whisper => None,
+        };
+    }
+    if !model_file.is_dir() {
+        return None;
+    }
+    Some(if model_file.join("tokenizer").is_dir() { Family::Qwen3 } else { Family::NemoTransducer })
+}
+
+/// Language of an ONNX transcript: Hindi when it's written in Devanagari, else English, unless
+/// the user fixed one. "auto" settles Hindi vs Gujarati like the Whisper path (`final_language`).
+pub fn onnx_language(language: &str, text: &str, allowed: &[String]) -> String {
+    let devanagari = text.chars().any(|c| ('\u{0900}'..='\u{097F}').contains(&c));
+    match language {
+        "" | "auto" => final_language(if devanagari { "hi" } else { "en" }, text, allowed),
+        l => l.to_string(),
+    }
 }
 
 impl LocalWhisper {
@@ -884,6 +1247,9 @@ impl LocalWhisper {
             if self.ctx.lock().take().is_some() {
                 log::info!("unloaded speech model");
             }
+        }
+        if self.onnx.unload() {
+            log::info!("unloaded onnx speech model");
         }
         *self.last_used.lock() = None;
     }
@@ -897,6 +1263,9 @@ impl LocalWhisper {
                 if self.ctx.lock().take().is_some() {
                     log::info!("unloaded speech model after idle");
                 }
+            }
+            if self.onnx.unload() {
+                log::info!("unloaded onnx speech model after idle");
             }
             *self.last_used.lock() = None;
         }
@@ -929,7 +1298,7 @@ impl LocalWhisper {
     pub fn warm(&self, model_file: &Path) {
         let t = std::time::Instant::now();
         let was_loaded = self.is_loaded();
-        if self.context(model_file).is_ok() {
+        if self.load(model_file).is_ok() {
             log::info!("speech model ready in {} ms ({})", t.elapsed().as_millis(), if was_loaded { "warm" } else { "cold load" });
         }
     }
@@ -937,7 +1306,7 @@ impl LocalWhisper {
     /// The model is in memory (the next dictation skips loading it).
     #[cfg(feature = "local-stt")]
     pub fn is_loaded(&self) -> bool {
-        self.ctx.lock().is_some()
+        self.ctx.lock().is_some() || self.onnx.is_loaded()
     }
 
     #[cfg(not(feature = "local-stt"))]
@@ -952,6 +1321,13 @@ impl LocalWhisper {
     /// dictation, so the try-out never meets a cold or missing model).
     #[cfg(feature = "local-stt")]
     pub fn load(&self, model_file: &Path) -> Result<()> {
+        if let Some(f) = onnx_family(model_file) {
+            // a Whisper model already loaded stays: clips Parakeet can't hear are routed to it
+            *self.last_used.lock() = Some(std::time::Instant::now());
+            return self.onnx.load(model_file, f);
+        }
+        // a Whisper model chosen: an ONNX one isn't needed any more
+        self.onnx.unload();
         self.context(model_file).map(|_| ())
     }
 
@@ -1013,6 +1389,21 @@ impl LocalWhisper {
     /// again. "hi-en" (Hinglish) is decoded as English steered to Roman-letter Hindi.
     #[cfg(feature = "local-stt")]
     pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+        if onnx_family(model_file).is_some() || needs_routing(model_file, language) {
+            let langs = self.auto_langs.lock().clone();
+            match route_model(model_file, language, &langs) {
+                Some(p) if p.as_path() != model_file => {
+                    log::info!("stt: {} can't hear {language}; using {}", model_file.display(), p.display());
+                    return self.transcribe(&p, samples, language, prompt);
+                }
+                Some(_) => {
+                    if let Some(f) = onnx_family(model_file) {
+                        return self.transcribe_onnx(model_file, f, samples, language);
+                    }
+                }
+                None => bail!("This speech model can't hear that language. Download Whisper Large v3 Turbo in Settings → Voice."),
+            }
+        }
         let t0 = std::time::Instant::now();
         let mut timing = DecodeTiming::default();
         let lang_in = if language.is_empty() { "auto" } else { language };
@@ -1254,6 +1645,25 @@ impl LocalWhisper {
         Ok(((collapse_loops(&out), mean_confidence(&probs)), state))
     }
 
+    /// A clip through an ONNX engine (`asr_onnx`): one pass, no prompt (these models take none),
+    /// the language read off the transcript, Gujarati rewritten in its own script.
+    fn transcribe_onnx(&self, dir: &Path, f: crate::asr_onnx::Family, samples: &[f32], language: &str) -> Result<String> {
+        // a Whisper model loaded for routed clips (Hindi while Parakeet is chosen) stays loaded
+        // next to it; the idle unloader frees both
+        let t0 = std::time::Instant::now();
+        *self.last_used.lock() = Some(t0);
+        let text = collapse_loops(&self.onnx.transcribe(dir, f, samples)?);
+        let lang = onnx_language(language, &text, &self.auto_langs.lock().clone());
+        if matches!(language, "" | "auto") {
+            *self.detected.lock() = Some(lang.clone());
+        }
+        *self.last_lang.lock() = lang.clone();
+        let timing = DecodeTiming { total_ms: t0.elapsed().as_millis(), confidence: 1.0, ..Default::default() };
+        *self.last_timing.lock() = timing;
+        log::info!("stt: {} ms (onnx {f:?}) lang={lang}", timing.total_ms);
+        Ok(in_script(&text, &lang))
+    }
+
     /// Language Whisper last auto-detected ("hi", "gu", "en", …), if any.
     pub fn detected_lang(&self) -> Option<String> {
         self.detected.lock().clone()
@@ -1265,7 +1675,10 @@ impl LocalWhisper {
     }
 
     #[cfg(not(feature = "local-stt"))]
-    pub fn transcribe(&self, _m: &Path, _s: &[f32], _l: &str, _p: &str) -> Result<String> {
+    pub fn transcribe(&self, m: &Path, s: &[f32], l: &str, _p: &str) -> Result<String> {
+        if let Some(f) = onnx_family(m) {
+            return self.transcribe_onnx(m, f, s, l);
+        }
         bail!("This build has no on-device speech model. Choose OpenAI or Groq in Settings → Voice.")
     }
 }
@@ -1395,7 +1808,7 @@ pub fn unused_installed(models_dir: &Path, in_use: &str) -> Vec<&'static ModelSp
 pub fn remove_unused(models_dir: &Path, in_use: &str) -> u64 {
     unused_installed(models_dir, in_use)
         .into_iter()
-        .filter(|m| std::fs::remove_file(models_dir.join(m.file)).is_ok())
+        .filter(|m| remove_model_path(&models_dir.join(m.file)).is_ok())
         .map(|m| {
             log::info!("removed unused speech model {}", m.id);
             m.size_mb
@@ -1534,23 +1947,40 @@ mod upgrade_tests {
     }
 
     #[test]
+    fn hindi_speakers_on_16gb_get_large_v3_and_english_only_stays_on_turbo() {
+        let hindi = Settings { language: "auto".into(), auto_languages: vec!["en".into(), "hi".into()], ..installed() };
+        assert_eq!(upgrade_target_for(&hindi, true, 16.0), Some(UPGRADE_MODEL_INDIC));
+        assert_eq!(upgrade_target_for(&hindi, true, 8.0), Some(UPGRADE_MODEL));
+        let hinglish = Settings { language: "hi-en".into(), ..installed() };
+        assert_eq!(upgrade_target_for(&hinglish, true, 32.0), Some(UPGRADE_MODEL_INDIC));
+        let english = Settings { language: "en".into(), ..installed() };
+        assert_eq!(upgrade_target_for(&english, true, 32.0), Some(UPGRADE_MODEL));
+        // an automatic Turbo upgrade moves on; a model the user picked never does
+        let auto_turbo = Settings { stt_model: UPGRADE_MODEL.into(), ..hindi.clone() };
+        assert_eq!(upgrade_target_for(&auto_turbo, true, 16.0), Some(UPGRADE_MODEL_INDIC));
+        assert_eq!(upgrade_target_for(&Settings { stt_model_explicit: true, ..auto_turbo.clone() }, true, 16.0), None);
+        assert_eq!(upgrade_target_for(&Settings { language: "en".into(), ..auto_turbo }, true, 16.0), None);
+        assert!(spec(UPGRADE_MODEL_INDIC).is_some());
+    }
+
+    #[test]
     fn starter_moves_up_after_setup_on_a_capable_machine() {
-        assert_eq!(upgrade_target(&installed(), true), Some(UPGRADE_MODEL));
+        assert_eq!(upgrade_target_for(&installed(), true, 8.0), Some(UPGRADE_MODEL));
         assert!(spec(UPGRADE_MODEL).is_some_and(|m| m.tier == Tier::Advanced));
     }
 
     #[test]
     fn no_upgrade_during_setup_on_weak_machines_or_for_cloud_engines() {
-        assert_eq!(upgrade_target(&Settings { onboarded: false, ..installed() }, true), None);
-        assert_eq!(upgrade_target(&installed(), false), None);
-        assert_eq!(upgrade_target(&Settings { stt_provider: "groq".into(), ..installed() }, true), None);
+        assert_eq!(upgrade_target_for(&Settings { onboarded: false, ..installed() }, true, 8.0), None);
+        assert_eq!(upgrade_target_for(&installed(), false, 8.0), None);
+        assert_eq!(upgrade_target_for(&Settings { stt_provider: "groq".into(), ..installed() }, true, 8.0), None);
     }
 
     #[test]
     fn a_model_the_user_picked_is_never_replaced() {
-        assert_eq!(upgrade_target(&Settings { stt_model_explicit: true, ..installed() }, true), None);
+        assert_eq!(upgrade_target_for(&Settings { stt_model_explicit: true, ..installed() }, true, 8.0), None);
         for m in ["large-v3-turbo-q5_0", "large-v3-turbo", "base.en", "small"] {
-            assert_eq!(upgrade_target(&Settings { stt_model: m.into(), ..installed() }, true), None, "{m}");
+            assert_eq!(upgrade_target_for(&Settings { stt_model: m.into(), ..installed() }, true, 8.0), None, "{m}");
         }
     }
 
@@ -1559,7 +1989,7 @@ mod upgrade_tests {
         // a settings file from 0.1.7 / 0.1.8: no sttModelExplicit key
         let s: Settings = serde_json::from_str(r#"{"settingsVersion":7,"onboarded":true,"sttProvider":"local","sttModel":"small-q5_1"}"#).unwrap();
         assert!(!s.stt_model_explicit);
-        assert_eq!(upgrade_target(&s, true), Some(UPGRADE_MODEL));
+        assert_eq!(upgrade_target_for(&s, true, 8.0), Some(UPGRADE_MODEL));
     }
 
     #[test]
@@ -1917,6 +2347,22 @@ mod join_tests {
     }
 
     #[test]
+    fn a_pause_inside_a_number_or_address_is_not_a_sentence_break() {
+        let j = |v: &[&str]| join_chunks(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        // seen in the dictation bench: "version 2 point 4", "gmail dot com" with a pause
+        assert_eq!(j(&["We shipped version 2.", "4 on Monday."]), "We shipped version 2.4 on Monday.");
+        assert_eq!(j(&["Write to priya.sharma@gmail.", "com today."]), "Write to priya.sharma@gmail.com today.");
+        // numbers, addresses and abbreviations inside one decode survive the loop check
+        let t = "Version 2.4 is out. Mail priya.sharma@gmail.com by 3 p.m. today, see flo.app/docs.";
+        assert_eq!(collapse_loops(t), t);
+        assert_eq!(collapse_loops("Send it. Send it."), "Send it.");
+        // real sentence breaks stay
+        assert_eq!(j(&["I have 2.", "Four more are coming."]), "I have 2. Four more are coming.");
+        assert_eq!(j(&["I'll be there.", "in the morning"]), "I'll be there. in the morning");
+        assert_eq!(j(&["Send it.", "Then call."]), "Send it. Then call.");
+    }
+
+    #[test]
     fn pause_chunks_that_echo_the_previous_one_are_dropped() {
         // each sentence is decoded on its own with the previous one as Whisper's prompt; a short or
         // unclear chunk comes back as a copy of that prompt, and the copies were simply joined
@@ -1980,11 +2426,108 @@ mod tier_tests {
         ids.dedup();
         assert_eq!(ids.len(), MODELS.len());
         for m in MODELS {
-            assert!(m.file.starts_with("ggml-") && m.file.ends_with(".bin"));
+            match m.engine {
+                Engine::Whisper => assert!(m.file.starts_with("ggml-") && m.file.ends_with(".bin") && m.parts.is_empty() != m.hf_convert),
+                Engine::Onnx(_) => assert!(!m.hf_convert),
+            }
+            if !m.parts.is_empty() {
+                {
+                    // a pinned revision (never a moving branch) and every part pinned by size + hash
+                    assert!(m.rev.len() == 40 && m.rev.chars().all(|c| c.is_ascii_hexdigit()), "{}", m.id);
+                    assert!(!m.file.ends_with(".part"));
+                    for p in m.parts {
+                        assert!(p.bytes > 0 && p.sha256.len() == 64 && p.sha256.chars().all(|c| c.is_ascii_hexdigit()), "{}", p.name);
+                    }
+                    let mb = parts_bytes(m.parts) as f64 / 1e6;
+                    assert!((mb - m.size_mb as f64).abs() < 2.0, "{} size {} vs parts {mb:.0}", m.id, m.size_mb);
+                    assert!(!m.best_for.is_empty());
+                }
+            }
+            // downloads only from the model hub on the egress allow-list
+            let url = url::Url::parse(&m.url(m.file)).unwrap();
+            assert!(crate::egress::is_allowed(url.host_str().unwrap(), crate::egress::Purpose::ModelDownload, false), "{url}");
             for t in [m.label, m.speed, m.accuracy, m.languages] {
                 assert!(!t.contains('—') && !t.contains('–'), "no em dashes in app copy: {t}");
             }
         }
+    }
+
+    #[test]
+    fn onnx_models_are_folders_routed_by_language() {
+        let d = dir_with(&["ggml-small-q5_1.bin"]);
+        let parakeet = model_path(&d, "parakeet-tdt-0.6b-v2").unwrap();
+        std::fs::create_dir_all(&parakeet).unwrap();
+        assert_eq!(onnx_family(&parakeet), Some(crate::asr_onnx::Family::NemoTransducer));
+        assert_eq!(onnx_family(&d.join("ggml-small-q5_1.bin")), None);
+        let langs = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // English goes to Parakeet
+        assert_eq!(route_model(&parakeet, "en", &[]), Some(parakeet.clone()));
+        assert_eq!(route_model(&parakeet, "auto", &langs(&["en"])), Some(parakeet.clone()));
+        // Hindi, Hinglish, Gujarati, and Auto with Hindi in it go to the best Whisper on disk
+        let small = d.join("ggml-small-q5_1.bin");
+        for l in ["hi", "hi-en", "gu"] {
+            assert_eq!(route_model(&parakeet, l, &[]), Some(small.clone()), "{l}");
+        }
+        assert_eq!(route_model(&parakeet, "auto", &langs(&["en", "hi"])), Some(small.clone()));
+        std::fs::write(d.join("ggml-large-v3-turbo-q5_0.bin"), b"x").unwrap();
+        assert_eq!(route_model(&parakeet, "hi", &[]), Some(d.join("ggml-large-v3-turbo-q5_0.bin")));
+        // Whisper models hear everything (base.en only English)
+        assert_eq!(route_model(&small, "hi", &[]), Some(small.clone()));
+        assert!(!model_hears(&d.join("ggml-base.en.bin"), "hi", &[]));
+        std::fs::remove_dir_all(&d).ok();
+        // nothing that hears Hindi downloaded
+        let lone = dir_with(&[]);
+        let p = model_path(&lone, "parakeet-tdt-0.6b-v2").unwrap();
+        assert_eq!(route_model(&p, "hi", &[]), None);
+        std::fs::remove_dir_all(lone).ok();
+    }
+
+    #[test]
+    fn hinglish_goes_to_the_hinglish_model_once_downloaded() {
+        let d = dir_with(&["ggml-large-v3-turbo-q5_0.bin"]);
+        let turbo = d.join("ggml-large-v3-turbo-q5_0.bin");
+        let apex = d.join("ggml-hinglish-apex.bin");
+        assert_eq!(route_model(&turbo, "hi-en", &[]), Some(turbo.clone()));
+        assert!(!needs_routing(&turbo, "hi-en"));
+        std::fs::write(&apex, b"x").unwrap();
+        // Hinglish clips go to it, whichever model is chosen
+        assert!(needs_routing(&turbo, "hi-en"));
+        assert_eq!(route_model(&turbo, "hi-en", &[]), Some(apex.clone()));
+        assert_eq!(route_model(&apex, "hi-en", &[]), Some(apex.clone()));
+        // everything else stays with Whisper (it writes Hindi in Roman letters and is weaker at English)
+        assert!(!needs_routing(&turbo, "en") && !needs_routing(&turbo, "auto"));
+        for l in ["en", "hi", "auto", "gu"] {
+            assert_eq!(route_model(&apex, l, &["en".to_string(), "hi".to_string()]), Some(turbo.clone()), "{l}");
+        }
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn a_model_folder_is_installed_only_once_complete_and_is_removed_whole() {
+        let d = dir_with(&[]);
+        // a half-finished download sits in "<folder>.part" and doesn't count
+        std::fs::create_dir_all(d.join("parakeet-tdt-0.6b-v2-int8.part")).unwrap();
+        let row = |d: &Path| list_models(d).into_iter().find(|m| m.id == "parakeet-tdt-0.6b-v2");
+        if crate::asr_onnx::supported() {
+            assert!(!row(&d).unwrap().installed);
+            std::fs::create_dir_all(d.join("parakeet-tdt-0.6b-v2-int8")).unwrap();
+            std::fs::write(d.join("parakeet-tdt-0.6b-v2-int8").join("tokens.txt"), b"x").unwrap();
+            let r = row(&d).unwrap();
+            assert!(r.installed && r.engine == "onnx" && r.best_for == "English");
+            assert_eq!(remove_unused(&d, DEFAULT_MODEL), 661);
+            assert!(!d.join("parakeet-tdt-0.6b-v2-int8").exists());
+        } else {
+            assert!(row(&d).is_none(), "not offered where it can't run");
+        }
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn sha256_of_a_file() {
+        let d = dir_with(&[]);
+        std::fs::write(d.join("f"), b"abc").unwrap();
+        assert_eq!(sha256_file(&d.join("f")).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        std::fs::remove_dir_all(d).ok();
     }
 
     #[test]

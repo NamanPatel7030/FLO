@@ -14,7 +14,7 @@ import { Ribbon, type RibbonMode } from "../../island/Ribbon";
 import * as snd from "../../lib/onboardSounds";
 import { usePermissions } from "../usePermissions";
 import { hotkeyReady } from "./perms";
-import { os } from "../../lib/os";
+import { os, islandWord } from "../../lib/os";
 import { Burst } from "./Aurora";
 import { Btn, ChoiceCard, Chip, Heading, Key, Rise, Stagger, rise } from "./parts";
 import { friendlyError, toggle, type SetupAnswers } from "./flow";
@@ -197,7 +197,7 @@ export function TryDemo({
       <Stagger className="flex w-full flex-col items-center">
         <Rise className="mt-3 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[17px] text-[#5b6678]">
           Hold <Key>{keyLabel}</Key>
-          {keyWord && <span className="text-[14px]">({keyWord})</span>} or the mic button and say
+          {keyWord && keyWord.toLowerCase() !== String(keyLabel).toLowerCase() && <span className="text-[14px]">({keyWord})</span>} or the mic button and say
           <span className="font-semibold text-[#0b1220]">"{PHRASE}"</span>
         </Rise>
 
@@ -239,7 +239,7 @@ export function TryDemo({
             {mode ? (
               <Ribbon width={320} height={40} notchWidth={0} wing={160} mode={mode} leftWing />
             ) : (
-              <div className="flex h-full items-center justify-center text-[12px] text-white/45">your notch</div>
+              <div className="flex h-full items-center justify-center text-[12px] text-white/45">your {islandWord()}</div>
             )}
           </div>
           <div className="relative mt-[60px]">

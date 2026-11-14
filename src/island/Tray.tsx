@@ -352,7 +352,7 @@ export function TrayTooltip({
       {item.kind === "todos" && (
         <>
           <div className="mb-1 flex h-[26px] shrink-0 items-center gap-1.5 text-[12.5px] font-semibold">
-            <CheckCircle2 size={13} className="text-brand-300" /> {item.todos.length} to-do{item.todos.length === 1 ? "" : "s"} need you
+            <CheckCircle2 size={13} className="text-brand-300" /> {item.todos.length === 1 ? "1 to-do needs you" : `${item.todos.length} to-dos need you`}
           </div>
           {/* every to-do, scrollable (it used to show only the first three), each one tickable */}
           <div className="flo-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain" style={{ maxHeight: TRAY_LIST_ROW * 6 }} data-testid="todo-tip-list">

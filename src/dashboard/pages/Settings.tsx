@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import clsx from "clsx";
 import { Bell, Check, Download, KeyRound, Lock, Mic, Play, RotateCcw, ShieldCheck, Sparkles, Trash2, X, Keyboard, Palette, Volume2, LayoutGrid, GripVertical, ChevronUp, ChevronDown, Maximize2, Globe2, Plus, Search, SunMoon } from "lucide-react";
 import { api, on } from "../../lib/api";
 import { permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyOptions, hotkeyWords, relativeTime, sameHotkey } from "../../lib/format";
-import { deviceWord, keyStoreName, os, settingsApp } from "../../lib/os";
-import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, languageActive, pickLanguage, progressText, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
+import { deviceWord, keyStoreName, os, settingsApp, islandWord } from "../../lib/os";
+import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, languageActive, pickLanguage, progressText, routingNote, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
 import { useSpeechModels, type Download as SpeechDownload } from "../useSpeechModels";
 import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type TaskCaptureLevel, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
-import { useStore } from "../store";
+import { useStore, usePick, usePageArg } from "../store";
 import { Button, Card, CardTitle, FieldHelp, InfoDot, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
 import { About } from "../About";
 import { Integrations } from "../Integrations";
@@ -26,6 +26,7 @@ import { PresenceSettings } from "../Presence";
 import { SyncCard } from "../SyncCard";
 import { PlatformChecks } from "../PlatformChecks";
 import { AutoContinueSettings } from "../AutoContinue";
+import { LearningSettings } from "../Learning";
 import { formatZoneTime, hourDiffLabel, loadZones, MAX_ZONES, onZonesChange, saveZones, searchCities, type ClockZone, type ZoneCity } from "../../lib/timezones";
 
 const TABS = ["General", "Appearance", "Shortcuts", "Voice", "AI", "Privacy", "Permissions", "Dictionary", "Integrations", "About"] as const;
@@ -39,34 +40,64 @@ function resolveSettingsTab(arg: string | undefined): Tab {
 }
 
 export default function Settings() {
-  const { settings, setSettings, pageArg, go } = useStore();
+  const { settings, setSettings, go } = usePick("settings", "setSettings", "go");
+  const pageArg = usePageArg("settings");
+  // the tab body only lives while Settings is showing: each visit loads fresh values (as before),
+  // and a hidden Settings re-renders only when you enter or leave it, not on every navigation
+  const active = useStore((s) => s.page === "settings");
   const tab = resolveSettingsTab(pageArg);
   const set = (patch: Partial<S>) => settings && setSettings({ ...settings, ...patch });
   // rewrite a merged-away tab's URL to its new home so the address matches what's shown
   useEffect(() => {
     if (pageArg && TAB_ALIASES[pageArg.toLowerCase()]) go("settings", tab.toLowerCase());
   }, [pageArg]); // eslint-disable-line react-hooks/exhaustive-deps
+  // keep the selected tab in view when the tab row scrolls (narrow window)
+  const tabBar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const center = () => {
+      const bar = tabBar.current;
+      const el = bar?.querySelector<HTMLElement>("[data-active]");
+      if (!bar || !el || bar.scrollWidth <= bar.clientWidth) return;
+      // measured from the boxes (offsetLeft is relative to the nearest positioned ancestor, not the row)
+      const [b, r] = [bar.getBoundingClientRect(), el.getBoundingClientRect()];
+      bar.scrollTo({ left: Math.max(0, bar.scrollLeft + r.left - b.left - (b.width - r.width) / 2) });
+    };
+    center();
+    // again once the font has loaded and the row is resized (the labels widen a little)
+    let alive = true;
+    void document.fonts?.ready.then(() => alive && center());
+    const ro = new ResizeObserver(() => alive && center());
+    if (tabBar.current) for (const el of [tabBar.current, ...tabBar.current.children]) ro.observe(el);
+    return () => {
+      alive = false;
+      ro.disconnect();
+    };
+  }, [tab]);
 
   return (
     <div>
       <PageHeader title="Settings" subtitle="Everything runs on your machine. Bring your own keys only if you want cloud models." />
-      <div className="glass mb-5 inline-flex rounded-xl p-1">
+      {/* one row, never wider than the page: it scrolls sideways in a narrow window (it used to push
+          the whole page into a horizontal scroll at the minimum window size) */}
+      <div ref={tabBar} data-testid="settings-tabs" className="no-scrollbar glass mb-5 flex w-fit max-w-full overflow-x-auto rounded-xl p-1">
         {TABS.map((t) => (
           <button
             key={t}
+            data-active={tab === t || undefined}
             onClick={() => go("settings", t.toLowerCase())}
-            className={clsx("relative h-8 rounded-lg px-3.5 text-[13px] font-medium transition", tab === t ? "text-[var(--fg)]" : "text-muted hover:text-[var(--fg)]")}
+            className={clsx("relative h-8 shrink-0 whitespace-nowrap rounded-lg px-3 text-[13px] font-medium transition-colors", tab === t ? "text-[var(--fg)]" : "text-muted hover:text-[var(--fg)]")}
           >
             {tab === t && <motion.span layoutId="settings-tab" className="absolute inset-0 rounded-lg glass-strong" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
             <span className="relative">{t}</span>
           </button>
         ))}
       </div>
-      {!settings ? (
+      {!active ? null : !settings ? (
         <Skeleton className="h-80" />
       ) : (
-        <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className={tab === "About" ? "max-w-[940px]" : "max-w-3xl"}>
+        // the new tab fades straight in (no wait for the old one to fade out first: that doubled the
+        // delay on every tab click)
+          <motion.div key={tab} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.14, ease: "easeOut" }} className={tab === "About" ? "max-w-[940px]" : "max-w-3xl"}>
             {tab === "General" && <General s={settings} set={set} />}
             {tab === "Appearance" && <Appearance s={settings} set={set} />}
             {tab === "Shortcuts" && <Shortcuts s={settings} set={set} />}
@@ -74,11 +105,16 @@ export default function Settings() {
             {tab === "AI" && <AI s={settings} set={set} />}
             {tab === "Privacy" && <Privacy s={settings} set={set} />}
             {tab === "Permissions" && <PermissionsTab />}
-            {tab === "Dictionary" && <Dictionary />}
+            {/* Learning (screen words, your edits, per-app style) + what Flo learned: Learning.tsx */}
+            {tab === "Dictionary" && (
+              <div className="flex flex-col gap-4">
+                <LearningSettings s={settings} set={set} />
+                <Dictionary />
+              </div>
+            )}
             {tab === "Integrations" && <Integrations />}
             {tab === "About" && <About />}
           </motion.div>
-        </AnimatePresence>
       )}
     </div>
   );
@@ -169,7 +205,6 @@ function Shortcuts({ s, set }: P) {
       </Card>
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
         <Toggle label="Detect meetings" hint="When Zoom, Meet, Teams, Slack or FaceTime starts using the mic, Flo offers to take notes." checked={s.meetingDetection} onChange={(v) => set({ meetingDetection: v })} />
-        <Toggle label="Learn from my corrections" hint="If you fix a word Flo typed, it offers to remember the right spelling." checked={s.learnCorrections} onChange={(v) => set({ learnCorrections: v })} />
       </Card>
     </div>
   );
@@ -286,12 +321,12 @@ function Appearance({ s, set }: P) {
       <Section first title="Theme" hint={os() === "macos" ? "How Flo's window looks. The notch stays black: it's part of your Mac." : "How Flo's window looks. The pill stays dark so it reads over any app."}>
         <ThemeCard s={s} set={set} />
       </Section>
-      <Section title="Your avatar" hint="Flo's little face lives in your notch and reacts as you work. Make it yours.">
+      <Section title="Your avatar" hint={`Flo's little face lives in your ${islandWord()} and reacts as you work. Make it yours.`}>
         <Card className="p-4">
           <AvatarEditor value={s.avatar} accent={s.accent} onChange={(avatar) => set({ avatar })} />
         </Card>
       </Section>
-      <Section title="Colour" hint="One accent recolours everything: buttons, logo, charts and the notch.">
+      <Section title="Colour" hint={`One accent recolours everything: buttons, logo, charts and the ${islandWord()}.`}>
         <AccentCard s={s} set={set} />
         <NotchColoursCard s={s} set={set} />
       </Section>
@@ -370,7 +405,7 @@ function AccentCard({ s, set }: P) {
     <div>
       <Card className="p-4">
         <CardTitle icon={<Palette size={15} />}>Accent</CardTitle>
-        <p className="-mt-1 text-[12px] text-faint">Used across Flo and in the notch. Changes apply instantly, everywhere.</p>
+        <p className="-mt-1 text-[12px] text-faint">Used across Flo and in the {islandWord()}. Changes apply instantly, everywhere.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2.5">
           {ACCENT_PRESETS.map((pre) => (
             <button
@@ -408,10 +443,10 @@ function Notch({ s, set }: P) {
   const volume = s.soundVolume ?? 70;
   return (
     <>
-      <Section title="Notch" hint="How the notch looks and moves when you hover it or talk to Flo.">
+      <Section title={os() === "macos" ? "Notch" : "Pill"} hint={`How the ${islandWord()} looks and moves when you hover it or talk to Flo.`}>
         <Card className="p-4">
           <CardTitle icon={<Maximize2 size={15} />}>Size</CardTitle>
-          <p className="-mt-1 text-[12px] text-faint">How big things open when you hover the notch: your to-dos, Claude sessions and widgets.</p>
+          <p className="-mt-1 text-[12px] text-faint">How big things open when you hover the {islandWord()}: your to-dos, Claude sessions and widgets.</p>
           <div className="mt-3 grid grid-cols-4 gap-3" role="radiogroup" aria-label="Notch size">
             {SIZES.map((z) => (
               <button
@@ -448,7 +483,7 @@ function Notch({ s, set }: P) {
           <div className="flex items-center justify-between">
             <CardTitle icon={<Sparkles size={15} />}>Animation</CardTitle>
             <Button size="sm" variant="glass" icon={<Play size={12} />} onClick={() => broadcastNotchPreview(s.notchStyle)}>
-              Preview in notch
+              Preview in {islandWord()}
             </Button>
           </div>
           <div className="relative mt-1">
@@ -480,7 +515,7 @@ function Notch({ s, set }: P) {
               </button>
             ))}
           </div>
-          <p className="mt-2.5 text-[12px] text-faint">Every style reacts to your voice. Tap one to apply it and see it in the notch.</p>
+          <p className="mt-2.5 text-[12px] text-faint">Every style reacts to your voice. Tap one to apply it and see it in the {islandWord()}.</p>
         </Card>
 
       </Section>
@@ -513,7 +548,7 @@ function Notch({ s, set }: P) {
             />
             <SoundRow
               label="Notifications"
-              hint="When a reminder or a Claude update appears in the notch."
+              hint={`When a reminder or a Claude update appears in the ${islandWord()}.`}
               on={s.notifySound ?? true}
               onToggle={(v) => set({ notifySound: v })}
               pack={(s.soundNotify || pack) as SoundPack}
@@ -541,13 +576,13 @@ function Notch({ s, set }: P) {
           <CardTitle icon={<Bell size={15} />}>Notifications</CardTitle>
           <Toggle
             label={os() === "macos" ? "macOS notification banners" : "Notification banners"}
-            hint={`Reminders also appear in ${os() === "macos" ? "Notification Centre" : "your system notifications"}. Off: only the ${os() === "macos" ? "notch" : "island"} shows them (with Done and Snooze).`}
+            hint={`Reminders also appear in ${os() === "macos" ? "Notification Centre" : "your system notifications"}. Off: only the ${islandWord()} shows them (with Done and Snooze).`}
             checked={s.systemNotifications ?? true}
             onChange={(v) => set({ systemNotifications: v })}
           />
           <Toggle
-            label="Allow or deny Claude Code from the notch"
-            hint="When Claude Code asks for permission, answer in the notch instead of the terminal. Unanswered after 2 minutes, it asks in the terminal as usual."
+            label={`Allow or deny Claude Code from the ${islandWord()}`}
+            hint={`When Claude Code asks for permission, answer in the ${islandWord()} instead of the terminal. Unanswered after 2 minutes, it asks in the terminal as usual.`}
             checked={s.claudeApprovals ?? true}
             onChange={(v) => set({ claudeApprovals: v })}
           />
@@ -555,7 +590,7 @@ function Notch({ s, set }: P) {
         </Card>
       </Section>
 
-      <Section title="Widgets" hint="The panel that opens below the notch.">
+      <Section title="Widgets" hint={`The panel that opens below the ${islandWord()}.`}>
         <WidgetsCard />
       </Section>
     </>
@@ -568,7 +603,7 @@ function NotchColoursCard({ s, set }: P) {
   const [gf, gt] = deriveGradient({ accent, notchGradient: s.notchGradient });
   return (
     <Card className="p-4">
-      <CardTitle icon={<Palette size={15} />}>Notch colours</CardTitle>
+      <CardTitle icon={<Palette size={15} />}>{os() === "macos" ? "Notch" : "Pill"} colours</CardTitle>
       <Toggle label="Match my accent" hint="Use a gradient made from your accent colour." checked={auto} onChange={(v) => set({ notchGradient: v ? [] : [gf, gt] })} />
       {!auto && (
         <div className="mt-2 flex items-center gap-3">
@@ -710,12 +745,12 @@ function WidgetsCard() {
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between">
-        <CardTitle icon={<LayoutGrid size={15} />}>Notch widgets</CardTitle>
+        <CardTitle icon={<LayoutGrid size={15} />}>{os() === "macos" ? "Notch" : "Pill"} widgets</CardTitle>
         <Button size="sm" variant="glass" icon={<RotateCcw size={13} />} onClick={() => apply([...DEFAULT_WIDGETS])}>
           Reset
         </Button>
       </div>
-      <p className="mt-1 text-[12px] text-faint">Choose what shows in the panel below the notch, and drag the order with the arrows. Changes apply instantly.</p>
+      <p className="mt-1 text-[12px] text-faint">Choose what shows in the panel below the {islandWord()}, and drag the order with the arrows. Changes apply instantly.</p>
 
       <div className="mt-3 space-y-2.5">
         {ids.length === 0 && <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-3 text-[12.5px] text-muted">No widgets shown. Add some below.</div>}
@@ -749,7 +784,7 @@ function WidgetsCard() {
 
       {off.length > 0 && (
         <>
-          <div className="mt-4 mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Available — tap to add</div>
+          <div className="mt-4 mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Available. Tap to add</div>
           <div className="grid grid-cols-2 gap-2.5">
             {off.map((w) => (
               <button key={w.id} onClick={() => toggle(w.id)} className="group rounded-xl glass p-2.5 text-left transition hover:glass-strong">
@@ -821,6 +856,11 @@ function ModelRow({ m, active, dl, onUse, onDownload, onDelete }: { m: LocalMode
         <div className="flex items-center gap-2 text-[13.5px] font-medium">
           {m.label}
           {active && <span className="rounded-full bg-brand-500/20 px-1.5 text-[10.5px] text-brand-500 dark:text-brand-300">In use</span>}
+          {m.bestFor && (
+            <span data-testid="model-best-for" className="rounded-full bg-[var(--glass-strong)] px-1.5 text-[10.5px] text-muted">
+              Best for {m.bestFor}
+            </span>
+          )}
         </div>
         <div className="text-[12px] text-faint">
           {m.sizeMb} MB · {m.speed} · {m.accuracy}
@@ -1001,7 +1041,12 @@ function Voice({ s, set }: P) {
               </Button>
             </div>
           )}
-          <FieldHelp>The starter model is small and quick. Bigger models hear accents, Hindi and names better, but take more space and memory. Switch any time, no restart needed.</FieldHelp>
+          <FieldHelp>The starter model is small and quick. Bigger models hear accents, Hindi and names better, but take more space and memory. Whisper Large v3 is the most accurate for Hindi and noisy rooms, Whisper Hinglish writes Hinglish in Roman letters best, and Parakeet is an English specialist. Specialists only get their own language; the rest goes to Whisper. Switch any time, no restart needed.</FieldHelp>
+          {models && routingNote(models, s) && (
+            <div data-testid="model-routing-note" className="mt-2 rounded-xl bg-[var(--glass)] px-3 py-2 text-[12.5px] text-muted">
+              {routingNote(models, s)}
+            </div>
+          )}
           <div className="mt-3 flex flex-col gap-2">
             {!models && <Skeleton className="h-28" />}
             {starters.map(row)}

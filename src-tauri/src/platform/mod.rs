@@ -30,7 +30,15 @@ pub struct FrontApp {
     pub pid: i32,
 }
 
-pub type HotkeyCallback = Box<dyn Fn(HotkeyEvent) + Send + Sync + 'static>;
+/// Text around the focus for screen-aware vocabulary (learning.rs): the focused window's visible
+/// text via accessibility. `secure`: a password field has focus, so nothing was read.
+#[derive(Debug, Clone, Default)]
+pub struct WindowText {
+    pub secure: bool,
+    pub text: String,
+}
+
+pub type HotkeyCallback =Box<dyn Fn(HotkeyEvent) + Send + Sync + 'static>;
 
 /// Save clipboard, put `text`, paste, restore after a delay (runs restore on a helper thread).
 ///

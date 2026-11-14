@@ -13,8 +13,8 @@ import {
   Check,
   ExternalLink,
 } from "lucide-react";
-import { api } from "../lib/api";
-import type { ClaudeSession, Todo, Weather } from "../lib/types";
+import { api, on } from "../lib/api";
+import { EV, type ClaudeSession, type Todo, type Weather } from "../lib/types";
 import { EMPTY_WIDGETS_H, GAP, PANEL_COLS, packPanelRows, panelGridHeight, panelGridMax, widgetHeight, ZONE_ROW_H, type WidgetId } from "../lib/widgets";
 import { NowPlayingCard } from "./NowPlaying";
 import { AgendaWidget } from "./AgendaWidget";
@@ -390,12 +390,14 @@ function TodayWidget({ onOpen }: { onOpen: () => void }) {
       api
         .listTodos()
         .then((all) => {
-          const today = new Date().toISOString().slice(0, 10);
-          // open tasks, plus anything completed today so it can still be un-checked
-          setTodos(all.filter((x) => x.status === "open" || (x.status === "done" && (x.completedAt ?? "").slice(0, 10) === today)));
+          // open tasks, plus anything completed today (your local day, not UTC) so it can still be un-checked
+          const today = new Date().toDateString();
+          setTodos(all.filter((x) => x.status === "open" || (x.status === "done" && !!x.completedAt && new Date(x.completedAt).toDateString() === today)));
         })
         .catch(() => {});
     load();
+    // stay current while the panel is open (a to-do added or ticked elsewhere)
+    return on(EV.todos, load);
   }, []);
   const openCount = todos.filter((t) => t.status === "open").length;
   const toggle = (t: Todo) => {

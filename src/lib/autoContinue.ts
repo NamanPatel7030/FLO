@@ -122,7 +122,7 @@ export function acHeadline(a: AutoContinue, now = Date.now()): string {
       if (!a.resetsAt) return a.auto ? `Retrying ${resetLabel(a.nextCheckAt, now)}` : "Waiting for the limit to lift";
       return a.auto ? `Resumes ${when}` : `Resets ${when}`;
     case "resuming":
-      return "Resumed — continuing";
+      return "Resumed, continuing";
     case "resumed":
       return "Continued after the reset";
     case "failed":

@@ -55,6 +55,18 @@ pub fn wer(reference: &str, hyp: &str) -> f32 {
     edit_distance(&r, &h) as f32 / r.len() as f32
 }
 
+/// WER that also counts formatting: words compared as written (case and punctuation kept), so
+/// "Send it to Rahul." vs "send it to rahul" scores 0.75. For dictation, where the text is pasted
+/// as it comes out.
+pub fn formatted_wer(reference: &str, hyp: &str) -> f32 {
+    let r: Vec<&str> = reference.split_whitespace().collect();
+    let h: Vec<&str> = hyp.split_whitespace().collect();
+    if r.is_empty() {
+        return if h.is_empty() { 0.0 } else { 1.0 };
+    }
+    edit_distance(&r, &h) as f32 / r.len() as f32
+}
+
 /// Character error rate (spaces ignored) — fairer than WER for Indic scripts.
 pub fn cer(reference: &str, hyp: &str) -> f32 {
     let r: Vec<char> = normalize(reference).concat().chars().collect();

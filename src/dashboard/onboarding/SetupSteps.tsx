@@ -8,7 +8,7 @@ import { EV, type LocalModel, type ModelProgressEvent, type Settings } from "../
 import type { NotchlingMood } from "../../lib/notchling";
 import { usePermissions } from "../usePermissions";
 import { SETUP_PERMS, accessibilityState, nextSetupPerm, setupDone, setupPerms } from "./perms";
-import { deviceWord, os, settingsApp } from "../../lib/os";
+import { deviceWord, os, settingsApp, islandWord } from "../../lib/os";
 import { AiProviderFields, providerInfo, ProviderKey } from "../AiSetup";
 import { Select } from "../ui";
 import { DEFAULT_MODEL } from "../../lib/models";
@@ -295,7 +295,7 @@ export function Done({ title, sub, keys }: { title: string; sub: string; keys: {
           </motion.div>
         ))}
         <Rise className="onb-faint col-span-3 mt-1 text-[14.5px]">
-          <Key>Esc</Key> cancels. Hover the notch for quick actions.
+          <Key>Esc</Key> cancels. Hover the {islandWord()} for quick actions.
         </Rise>
       </Stagger>
       </div>

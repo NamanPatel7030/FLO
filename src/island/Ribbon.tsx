@@ -267,7 +267,9 @@ function drawFlow(g: CanvasRenderingContext2D, c: Ctx) {
     const env = Math.sin(Math.PI * (i / n));
     pts.push([x, c.mid + env * A * Math.sin(x * 0.08 + c.t * 1.4 * c.speed)]);
   }
-  const p = (c.t * 0.25 * c.speed) % 1;
+  // wrapped into 0..1 (a negative t, the first frame after a restart, gave a negative stop and
+  // addColorStop threw, killing the animation loop)
+  const p = (((c.t * 0.25 * c.speed) % 1) + 1) % 1;
   const grad = g.createLinearGradient(c.x0, 0, c.x1, 0);
   grad.addColorStop(Math.max(0, p - 0.3), c.rgba(c.col.from, 0.12 * c.alpha));
   grad.addColorStop(p, c.rgba(c.col.soft, 0.9 * c.alpha));

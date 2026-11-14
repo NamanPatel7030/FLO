@@ -7,6 +7,25 @@ use serde::Deserialize;
 /// `fixes`: mistakes they corrected before ("tory" → "Tauri"), newest first — both bounded so a
 /// big dictionary doesn't cost tokens on every dictation.
 pub fn cleanup_system(app: &str, vocabulary: &[String], fixes: &[(String, String)]) -> String {
+    cleanup_system_with(app, vocabulary, fixes, &[], None)
+}
+
+/// Cleanup prompt with what Flo learned: words on screen right now (`screen_terms`, only passed
+/// when they may go to this model) and a one-line style hint for this app.
+pub fn cleanup_system_with(app: &str, vocabulary: &[String], fixes: &[(String, String)], screen_terms: &[String], style: Option<&str>) -> String {
+    let mut out = cleanup_base(app, vocabulary, fixes);
+    let terms = crate::text::stt_vocab(screen_terms, 300);
+    if !terms.is_empty() {
+        out.push_str(&format!("\nOn the user's screen now (likely names/terms in this text; use their spelling when a word sounds like one): {terms}."));
+    }
+    if let Some(s) = style.map(str::trim).filter(|s| !s.is_empty()) {
+        out.push('\n');
+        out.extend(s.chars().take(300));
+    }
+    out
+}
+
+fn cleanup_base(app: &str, vocabulary: &[String], fixes: &[(String, String)]) -> String {
     let vocab = crate::text::stt_vocab(vocabulary, 400);
     let vocab = if vocab.is_empty() { String::new() } else { format!("\nSpell these exactly: {vocab}.") };
     let mut fx = String::new();
@@ -543,6 +562,18 @@ mod tests {
         // bounded: a huge dictionary doesn't blow up every cleanup request
         let many: Vec<(String, String)> = (0..500).map(|i| (format!("w{i}"), format!("W{i}x"))).collect();
         assert!(cleanup_system("Notes", &[], &many).len() < 2000);
+    }
+
+    #[test]
+    fn cleanup_prompt_carries_screen_terms_and_style_only_when_given() {
+        let plain = cleanup_system("Slack", &[], &[]);
+        assert_eq!(cleanup_system_with("Slack", &[], &[], &[], None), plain);
+        let p = cleanup_system_with("Slack", &[], &[], &["Avenuor".into(), "Priya".into()], Some("In Slack the user writes: short messages, casual."));
+        assert!(p.contains("On the user's screen now") && p.contains("Avenuor, Priya"), "{p}");
+        assert!(p.ends_with("In Slack the user writes: short messages, casual."), "{p}");
+        // bounded
+        let many: Vec<String> = (0..300).map(|i| format!("Term{i}")).collect();
+        assert!(cleanup_system_with("Slack", &[], &[], &many, Some(&"x".repeat(2000))).len() < plain.len() + 800);
     }
 
     #[test]

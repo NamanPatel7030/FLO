@@ -54,8 +54,8 @@ export function Card({ className, children, strong, onClick }: { className?: str
 
 export function CardTitle({ icon, children, action }: { icon?: ReactNode; children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-center justify-between">
-      <div className="flex items-center gap-2 text-[13px] font-semibold tracking-tight">
+    <div className="mb-3 flex items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2 text-[13px] font-semibold tracking-tight">
         {icon && <span className="text-muted">{icon}</span>}
         {children}
       </div>

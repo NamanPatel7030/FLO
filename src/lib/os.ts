@@ -39,6 +39,10 @@ export const isMac = (p: Platform = current) => p === "macos";
 /** "Mac" / "PC": for copy like "stays on this Mac". */
 export const deviceWord = (p: Platform = current) => (p === "macos" ? "Mac" : "computer");
 
+/** What the always-on island is called in copy: the notch on a Mac, the pill on Windows / Linux
+ *  (there is no notch there; "in the notch" read as a Mac-only feature). */
+export const islandWord = (p: Platform = current) => (p === "macos" ? "notch" : "pill");
+
 /** The OS settings app, for "open … Sound". */
 export const settingsApp = (p: Platform = current) => (p === "macos" ? "System Settings" : p === "windows" ? "Settings" : "your system settings");
 

@@ -22,7 +22,7 @@
 //! 10 dB under the voice). All sit on a -65 dBFS room floor, like a real microphone.
 use super::*;
 use crate::livetx::Segmenter;
-use crate::stt::bench::{read_wav, wer};
+use crate::stt::bench::{formatted_wer, read_wav, wer};
 use crate::stt::{self, LocalWhisper};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -250,10 +250,12 @@ fn dictation_bench() {
                 let mic = scenario(sc, &audio_clip);
                 let (text, tail_ms, total_ms) = run_pipeline(&w, c, &mic, &lang);
                 let e = score(expect, alt, &text);
+                // formatting (case + punctuation) as pasted, English only (Indic scripts have none)
+                let fmt = if clang == "en" { formatted_wer(expect, &text).min(alt.map(|a| formatted_wer(a, &text)).unwrap_or(f32::MAX)) } else { 0.0 };
                 println!("[{}] {name:8} {sc:8} wer {e:.2} tail {tail_ms:4} ms lang {:?} | {text}", c.name, w.detected_lang());
                 let row = json!({
                     "config": c.name, "clip": name, "lang": clang, "kind": clip["kind"], "scenario": sc,
-                    "secs": (audio_clip.len() as f32 / 1600.0).round() / 10.0, "wer": e, "tail_ms": tail_ms, "total_ms": total_ms,
+                    "secs": (audio_clip.len() as f32 / 1600.0).round() / 10.0, "wer": e, "fmt_wer": fmt, "tail_ms": tail_ms, "total_ms": total_ms,
                     "detected": w.detected_lang(), "empty": text.trim().is_empty(), "text": text,
                 });
                 cfg_rows.push(row);
@@ -269,9 +271,13 @@ fn dictation_bench() {
         for sc in &scenarios {
             sum.insert(sc.clone(), json!(group(&|r| r["scenario"] == sc.as_str()).0));
         }
-        sum.insert("indian_en".into(), json!(group(&|r| r["clip"].as_str().unwrap().starts_with("in_en")).0));
-        sum.insert("us_en".into(), json!(group(&|r| r["clip"].as_str().unwrap().starts_with("us_en")).0));
+        sum.insert("indian_en".into(), json!(group(&|r| r["clip"].as_str().unwrap().trim_start_matches("d_").starts_with("in_en")).0));
+        sum.insert("us_en".into(), json!(group(&|r| r["clip"].as_str().unwrap().trim_start_matches("d_").starts_with("us_en")).0));
         sum.insert("hindi".into(), json!(group(&|r| r["lang"] == "hi").0));
+        // real-style dictation (numbers, emails, times, names) and formatting as pasted
+        sum.insert("real".into(), json!(group(&|r| r["clip"].as_str().unwrap().starts_with("d_")).0));
+        let en_clean: Vec<&Value> = cfg_rows.iter().filter(|r| r["lang"] == "en" && r["scenario"] == "clean").collect();
+        sum.insert("fmt_en".into(), json!(((en_clean.iter().map(|r| r["fmt_wer"].as_f64().unwrap().min(1.0)).sum::<f64>() / en_clean.len().max(1) as f64) * 1000.0).round() / 1000.0));
         sum.insert("hinglish".into(), json!(group(&|r| r["lang"] == "hi-en").0));
         sum.insert("assistant".into(), json!(group(&|r| r["kind"] == "assistant").0));
         sum.insert("all".into(), json!(group(&|_| true).0));
@@ -281,16 +287,18 @@ fn dictation_bench() {
         // a ~5 s clip, decoded end to end (no streaming head start): the worst case at release
         let five: Vec<u128> = clean.iter().filter(|r| (4.0..=6.5).contains(&r["secs"].as_f64().unwrap())).map(|r| r["total_ms"].as_u64().unwrap() as u128).collect();
         sum.insert("five_sec_total_ms_p50".into(), json!(pct(five, 50)));
+        // memory with this model loaded (the process footprint; one config runs at a time)
+        sum.insert("ram_mb".into(), json!(crate::stt::bench::footprint_mb().map(|m| m.round()).unwrap_or(0.0)));
         println!("\n== {} ==\n{}", c.name, serde_json::to_string_pretty(&sum).unwrap());
         summaries.push(json!({ "config": c.name, "summary": sum }));
         rows.extend(cfg_rows);
     }
-    println!("\nconfig | {} | indian_en | us_en | hindi | hinglish | assistant | all | empty | tail p50 ms | 5 s clip p50 ms", scenarios.join(" | "));
+    println!("\nconfig | {} | indian_en | us_en | hindi | hinglish | assistant | real | fmt_en | all | empty | tail p50 ms | 5 s clip p50 ms | RAM MB", scenarios.join(" | "));
     for s in &summaries {
         let m = &s["summary"];
         let cells: Vec<String> = scenarios.iter().map(|k| format!("{:.3}", m[k].as_f64().unwrap())).collect();
         println!(
-            "{} | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {} | {}",
+            "{} | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {} | {} | {}",
             s["config"].as_str().unwrap(),
             cells.join(" | "),
             m["indian_en"].as_f64().unwrap(),
@@ -298,10 +306,13 @@ fn dictation_bench() {
             m["hindi"].as_f64().unwrap(),
             m["hinglish"].as_f64().unwrap(),
             m["assistant"].as_f64().unwrap(),
+            m["real"].as_f64().unwrap(),
+            m["fmt_en"].as_f64().unwrap(),
             m["all"].as_f64().unwrap(),
             m["empty"],
             m["tail_ms_p50"],
-            m["five_sec_total_ms_p50"]
+            m["five_sec_total_ms_p50"],
+            m["ram_mb"]
         );
     }
     if let Ok(out) = std::env::var("FLO_DICT_OUT") {

@@ -6,7 +6,7 @@ import { Notchling } from "../../lib/NotchlingFace";
 import { moodForState } from "../../lib/notchling";
 import { formatDuration, formatNumber, greeting, groupTodos, relativeTime } from "../../lib/format";
 import type { Analytics, AttentionStatus } from "../../lib/types";
-import { assistantHotkeyLabel, hotkeyLabel, useStore } from "../store";
+import { assistantHotkeyLabel, hotkeyLabel, usePick } from "../store";
 import { Card, CardTitle, Empty, Kbd, ProgressRing, Skeleton, Stat, StatusPill, Button } from "../ui";
 import { ClaudeSessionsCard, TodoRow } from "../components";
 import { missingRequired, permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
@@ -17,7 +17,7 @@ import { joinLabel, nextEvent, nextHeadline, eventTimeLabel } from "../../lib/me
 import { openLink, useCalendar } from "../../lib/useCalendar";
 
 export default function Home() {
-  const { settings, todos, projects, notes, geo, go } = useStore();
+  const { settings, todos, projects, notes, geo, go } = usePick("settings", "todos", "projects", "notes", "geo", "go");
   // shown instantly from the page cache, refreshed in the background
   const a = useSwr<Analytics>("analytics:30", () => api.getAnalytics(30), { subscribe: onStatsChange });
   const att = useSwr<AttentionStatus>("attention", () => api.attentionStatus());
@@ -79,9 +79,9 @@ export default function Home() {
       <div className="grid grid-cols-4 gap-4">
         {a && today ? (
           <>
-            <Stat label="Words today" value={formatNumber(today.words)} sub={`${formatNumber(a.totalWords)} this month`} icon={<Type size={13} />} tint="#93ddff" />
-            <Stat label="Time saved" value={formatDuration(a.minutesSaved * 60)} sub={`at ${a.avgWpm} wpm vs ${settings?.typingWpm ?? 40} typing`} icon={<Clock size={13} />} tint="#66ceff" />
-            <Stat label="Streak" value={`${a.streakDays}d`} sub="days in a row" icon={<Flame size={13} />} tint="#f59e0b" />
+            <Stat label="Words today" value={formatNumber(today.words)} sub={`${formatNumber(a.totalWords)} in the last 30 days`} icon={<Type size={13} />} tint="#93ddff" />
+            <Stat label="Time saved" value={formatDuration(a.minutesSaved * 60)} sub={`30 days · ${a.avgWpm} wpm vs ${settings?.typingWpm ?? 40} typing`} icon={<Clock size={13} />} tint="#66ceff" />
+            <Stat label="Streak" value={a.streakDays === 1 ? "1 day" : `${a.streakDays} days`} sub={a.streakDays > 0 ? "in a row" : "Dictate today to start one"} icon={<Flame size={13} />} tint="#f59e0b" />
             <Stat label="Open to-dos" value={todos?.filter((t) => t.status === "open").length ?? "–"} sub={`${groups?.screen.length ?? 0} found on your screen`} icon={<CheckCircle2 size={13} />} tint="#34d399" />
           </>
         ) : (

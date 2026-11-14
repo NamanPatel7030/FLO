@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, demoReady, languageActive, nextSpeed, pickLanguage, progressText, setupTarget, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "./models";
+import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, demoReady, languageActive, modelHears, nextSpeed, pickLanguage, progressText, routingNote, setupTarget, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "./models";
 import type { LocalModel } from "./types";
 
 const m = (id: string, sizeMb: number, installed: boolean, tier: LocalModel["tier"] = "advanced"): LocalModel => ({ id, label: id, sizeMb, languages: "", installed, tier, speed: "Fast", accuracy: "Good" });
@@ -16,6 +16,41 @@ describe("model tiers", () => {
     expect(setupTarget(list, "large-v3-turbo-q5_0")).toBe("large-v3-turbo-q5_0");
     expect(setupTarget(list, "large-v3-turbo")).toBe("small-q5_1");
     expect(setupTarget(list, "nope")).toBe("small-q5_1");
+  });
+});
+
+describe("per-language routing", () => {
+  const parakeet: LocalModel = { ...m("parakeet-tdt-0.6b-v3", 671, true), label: "NVIDIA Parakeet v3", engine: "onnx", bestFor: "English" };
+  const apex: LocalModel = { ...m("hinglish-apex", 1618, true), label: "Whisper Hinglish", engine: "whisper", bestFor: "Hinglish" };
+  it("the Hinglish model is used for Hinglish only", () => {
+    expect(modelHears(apex, "hi-en")).toBe(true);
+    expect(modelHears(apex, "en")).toBe(false);
+    expect(modelHears(apex, "auto", ["en", "hi"])).toBe(false);
+    const turboOnly: LocalModel = { ...m("large-v3-turbo-q5_0", 574, true), label: "Whisper Large v3 Turbo" };
+    expect(routingNote([apex, turboOnly], { sttModel: "large-v3-turbo-q5_0", language: "hi-en", autoLanguages: ["en", "hi"] })).toBe("Hinglish goes to Whisper Hinglish, made for it.");
+    expect(routingNote([apex, turboOnly], { sttModel: "hinglish-apex", language: "auto", autoLanguages: ["en", "hi"] })).toBe("Whisper Hinglish types your Hinglish. Other languages go to Whisper Large v3 Turbo.");
+    expect(routingNote([apex, turboOnly], { sttModel: "hinglish-apex", language: "hi-en", autoLanguages: ["en", "hi"] })).toBeNull();
+    expect(routingNote([{ ...apex, installed: false }, turboOnly], { sttModel: "large-v3-turbo-q5_0", language: "hi-en", autoLanguages: ["en", "hi"] })).toBeNull();
+  });
+  const turbo: LocalModel = { ...m("large-v3-turbo-q5_0", 574, true), label: "Whisper Large v3 Turbo", engine: "whisper" };
+  const small: LocalModel = { ...m("small-q5_1", 190, true, "starter"), label: "Whisper Small", engine: "whisper" };
+  it("Parakeet hears English only; Whisper hears everything", () => {
+    expect(modelHears(parakeet, "en")).toBe(true);
+    expect(modelHears(parakeet, "hi")).toBe(false);
+    expect(modelHears(parakeet, "hi-en")).toBe(false);
+    expect(modelHears(parakeet, "auto", ["en", "hi"])).toBe(false);
+    expect(modelHears(parakeet, "auto", ["en"])).toBe(true);
+    expect(modelHears(turbo, "gu")).toBe(true);
+    expect(modelHears(m("base.en", 148, true, "light"), "hi")).toBe(false);
+  });
+  it("says where Hindi goes when Parakeet is in use", () => {
+    expect(routingNote([parakeet, turbo, small], { sttModel: "parakeet-tdt-0.6b-v3", language: "auto", autoLanguages: ["en", "hi"] })).toBe(
+      "NVIDIA Parakeet v3 types your English. Hindi, Hinglish and Gujarati go to Whisper Large v3 Turbo.",
+    );
+    expect(routingNote([parakeet, { ...turbo, installed: false }, small], { sttModel: "parakeet-tdt-0.6b-v3", language: "hi", autoLanguages: ["en", "hi"] })).toContain("Whisper Small");
+    expect(routingNote([parakeet], { sttModel: "parakeet-tdt-0.6b-v3", language: "hi", autoLanguages: ["en", "hi"] })).toContain("Download Whisper Large v3 Turbo");
+    expect(routingNote([parakeet, turbo], { sttModel: "parakeet-tdt-0.6b-v3", language: "en", autoLanguages: ["en", "hi"] })).toBeNull();
+    expect(routingNote([parakeet, turbo], { sttModel: "large-v3-turbo-q5_0", language: "hi", autoLanguages: ["en", "hi"] })).toBeNull();
   });
 });
 

@@ -280,6 +280,90 @@ pub fn focused_text() -> Option<(usize, String)> {
         value.filter(|v| v.len() < 200_000).map(|v| (id, v))
     }
 }
+unsafe fn ax_str(el: AXRef, attr: &str) -> Option<String> {
+    ax_copy(el, attr).and_then(|v| cf_to_string(v)).filter(|s| !s.trim().is_empty())
+}
+
+/// Visible text of the frontmost window via accessibility (static texts, field values, button and
+/// link titles), at most `max_chars`, within ~120 ms. Password fields are never read; when one has
+/// focus nothing is read at all (`secure`).
+pub fn focused_window_text(max_chars: usize) -> Option<super::WindowText> {
+    let app = frontmost_app();
+    if app.pid <= 0 {
+        return None;
+    }
+    enable_app_accessibility(app.pid);
+    unsafe {
+        let sys = AXUIElementCreateSystemWide();
+        if sys.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(sys, 0.3);
+        let focused = ax_copy(sys, "AXFocusedUIElement");
+        CFRelease(sys);
+        if let Some(el) = focused {
+            let secure = [ax_str(el, "AXRole"), ax_str(el, "AXSubrole")].iter().flatten().any(|r| r == "AXSecureTextField");
+            CFRelease(el);
+            if secure {
+                return Some(super::WindowText { secure: true, text: String::new() });
+            }
+        }
+        let appel = AXUIElementCreateApplication(app.pid);
+        if appel.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(appel, 0.25);
+        let win = ax_copy(appel, "AXFocusedWindow").or_else(|| ax_copy(appel, "AXMainWindow"));
+        CFRelease(appel as core_foundation::base::CFTypeRef);
+        let Some(win) = win else { return Some(super::WindowText::default()) };
+        let mut out = String::new();
+        let mut nodes = 0u32;
+        ax_walk(win as AXRef, 0, &mut out, &mut nodes, std::time::Instant::now(), max_chars);
+        CFRelease(win);
+        Some(super::WindowText { secure: false, text: out })
+    }
+}
+
+unsafe fn ax_walk(el: AXRef, depth: u32, out: &mut String, nodes: &mut u32, t0: std::time::Instant, max: usize) {
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    if depth > 40 || *nodes > 3000 || out.len() >= max || t0.elapsed() > std::time::Duration::from_millis(120) {
+        return;
+    }
+    *nodes += 1;
+    AXUIElementSetMessagingTimeout(el, 0.1);
+    let role = ax_str(el, "AXRole").unwrap_or_default();
+    if role == "AXSecureTextField" || ax_str(el, "AXSubrole").as_deref() == Some("AXSecureTextField") {
+        return;
+    }
+    if matches!(role.as_str(), "AXMenuBar" | "AXMenu" | "AXScrollBar" | "AXImage") {
+        return;
+    }
+    let text = match role.as_str() {
+        "AXStaticText" | "AXTextField" | "AXTextArea" | "AXComboBox" => ax_str(el, "AXValue"),
+        "AXButton" | "AXLink" | "AXHeading" | "AXCell" | "AXRadioButton" | "AXTab" | "AXWindow" => ax_str(el, "AXTitle").or_else(|| ax_str(el, "AXDescription")),
+        _ => None,
+    };
+    let leaf = role == "AXStaticText";
+    if let Some(t) = text {
+        let room = max.saturating_sub(out.len());
+        out.extend(t.chars().take(room.min(4000)));
+        out.push('\n');
+    }
+    if leaf {
+        return; // its children repeat its text
+    }
+    let Some(kids) = ax_copy(el, "AXChildren") else { return };
+    let Some(arr) = CFType::wrap_under_create_rule(kids).downcast::<CFArray>() else { return };
+    for k in arr.iter() {
+        let child: *const c_void = *k;
+        ax_walk(child as AXRef, depth + 1, out, nodes, t0, max);
+        if out.len() >= max || t0.elapsed() > std::time::Duration::from_millis(120) {
+            break;
+        }
+    }
+}
+
 #[link(name = "Vision", kind = "framework")]
 extern "C" {}
 #[link(name = "AVFoundation", kind = "framework")]

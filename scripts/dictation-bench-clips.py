@@ -39,12 +39,32 @@ clips = [
  ("cmd4", "Rishi", "en", "assistant", "Send a message to Rahul saying I'm running late.", None),
  ("cmd5", "Rishi", "en", "assistant", "What's on my calendar today?", None),
  ("cmd6", "Lekha", "hi", "assistant", "कल सुबह नौ बजे मुझे याद दिलाना।", None),
+ # real-style dictation: numbers, money, times, emails, names, punctuation (FLO_DICT_ONLY=d_ for these)
+ ("d_in_en1", "Rishi", "en", "dictation", "Hi Ankit, the invoice for 45,000 rupees is due on March 15th. Please confirm by tomorrow.", "Hi Ankit, the invoice for forty five thousand rupees is due on March fifteenth. Please confirm by tomorrow."),
+ ("d_in_en2", "Rishi", "en", "dictation", "My email is priya.sharma@gmail.com, and my phone number is 98765 43210.", None),
+ ("d_in_en3", "Rishi", "en", "dictation", "We shipped version 2.4 on Monday, and the crash rate dropped from 3% to 0.5%.", None),
+ ("d_in_en4", "Rishi", "en", "dictation", "Can we move the stand-up to 10:30? Also, Sneha from Bengaluru is joining the call.", None),
+ ("d_in_en5", "Rishi", "en", "dictation", "Thanks for the update. I'll review the Figma designs tonight and share feedback on Slack.", None),
+ ("d_us_en1", "Samantha", "en", "dictation", "Let's meet at 3 p.m. on Thursday. I'll send the agenda, the budget spreadsheet, and the Q3 roadmap.", None),
+ ("d_hi1", "Lekha", "hi", "dictation", "मेरी फ्लाइट शाम सात बजे की है, मैं एयरपोर्ट से सीधे ऑफिस आऊँगा।", None),
+ ("d_hi2", "Lekha", "hi", "dictation", "कृपया इस महीने की रिपोर्ट शुक्रवार तक भेज दीजिए।", None),
+ ("d_hi3", "Lekha", "hi", "dictation", "आज बारिश बहुत तेज़ है, इसलिए मैं घर से काम करूँगा।", None),
+ ("d_hien1", "Rishi", "hi-en", "dictation", "Bhai, aaj ka standup thoda late karte hain, mujhe ek client call hai.", "भाई, आज का स्टैंडअप थोड़ा लेट करते हैं, मुझे एक क्लाइंट कॉल है।"),
+ ("d_hien2", "Lekha", "hi-en", "dictation", "Kal subah tak deck final kar dena, aur Rahul ko email bhi kar dena.", "कल सुबह तक डेक फाइनल कर देना, और राहुल को ईमेल भी कर देना।"),
 ]
 
 RATE = "165"
 
 # Hinglish read by Lekha is spoken from Devanagari, everything else from its own text
-spoken = {"hien_l1": "प्रिया को बोलो कि प्रेजेंटेशन कल तक भेज दे।"}
+spoken = {
+    "hien_l1": "प्रिया को बोलो कि प्रेजेंटेशन कल तक भेज दे।",
+    "d_hien2": "कल सुबह तक डेक फाइनल कर देना, और राहुल को ईमेल भी कर देना।",
+    # said the way a person dictates it
+    "d_in_en2": "My email is priya dot sharma at gmail dot com, and my phone number is 98765 43210.",
+    "d_in_en3": "We shipped version 2 point 4 on Monday, and the crash rate dropped from 3 percent to 0 point 5 percent.",
+    "d_in_en4": "Can we move the stand-up to ten thirty? Also, Sneha from Bengaluru is joining the call.",
+}
+# No Gujarati voice ships with macOS `say`, so Gujarati is not in this synthetic set.
 
 
 def render(out, name, voice, text):

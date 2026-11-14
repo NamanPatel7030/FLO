@@ -43,7 +43,7 @@ export function AgentModePill({ hf, notch, geo, exitHint, onExit }: { hf: Handsf
           <span className="ml-auto shrink-0 truncate text-[10px] text-white/35">{exitHint}</span>
         </div>
         <div className="truncate text-[12.5px] text-white/85" data-testid="agent-mode-heard">
-          {hf.message ? hf.message : hf.heard ? `“${hf.heard}”` : <span className="text-white/45">Just say what to do — “open Chrome and play lofi”</span>}
+          {hf.message ? hf.message : hf.heard ? `“${hf.heard}”` : <span className="text-white/45">Just say what to do, like “open Chrome and play lofi”</span>}
         </div>
       </div>
       <button onClick={onExit} title="Turn off agent mode" aria-label="Turn off agent mode" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white/50 transition hover:bg-white/10 hover:text-white">

@@ -2,6 +2,7 @@
 mod account;
 mod agent;
 mod agents;
+mod asr_onnx;
 mod assistant;
 mod attention;
 mod audio;
@@ -15,8 +16,10 @@ mod corrections;
 mod cpuwatch;
 mod db;
 mod dictation;
+mod e2e;
 mod egress;
 mod floagent;
+mod ggml_convert;
 mod hermes;
 mod handsfree;
 mod hotkey;
@@ -24,6 +27,7 @@ mod island_pos;
 mod cache;
 mod capture;
 mod intents;
+mod learning;
 mod livetx;
 mod llm;
 mod meeting;
@@ -167,8 +171,11 @@ pub(crate) fn place_island(app: &AppHandle, width: f64, height: f64) -> anyhow::
     #[allow(unreachable_code)]
     {
         if island_pos::dragging() {
-            // mid-drag: the cursor owns the position; island_drag_end settles it
+            // mid-drag: the cursor owns the position; island_drag_end settles it. A size change
+            // (the panel collapsing to the pill as the drag starts) re-centres it on the cursor.
             w.set_size(LogicalSize::new(width, height))?;
+            let s = w.scale_factor().unwrap_or(1.0);
+            island_pos::regrab(&w, (width * s).round() as u32, (height * s).round() as u32);
             if let Some(r) = ISLAND_RECT.lock().as_mut() {
                 (r.2, r.3) = (width, height);
             }
@@ -343,7 +350,13 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
-    tray.on_menu_event(move |app, event| match event.id.as_ref() {
+    tray.on_menu_event(move |app, event| on_tray_menu(app, &st, event.id.as_ref())).build(app)?;
+    Ok(())
+}
+
+/// One tray menu item (also run by the desktop E2E suite through `e2e_tray`).
+pub(crate) fn on_tray_menu(app: &AppHandle, st: &Shared, id: &str) {
+    match id {
         "open" => show_dashboard(app, None),
         "meeting" => {
             let st = st.clone();
@@ -378,9 +391,7 @@ fn build_tray(app: &AppHandle, st: Shared) -> tauri::Result<()> {
         }
         "quit" => app.exit(0),
         _ => {}
-    })
-    .build(app)?;
-    Ok(())
+    }
 }
 
 /// How long to wait before the next cursor sample while the cursor is outside the island:
@@ -696,6 +707,9 @@ pub fn run() {
             commands::dismiss_claude_session,
             commands::accept_correction,
             commands::undo_correction,
+            learning::learning_overview,
+            learning::learning_forget,
+            learning::learning_clear,
             commands::list_integrations,
             commands::install_integration,
             commands::uninstall_integration,
@@ -776,6 +790,8 @@ pub fn run() {
             autocontinue::cancel_auto_continue,
             autocontinue::dismiss_auto_continue,
             autocontinue::auto_continue_log,
+            e2e::e2e_info,
+            e2e::e2e_tray,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -783,11 +799,16 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let models_dir = data_dir.join("models");
             let mut settings = settings::load(&data_dir);
+            // desktop E2E test builds only (never in a release build; see e2e.rs)
+            if let Some(u) = e2e::account_url() {
+                settings.account_url = u;
+            }
             if stt::prefer_quantized(&mut settings, &models_dir) {
                 let _ = settings::save(&data_dir, &settings);
             }
             stt::remove_redundant(&models_dir, &settings.stt_model);
             let db_path = data_dir.join("flo.db");
+            secrets::init_fallback(&data_dir);
             let key = secrets::db_key(&data_dir, db_path.exists()).map_err(|e| anyhow::anyhow!("Keychain unavailable: {e}"))?;
             let db = db::Db::open(&db_path, Some(&key))?;
             db.close_stale_live_notes()?;
@@ -820,6 +841,8 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 #[cfg(any(target_os = "linux", target_os = "windows"))]
                 let _ = app.deep_link().register_all();
+                #[cfg(target_os = "linux")]
+                platform::fix_url_handler_entry();
                 let st_dl = st.clone();
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
@@ -828,6 +851,17 @@ pub fn run() {
                         google::handle_deep_link(st_dl.clone(), url.to_string());
                     }
                 });
+                // Windows / Linux: a flo:// link that STARTED Flo (it wasn't running when the
+                // browser came back from Google) arrives as a launch argument, before the listener
+                // above exists; without this the sign-in was silently lost
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    for url in urls {
+                        account::handle_deep_link(st.clone(), url.to_string());
+                        slack::handle_deep_link(st.clone(), url.to_string());
+                        google::handle_deep_link(st.clone(), url.to_string());
+                    }
+                }
             }
             create_island(&handle, st.signed_in.load(std::sync::atomic::Ordering::SeqCst))?;
             watch_geometry(handle.clone());

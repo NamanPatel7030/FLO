@@ -1,0 +1,133 @@
+name: desktop-e2e
+
+# The REAL Flo app on Linux and Windows, installed from its own package and driven end to end:
+# sign-in (Google browser leg + flo:// deep link into the running instance, paste-code, password),
+# setup with the speech model download, dictation into another app with the Flo key, the pill
+# (hover / fit / widgets / drag / remembered spot), dashboard pages, themes, permissions, start at
+# login, update check, idle CPU and quit. tests/desktop-e2e (tauri-driver + WebdriverIO).
+#
+# The build enables the `e2e` cargo feature (a test mode that is inert unless FLO_E2E=1 and is
+# never enabled by desktop.yml or the Mac release script): the account server and model host are a
+# local mock and a WAV file stands in for the microphone. No credentials are needed.
+on:
+  push:
+    branches: ["flo-mvp"]
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            bundle: deb
+          - os: windows-latest
+            bundle: nsis
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/desktop-e2e/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: desktop-e2e-${{ matrix.os }}
+          cache-all-crates: true
+
+      - name: Linux deps (webview, WebDriver, virtual display, window manager, input tools)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libasound2-dev libssl-dev libdbus-1-dev libxtst-dev libx11-dev libxi-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev libxcb1-dev libxrandr-dev \
+            cmake clang libclang-dev pkg-config file \
+            xvfb x11-utils xdotool wmctrl openbox xcompmgr dbus-x11 imagemagick python3-tk xdg-utils desktop-file-utils
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Edge WebDriver matching the WebView2 runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\edgedriver" | Out-Null
+          Push-Location "$env:RUNNER_TEMP\edgedriver"
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          Pop-Location
+          echo "$env:RUNNER_TEMP\edgedriver" >> $env:GITHUB_PATH
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Build the installer (e2e profile + test-mode feature)
+        run: npx tauri build --features e2e --bundles ${{ matrix.bundle }} -- --profile e2e
+
+      - name: Install it (Linux .deb)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./src-tauri/target/e2e/bundle/deb/*.deb
+          echo "FLO_APP=/usr/bin/flo-flow" >> "$GITHUB_ENV"
+
+      - name: Install it (Windows NSIS, silent, per user)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem src-tauri/target/e2e/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
+          $exe = @("$env:LOCALAPPDATA\Flo\flo-flow.exe", "$env:ProgramFiles\Flo\flo-flow.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) { Get-ChildItem -Recurse "$env:LOCALAPPDATA" -Filter flo-flow.exe -ErrorAction SilentlyContinue | Select-Object -First 3 | Format-List FullName; throw "installed flo-flow.exe not found" }
+          echo "FLO_APP=$exe" >> $env:GITHUB_ENV
+
+      - name: Cache the Whisper test model
+        uses: actions/cache@v4
+        with:
+          path: tests/desktop-e2e/.cache
+          key: desktop-e2e-model-tiny-q5_1
+
+      - name: Test deps + model fixture
+        working-directory: tests/desktop-e2e
+        run: |
+          npm ci
+          npm run fetch-model
+
+      - name: Run (Linux, Xvfb + openbox + compositor + session bus)
+        if: runner.os == 'Linux'
+        working-directory: tests/desktop-e2e
+        env:
+          XDG_SESSION_TYPE: x11
+          XDG_CURRENT_DESKTOP: openbox
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24" dbus-run-session -- bash -c '
+            openbox >/dev/null 2>&1 &
+            xcompmgr >/dev/null 2>&1 &
+            sleep 1
+            npx wdio run wdio.conf.mjs'
+
+      - name: Run (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tests/desktop-e2e
+        run: npx wdio run wdio.conf.mjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-e2e-${{ matrix.os }}
+          path: tests/desktop-e2e/artifacts/
+          if-no-files-found: ignore

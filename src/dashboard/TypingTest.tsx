@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { Check, Flame, Gauge, Keyboard, RotateCcw, Timer } from "lucide-react";
 import { buildPracticeWords, computeWpm, initialTyping, minutesSavedPer1000, typeKey, wordLetters, type TypingState } from "../lib/typing";
 import { playChime, playKey } from "../lib/keySounds";
-import { useStore } from "./store";
+import { usePick } from "./store";
 import { Button, Card } from "./ui";
 
 const LINE = 42;
@@ -25,7 +25,7 @@ export function TypingTest({
   autoApply?: boolean;
   onApplied?: (wpm: number) => void;
 }) {
-  const { settings, setSettings } = useStore();
+  const { settings, setSettings } = usePick("settings", "setSettings");
   const [seed, setSeed] = useState(() => Date.now());
   const words = useMemo(() => buildPracticeWords(seed), [seed]);
   const [st, setSt] = useState<TypingState>(initialTyping);

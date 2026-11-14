@@ -5,12 +5,13 @@ import { Bell, CalendarClock, CheckCheck, CheckCircle2, Eye, Plus, Sun, Trash2 }
 import { api } from "../../lib/api";
 import { formatDue, groupTodos, upcomingReminders } from "../../lib/format";
 import type { Todo } from "../../lib/types";
-import { useStore } from "../store";
+import { usePick } from "../store";
 import { Card, CardTitle, Input, PageHeader, Select, Skeleton, Button } from "../ui";
 import { TodoRow } from "../components";
+import { islandWord } from "../../lib/os";
 
 export default function Todos() {
-  const { todos, projects } = useStore();
+  const { todos, projects } = usePick("todos", "projects");
   const [filter, setFilter] = useState<string>("all");
   const [title, setTitle] = useState("");
   const [showDone, setShowDone] = useState(false);
@@ -88,13 +89,13 @@ export default function Todos() {
             </CardTitle>
             {reminders.length === 0 ? (
               <div className="py-3 text-[12.5px] text-faint">
-                No reminders yet. Give a to-do a time, like "send the deck tomorrow at 5pm" or "by next Monday", and Flo reminds you 5 minutes early in the notch.
+                No reminders yet. Give a to-do a time, like “send the deck tomorrow at 5pm” or “by next Monday”, and Flo reminds you 5 minutes early in the {islandWord()}.
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-x-4">
                 {reminders.map((t) => (
                   <div key={t.id} className="flex items-center gap-3">
-                    <span className="w-[132px] shrink-0 rounded-lg bg-[var(--glass)] px-2 py-1 text-center text-[11.5px] font-medium tabular-nums text-brand-200">{formatDue(t.remindAt!)}</span>
+                    <span className="min-w-[104px] shrink-0 whitespace-nowrap rounded-lg bg-[var(--glass-strong)] px-2 py-1 text-center text-[11.5px] font-medium tabular-nums text-brand-200 ring-1 ring-[var(--border)]">{formatDue(t.remindAt!)}</span>
                     <div className="min-w-0 flex-1">
                       <TodoRow todo={t} compact />
                     </div>

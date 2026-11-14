@@ -67,6 +67,22 @@ function localDay(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** The local calendar day ("2026-11-14") of a due value. A plain date is already a day; a timestamp
+ *  is converted to local time first (slicing its UTC date put a to-do due 00:30 tomorrow in India
+ *  under Today, and one due tonight in California under Upcoming). */
+export function dueDay(due: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) return due;
+  const d = new Date(due);
+  return Number.isNaN(d.getTime()) ? due.slice(0, 10) : localDay(d);
+}
+
+/** A due value as a Date in local time: a plain "2026-11-14" means that local day (new Date() reads
+ *  it as UTC midnight, which is the evening before anywhere west of UTC). */
+function dueDate(iso: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(iso);
+}
+
 export interface TodoGroups {
   today: Todo[];
   upcoming: Todo[];
@@ -81,7 +97,7 @@ const FULL_FMT = new Intl.DateTimeFormat([], { weekday: "short", month: "short",
 
 /** "Today, 5:00 PM", "Tomorrow, 10:00 AM", "Mon, Nov 9, 10:00 AM"; date-only values → just the day. */
 export function formatDue(iso: string, now: Date = new Date()): string {
-  const d = new Date(iso);
+  const d = dueDate(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
   const dayDiff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000);
@@ -109,7 +125,7 @@ export function groupTodos(todos: Todo[], now: Date = new Date()): TodoGroups {
     if (t.status === "done") g.done.push(t);
     else if (t.status !== "open") continue;
     else if (t.source === "attention") g.screen.push(t);
-    else if (t.due && t.due.slice(0, 10) > today) g.upcoming.push(t);
+    else if (t.due && dueDay(t.due) > today) g.upcoming.push(t);
     else g.today.push(t);
   }
   return g;
@@ -594,7 +610,9 @@ export function islandSize(variant: IslandVariant, geo: IslandGeometry, content?
       return { width: 440 + pad, height: Math.min(240, cardBody(content, 52) + 12) + pad };
     case "claude":
     case "reminder":
-      return { width: 380 + pad, height: 74 + pad };
+      // 440 like the assistant card: at 380 the action buttons left ~120 px for the title, which cut
+      // "Claude finished · <project>" and "Reminder · due 19:03" mid-word
+      return { width: 440 + pad, height: 74 + pad };
     case "meetingSoon":
       return { width: 470 + pad, height: 80 + pad };
   }

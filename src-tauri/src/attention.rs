@@ -110,6 +110,8 @@ pub fn spawn(st: Shared) {
                 a.last_capture_at = Some(chrono::Local::now().to_rfc3339());
                 a.last_app = Some(app.clone());
             }
+            // the same capture teaches screen-aware vocabulary (no extra screen read)
+            crate::learning::observe_screen(&st, &app, &title, &screen);
             if let Err(e) = process(&st, &app, &title, &screen).await {
                 log::warn!("attention: {e:#}");
             }

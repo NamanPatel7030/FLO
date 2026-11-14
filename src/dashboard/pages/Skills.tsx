@@ -12,7 +12,7 @@ import { api, on } from "../../lib/api";
 import { cronError, describeCron, formatRun, nextRun } from "../../lib/cron";
 import type { Connection, McpTool, Skill } from "../../lib/types";
 import { SkillCanvasEditor } from "../SkillCanvas";
-import { useStore } from "../store";
+import { usePick, usePageArg } from "../store";
 import { Button, Card, Empty, PageHeader, Skeleton } from "../ui";
 import ContextPage from "./Context";
 
@@ -59,7 +59,8 @@ const TEMPLATES: Omit<Skill, "id" | "uses" | "createdAt">[] = [
 const EMPTY: Skill = { id: "", name: "", triggers: "", instructions: "", platforms: [], mode: "write", enabled: true, uses: 0, createdAt: "", graph: "", connections: [] };
 
 export default function SkillsPage() {
-  const { pageArg, go } = useStore();
+  const { go } = usePick("go");
+  const pageArg = usePageArg("skills");
   const tab: "skills" | "connections" | "knowledge" = pageArg === "knowledge" ? "knowledge" : pageArg === "connections" ? "connections" : "skills";
   return (
     <div>
@@ -187,7 +188,7 @@ function SkillCard({ k, onEdit, onRan }: { k: Skill; onEdit: () => void; onRan: 
     }
   };
   return (
-    <Card onClick={onEdit} className={clsx("relative h-full p-5", !k.enabled && "opacity-55")}>
+    <Card onClick={onEdit} className={clsx("@container relative h-full p-5", !k.enabled && "opacity-55")}>
       <div className="flex items-start gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)]/15 text-brand-200">
           {k.mode === "do" ? <MousePointerClick size={16} /> : <PenLine size={16} />}
@@ -195,10 +196,14 @@ function SkillCard({ k, onEdit, onRan }: { k: Skill; onEdit: () => void; onRan: 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-[15px] font-semibold">{k.name}</span>
-            <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10.5px] font-medium text-muted">{k.mode === "do" ? "Does it" : "Writes it"}</span>
+            {/* a narrow card moves the mode chip to the line below, so the name isn't cut */}
+            <span className={clsx("shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10.5px] font-medium text-muted", sched && "hidden @[24rem]:inline")}>{k.mode === "do" ? "Does it" : "Writes it"}</span>
             {!k.enabled && <span className="shrink-0 text-[10.5px] text-faint">Off</span>}
           </div>
-          <div className="mt-1 text-[12px] text-faint">{first ? `Say “${first}”` : sched ? "Runs on its schedule" : `Say “${k.name}”`}</div>
+          <div className="mt-1 flex items-center gap-2 text-[12px] text-faint">
+            <span className="min-w-0 truncate">{first ? `Say “${first}”` : sched ? "Runs on its schedule" : `Say “${k.name}”`}</span>
+            {sched && <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10.5px] font-medium text-muted @[24rem]:hidden">{k.mode === "do" ? "Does it" : "Writes it"}</span>}
+          </div>
         </div>
         {sched && (
           <button
@@ -207,19 +212,20 @@ function SkillCard({ k, onEdit, onRan }: { k: Skill; onEdit: () => void; onRan: 
               if (!run.busy) runNow();
             }}
             aria-label={`Run ${k.name} now`}
+            title="Run now"
             disabled={run.busy}
             className="flex h-8 shrink-0 items-center gap-1.5 rounded-xl bg-[var(--accent)]/15 px-3 text-[12px] font-medium text-brand-100 ring-1 ring-[var(--accent)]/30 transition hover:bg-[var(--accent)]/25 disabled:opacity-70"
           >
             {run.busy ? <Loader2 size={13} className="animate-spin" /> : <Play size={12} className="fill-current" />}
-            {run.busy ? "Running…" : "Run now"}
+            <span className="hidden @[24rem]:inline">{run.busy ? "Running…" : "Run now"}</span>
           </button>
         )}
       </div>
       {sched && (
-        <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#ff8a5c]/[0.08] px-3 py-2 text-[12px] ring-1 ring-[#ff8a5c]/20" data-testid="skill-schedule">
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-xl bg-[#ff8a5c]/[0.08] px-3 py-2 text-[12px] ring-1 ring-[#ff8a5c]/20" data-testid="skill-schedule">
           <Clock size={13} className="shrink-0 text-[#ffb08f]" />
-          <span className="truncate text-[var(--fg)]">{sched.when}</span>
-          <span className="ml-auto shrink-0 text-faint">next {sched.next}</span>
+          <span className="min-w-0 text-[var(--fg)]">{sched.when}</span>
+          <span className="ml-auto whitespace-nowrap text-faint">next {sched.next}</span>
         </div>
       )}
       {(run.reply || run.error) && (

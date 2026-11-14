@@ -8,8 +8,9 @@ import clsx from "clsx";
 import { CalendarDays, ExternalLink, Loader2, Mail, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
 import { api, on } from "../lib/api";
 import { DEFAULT_GOOGLE_SETTINGS, EV, type GoogleCalendar, type GoogleEvent, type GoogleSettings, type GoogleStatus } from "../lib/types";
-import { useStore } from "./store";
+import { usePick } from "./store";
 import { Button, Card, CardTitle, Select, Skeleton, Toggle } from "./ui";
+import { islandWord } from "../lib/os";
 
 /** The official four-colour Google "G" (Google sign-in branding guidelines). */
 export const GoogleG = ({ size = 18 }: { size?: number }) => (
@@ -46,7 +47,7 @@ type Phase = "idle" | "starting" | "waiting";
 const LEAD = [1, 2, 5, 10];
 
 export function GoogleCard() {
-  const { toast, settings, setSettings } = useStore();
+  const { toast, settings, setSettings } = usePick("toast", "settings", "setSettings");
   const [status, setStatus] = useState<GoogleStatus | null | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -188,7 +189,7 @@ export function GoogleCard() {
             <ServiceCheck
               icon={<CalendarDays size={14} />}
               label="Calendar"
-              hint={status.calendar ? "Meeting alerts in the notch and your agenda" : "Not allowed yet: checking it asks Google"}
+              hint={status.calendar ? `Meeting alerts in the ${islandWord()} and your agenda` : "Not allowed yet: checking it asks Google"}
               checked={g.calendar && (status.calendar || asking("calendar"))}
               onChange={(v) => setService("calendar", v)}
             />
@@ -197,7 +198,7 @@ export function GoogleCard() {
                 <div className="flex items-center justify-between gap-6 py-1.5">
                   <div>
                     <div className="text-[13.5px] font-medium">Alert before meetings</div>
-                    <div className="mt-0.5 text-[12px] text-muted">A card in the notch with Join and Take notes</div>
+                    <div className="mt-0.5 text-[12px] text-muted">A card in the {islandWord()} with Join and Take notes</div>
                   </div>
                   <Select
                     value={String(g.alertMinutes)}
@@ -288,9 +289,9 @@ export function GoogleCard() {
           </div>
         ) : (
           <div className="flex flex-col gap-3" data-testid="google-disconnected">
-            <p className="-mt-1.5 text-[12.5px] text-muted">See your next meeting in the notch, take notes in one click, and answer email by voice. Flo always asks before sending.</p>
+            <p className="-mt-1.5 text-[12.5px] text-muted">See your next meeting in the {islandWord()}, take notes in one click, and answer email by voice. Flo always asks before sending.</p>
             <div className="flex flex-col">
-              <ServiceCheck icon={<CalendarDays size={14} />} label="Calendar" hint="Meeting alerts in the notch and your agenda" checked={want.calendar} onChange={(v) => setWant((w) => ({ ...w, calendar: v }))} />
+              <ServiceCheck icon={<CalendarDays size={14} />} label="Calendar" hint={`Meeting alerts in the ${islandWord()} and your agenda`} checked={want.calendar} onChange={(v) => setWant((w) => ({ ...w, calendar: v }))} />
               <ServiceCheck icon={<Mail size={14} />} label="Gmail" hint="Read and reply to email by voice" checked={want.gmail} onChange={(v) => setWant((w) => ({ ...w, gmail: v }))} />
             </div>
             {waiting ?? (

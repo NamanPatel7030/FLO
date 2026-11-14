@@ -76,11 +76,19 @@ fn raw_get(name: &str) -> Result<Option<String>> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        match entry(name)?.get_password() {
+        let kr = entry(name).and_then(|e| match e.get_password() {
             Ok(v) => Ok(Some(v)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e.into()),
+        });
+        // Linux without a keyring: what was saved to the private file instead
+        #[cfg(target_os = "linux")]
+        if !matches!(kr, Ok(Some(_))) {
+            if let Some(v) = fallback::path().and_then(|p| file_get(&p, name)) {
+                return Ok(Some(v));
+            }
         }
+        kr
     }
 }
 
@@ -99,8 +107,25 @@ fn raw_set(name: &str, value: &str) -> Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        entry(name)?.set_password(value)?;
-        Ok(())
+        match entry(name).and_then(|e| Ok(e.set_password(value)?)) {
+            Ok(()) => {
+                #[cfg(target_os = "linux")]
+                if let Some(p) = fallback::path() {
+                    let _ = file_delete(&p, name);
+                }
+                Ok(())
+            }
+            // Linux with no Secret Service (no GNOME Keyring / KWallet: i3, sway, minimal
+            // installs, containers): keep it in a private file in the app data folder instead of
+            // failing. Sign-in used to be impossible there ("Sign-in: Platform secure storage
+            // failure"). The database key keeps its own rules (db_key).
+            #[cfg(target_os = "linux")]
+            Err(err) if name != "db-key" && fallback::path().is_some() => {
+                log::warn!("no keyring ({err}); keeping {name} in a private file");
+                file_set(&fallback::path().expect("checked"), name, value)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -117,11 +142,64 @@ fn raw_delete(name: &str) -> Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        match entry(name)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.into()),
+        #[cfg(target_os = "linux")]
+        let in_file = fallback::path().map(|p| file_delete(&p, name).unwrap_or(false)).unwrap_or(false);
+        #[cfg(not(target_os = "linux"))]
+        let in_file = false;
+        match entry(name).and_then(|e| Ok(e.delete_credential()?)) {
+            Ok(()) => Ok(()),
+            Err(e) if matches!(e.downcast_ref::<keyring::Error>(), Some(keyring::Error::NoEntry)) => Ok(()),
+            Err(_) if in_file => Ok(()),
+            Err(e) => Err(e),
         }
     }
+}
+
+// ── Linux without a keyring: a private file (0600) in the app data folder ─────────────────────
+
+#[cfg(target_os = "linux")]
+mod fallback {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    pub fn init(dir: &std::path::Path) {
+        let _ = DIR.set(dir.to_path_buf());
+    }
+    pub fn path() -> Option<std::path::PathBuf> {
+        DIR.get().map(|d| d.join(".secrets.json"))
+    }
+}
+
+/// Where secrets go when the system has no keyring (Linux). Call once at start.
+pub fn init_fallback(data_dir: &std::path::Path) {
+    #[cfg(target_os = "linux")]
+    fallback::init(data_dir);
+    let _ = data_dir;
+}
+
+fn file_map(path: &std::path::Path) -> std::collections::HashMap<String, String> {
+    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn file_get(path: &std::path::Path, name: &str) -> Option<String> {
+    file_map(path).remove(name).filter(|v| !v.is_empty())
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn file_set(path: &std::path::Path, name: &str, value: &str) -> Result<()> {
+    let mut m = file_map(path);
+    m.insert(name.to_string(), value.to_string());
+    write_private(path, &serde_json::to_string(&m)?)
+}
+
+/// true when it was there
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn file_delete(path: &std::path::Path, name: &str) -> Result<bool> {
+    let mut m = file_map(path);
+    if m.remove(name).is_none() {
+        return Ok(false);
+    }
+    write_private(path, &serde_json::to_string(&m)?)?;
+    Ok(true)
 }
 
 /// Keys read once per run (each Keychain read can trigger a macOS prompt).
@@ -180,7 +258,15 @@ fn random_hex32() -> String {
 }
 
 fn write_private(path: &std::path::Path, s: &str) -> Result<()> {
-    std::fs::write(path, s)?;
+    use std::io::Write;
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(path)?.write_all(s.as_bytes())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -275,6 +361,30 @@ pub fn hook_token() -> Result<String> {
     };
     *HOOK_TOKEN.lock() = Some(t.clone());
     Ok(t)
+}
+
+#[cfg(test)]
+mod file_fallback_tests {
+    #[test]
+    fn set_get_delete_in_a_private_file() {
+        let dir = std::env::temp_dir().join(format!("flo-secrets-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(".secrets.json");
+        assert_eq!(super::file_get(&p, "account-token"), None);
+        super::file_set(&p, "account-token", "tok").unwrap();
+        super::file_set(&p, "api-key:openai", "sk").unwrap();
+        assert_eq!(super::file_get(&p, "account-token").as_deref(), Some("tok"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        assert!(super::file_delete(&p, "account-token").unwrap());
+        assert!(!super::file_delete(&p, "account-token").unwrap());
+        assert_eq!(super::file_get(&p, "account-token"), None);
+        assert_eq!(super::file_get(&p, "api-key:openai").as_deref(), Some("sk"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[cfg(test)]

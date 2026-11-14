@@ -1,4 +1,6 @@
+import { useRef } from "react";
 import { create } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { api, on } from "../lib/api";
 import { formatHotkey } from "../lib/format";
 import { os, setOS } from "../lib/os";
@@ -71,6 +73,29 @@ export const useStore = create<State>((set, get) => ({
     setTimeout(() => set({ toasts: get().toasts.filter((x) => x.id !== id) }), 3800);
   },
 }));
+
+/** Pick a few fields from the store; re-renders only when one of them changes. (`useStore()` with no
+ *  selector re-renders on EVERY store change, and pages stay mounted once visited, so each page
+ *  switch, toast or settings save re-rendered every page you had opened.) */
+export function usePick<K extends keyof State>(...keys: K[]): Pick<State, K> {
+  return useStore(
+    useShallow((s) => {
+      const o = {} as Pick<State, K>;
+      for (const k of keys) o[k] = s[k];
+      return o;
+    }),
+  );
+}
+
+/** The route argument for `page` (#/settings/voice → "voice"). While another page is showing it keeps
+ *  the last value, so a hidden page doesn't re-render on every navigation. */
+export function usePageArg(page: Page): string | undefined {
+  const last = useRef<string | undefined>(undefined);
+  return useStore((s) => {
+    if (s.page === page) last.current = s.pageArg;
+    return last.current;
+  });
+}
 
 /** Load everything + wire backend events. Call once from the shell. */
 export function bootStore(): () => void {

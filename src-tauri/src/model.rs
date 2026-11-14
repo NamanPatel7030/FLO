@@ -42,6 +42,11 @@ pub struct Settings {
     pub hotkey_assistant: String,
     pub meeting_detection: bool,
     pub learn_corrections: bool,
+    /// Learning: read the words around the focus when dictating (names, jargon on screen) to fix
+    /// misheard ones; on-device, never in denylisted apps or password fields (learning.rs)
+    pub learn_from_screen: bool,
+    /// Learning: remember how the user writes in each app (length, tone, sign-off) for cleanup
+    pub learn_app_style: bool,
     pub system_prompt: String,
     /// turn unanswered Slack DMs / mentions into to-dos (when a Slack token is saved)
     pub slack_sync: bool,
@@ -205,6 +210,8 @@ impl Default for Settings {
             hotkey_assistant: "fn".into(),
             meeting_detection: true,
             learn_corrections: true,
+            learn_from_screen: true,
+            learn_app_style: true,
             system_prompt: String::new(),
             slack_sync: true,
             onboarded: false,
@@ -759,6 +766,10 @@ pub struct LocalModel {
     pub tier: String,
     pub speed: String,
     pub accuracy: String,
+    /// "whisper" (whisper.cpp) | "onnx" (sherpa-onnx: Parakeet, Qwen3-ASR)
+    pub engine: String,
+    /// what it's the best pick for ("English", "Hindi and Hinglish", …); empty = general
+    pub best_for: String,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]

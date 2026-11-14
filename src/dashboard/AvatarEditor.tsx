@@ -2,6 +2,7 @@
 import clsx from "clsx";
 import { Notchling } from "../lib/NotchlingFace";
 import { GLOWS, normalizeAvatar, type AvatarAccessory, type AvatarEyes, type AvatarGlow, type AvatarMouth, type AvatarSettings, type NotchlingMood } from "../lib/notchling";
+import { islandWord } from "../lib/os";
 
 const EYES: { id: AvatarEyes; label: string }[] = [
   { id: "pill", label: "Classic" },
@@ -76,7 +77,7 @@ export function AvatarEditor({ value, accent, onChange, compact = false }: { val
         {!compact && (
           <label className="flex cursor-pointer items-center justify-between gap-6">
             <div>
-              <div className="text-[13.5px] font-medium">Show my avatar in the notch</div>
+              <div className="text-[13.5px] font-medium">Show my avatar in the {islandWord()}</div>
               <div className="mt-0.5 text-[12px] text-muted">It listens while you talk, thinks while Flo works and smiles when the text lands.</div>
             </div>
             <input type="checkbox" className="h-4 w-4 accent-[var(--accent)]" checked={a.enabled} onChange={(e) => set({ enabled: e.target.checked })} data-testid="avatar-enabled" />

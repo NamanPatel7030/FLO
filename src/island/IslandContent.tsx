@@ -720,7 +720,7 @@ export function IslandContent(p: Props) {
         >
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[13px] font-semibold">
-              {needs ? "Claude needs you" : c.kind === "limit" ? "Claude hit its limit" : c.kind === "resumed" ? "Resumed — continuing" : "Claude finished"} <span className="text-white/50">· {c.project}</span>
+              {needs ? "Claude needs you" : c.kind === "limit" ? "Claude hit its limit" : c.kind === "resumed" ? "Resumed, continuing" : "Claude finished"} <span className="text-white/50">· {c.project}</span>
             </span>
             {p.claudeMore > 0 && <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10.5px] text-white/70">+{p.claudeMore}</span>}
           </div>
@@ -754,7 +754,7 @@ function Quick({ icon, label, onClick, hot, index }: { icon: React.ReactNode; la
       className="island-tile flex h-full min-w-0 flex-col items-center justify-center gap-1 rounded-2xl"
     >
       <span className="island-tile-icon flex h-[18px] items-center justify-center">{icon}</span>
-      <span className="island-tile-label pointer-events-none max-w-full truncate px-1 text-[10.5px] font-medium leading-none" aria-hidden>
+      <span className="island-tile-label pointer-events-none max-w-full truncate px-1 pb-px text-[10.5px] font-medium leading-[1.3]" aria-hidden>
         {label}
       </span>
     </motion.button>

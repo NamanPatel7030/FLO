@@ -6,8 +6,9 @@ import clsx from "clsx";
 import { ChevronDown, ExternalLink, Loader2, Plug, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
 import { api, on } from "../lib/api";
 import { EV, type SlackEvent } from "../lib/types";
-import { useStore } from "./store";
+import { usePick } from "./store";
 import { Button, Card, CardTitle, Input, Skeleton, Toggle } from "./ui";
+import { islandWord } from "../lib/os";
 
 export const SlackIcon = ({ size = 18 }: { size?: number }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden>
@@ -74,7 +75,7 @@ export function useSlackConnected(): boolean | undefined {
 type Phase = "idle" | "starting" | "waiting";
 
 export function SlackCard() {
-  const { toast, settings, setSettings } = useStore();
+  const { toast, settings, setSettings } = usePick("toast", "settings", "setSettings");
   const [who, setWho] = useState<string | null | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -172,7 +173,7 @@ export function SlackCard() {
           {settings && (
             <Toggle
               label="Turn unanswered DMs and mentions into to-dos"
-              hint="Checked locally. Messages are never sent without your OK in the notch."
+              hint={`Checked locally. Messages are never sent without your OK in the ${islandWord()}.`}
               checked={settings.slackSync}
               onChange={(v) => setSettings({ ...settings, slackSync: v })}
             />

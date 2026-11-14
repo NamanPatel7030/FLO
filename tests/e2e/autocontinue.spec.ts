@@ -27,7 +27,7 @@ test("Home: a session that hit its limit shows the waiting state with a live cou
   await expect(row).toHaveAttribute("data-status", "waiting");
   await expect(row.getByTestId("ac-headline")).toHaveText("Waiting for limit reset");
   await expect(row).toContainText("api");
-  await expect(row).toContainText(/Resets \d{1,2}:\d{2} [AP]M/); // toggle off by default → "Resets", not "Resumes"
+  await expect(row).toContainText(/Resets (tomorrow )?\d{1,2}:\d{2} [AP]M/); // toggle off by default → "Resets", not "Resumes" (near midnight: "Resets tomorrow …")
   const cd = row.getByTestId("ac-countdown");
   await expect(cd).toHaveText(/^1h 1[01]m$/);
   // a short wait: the countdown is live (seconds tick when under an hour)
@@ -52,7 +52,7 @@ test("per-session switch turns auto-continue on; Continue now and Cancel call th
 
   await row.getByRole("button", { name: "Continue now" }).click();
   await expect(row).toHaveAttribute("data-status", "resuming");
-  await expect(row.getByTestId("ac-headline")).toHaveText("Resumed — continuing");
+  await expect(row.getByTestId("ac-headline")).toHaveText("Resumed, continuing");
   expect(await calls(page)).toContain("auto_continue_now");
   // the log shows the resume command (no permission-bypass flags) and Claude's output
   await row.getByRole("button", { name: "Log" }).click();

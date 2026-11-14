@@ -9,7 +9,7 @@ import { BookText, ClipboardPaste, Eye, FileUp, Pin, PinOff, Save, Sparkles, Tra
 import { api } from "../../lib/api";
 import { formatNumber, relativeTime } from "../../lib/format";
 import type { ContextDoc } from "../../lib/types";
-import { useStore } from "../store";
+import { useStore, usePick } from "../store";
 import { Button, Card, CardTitle, Empty, Input, PageHeader, Skeleton } from "../ui";
 
 const MAX_FILE = 400 * 1024;
@@ -17,7 +17,7 @@ const PIN_BUDGET = 1200;
 const PROMPT_STYLE_LIMIT = 300;
 
 export default function ContextPage() {
-  const { toast } = useStore();
+  const { toast } = usePick("toast");
   const [docs, setDocs] = useState<ContextDoc[] | null>(null);
   const refresh = useCallback(() => api.listContextDocs().then(setDocs), []);
   useEffect(() => {
@@ -102,7 +102,7 @@ export default function ContextPage() {
 }
 
 function SystemPromptCard() {
-  const { settings, setSettings } = useStore();
+  const { settings, setSettings } = usePick("settings", "setSettings");
   const [value, setValue] = useState(settings?.systemPrompt ?? "");
   const [saved, setSaved] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -150,7 +150,7 @@ function UploadCard({ onFiles, onPasted }: { onFiles: (f: FileList | File[]) => 
   const [pasting, setPasting] = useState(false);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
-  const { toast } = useStore();
+  const { toast } = usePick("toast");
   return (
     <Card className="p-5">
       <div

@@ -129,6 +129,10 @@ impl Recorder {
     pub fn start(on_level: impl Fn(f32) + Send + 'static) -> Result<Self> {
         let shared = Arc::new(Mutex::new(Shared { buf: Vec::new(), rate: TARGET_RATE }));
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        // desktop E2E test builds only (inert in release builds; see e2e.rs)
+        if let Some(wav) = crate::e2e::wav_input() {
+            return Self::start_from_wav(&wav, shared, stop_tx, stop_rx, on_level);
+        }
         let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
         let sh = shared.clone();
         // cpal::Stream is !Send on macOS → own it on a dedicated thread.
@@ -217,6 +221,38 @@ impl Recorder {
             drop(stream);
         })?;
         ready_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| anyhow!("microphone did not start"))??;
+        Ok(Self { shared, stop_tx, thread: Some(thread) })
+    }
+
+    /// E2E test mode: play a WAV file into the recording in real time (20 ms frames), then
+    /// near-silence until stopped, as a microphone would deliver it.
+    fn start_from_wav(path: &std::path::Path, shared: Arc<Mutex<Shared>>, stop_tx: mpsc::Sender<()>, stop_rx: mpsc::Receiver<()>, on_level: impl Fn(f32) + Send + 'static) -> Result<Self> {
+        let (samples, rate) = crate::e2e::read_wav(path)?;
+        shared.lock().rate = rate;
+        *LAST_DEVICE.lock() = "E2E WAV".into();
+        let sh = shared.clone();
+        let thread = std::thread::Builder::new().name("flo-audio-e2e".into()).spawn(move || {
+            let mut level = LevelMeter::new(on_level);
+            let frame = (rate as usize / 50).max(1);
+            let hush: Vec<f32> = (0..frame).map(|i| if i % 2 == 0 { 1e-4 } else { -1e-4 }).collect();
+            let mut at = 0;
+            loop {
+                match stop_rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let chunk = if at < samples.len() {
+                    let end = (at + frame).min(samples.len());
+                    let c = &samples[at..end];
+                    at = end;
+                    c
+                } else {
+                    &hush[..]
+                };
+                level.feed(chunk);
+                sh.lock().buf.extend_from_slice(chunk);
+            }
+        })?;
         Ok(Self { shared, stop_tx, thread: Some(thread) })
     }
 

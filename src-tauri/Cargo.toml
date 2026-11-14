@@ -16,6 +16,9 @@ local-stt = ["dep:whisper-rs"]
 # On-device speaker diarization for meeting call audio (sherpa-onnx: pyannote segmentation +
 # 3D-Speaker CAM++ embeddings). Prebuilt static libs are fetched from GitHub at build time.
 diarize = ["dep:sherpa-onnx"]
+# Desktop E2E test mode (tests/desktop-e2e): stubbed account server / model download / microphone,
+# active only with FLO_E2E=1. Enabled ONLY by the desktop-e2e CI job; never in a release build.
+e2e = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -87,3 +90,9 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Faster optimized build for the desktop E2E suite (no LTO; same code as release otherwise).
+[profile.e2e]
+inherits = "release"
+lto = false
+codegen-units = 16

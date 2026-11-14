@@ -62,14 +62,12 @@ export default function Dashboard() {
   useEffect(() => bootStore(), []);
   const page = useStore((s) => s.page);
   const go = useStore((s) => s.go);
-  const todos = useStore((s) => s.todos);
-  const claude = useStore((s) => s.claude);
-  const notes = useStore((s) => s.notes);
+  // derived values, so the shell re-renders only when the badge or the live dot changes
+  const openTodos = useStore((s) => s.todos?.filter((t) => t.status === "open").length ?? 0);
   const geo = useStore((s) => s.geo);
   const settings = useStore((s) => s.settings);
   const account = useAccount();
   const signedIn = !!account.status?.signedIn || (account.offlineOk && !!account.status?.user);
-  const openTodos = todos?.filter((t) => t.status === "open").length ?? 0;
   // Home badge = live Claude sessions needing attention (matches the Home card), not stale events
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
   // the backend checks every few hours; also check when the window opens so the card is current
@@ -81,8 +79,7 @@ export default function Dashboard() {
     return on<ClaudeSession[]>(EV.claudeSessions, (l) => setSessions(Array.isArray(l) ? l : []));
   }, []);
   const claudeAttention = sessions.filter((s) => s.status !== "working").length;
-  void claude;
-  const liveMeeting = notes?.some((n) => n.live);
+  const liveMeeting = useStore((s) => !!s.notes?.some((n) => n.live));
   // Pages you've opened stay mounted (hidden) so switching back is instant and keeps scroll + data.
   const [visited, setVisited] = useState<Page[]>(() => [page]);
   useEffect(() => {
@@ -99,7 +96,7 @@ export default function Dashboard() {
       <div className="relative flex h-full overflow-hidden noise">
         <Backdrop />
         {/* sidebar */}
-        <aside className="relative z-10 flex w-[216px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--glass)] backdrop-blur-2xl">
+        <aside className="no-scrollbar relative z-10 flex w-[216px] shrink-0 flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--glass)] backdrop-blur-2xl">
           <div data-tauri-drag-region className={clsx("shrink-0", mac ? "h-11" : "h-3")} />
           <div data-tauri-drag-region className="mb-4 flex items-center gap-2.5 px-4">
             <Logo size={34} />
@@ -117,7 +114,7 @@ export default function Dashboard() {
                   key={n.id}
                   onClick={() => go(n.id)}
                   className={clsx(
-                    "relative flex h-9 items-center gap-2.5 rounded-xl px-2.5 text-[13.5px] transition",
+                    "relative flex h-9 shrink-0 items-center gap-2.5 rounded-xl px-2.5 text-[13.5px] transition-colors [@media(max-height:700px)]:h-8",
                     active ? "text-[var(--fg)]" : "text-muted hover:bg-[var(--glass)] hover:text-[var(--fg)]",
                   )}
                 >
@@ -167,7 +164,7 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
-            <div className="mt-2.5">
+            <div className="mt-2.5 [@media(max-height:720px)]:hidden">
               <Signature />
             </div>
           </div>
@@ -185,14 +182,22 @@ export default function Dashboard() {
         </main>
         <Toasts />
         {/* account gate first, then first-run onboarding (or Settings → General → Run setup again) */}
-        {account.status && !signedIn ? <SignIn status={account.status} /> : account.status && settings?.onboarded === false ? <Onboarding /> : null}
+        {/* until the account answer arrives, cover the dashboard so a signed-out user never glimpses it */}
+        {!account.status ? (
+          <div className="fixed inset-0 z-50 bg-[var(--bg)]" data-testid="account-pending" aria-hidden />
+        ) : !signedIn ? (
+          <SignIn status={account.status} />
+        ) : settings?.onboarded === false ? (
+          <Onboarding />
+        ) : null}
       </div>
     </MotionConfig>
   );
 }
 
 /** One dashboard page, kept mounted once opened. Memoised, so switching tabs only re-renders the
- *  two pages whose visibility changed, not every page you've visited. */
+ *  two pages whose visibility changed, not every page you've visited. (display: none on purpose: a
+ *  parked page kept in layout re-measured its charts whenever the scrollbar came or went.) */
 const KeptPage = memo(function KeptPage({ id, active }: { id: Page; active: boolean }) {
   const Comp = PAGES[id];
   return (

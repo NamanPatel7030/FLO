@@ -179,7 +179,46 @@ pub fn island_drag_start(app: tauri::AppHandle) -> Result<(), String> {
     let pos = w.outer_position().map_err(|e| e.to_string())?;
     let cur = app.cursor_position().map_err(|e| e.to_string())?;
     *DRAG.lock() = Some(((pos.x, pos.y), (cur.x, cur.y)));
+    #[cfg(target_os = "linux")]
+    follow_until_release(app);
     Ok(())
+}
+
+/// Linux (X11): the drag starts on the open panel, which then shrinks back to the pill, so the
+/// pointer ends up outside the window and WebKitGTK stops sending it pointer moves (and the
+/// release): the pill stayed put and the drag never ended. Follow the real pointer here until the
+/// button is let go, then settle exactly as a release would.
+#[cfg(target_os = "linux")]
+fn follow_until_release(app: tauri::AppHandle) {
+    let _ = std::thread::Builder::new().name("flo-island-drag".into()).spawn(move || {
+        let started = std::time::Instant::now();
+        while dragging() && started.elapsed() < std::time::Duration::from_secs(120) {
+            match crate::platform::primary_button_down() {
+                Some(true) => {
+                    let _ = island_drag_move(app.clone());
+                }
+                Some(false) => {
+                    let _ = island_drag_end(app.clone());
+                    return;
+                }
+                None => return, // no X11: the web view's own events drive the drag
+            }
+            std::thread::sleep(std::time::Duration::from_millis(16));
+        }
+    });
+}
+
+/// The island changed size mid-drag (the open panel collapsing to the pill): keep it under the
+/// cursor, centred on it, instead of shrinking towards its old top-left corner, away from the
+/// pointer. `w`, `h` in physical px.
+pub fn regrab(window: &tauri::WebviewWindow, w: u32, h: u32) {
+    use tauri::Manager;
+    let Ok(cur) = window.app_handle().cursor_position() else { return };
+    let pos = tauri::PhysicalPosition::new((cur.x - w as f64 / 2.0).round() as i32, (cur.y - h as f64 / 2.0).round() as i32);
+    if let Some(d) = DRAG.lock().as_mut() {
+        *d = ((pos.x, pos.y), (cur.x, cur.y));
+    }
+    let _ = window.set_position(pos);
 }
 
 /// The pointer moved during a drag: follow it (one call per animation frame).

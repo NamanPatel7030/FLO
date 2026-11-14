@@ -62,6 +62,8 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
         .map_err(|e| anyhow!("Microphone unavailable ({e}). Allow Flo in System Settings → Privacy → Microphone."))?;
     let mic_ms = t_press.elapsed().as_millis();
     let front = st.target_app();
+    // screen-aware vocabulary: read the words around the focus while the user talks (learning.rs)
+    crate::learning::begin(st, &front.name);
     let selection = if mode == Mode::Assistant { platform::copy_selection() } else { None };
     log::info!("listening ({mode:?}): microphone open {mic_ms} ms after the key, ready {} ms", t_press.elapsed().as_millis());
     let s = st.settings();
@@ -269,6 +271,9 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
                 Some(h) => h.await.ok().flatten(),
                 None => None,
             };
+            // a misheard name on screen is fixed before the assistant reads the request
+            let raw = crate::learning::correct(&raw, &crate::learning::prepare(st, &front.name).terms).0;
+            crate::learning::on_assistant_query(st, &raw, &front.name);
             let mut resp = assistant::run(st, &raw, selection, &front, screen_text).await?;
             save(st, mode, &front.name, &raw, &resp.reply, duration_ms, t0.elapsed().as_millis() as u64);
             assistant::log_exchange(st, &mut resp, "notch");
@@ -349,7 +354,27 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
     }
 }
 
+/// Clean a dictation for `app` with what Flo learned: misheard screen / dictionary terms corrected
+/// first (local, a few ms), screen terms and the app's style as hints for the AI cleanup, then the
+/// app's one local style rule (learning.rs).
 async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
+    let learned = crate::learning::prepare(st, app);
+    let t0 = Instant::now();
+    let (fixed, fixes) = crate::learning::correct(raw, &learned.terms);
+    if !fixes.is_empty() {
+        log::info!("learning: {} screen/dictionary fixes in {} µs ({} terms)", fixes.len(), t0.elapsed().as_micros(), learned.terms.len());
+    }
+    crate::learning::note_fixes(&fixes);
+    let out = cleanup_text(st, &fixed, app, &learned).await;
+    // the AI may respell a term it didn't know: put the screen spelling back
+    let out = crate::learning::correct(&out, &learned.terms).0;
+    match &learned.style {
+        Some(style) => crate::learning::apply_style_local(&out, style),
+        None => out,
+    }
+}
+
+async fn cleanup_text(st: &Shared, raw: &str, app: &str, learned: &crate::learning::Prepared) -> String {
     let s = st.settings();
     let entries = st.db.list_dictionary_recent().unwrap_or_default();
     let dict: Vec<(String, String)> = entries.iter().filter_map(|d| d.replacement.clone().map(|r| (d.word.clone(), r))).collect();
@@ -362,7 +387,7 @@ async fn cleanup(st: &Shared, raw: &str, app: &str) -> String {
     if !s.cleanup_enabled || !cfg.is_configured() || !text::needs_llm_cleanup(&base) {
         return dictation::local_cleanup(raw, &dict);
     }
-    let mut system = prompts::cleanup_system(app, &vocab, &dict);
+    let mut system = prompts::cleanup_system_with(app, &vocab, &dict, &learned.hints, learned.style_hint.as_deref());
     // short personal style notes ride along; long ones would cost tokens on every dictation
     let sp = s.system_prompt.trim();
     if !sp.is_empty() && sp.len() <= 300 {

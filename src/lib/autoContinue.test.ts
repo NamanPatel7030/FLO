@@ -44,7 +44,7 @@ describe("auto-continue formatting", () => {
     expect(acHeadline(entry(), now)).toBe("Resumes 3:00 PM");
     expect(acHeadline(entry({ auto: false }), now)).toBe("Resets 3:00 PM");
     expect(acHeadline(entry({ resetsAt: null, nextCheckAt: d(2026, 11, 8, 10, 15).toISOString() }), now)).toBe("Retrying 10:15 AM");
-    expect(acHeadline(entry({ status: "resuming" }), now)).toBe("Resumed — continuing");
+    expect(acHeadline(entry({ status: "resuming" }), now)).toBe("Resumed, continuing");
     expect(acHeadline(entry({ status: "cancelled" }), now)).toBe("Auto-continue cancelled");
   });
 

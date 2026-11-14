@@ -112,8 +112,11 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         let msg = wparam.0 as u32;
         let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
         let up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
-        // Flo's own SendInput (paste, typing) is flagged injected: never treat it as the hotkey
-        if (down || up) && (kb.flags.0 & LLKHF_INJECTED.0) == 0 {
+        // Flo's own SendInput (paste, typing) is flagged injected: never treat it as the hotkey.
+        // Desktop E2E test builds only: keys the test harness injects carry E2E_KEY_TAG (inert in
+        // release builds, where e2e::active() is a constant false).
+        let from_test = crate::e2e::active() && kb.dwExtraInfo == crate::e2e::E2E_KEY_TAG;
+        if (down || up) && ((kb.flags.0 & LLKHF_INJECTED.0) == 0 || from_test) {
             if let Some(key) = super::vk_to_pckey(kb.vkCode, kb.scanCode) {
                 let cfg = hotkey_cfg();
                 let mut fire = None;
@@ -612,6 +615,22 @@ pub fn focused_text() -> Option<(usize, String)> {
                 tp.DocumentRange().ok()?.GetText(200_000).ok().map(|b| b.to_string())
             })?;
         (value.len() < 200_000).then_some((id, value))
+    }
+}
+
+/// Screen-aware vocabulary: only whether a password field has focus (UI Automation's IsPassword);
+/// the window's words come from on-device OCR (learning.rs), so `text` stays empty here.
+pub fn focused_window_text(_max_chars: usize) -> Option<super::WindowText> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        let secure = match uia.GetFocusedElement() {
+            Ok(el) => el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(true),
+            Err(_) => false,
+        };
+        Some(super::WindowText { secure, text: String::new() })
     }
 }
 

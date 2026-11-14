@@ -7,7 +7,7 @@ import { isStopped, markStopped, stopMeetingNow } from "../../lib/meetingStops";
 import { api, on } from "../../lib/api";
 import { formatClock, formatDuration, relativeTime } from "../../lib/format";
 import { EV, type MeetingEvent, type MeetingInfo, type MeetingSegment, type Note } from "../../lib/types";
-import { useStore } from "../store";
+import { useStore, usePick, usePageArg } from "../store";
 import { shownName, speakerColor as defaultColor, speakerPalette, speakerStats, splitOwner } from "../../lib/speakers";
 
 /** Per-note speaker colours (no two people share one); falls back to the global mapping. */
@@ -214,7 +214,8 @@ function ActionItemText({ item, me }: { item: string; me?: string }) {
 }
 
 export default function Notes() {
-  const { notes, pageArg, go, projects, toast } = useStore();
+  const { notes, go, projects, toast } = usePick("notes", "go", "projects", "toast");
+  const pageArg = usePageArg("notes");
   const [title, setTitle] = useState("");
   const live = notes?.find((n) => n.live);
   const selectedId = pageArg ?? live?.id ?? notes?.[0]?.id;
@@ -288,7 +289,7 @@ export default function Notes() {
 
 function LiveNote({ note }: { note: Note }) {
   const me = useStore((s) => s.settings?.userName);
-  const { toast, refreshNotes } = useStore();
+  const { toast, refreshNotes } = usePick("toast", "refreshNotes");
   const [stopping, setStopping] = useState(false);
   const stop = async () => {
     if (stopping) return;
@@ -479,7 +480,7 @@ function useSummaryPending(note: Note) {
 }
 
 function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "success" | "info" | "error"; text: string }) => void }) {
-  const { go, refreshNotes } = useStore();
+  const { go, refreshNotes } = usePick("go", "refreshNotes");
   const writing = useSummaryPending(note);
   const [added, setAdded] = useState<Set<number>>(new Set());
   const info = useMeetingInfo(note.id, note.transcript);

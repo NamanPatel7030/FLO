@@ -1,4 +1,8 @@
 @import "tailwindcss";
+/* `dark:` follows Flo's theme (data-theme on <html>), not the OS setting: by default Tailwind keys it
+   to prefers-color-scheme, so a dark Flo on a light Mac drew dark-on-dark text (and a light Flo on a
+   dark Mac got the dark-only colours) */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
@@ -1013,6 +1017,15 @@ html.island .selectable {
   .notchling *, .notchling { animation: none !important; }
 }
 
+/* a row that scrolls sideways without showing a scrollbar (the Settings tabs in a narrow window) */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+/* glass inside glass: the inner card blurs only the outer card's flat tint, which looks the same as
+   no blur, but every backdrop-filter is its own compositing layer that repaints while scrolling */
+:is(.glass, .glass-strong) :is(.glass, .glass-strong) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 /* dashboard page switch: a quick fade, no blur, no waiting for the old page to leave */
 .page-in { animation: page-in 0.14s ease-out; }
 @keyframes page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }

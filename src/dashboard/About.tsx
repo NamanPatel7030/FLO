@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { animate, AnimatePresence, motion, useInView, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import { Clock3, Flame, Globe, Mic, ShieldCheck, Type } from "lucide-react";
 import { api } from "../lib/api";
-import { deviceWord } from "../lib/os";
+import { deviceWord, islandWord } from "../lib/os";
 import { formatDuration, formatNumber } from "../lib/format";
 import type { Analytics } from "../lib/types";
 import { LogoMark } from "./Logo";
@@ -482,7 +482,7 @@ export function About() {
             className="mt-[13px] max-w-[377px] text-muted"
             style={{ fontSize: T.body + 1, lineHeight: PHI }}
           >
-            Speak, and it's typed. Ask, and it's done. A voice assistant that lives in your notch.
+            Speak, and it's typed. Ask, and it's done. A voice assistant that lives in your {islandWord()}.
           </motion.p>
           <motion.div
             initial={reduce ? false : { opacity: 0 }}
@@ -513,6 +513,11 @@ export function About() {
         </span>
         <span className="h-px w-[34px] bg-[var(--border-strong)]" aria-hidden />
       </div>
+
+      {/* attribution the model licences ask for (CC-BY-4.0 for Parakeet) */}
+      <p className="mx-auto max-w-[620px] text-center text-[11px] leading-relaxed text-faint" data-testid="about-models">
+        Speech models: Whisper by OpenAI (MIT) via whisper.cpp; Whisper Hindi2Hinglish Apex by Oriserve (Apache-2.0); Parakeet TDT 0.6B v2 by NVIDIA, licensed under CC-BY-4.0. Speaker separation by sherpa-onnx. Word list from SCOWL by Kevin Atkinson.
+      </p>
     </div>
   );
 }

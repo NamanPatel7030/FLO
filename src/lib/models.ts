@@ -101,3 +101,36 @@ export function suggestSarvamForGujarati(s: Pick<Settings, "sttProvider" | "lang
 export function switchToSarvam(): Partial<Settings> {
   return { sttProvider: "sarvam", sttModel: "saaras:v3" };
 }
+
+/** Whisper models a clip falls back to, best first (mirrors stt::FALLBACK_MODELS). */
+export const FALLBACK_MODELS = ["large-v3-q5_0", "large-v3-turbo-q5_0", "large-v3-turbo", "small-q5_1", "small"];
+
+/** The only language a specialist model is used for (mirrors ModelSpec::only_langs): Parakeet →
+ *  English, the Hinglish model → Hinglish. Null = every language. */
+function onlyLanguage(m: Pick<LocalModel, "id" | "bestFor">): string | null {
+  if (m.bestFor === "English" || m.id.endsWith(".en")) return "en";
+  if (m.bestFor === "Hinglish") return "hi-en";
+  return null;
+}
+
+/** Can `m` take `language`? Auto needs every language it picks from (mirrors stt::model_hears). */
+export function modelHears(m: Pick<LocalModel, "id" | "bestFor">, language: string, autoLanguages: string[] = AUTO_LANGUAGES): boolean {
+  const only = onlyLanguage(m);
+  if (!only) return true;
+  return language === "auto" ? autoLanguages.every((l) => l === only) : language === only;
+}
+
+/** The note under the model list when some of your speech goes to another model (mirrors
+ *  stt::route_model): Parakeet chosen while you also speak Hindi, the Hinglish model chosen while
+ *  you speak English, or Hinglish going to the downloaded Hinglish model. Null when nothing moves. */
+export function routingNote(models: LocalModel[], s: Pick<Settings, "sttModel" | "language" | "autoLanguages">): string | null {
+  const m = models.find((x) => x.id === s.sttModel);
+  if (!m) return null;
+  const hinglish = models.find((x) => x.bestFor === "Hinglish" && x.installed);
+  if (s.language === "hi-en" && hinglish && hinglish.id !== m.id) return `Hinglish goes to ${hinglish.label}, made for it.`;
+  if (modelHears(m, s.language, s.autoLanguages ?? AUTO_LANGUAGES)) return null;
+  const fb = FALLBACK_MODELS.map((id) => models.find((x) => x.id === id && x.installed)).find(Boolean);
+  const only = onlyLanguage(m);
+  if (!fb) return `${m.label} is only used for ${only === "en" ? "English" : "Hinglish"}. Download Whisper Large v3 Turbo for your other languages.`;
+  return only === "en" ? `${m.label} types your English. Hindi, Hinglish and Gujarati go to ${fb.label}.` : `${m.label} types your Hinglish. Other languages go to ${fb.label}.`;
+}

@@ -127,7 +127,7 @@ test("Settings → Voice: advanced models download with progress, switch without
   await expect(starter).toContainText("190 MB");
 
   const adv = page.getByTestId("advanced-models");
-  await expect(adv.getByTestId("model-row")).toHaveCount(2);
+  await expect(adv.getByTestId("model-row")).toHaveCount(4);
   // smallest first, each with size, speed and accuracy
   await expect(adv.getByTestId("model-row").first()).toHaveAttribute("data-model", "large-v3-turbo-q5_0");
   const turbo = adv.locator('[data-model="large-v3-turbo-q5_0"]');
@@ -152,4 +152,33 @@ test("Settings → Voice: advanced models download with progress, switch without
   await expect(starter.getByRole("button", { name: "Download" })).toBeVisible();
   // the model in use can't be deleted
   await expect(turbo.getByRole("button", { name: /Delete/ })).toHaveCount(0);
+});
+
+test("Settings → Voice: specialist models (Parakeet for English, Hinglish) say where the rest goes", async ({ page }) => {
+  await page.goto("/#/settings/voice");
+  await mock(page);
+  const parakeet = page.locator('[data-testid="model-row"][data-model="parakeet-tdt-0.6b-v2"]');
+  await expect(parakeet).toContainText("NVIDIA Parakeet v2");
+  await expect(parakeet).toContainText("661 MB · Runs on the CPU, about 0.9 s per sentence · English only");
+  await expect(parakeet.getByTestId("model-best-for")).toHaveText("Best for English");
+  await expect(page.locator('[data-model="hinglish-apex"]').getByTestId("model-best-for")).toHaveText("Best for Hinglish");
+  await expect(page.locator('[data-model="large-v3-q5_0"]')).toContainText("Most accurate: a third fewer Hindi errors than Turbo");
+  await expect(page.getByTestId("model-routing-note")).toHaveCount(0);
+
+  await parakeet.getByRole("button", { name: "Download" }).click();
+  const use = parakeet.getByRole("button", { name: "Use this model" });
+  await expect(use).toBeVisible({ timeout: 10_000 });
+  await use.click();
+  await expect(parakeet).toContainText("In use");
+  // Auto (English + Hindi): English is typed by Parakeet, Hindi by the Whisper starter on disk
+  await expect(page.getByTestId("model-routing-note")).toHaveText("NVIDIA Parakeet v2 types your English. Hindi, Hinglish and Gujarati go to Whisper Small (starter).");
+  // English only: nothing is rerouted
+  await page.getByRole("button", { name: "English", exact: true }).click();
+  await expect(page.getByTestId("model-routing-note")).toHaveCount(0);
+  // the Hinglish model, once downloaded, takes Hinglish whatever model is in use
+  const apex = page.locator('[data-model="hinglish-apex"]');
+  await apex.getByRole("button", { name: "Download" }).click();
+  await expect(apex.getByRole("button", { name: "Use this model" })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: /^Hinglish/ }).click();
+  await expect(page.getByTestId("model-routing-note")).toHaveText("Hinglish goes to Whisper Hinglish (Oriserve Apex), made for it.");
 });

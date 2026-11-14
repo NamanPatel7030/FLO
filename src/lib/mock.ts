@@ -15,6 +15,7 @@ import type {
   DailyStat,
   Dictation,
   DictionaryEntry,
+  LearningOverview,
   IslandGeometry,
   LocalModel,
   Mode,
@@ -67,6 +68,8 @@ const settings: Settings = {
   hotkeyAssistant: "fn",
   meetingDetection: true,
   learnCorrections: true,
+  learnFromScreen: true,
+  learnAppStyle: true,
   systemPrompt: "",
   slackSync: false,
   google: { ...DEFAULT_GOOGLE_SETTINGS },
@@ -341,6 +344,25 @@ const history: Dictation[] = Array.from({ length: 28 }, (_, i) => {
   };
 });
 
+// What Flo learned (Settings → General → Learning)
+const learning: LearningOverview = {
+  terms: [
+    { id: "Avenuor\u001fSlack", term: "Avenuor", app: "Slack", kind: "name", count: 14, lastSeen: new Date(Date.now() - 4 * 60_000).toISOString() },
+    { id: "Tauri\u001fSlack", term: "Tauri", app: "Slack", kind: "name", count: 9, lastSeen: new Date(Date.now() - 4 * 60_000).toISOString() },
+    { id: "Priya Shah\u001fSlack", term: "Priya Shah", app: "Slack", kind: "name", count: 7, lastSeen: new Date(Date.now() - 30 * 60_000).toISOString() },
+    { id: "kubectl\u001fiTerm2", term: "kubectl", app: "iTerm2", kind: "jargon", count: 3, lastSeen: new Date(Date.now() - 3 * 3600_000).toISOString() },
+  ],
+  fixes: [
+    { id: "Pria\u001fPriya", heard: "Pria", corrected: "Priya", app: "Slack", source: "edit", count: 2, applied: true, blocked: false, lastSeen: new Date(Date.now() - 20 * 60_000).toISOString() },
+    { id: "super base\u001fSupabase", heard: "super base", corrected: "Supabase", app: "Linear", source: "edit", count: 1, applied: false, blocked: false, lastSeen: new Date(Date.now() - 2 * 3600_000).toISOString() },
+  ],
+  styles: [
+    { app: "Slack", samples: 23, hint: "In Slack the user writes: short messages, casual, starts in lowercase, no full stop at the end, no sign-off.", updatedAt: new Date(Date.now() - 10 * 60_000).toISOString() },
+    { app: "Mail", samples: 2, hint: null, updatedAt: new Date(Date.now() - 86400_000).toISOString() },
+  ],
+};
+const learningSnapshot = (): LearningOverview => ({ terms: learning.terms.map((t) => ({ ...t })), fixes: learning.fixes.map((f) => ({ ...f })), styles: learning.styles.map((s) => ({ ...s })) });
+
 const dictionary: DictionaryEntry[] = [
   { id: "w1", word: "Flo" },
   { id: "w2", word: "Tauri" },
@@ -357,6 +379,9 @@ const models: LocalModel[] = [
   { id: "large-v3-turbo", label: "Whisper Large v3 Turbo (full precision)", sizeMb: 1624, languages: "99 languages", installed: false, tier: "advanced", speed: "Slowest, uses the most memory", accuracy: "Best. Only slightly ahead of Turbo" },
   { id: "small", label: "Whisper Small (full precision)", sizeMb: 488, languages: "99 languages", installed: false, tier: "light", speed: "Fast", accuracy: "About the same as the starter, more space" },
   { id: "base.en", label: "Whisper Base English", sizeMb: 148, languages: "English", installed: false, tier: "light", speed: "Instant", accuracy: "English only" },
+  { id: "large-v3-q5_0", label: "Whisper Large v3", sizeMb: 1081, languages: "99 languages incl. Hindi, Gujarati", installed: false, tier: "advanced", speed: "Slower: about 1 s per sentence", accuracy: "Most accurate: a third fewer Hindi errors than Turbo", engine: "whisper", bestFor: "" },
+  { id: "parakeet-tdt-0.6b-v2", label: "NVIDIA Parakeet v2", sizeMb: 661, languages: "English. Hindi, Hinglish and Gujarati go to Whisper", installed: false, tier: "light", speed: "Runs on the CPU, about 0.9 s per sentence", accuracy: "English only. On par with Turbo in Flo's tests", engine: "onnx", bestFor: "English" },
+  { id: "hinglish-apex", label: "Whisper Hinglish (Oriserve Apex)", sizeMb: 1618, languages: "Hinglish: Hindi and English in Roman letters", installed: false, tier: "advanced", speed: "Like Turbo, uses more memory", accuracy: "Best for Hinglish: a third of Turbo's errors", engine: "whisper", bestFor: "Hinglish" },
 ];
 const dlMode = () => (typeof location === "undefined" ? null : new URLSearchParams(location.search).get("dl"));
 /** bytes already on disk per model (a cut-off download resumes from here) */
@@ -1638,6 +1663,19 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       dictionary.push(e);
       return e;
     }
+    case "learning_overview":
+      return learningSnapshot();
+    case "learning_forget": {
+      const list = args.kind === "term" ? learning.terms : args.kind === "fix" ? learning.fixes : learning.styles;
+      const i = list.findIndex((x: { id?: string; app: string }) => (x.id ?? x.app) === args.id);
+      if (i >= 0) list.splice(i, 1);
+      return learningSnapshot();
+    }
+    case "learning_clear":
+      learning.terms.length = 0;
+      learning.fixes.length = 0;
+      learning.styles.length = 0;
+      return learningSnapshot();
     case "undo_correction": {
       for (let i = dictionary.length - 1; i >= 0; i--) {
         if (dictionary[i].word.toLowerCase() === String(args.heard).toLowerCase()) dictionary.splice(i, 1);

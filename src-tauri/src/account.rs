@@ -90,6 +90,10 @@ fn remember(st: &Shared, token: &str, user: &AccountUser) -> Result<()> {
 /// Is sign-in actually enforced? Only when a real deployed account server is configured.
 /// Default (empty / localhost / http) = offline-first: Flo works without an account.
 pub fn enforced(st: &Shared) -> bool {
+    // desktop E2E test builds: the local mock account server is enforced like the live one
+    if crate::e2e::account_url().is_some() {
+        return true;
+    }
     let url = base(st);
     url.starts_with("https://") && !url.contains("localhost") && !url.contains("127.0.0.1")
 }

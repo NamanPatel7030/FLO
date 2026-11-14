@@ -570,7 +570,7 @@ pub fn delete_model(st: State<Shared>, id: String) -> R<()> {
         return Err("This model is in use. Pick another one first.".into());
     }
     if let Some(p) = stt::model_path(&st.models_dir, &id) {
-        std::fs::remove_file(p).map_err(e)?;
+        stt::remove_model_path(&p).map_err(e)?;
     }
     Ok(())
 }
@@ -966,12 +966,15 @@ pub fn accept_correction(st: State<Shared>, heard: String, corrected: String) ->
     if let Some(d) = existing.iter().find(|d| d.word.eq_ignore_ascii_case(&heard)) {
         let _ = st.db.remove_dictionary(&d.id);
     }
+    let _ = crate::learning::record_fix(&st.db, &heard, &corrected, "", "edit").and_then(|_| crate::learning::mark_applied(&st.db, &heard, &corrected));
     st.db.add_dictionary(&heard, Some(&corrected)).map_err(e)
 }
 
 /// Undo a correction Flo learned automatically.
 #[tauri::command(async)]
 pub fn undo_correction(st: State<Shared>, heard: String, corrected: String) -> R<()> {
+    // and never learn or make that change again
+    let _ = crate::learning::block_fix(&st.db, &heard, &corrected, "");
     crate::corrections::undo(&st, &heard, &corrected).map_err(e)
 }
 

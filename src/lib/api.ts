@@ -21,6 +21,7 @@ import type {
   DictionaryEntry,
   IslandGeometry,
   KeyProvider,
+  LearningOverview,
   LocalModel,
   Mode,
   NetworkLogEntry,
@@ -217,6 +218,9 @@ export const api = {
   dismissClaudeSession: (sessionId: string) => call<void>("dismiss_claude_session", { sessionId }),
   acceptCorrection: (heard: string, corrected: string) => call<DictionaryEntry>("accept_correction", { heard, corrected }),
   undoCorrection: (heard: string, corrected: string) => call<void>("undo_correction", { heard, corrected }),
+  learningOverview: () => call<LearningOverview>("learning_overview"),
+  learningForget: (kind: "term" | "fix" | "style", id: string) => call<LearningOverview>("learning_forget", { kind, id }),
+  learningClear: () => call<LearningOverview>("learning_clear"),
   // now playing / media / volume (notch widgets)
   nowPlaying: () => call<import("./types").NowPlaying | null>("now_playing").catch(() => null),
   weather: () => call<import("./types").Weather | null>("weather").catch(() => null),

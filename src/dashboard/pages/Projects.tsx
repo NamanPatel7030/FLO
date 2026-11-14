@@ -5,13 +5,14 @@ import { Briefcase, FolderKanban, Plus, StickyNote, X, Trash2, Wand2 } from "luc
 import { api } from "../../lib/api";
 import { formatDuration, relativeTime } from "../../lib/format";
 import type { Project, ProjectStatus } from "../../lib/types";
-import { useStore } from "../store";
+import { usePick, usePageArg } from "../store";
 import { Button, Card, CardTitle, Empty, Input, PageHeader, ProgressRing, Select, Skeleton, StatusPill } from "../ui";
 import { TodoRow } from "../components";
 import { CodeChip, CodeSection, requestAddCode } from "../ProjectCode";
 
 export default function Projects() {
-  const { projects, pageArg, go } = useStore();
+  const { projects, go } = usePick("projects", "go");
+  const pageArg = usePageArg("projects");
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
@@ -149,7 +150,7 @@ function ProjectCard({ p, onClick, onAddCode }: { p: Project; onClick: () => voi
 }
 
 function Drawer({ p, onClose }: { p: Project; onClose: () => void }) {
-  const { todos, notes } = useStore();
+  const { todos, notes } = usePick("todos", "notes");
   const [t, setT] = useState("");
   const ptodos = todos?.filter((x) => x.projectId === p.id && (x.status === "open" || x.status === "done")) ?? [];
   const pnotes = notes?.filter((n) => n.projectId === p.id) ?? [];

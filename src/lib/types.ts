@@ -47,6 +47,11 @@ export interface Settings {
   meetingDetection: boolean;
   /** watch for your fixes after a paste and suggest dictionary entries */
   learnCorrections: boolean;
+  /** Learning: read the words around the focus when dictating (names, jargon) to fix misheard
+   *  ones. On-device; never in denylisted apps or password fields. */
+  learnFromScreen: boolean;
+  /** Learning: remember how you write in each app (length, tone, sign-off) for cleanup */
+  learnAppStyle: boolean;
   /** your own instructions (tone, who you are, how to reply) — added to assistant + meeting prompts;
    *  also to dictation cleanup when ≤ 300 chars */
   systemPrompt: string;
@@ -519,6 +524,43 @@ export interface DictionaryEntry {
   replacement?: string;
 }
 
+/** What Flo learned (learning_overview / learning_forget / learning_clear). Local only. */
+export interface LearnedTerm {
+  id: string;
+  term: string;
+  /** app it was seen in */
+  app: string;
+  kind: "name" | "mixed" | "jargon" | "code";
+  /** screens it was seen on */
+  count: number;
+  lastSeen: string;
+}
+export interface LearnedFix {
+  id: string;
+  heard: string;
+  corrected: string;
+  app: string;
+  /** "edit" (you fixed Flo's text) | "assistant" (you re-asked) | "undo" (you put a word back) */
+  source: string;
+  count: number;
+  /** applied to every dictation (seen twice, or once when the word was on screen) */
+  applied: boolean;
+  /** never made again */
+  blocked: boolean;
+  lastSeen: string;
+}
+export interface LearnedStyle {
+  app: string;
+  samples: number;
+  hint?: string | null;
+  updatedAt: string;
+}
+export interface LearningOverview {
+  terms: LearnedTerm[];
+  fixes: LearnedFix[];
+  styles: LearnedStyle[];
+}
+
 export interface NetworkLogEntry {
   at: string;
   host: string;
@@ -540,6 +582,10 @@ export interface LocalModel {
   tier: "starter" | "advanced" | "light";
   speed: string;
   accuracy: string;
+  /** whisper = whisper.cpp; onnx = sherpa-onnx (Parakeet, Qwen3-ASR). Optional for older builds. */
+  engine?: "whisper" | "onnx";
+  /** what it's the best pick for ("English", "Hindi and Hinglish"); empty = general */
+  bestFor?: string;
 }
 
 export interface AttentionStatus {
@@ -954,6 +1000,7 @@ export interface HandsfreeEvent {
  *  open_claude_by_session({sessionId}) -> string  — focus its window; removes it from the tray unless still working
  *  dismiss_claude_session({sessionId})
  *  accept_correction({heard, corrected}) -> DictionaryEntry
+ *  learning_overview() -> LearningOverview   learning_forget({kind: term|fix|style, id}) -> LearningOverview   learning_clear() -> LearningOverview
  *  account_status() -> AccountStatus    account_login({email,password}) -> AccountUser
  *  account_google_start() -> {state} (opens browser)   account_exchange({code, state?}) -> AccountUser
  *  account_logout()      — sessions refuse to start while signed out ("Sign in to Flo…")

@@ -22,10 +22,10 @@ export interface WidgetMeta {
 export const WIDGETS: WidgetMeta[] = [
   { id: "saved", label: "Time saved", hint: "Say it. Save hours. How much time Flo saved you today and this week", span: 2, h: 72 },
   { id: "nowPlaying", label: "Now Playing", hint: "Artwork, progress, transport controls and volume", span: 2, h: 148 },
-  { id: "agents", label: "Claude sessions", hint: "Live Claude Code sessions — scroll, hover to expand", span: 2, h: 132 },
+  { id: "agents", label: "Claude sessions", hint: "Live Claude Code sessions. Scroll, or hover to expand", span: 2, h: 132 },
   { id: "note", label: "Quick note", hint: "A scratch note, saved on this device", span: 2, h: 92 },
   { id: "agenda", label: "Today's agenda", hint: "Your next Google Calendar meetings, with a Join link", span: 2, h: 132 },
-  { id: "today", label: "Today's to-dos", hint: "Check off tasks, see why each is here — scroll, hover to expand", span: 2, h: 148 },
+  { id: "today", label: "Today's to-dos", hint: "Check off tasks, see why each is here. Scroll, or hover to expand", span: 2, h: 148 },
   { id: "timer", label: "Stopwatch", hint: "A simple count-up timer", span: 1, h: 96 },
   { id: "pomodoro", label: "Pomodoro", hint: "A 25-minute focus countdown", span: 1, h: 96 },
   { id: "clock", label: "Clock & date", hint: "The time, today's date and other time zones", span: 1, h: 96 },

@@ -1,6 +1,6 @@
 // Projects → Code: clone a GitHub repo or link a folder, see its git state, and "Edit with AI" —
 // hand a task to Claude Code / Codex / Gemini CLI in Terminal (or headless, in the background).
-import { deviceWord, modKey } from "../lib/os";
+import { deviceWord, modKey, islandWord } from "../lib/os";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
@@ -453,7 +453,7 @@ function EditWithAI({ p, onClose }: { p: Project; onClose: () => void }) {
     try {
       const run = await codeApi.editWithAi({ projectId: p.id, prompt: prompt.trim(), agent, mode, includeNotes: notes, acceptEdits: mode === "background" && accept });
       const name = agents?.find((a) => a.id === agent)?.name ?? agent;
-      toast({ kind: "success", text: mode === "terminal" ? `${name} opened in Terminal. Flo's notch shows when it needs you.` : `${name} is working in the background.` });
+      toast({ kind: "success", text: mode === "terminal" ? `${name} opened in Terminal. Flo's ${islandWord()} shows when it needs you.` : `${name} is working in the background.` });
       setPrompt("");
       window.dispatchEvent(new CustomEvent("flo:code-run", { detail: run }));
       if (mode === "terminal") onClose();
@@ -556,7 +556,7 @@ function EditWithAI({ p, onClose }: { p: Project; onClose: () => void }) {
             </div>
             <div className="mt-1.5 text-[11.5px] leading-snug text-faint">
               {mode === "terminal"
-                ? "Opens a Terminal window in the repo so you can watch. The agent asks before risky steps; Allow / Deny also appears in Flo's notch."
+                ? `Opens a Terminal window in the repo so you can watch. The agent asks before risky steps; Allow / Deny also appears in Flo's ${islandWord()}.`
                 : "Runs headless in the repo and streams its output here. It can edit files without asking each time."}
             </div>
 

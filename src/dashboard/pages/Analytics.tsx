@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useSwr, onStatsChange } from "../../lib/swr";
 import clsx from "clsx";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -22,8 +22,10 @@ export default function Analytics() {
   const [days, setDays] = useState<(typeof RANGES)[number]>(30);
   const a = useSwr<A>(`analytics:${days}`, () => api.getAnalytics(days), { subscribe: onStatsChange });
 
-  const daily = a?.daily.map((d) => ({ ...d, label: new Date(d.day + "T00:00").toLocaleDateString([], { month: "short", day: "numeric" }) })) ?? [];
-  const hourly = a?.hourly.map((w, h) => ({ h, label: h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`, words: w })) ?? [];
+  // memoised: fresh arrays on every render made the charts redraw (and replay their animation) on
+  // unrelated re-renders, like a settings change
+  const daily = useMemo(() => a?.daily.map((d) => ({ ...d, label: new Date(d.day + "T00:00").toLocaleDateString([], { month: "short", day: "numeric" }) })) ?? [], [a]);
+  const hourly = useMemo(() => a?.hourly.map((w, h) => ({ h, label: h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`, words: w })) ?? [], [a]);
 
   return (
     <div>
@@ -100,7 +102,7 @@ export default function Analytics() {
                   <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={false} minTickGap={28} />
                   <YAxis tick={axis} tickLine={false} axisLine={false} tickFormatter={formatNumber} width={48} />
                   <Tooltip content={<Tip unit="words" />} cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }} />
-                  <Area type="monotone" dataKey="words" stroke={S1} strokeWidth={2} fill="url(#gw)" activeDot={{ r: 4.5, stroke: "var(--bg)", strokeWidth: 2 }} />
+                  <Area animationDuration={600} type="monotone" dataKey="words" stroke={S1} strokeWidth={2} fill="url(#gw)" activeDot={{ r: 4.5, stroke: "var(--bg)", strokeWidth: 2 }} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -116,7 +118,7 @@ export default function Analytics() {
                     <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={false} interval={2} />
                     <YAxis tick={axis} tickLine={false} axisLine={false} tickFormatter={formatNumber} width={48} />
                     <Tooltip content={<Tip unit="words" />} cursor={{ fill: "var(--glass)" }} />
-                    <Bar dataKey="words" fill={S1} radius={[4, 4, 0, 0]} />
+                    <Bar animationDuration={600} dataKey="words" fill={S1} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -129,7 +131,7 @@ export default function Analytics() {
                     <XAxis type="number" hide />
                     <YAxis type="category" dataKey="app" tick={{ ...axis, fill: "var(--fg-muted)", fontSize: 12 }} tickLine={false} axisLine={false} width={74} />
                     <Tooltip content={<Tip unit="words" />} cursor={{ fill: "var(--glass)" }} />
-                    <Bar dataKey="words" fill={S2} radius={[0, 4, 4, 0]} label={{ position: "right", fill: "var(--fg-muted)", fontSize: 11, formatter: (v: unknown) => formatNumber(Number(v)) }} />
+                    <Bar animationDuration={600} dataKey="words" fill={S2} radius={[0, 4, 4, 0]} label={{ position: "right", fill: "var(--fg-muted)", fontSize: 11, formatter: (v: unknown) => formatNumber(Number(v)) }} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -145,7 +147,7 @@ export default function Analytics() {
                   <XAxis dataKey="label" tick={axis} tickLine={false} axisLine={false} minTickGap={28} />
                   <YAxis tick={axis} tickLine={false} axisLine={false} allowDecimals={false} width={48} />
                   <Tooltip content={<Tip unit="done" dataKey="todosDone" />} cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }} />
-                  <Line type="monotone" dataKey="todosDone" stroke={S4} strokeWidth={2} dot={false} activeDot={{ r: 4.5, stroke: "var(--bg)", strokeWidth: 2 }} />
+                  <Line animationDuration={600} type="monotone" dataKey="todosDone" stroke={S4} strokeWidth={2} dot={false} activeDot={{ r: 4.5, stroke: "var(--bg)", strokeWidth: 2 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

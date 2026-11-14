@@ -166,7 +166,7 @@ export function Onboarding() {
       data-testid="onboarding"
       data-step={step}
       initial={false}
-      animate={phase === "leaving" ? { opacity: 0, scale: 1.04, filter: "blur(10px)" } : { opacity: 1, scale: 1, filter: "blur(0px)" }}
+      animate={phase === "leaving" ? { opacity: 0, scale: 1.04 } : { opacity: 1, scale: 1 }}
       transition={{ duration: reduce ? 0.2 : 0.7, ease: EASE }}
       onAnimationComplete={() => phase === "leaving" && finish()}
     >
@@ -192,18 +192,21 @@ export function Onboarding() {
           <motion.div
             key={step}
             custom={dir}
+            // opacity + slide only: an animated filter: blur() over the whole step repainted the full
+            // window on every frame of the transition and stuttered on slower machines
             variants={{
-              enter: (d: number) => ({ opacity: 0, x: reduce ? 0 : 48 * d, filter: reduce ? "none" : "blur(10px)" }),
-              center: { opacity: 1, x: 0, filter: "blur(0px)" },
-              exit: (d: number) => ({ opacity: 0, x: reduce ? 0 : -48 * d, filter: reduce ? "none" : "blur(10px)" }),
+              enter: (d: number) => ({ opacity: 0, x: reduce ? 0 : 48 * d }),
+              center: { opacity: 1, x: 0 },
+              exit: (d: number) => ({ opacity: 0, x: reduce ? 0 : -48 * d }),
             }}
             initial="enter"
             animate="center"
             exit="exit"
-            transition={{ type: "spring", stiffness: 240, damping: 30, filter: { duration: 0.3 } }}
-            className="flex h-full w-full max-w-[940px] flex-col overflow-y-auto overflow-x-hidden px-1"
+            transition={{ type: "spring", stiffness: 240, damping: 30 }}
+            // a step taller than a small window scrolls; its bottom edge fades instead of cutting a card in half
+            className="flex h-full w-full max-w-[940px] flex-col overflow-y-auto overflow-x-hidden px-1 [mask-image:linear-gradient(to_bottom,#000_calc(100%-28px),transparent)]"
           >
-            <div className={clsx("my-auto flex w-full flex-col items-center pb-2", step === "welcome" ? "pt-2" : "pt-1")}>
+            <div className={clsx("my-auto flex w-full flex-col items-center pb-6", step === "welcome" ? "pt-2" : "pt-1")}>
             {step === "welcome" && <Welcome title={h.title} sub={h.sub} name={answers.name} setName={(name) => patch({ name })} onStart={() => go(1)} />}
             {step === "model" && <ModelStep title={h.title} sub={h.sub} m={sm} />}
             {step === "permissions" && <Permissions title={h.title} sub={h.sub} setMood={setMood} onStatus={onPerms} onDone={() => go(1)} />}

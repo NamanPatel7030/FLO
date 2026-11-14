@@ -23,13 +23,13 @@ export function LimitLine({ a }: { a: AutoContinue }) {
   if (a.status === "resuming")
     return (
       <span className="flex items-center gap-1 truncate text-[11px] leading-tight text-amber-200/80" data-testid="limit-line">
-        <Loader2 size={10} className="shrink-0 animate-spin" /> Resumed — continuing
+        <Loader2 size={10} className="shrink-0 animate-spin" /> Resumed, continuing
       </span>
     );
   const when = resetLabel(a.resetsAt ?? a.nextCheckAt, now);
   const what = !a.resetsAt ? (a.auto ? `Retrying ${when}` : "No reset time given") : a.auto ? `Resumes ${when}` : `Resets ${when}`;
   return (
-    <span className="flex min-w-0 items-center gap-1 text-[11px] leading-tight text-amber-200/80" data-testid="limit-line" title={`Waiting for limit reset · ${what} — ${a.reason}`}>
+    <span className="flex min-w-0 items-center gap-1 text-[11px] leading-tight text-amber-200/80" data-testid="limit-line" title={`Waiting for limit reset · ${what}: ${a.reason}`}>
       <AlarmClock size={10} className="shrink-0 text-amber-300" />
       <span className="truncate">{what}</span>
       <span className="shrink-0 tabular-nums text-amber-300/70">· {countdown(a.resetsAt ?? a.nextCheckAt, now)}</span>

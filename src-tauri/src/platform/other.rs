@@ -36,6 +36,9 @@ pub fn cursor_location() -> Option<(f64, f64)> {
 pub fn focused_text() -> Option<(usize, String)> {
     None
 }
+pub fn focused_window_text(_max_chars: usize) -> Option<super::WindowText> {
+    None
+}
 pub fn focus_session_window(_app: &str, _names: &[String]) -> Result<String> {
     Ok(String::new())
 }

@@ -1,6 +1,6 @@
 // Full-window sign-in gate (shown while account_status().signedIn is false).
 // Split layout: the form on the left, a living notch illustration on the right (stacks when narrow).
-import { deviceWord } from "../lib/os";
+import { deviceWord, islandWord } from "../lib/os";
 import { useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AlertCircle, ArrowLeft, ArrowRight, Check, CloudOff, Eye, EyeOff, Globe, Loader2, Lock } from "lucide-react";
@@ -473,7 +473,7 @@ export function SignIn({ status }: { status: AccountStatus }) {
             </div>
             <div className="px-10 pb-9">
               <p className="text-[22px] font-semibold leading-snug tracking-tight text-[#f3f9ff]">Speak. Flo writes, answers and remembers.</p>
-              <p className="mt-1.5 text-[13.5px] text-[rgba(226,240,255,0.62)]">Dictation, to-dos and translation, right in your notch.</p>
+              <p className="mt-1.5 text-[13.5px] text-[rgba(226,240,255,0.62)]">Dictation, to-dos and translation, right in your {islandWord()}.</p>
             </div>
           </div>
         </aside>

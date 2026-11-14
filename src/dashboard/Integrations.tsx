@@ -1,6 +1,6 @@
 // Settings → Integrations: agent tools (Claude Code, Codex, Cursor, webhook), Google (Calendar + Gmail).
 // Slack has one page: Flo Agent → Slack.
-import { deviceWord } from "../lib/os";
+import { deviceWord, islandWord } from "../lib/os";
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { ArrowRight, Asterisk, Check, CodeXml, Copy, MousePointer2, Plug, Terminal, Unplug, Webhook } from "lucide-react";
@@ -41,7 +41,7 @@ export function Integrations() {
   };
   return (
     <div className="flex flex-col gap-4">
-      <p className="-mb-1 text-[12.5px] text-muted">Agents ping Flo on 127.0.0.1 when they finish or need you. Sessions show up in the notch.</p>
+      <p className="-mb-1 text-[12.5px] text-muted">Agents ping Flo on 127.0.0.1 when they finish or need you. Sessions show up in the {islandWord()}.</p>
       {!list ? (
         <Skeleton className="h-52" />
       ) : (

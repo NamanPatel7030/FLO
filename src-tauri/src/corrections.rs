@@ -4,6 +4,10 @@
 //! later dictation (final step, after AI cleanup), and its words bias the speech model and the
 //! cleanup prompt, so the same mistake doesn't come back.
 //!
+//! A fix is counted first (learning.rs): applied by itself once seen twice, or once when the word
+//! was on screen; the first time the notch offers Save. Putting back a word Flo changed to a screen
+//! term blocks that change. What the user keeps in the field also teaches Flo their style per app.
+//!
 //! The field is often sent and cleared right after the fix (Enter in Slack), so we compare
 //! against the last snapshot that still holds what Flo typed — and only one the user had finished
 //! typing (seen unchanged on two polls in a row), so a half-typed "Tau" is never learned.
@@ -72,6 +76,11 @@ impl Watcher {
         Step::Continue
     }
 
+    /// What the field held last while it still held the paste (what the user kept).
+    pub fn kept(&self) -> &str {
+        &self.last
+    }
+
     /// The fixes to learn. Normally from the settled snapshot; if the user was still typing more of
     /// it when they hit Enter (the newest snapshot only grew from the settled one), the newest one.
     pub fn corrections(&self) -> Vec<(String, String)> {
@@ -132,8 +141,14 @@ pub fn undo(st: &Shared, heard: &str, corrected: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Watch the field at all? Learning from edits or style is on, the app isn't denylisted.
+pub fn should_track(s: &crate::model::Settings, pasted: &str, app: &str) -> bool {
+    (s.learn_corrections || s.learn_app_style) && !pasted.trim().is_empty() && !crate::learning::denied_app(app, "", &s.attention_denylist)
+}
+
 pub fn track(st: Shared, pasted: String, app: String) {
-    if !st.settings().learn_corrections || pasted.split_whitespace().count() < 1 {
+    let s = st.settings();
+    if !should_track(&s, &pasted, &app) {
         return;
     }
     std::thread::Builder::new()
@@ -165,14 +180,11 @@ pub fn track(st: Shared, pasted: String, app: String) {
                     break;
                 }
             }
-            for (heard, corrected) in w.corrections() {
-                let saved = match save(&st, &heard, &corrected) {
-                    Ok(()) => true,
-                    Err(e) => {
-                        log::warn!("save correction {heard} → {corrected}: {e}");
-                        false
-                    }
-                };
+            crate::learning::on_kept_text(&st, &app, w.kept());
+            if !s.learn_corrections {
+                return;
+            }
+            for (heard, corrected, saved) in crate::learning::on_edits(&st, &app, w.corrections()) {
                 log::info!("learned correction {heard:?} → {corrected:?} in {app} (saved={saved})");
                 st.emit(ev::CORRECTION, CorrectionEvent { id: crate::db::new_id(), heard, corrected, app: app.clone(), saved });
             }
@@ -207,6 +219,28 @@ mod tests {
         assert_eq!(plan_save(&existing, "Flo", "flow"), (vec!["2".to_string()], false));
         // already known: nothing to do
         assert_eq!(plan_save(&existing, "naman", "Naman"), (vec![], false));
+    }
+
+    #[test]
+    fn never_watches_denylisted_apps_or_with_learning_off() {
+        let mut s = crate::model::Settings::default();
+        assert!(should_track(&s, "ask Priya", "Slack"));
+        assert!(!should_track(&s, "ask Priya", "1Password 8"));
+        assert!(!should_track(&s, "ask Priya", "Flo Flow"));
+        assert!(!should_track(&s, "  ", "Slack"));
+        s.learn_corrections = false;
+        assert!(should_track(&s, "ask Priya", "Slack"), "style learning still watches");
+        s.learn_app_style = false;
+        assert!(!should_track(&s, "ask Priya", "Slack"));
+    }
+
+    #[test]
+    fn kept_text_is_the_last_snapshot_that_held_the_paste() {
+        let pasted = "ship it today";
+        let mut w = Watcher::new(pasted, pasted);
+        w.observe(Some("ship it today 🚀"));
+        w.observe(Some(""));
+        assert_eq!(w.kept(), "ship it today 🚀");
     }
 
     #[test]

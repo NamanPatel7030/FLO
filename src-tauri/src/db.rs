@@ -183,6 +183,10 @@ impl Db {
         ] {
             let _ = conn.execute(sql, []);
         }
+        // Learning (learning.rs): screen words, the user's fixes, per-app style. Local only, never synced.
+        for sql in crate::learning::SCHEMA {
+            conn.execute(sql, [])?;
+        }
         backfill_threads(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }

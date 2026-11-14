@@ -6,7 +6,7 @@ import { motion } from "motion/react";
 import clsx from "clsx";
 import { Cpu, LayoutGrid, Plug, SlidersHorizontal, Zap } from "lucide-react";
 import { agentApi, DEFAULT_AGENT_CONFIG, type AgentConfig } from "../../lib/floAgent";
-import { useStore } from "../store";
+import { usePick, usePageArg } from "../store";
 import { Card, CardTitle } from "../ui";
 import { Integrations } from "../Integrations";
 import { SlackIcon } from "../SlackCard";
@@ -16,6 +16,7 @@ import { EnginePanel } from "../floagent/Engine";
 import { SlackPage } from "../floagent/Slack";
 import { Customize } from "../floagent/Customize";
 import { EASE } from "../floagent/parts";
+import { islandWord } from "../../lib/os";
 
 export type AgentTab = "overview" | "apps" | "skills" | "engine" | "slack" | "customize";
 
@@ -48,7 +49,8 @@ export function useAgentConfig() {
 }
 
 export default function FloAgentPage() {
-  const { pageArg, go } = useStore();
+  const { go } = usePick("go");
+  const pageArg = usePageArg("agent");
   const tab: AgentTab = TABS.some((t) => t.id === pageArg) ? (pageArg as AgentTab) : "overview";
   const agent = useAgentConfig();
   return (
@@ -95,7 +97,7 @@ function AppsTab() {
       <div>
         <Card className="mb-4 px-5 py-4">
           <CardTitle icon={<Plug size={15} />}>Agents and coding tools</CardTitle>
-          <p className="-mt-1.5 text-[12.5px] text-muted">Flo Agent can hand work to these, and they report back to Flo in the notch.</p>
+          <p className="-mt-1.5 text-[12.5px] text-muted">Flo Agent can hand work to these, and they report back to Flo in the {islandWord()}.</p>
         </Card>
         <Integrations />
       </div>

@@ -10,6 +10,7 @@ import { EV, type ClaudeEvent, type ClaudeSession, type Todo } from "../lib/type
 import { useStore } from "./store";
 import { Card, CardTitle, Empty, SourceBadge } from "./ui";
 import { AutoContinueList } from "./AutoContinue";
+import { islandWord } from "../lib/os";
 
 export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
   const projects = useStore((s) => s.projects);
@@ -68,7 +69,7 @@ export function TodoRow({ todo, compact }: { todo: Todo; compact?: boolean }) {
                 · <Bell size={11} /> {formatDue(reminder)}
               </span>
             )}
-            {todo.reason && <span className="truncate">· {todo.reason}</span>}
+            {todo.reason && <span className="min-w-0 flex-1 basis-24 truncate">· {todo.reason}</span>}
           </div>
         )}
       </div>
@@ -138,6 +139,7 @@ export function ClaudeSessionsCard() {
     };
   }, []);
   const working = sessions?.filter((s) => s.status === "working").length ?? 0;
+  const attention = (sessions?.length ?? 0) - working;
   const unseen = events.filter((e) => !e.seen).length;
   const drop = (id: string) => setSessions((l) => (l ?? []).filter((s) => s.sessionId !== id));
   const markAllSeen = async () => {
@@ -146,21 +148,32 @@ export function ClaudeSessionsCard() {
   };
   const nothing = sessions && sessions.length === 0 && events.length === 0;
   return (
-    <Card className="p-4">
-      <CardTitle icon={<Terminal size={15} />}>
-        Claude sessions
-        {!!sessions?.length && <span className="rounded-full bg-[#d97757] px-1.5 text-[10.5px] font-semibold leading-[18px] text-white">{sessions.length}</span>}
-        {working > 0 && <span className="text-[11px] font-normal text-brand-300">{working} working</span>}
-        {unseen > 0 && (
-          <button onClick={markAllSeen} className="ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium text-brand-300 transition hover:bg-[var(--glass-strong)]">
-            Mark all seen
-          </button>
+    // a container: in a narrow card (minimum window) the "N working" note and the times step aside
+    // so names and statuses stay whole
+    <Card className="@container p-4">
+      <CardTitle
+        icon={<Terminal size={15} />}
+        action={
+          unseen > 0 && (
+            <button onClick={markAllSeen} aria-label="Mark all seen" className="-mr-1.5 shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-medium text-brand-300 transition hover:bg-[var(--glass-strong)]">
+              Mark <span className="hidden @[20rem]:inline">all </span>seen
+            </button>
+          )
+        }
+      >
+        <span className="whitespace-nowrap">Claude sessions</span>
+        {/* the same count as the Home badge in the sidebar: sessions that need you (not the working ones) */}
+        {attention > 0 && (
+          <span data-testid="claude-attention-count" title="Sessions that need you" className="rounded-full bg-[#d97757] px-1.5 text-[10.5px] font-semibold leading-[18px] text-white">
+            {attention}
+          </span>
         )}
+        {working > 0 && <span className="hidden whitespace-nowrap text-[11px] font-normal text-brand-300 @[20rem]:inline">{working} working</span>}
       </CardTitle>
       {/* sessions that hit a usage limit: waiting for the reset / auto-continued */}
       <AutoContinueList />
       {!sessions ? null : nothing ? (
-        <Empty icon={<BellRing size={18} />} title="All caught up" hint="Connect Claude Code in Settings · Integrations and your sessions show up here and in the notch." />
+        <Empty icon={<BellRing size={18} />} title="All caught up" hint={`Connect Claude Code in Settings · Integrations and your sessions show up here and in the ${islandWord()}.`} />
       ) : (
         <div className="flex max-h-[360px] flex-col gap-0.5 overflow-y-auto">
           <AnimatePresence initial={false}>
@@ -214,9 +227,10 @@ function ClaudeRow({ s, onOpen, onDismiss }: { s: ClaudeSession; onOpen: () => v
         <SourceGlyph source={s.source} live={s.status !== "done"} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-[13px]">
-            <span className="truncate font-medium">{s.project}</span>
-            <span className={clsx("shrink-0 rounded-full border px-1.5 text-[10.5px] leading-[16px]", STATUS_CHIP[s.status])}>{claudeStatusLabel(s.status)}</span>
-            <span className="ml-auto shrink-0 text-[11px] text-faint">{relativeTime(s.updatedAt)}</span>
+            {/* in a narrow card the status chip gives way first, so the project name stays readable */}
+            <span className="max-w-[60%] shrink-0 truncate font-medium">{s.project}</span>
+            <span className={clsx("min-w-0 truncate rounded-full border px-1.5 text-[10.5px] leading-[16px]", STATUS_CHIP[s.status])}>{claudeStatusLabel(s.status)}</span>
+            <span className="ml-auto hidden shrink-0 text-[11px] text-faint @[20rem]:inline">{relativeTime(s.updatedAt)}</span>
           </div>
           <div className="truncate text-[12px] text-muted">{s.message}</div>
         </div>
