@@ -19,8 +19,113 @@ pub struct Recorder {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+/// Input devices that delivered pure zeros this run (a Bluetooth speaker that macOS made the
+/// default input, a muted USB mic, a virtual device). Skipped while another microphone exists.
+static SILENT_DEVICES: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+/// A silent mark expires: AirPods and some USB mics send zeros for a moment while they wake up.
+const SILENT_FOR: Duration = Duration::from_secs(300);
+
+fn silent_now() -> Vec<String> {
+    let mut sd = SILENT_DEVICES.lock();
+    sd.retain(|(_, t)| t.elapsed() < SILENT_FOR);
+    sd.iter().map(|(n, _)| n.clone()).collect()
+}
+/// The device the last recording actually used, for messages ("Stone 350 sends no sound").
+static LAST_DEVICE: Mutex<String> = Mutex::new(String::new());
+
+/// How long the first audio may be pure zeros before we try another microphone.
+const SILENT_PROBE: Duration = Duration::from_millis(350);
+
+/// Name of the microphone the last recording used.
+pub fn last_device_name() -> String {
+    LAST_DEVICE.lock().clone()
+}
+
+/// Order to try input devices in: the system default first unless it already proved silent this
+/// run, then a built-in microphone, then any other input.
+pub(crate) fn device_order(default: Option<&str>, all: &[String], silent: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |n: &str, out: &mut Vec<String>| {
+        if !out.iter().any(|o| o == n) {
+            out.push(n.to_string());
+        }
+    };
+    let builtin = |n: &str| {
+        let l = n.to_lowercase();
+        l.contains("macbook") || l.contains("built-in") || l.contains("internal") || l.contains("microphone array")
+    };
+    if let Some(d) = default {
+        if !silent.iter().any(|s| s == d) {
+            push(d, &mut out);
+        }
+    }
+    for n in all.iter().filter(|n| builtin(n) && !silent.contains(n)) {
+        push(n, &mut out);
+    }
+    for n in all.iter().filter(|n| !silent.contains(n)) {
+        push(n, &mut out);
+    }
+    // every device proved silent: still try the default so the user gets a clear message
+    if out.is_empty() {
+        if let Some(d) = default {
+            push(d, &mut out);
+        }
+    }
+    out
+}
+
+fn open_stream(dev: &cpal::Device, sh: &Arc<Mutex<Shared>>, level: &Arc<Mutex<dyn LevelFeed + Send>>) -> Result<cpal::Stream> {
+    let cfg = dev.default_input_config()?;
+    let channels = cfg.channels() as usize;
+    {
+        let mut s = sh.lock();
+        s.buf.clear();
+        s.rate = cfg.sample_rate().0;
+    }
+    let err_fn = |e| log::error!("audio stream error: {e}");
+    let stream_cfg: cpal::StreamConfig = cfg.clone().into();
+    macro_rules! build {
+        ($t:ty, $conv:expr) => {{
+            let sh2 = sh.clone();
+            let lv = level.clone();
+            dev.build_input_stream(
+                &stream_cfg,
+                move |data: &[$t], _| {
+                    let mono: Vec<f32> =
+                        data.chunks(channels).map(|f| f.iter().map(|s| $conv(*s)).sum::<f32>() / channels as f32).collect();
+                    lv.lock().feed_samples(&mono);
+                    sh2.lock().buf.extend_from_slice(&mono);
+                },
+                err_fn,
+                None,
+            )?
+        }};
+    }
+    let stream = match cfg.sample_format() {
+        cpal::SampleFormat::F32 => build!(f32, |s: f32| s),
+        cpal::SampleFormat::I16 => build!(i16, |s: i16| s as f32 / i16::MAX as f32),
+        cpal::SampleFormat::U16 => build!(u16, |s: u16| (s as f32 - 32768.0) / 32768.0),
+        cpal::SampleFormat::I32 => build!(i32, |s: i32| s as f32 / i32::MAX as f32),
+        f => return Err(anyhow!("unsupported sample format {f:?}")),
+    };
+    stream.play()?;
+    Ok(stream)
+}
+
+trait LevelFeed {
+    fn feed_samples(&mut self, s: &[f32]);
+}
+impl<F: Fn(f32)> LevelFeed for LevelMeter<F> {
+    fn feed_samples(&mut self, s: &[f32]) {
+        self.feed(s)
+    }
+}
+
 impl Recorder {
-    /// Start recording from the default input device. `on_level` receives 0..1 ~30×/s.
+    /// Start recording. Uses the system's default input, but if it delivers pure zeros for the
+    /// first moments (a Bluetooth speaker macOS made the default input, a muted mic) and another
+    /// microphone exists, switches to that one mid-press and remembers the silent device for the
+    /// rest of the run. `on_level` receives 0..1 ~30×/s.
     pub fn start(on_level: impl Fn(f32) + Send + 'static) -> Result<Self> {
         let shared = Arc::new(Mutex::new(Shared { buf: Vec::new(), rate: TARGET_RATE }));
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -28,54 +133,88 @@ impl Recorder {
         let sh = shared.clone();
         // cpal::Stream is !Send on macOS → own it on a dedicated thread.
         let thread = std::thread::Builder::new().name("flo-audio".into()).spawn(move || {
-            let res = (|| -> Result<cpal::Stream> {
-                let host = cpal::default_host();
-                let dev = host.default_input_device().ok_or_else(|| anyhow!("No microphone found"))?;
-                let cfg = dev.default_input_config()?;
-                let channels = cfg.channels() as usize;
-                sh.lock().rate = cfg.sample_rate().0;
-                let level = Arc::new(Mutex::new(LevelMeter::new(on_level)));
-                let err_fn = |e| log::error!("audio stream error: {e}");
-                let stream_cfg: cpal::StreamConfig = cfg.clone().into();
-                macro_rules! build {
-                    ($t:ty, $conv:expr) => {{
-                        let sh2 = sh.clone();
-                        let lv = level.clone();
-                        dev.build_input_stream(
-                            &stream_cfg,
-                            move |data: &[$t], _| {
-                                let mono: Vec<f32> = data
-                                    .chunks(channels)
-                                    .map(|f| f.iter().map(|s| $conv(*s)).sum::<f32>() / channels as f32)
-                                    .collect();
-                                lv.lock().feed(&mono);
-                                sh2.lock().buf.extend_from_slice(&mono);
-                            },
-                            err_fn,
-                            None,
-                        )?
-                    }};
-                }
-                let stream = match cfg.sample_format() {
-                    cpal::SampleFormat::F32 => build!(f32, |s: f32| s),
-                    cpal::SampleFormat::I16 => build!(i16, |s: i16| s as f32 / i16::MAX as f32),
-                    cpal::SampleFormat::U16 => build!(u16, |s: u16| (s as f32 - 32768.0) / 32768.0),
-                    cpal::SampleFormat::I32 => build!(i32, |s: i32| s as f32 / i32::MAX as f32),
-                    f => return Err(anyhow!("unsupported sample format {f:?}")),
-                };
-                stream.play()?;
-                Ok(stream)
-            })();
-            match res {
-                Ok(stream) => {
-                    let _ = ready_tx.send(Ok(()));
-                    let _ = stop_rx.recv();
-                    drop(stream);
-                }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
+            let host = cpal::default_host();
+            let level: Arc<Mutex<dyn LevelFeed + Send>> = Arc::new(Mutex::new(LevelMeter::new(on_level)));
+            let devices: Vec<cpal::Device> = host.input_devices().map(|d| d.collect()).unwrap_or_default();
+            let names: Vec<String> = devices.iter().map(|d| d.name().unwrap_or_default()).collect();
+            let default = host.default_input_device().and_then(|d| d.name().ok());
+            let order = device_order(default.as_deref(), &names, &silent_now());
+            let find = |n: &str| devices.iter().zip(&names).find(|(_, dn)| dn.as_str() == n).map(|(d, _)| d.clone());
+
+            // open the first device that starts
+            let mut idx = 0;
+            let mut current: Option<(cpal::Stream, String)> = None;
+            let mut last_err = anyhow!("No microphone found. Connect one, or choose one in System Settings → Sound → Input.");
+            while idx < order.len() {
+                let name = order[idx].clone();
+                idx += 1;
+                let Some(dev) = find(&name) else { continue };
+                match open_stream(&dev, &sh, &level) {
+                    Ok(s) => {
+                        current = Some((s, name));
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("microphone {name}: {e}");
+                        last_err = e;
+                    }
                 }
             }
+            let Some((mut stream, mut name)) = current else {
+                let _ = ready_tx.send(Err(last_err));
+                return;
+            };
+            *LAST_DEVICE.lock() = name.clone();
+            let _ = ready_tx.send(Ok(()));
+
+            // watch the first moments: pure zeros with another mic available → switch
+            let mut probe_until = Instant::now() + SILENT_PROBE;
+            loop {
+                match stop_rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                if Instant::now() < probe_until || idx >= order.len() {
+                    continue;
+                }
+                let silent = {
+                    let s = sh.lock();
+                    !s.buf.is_empty() && is_digital_silence(&s.buf)
+                };
+                if !silent {
+                    idx = order.len(); // this one works: stop probing
+                    continue;
+                }
+                log::warn!("microphone {name} sends only silence; trying another");
+                {
+                    let mut sd = SILENT_DEVICES.lock();
+                    sd.retain(|(n, _)| n != &name);
+                    sd.push((name.clone(), Instant::now()));
+                }
+                let mut switched = false;
+                while idx < order.len() {
+                    let next = order[idx].clone();
+                    idx += 1;
+                    let Some(dev) = find(&next) else { continue };
+                    drop(std::mem::replace(&mut stream, match open_stream(&dev, &sh, &level) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::warn!("microphone {next}: {e}");
+                            continue;
+                        }
+                    }));
+                    log::info!("microphone: switched from {name} to {next}");
+                    name = next;
+                    *LAST_DEVICE.lock() = name.clone();
+                    probe_until = Instant::now() + SILENT_PROBE;
+                    switched = true;
+                    break;
+                }
+                if !switched {
+                    idx = order.len();
+                }
+            }
+            drop(stream);
         })?;
         ready_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| anyhow!("microphone did not start"))??;
         Ok(Self { shared, stop_tx, thread: Some(thread) })
@@ -410,5 +549,46 @@ mod tests {
         let wav = encode_wav(&[0.0, 0.5, -0.5], 16_000).unwrap();
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(wav.len(), 44 + 6);
+    }
+}
+
+#[cfg(test)]
+mod device_order_tests {
+    use super::device_order;
+    fn v(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+    #[test]
+    fn default_first_then_builtin_then_others() {
+        let all = v(&["Stone 350", "MacBook Pro Microphone", "USB Mic"]);
+        assert_eq!(device_order(Some("Stone 350"), &all, &[]), v(&["Stone 350", "MacBook Pro Microphone", "USB Mic"]));
+    }
+    #[test]
+    fn a_silent_default_is_skipped_for_the_builtin_mic() {
+        let all = v(&["Stone 350", "MacBook Pro Microphone"]);
+        assert_eq!(device_order(Some("Stone 350"), &all, &v(&["Stone 350"])), v(&["MacBook Pro Microphone"]));
+    }
+    #[test]
+    fn when_everything_is_silent_the_default_is_still_tried() {
+        let all = v(&["Stone 350"]);
+        assert_eq!(device_order(Some("Stone 350"), &all, &v(&["Stone 350"])), v(&["Stone 350"]));
+    }
+    #[test]
+    fn windows_and_linux_builtin_names_count() {
+        let all = v(&["Headset (BT)", "Microphone Array (Realtek)"]);
+        assert_eq!(device_order(Some("Headset (BT)"), &all, &v(&["Headset (BT)"])), v(&["Microphone Array (Realtek)"]));
+    }
+}
+
+#[cfg(test)]
+mod live_mic_probe {
+    /// Manual check on a real Mac: `cargo test --release --lib live_mic_probe -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn records_from_a_working_microphone() {
+        let r = super::Recorder::start(|_| {}).expect("start");
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let s = r.stop();
+        println!("device={} samples={} silent={} rms={:.5}", super::last_device_name(), s.len(), super::is_digital_silence(&s), super::rms(&s));
     }
 }

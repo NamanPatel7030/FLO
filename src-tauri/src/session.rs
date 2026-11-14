@@ -216,7 +216,12 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
                 return Ok(());
             }
             SilentHold::MicSilent => {
-                return Err(anyhow!("The microphone sent only silence. Check the input device in System Settings → Sound."));
+                let dev = audio::last_device_name();
+                return Err(if dev.is_empty() {
+                    anyhow!("The microphone sent only silence. Choose a working one in System Settings → Sound → Input.")
+                } else {
+                    anyhow!("{dev} sends no sound. Choose another microphone in System Settings → Sound → Input.")
+                });
             }
             SilentHold::NoSpeech => return Err(anyhow!("I didn't hear anything. Check the microphone in System Settings → Sound.")),
         }
