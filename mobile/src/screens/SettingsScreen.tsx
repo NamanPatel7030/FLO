@@ -17,7 +17,7 @@ import { KindIcon } from '../ui/KindIcon';
 import { Toggle } from '../ui/Toggle';
 import { BubbleCard } from '../ui/BubbleCard';
 import { bubble } from '../lib/bubble';
-import { bubbleVisible, effectiveGestures, isDictationOnly } from '../lib/bubbleSettings';
+import { STYLES, bubbleVisible, effectiveGestures, isDictationOnly, sizeDp } from '../lib/bubbleSettings';
 import { useBubbleSettings } from '../state/BubbleSettings';
 import { OfflinePill } from '../ui/OfflinePill';
 import { OrbPreview } from '../ui/OrbPreview';
@@ -83,14 +83,14 @@ function ThemePicker({ value, onChange }: { value: ThemeMode; onChange: (t: Them
 
 export function SettingsScreen({ onBack, onCustomize, onComputer, onBubble }: { onBack?: () => void; onCustomize: () => void; onComputer: () => void; onBubble: () => void }) {
   const insets = useSafeAreaInsets();
-  const { settings: bs, accent: bubbleAccent } = useBubbleSettings();
+  const { settings: bs, accent: bubbleAccent, accent2: bubbleAccent2 } = useBubbleSettings();
   const bg = effectiveGestures(bs);
   const bubbleSummary = !bubbleVisible(bs)
     ? 'Hidden: Dictation and Assistant are both off'
     : [
         isDictationOnly(bs) ? 'Dictation only' : bs.assistant && !bs.dictation ? 'Assistant only' : 'Dictate and Ask',
-        `tap to ${bg.tap === 'ask' ? 'ask' : bg.tap === 'dictate' ? 'dictate' : 'do nothing'}`,
-        `${bs.size === 's' ? 'small' : bs.size === 'l' ? 'large' : 'medium'} size`,
+        `tap to ${bg.tap === 'none' ? 'do nothing' : bg.tap === 'ask' ? 'ask' : bg.tap === 'openFlo' ? 'open Flo' : bg.tap}`,
+        `${STYLES.find((x) => x.id === bs.style)?.label.toLowerCase() ?? 'orb'}, ${sizeDp(bs)} dp`,
       ].join(', ');
   const flo = useFlo();
   const computer = useComputer();
@@ -215,7 +215,7 @@ export function SettingsScreen({ onBack, onCustomize, onComputer, onBubble }: { 
           <BubbleCard />
           <Pressable testID="open-bubble-settings" accessibilityRole="button" onPress={onBubble} style={{ marginTop: 10 }}>
             <GlassCard style={styles.rowCard}>
-              <OrbPreview size={32} pad={5} accent={bubbleAccent} animate={false} />
+              <OrbPreview look={bs.style} size={32} pad={5} accent={bubbleAccent} accent2={bubbleAccent2} animate={false} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>Customize the bubble</Text>
                 <Text style={type.small} numberOfLines={2}>

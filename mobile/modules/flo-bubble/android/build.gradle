@@ -16,4 +16,7 @@ android {
 
 dependencies {
   implementation "androidx.core:core-ktx:1.17.0"
+  // FloCleanupTest: the same cases as the app's jest test (../cleanup-cases.json)
+  testImplementation "junit:junit:4.13.2"
+  testImplementation "org.json:json:20240303"
 }

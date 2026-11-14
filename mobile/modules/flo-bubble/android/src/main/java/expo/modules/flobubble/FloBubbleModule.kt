@@ -8,6 +8,7 @@ import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
@@ -56,6 +57,24 @@ class FloBubbleModule : Module() {
 
     /** Flo was opened: a bubble waiting since the restart ("Start on boot" off) can come back. */
     Function("clearBootPause") { Prefs.setBootPaused(ctx, false) }
+
+    /** Forget where the bubble rests: the service moves it back to the default spot at once. */
+    Function("resetPosition") { Prefs.resetDock(ctx) }
+
+    /** Flo is exempt from battery optimisation (some phones stop accessibility helpers to save power). */
+    Function("batteryUnrestricted") {
+      (ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isIgnoringBatteryOptimizations(ctx.packageName) ?: true
+    }
+
+    /** The phone's battery optimisation list (no special permission needed), else Flo's App info. */
+    Function("openBatterySettings") {
+      val list = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      if (runCatching { ctx.startActivity(list) }.isFailure) {
+        ctx.startActivity(
+          Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", ctx.packageName, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+      }
+    }
 
     // ── offline ────────────────────────────────────────────────────────────────
 

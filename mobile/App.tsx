@@ -14,7 +14,7 @@ import { parsePairPayload, type PairTarget } from './src/lib/pairing';
 import { appLink } from './src/lib/bubble';
 import { BubbleSettingsScreen } from './src/screens/BubbleSettingsScreen';
 import { OfflineSpeechScreen } from './src/screens/OfflineSpeechScreen';
-import { BubbleSettingsProvider } from './src/state/BubbleSettings';
+import { BubbleSettingsProvider, DesktopAccentSync } from './src/state/BubbleSettings';
 import { OfflineProvider } from './src/state/Offline';
 import { EnterCodeScreen } from './src/screens/EnterCodeScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -288,6 +288,7 @@ function Themed() {
         <OfflineProvider>
           <BubbleSettingsProvider>
             <ComputerProvider>
+              <DesktopAccentSync />
               <View style={[styles.app, { backgroundColor: colors.bg }]}>
                 <Root />
               </View>

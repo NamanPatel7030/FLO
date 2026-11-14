@@ -47,29 +47,43 @@ internal object FloSpeech {
     return runCatching { SpeechRecognizer.createSpeechRecognizer(c) }.getOrNull()?.let { Choice(it, false) }
   }
 
-  /** [hold]: push-to-talk (you decide when you're done by letting go, so allow long pauses). */
-  fun intent(c: Context, cfg: BubbleConfig, offline: Boolean, hold: Boolean): Intent =
+  /**
+   * [continuous]: you decide when you're done (holding, or "tap again to stop"), so allow long pauses;
+   * the service starts a new session if the recognizer ends one anyway. [formatting]: ask Android 13+
+   * recognizers for punctuation and capitals (off after a recognizer refused it once).
+   */
+  fun intent(c: Context, cfg: BubbleConfig, offline: Boolean, continuous: Boolean, formatting: Boolean = cfg.punctuation): Intent =
     Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
       putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
       putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
       putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, c.packageName)
       putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-      val silence = if (hold) 6000L else 2500L
+      val silence = if (continuous) 6000L else 2500L
       putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, silence)
       putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, silence)
       if (offline || cfg.engine == "device") putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // type what was said, not "f***"
+        putExtra(RecognizerIntent.EXTRA_MASK_OFFENSIVE_WORDS, false)
+        if (formatting) {
+          putExtra(RecognizerIntent.EXTRA_ENABLE_FORMATTING, RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY)
+          // the caption shouldn't flash a full stop at every pause
+          putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true)
+        }
+        // your names and words: the recognizer leans toward them
+        if (cfg.words.isNotEmpty()) putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(cfg.words))
+      }
       val tag = cfg.langTag
       if (tag != null) {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, tag)
       } else if (Build.VERSION.SDK_INT >= 34 && cfg.langDetect.isNotEmpty()) {
-        // Android 14+: let the recognizer switch between the languages you speak (en / hi / gu).
-        // Written as the platform's string keys; recognizers that don't know them ignore them.
+        // Android 14+: let the recognizer switch between the languages you speak (en / hi / gu)
         val langs = ArrayList(cfg.langDetect)
-        putExtra("android.speech.extra.ENABLE_LANGUAGE_DETECTION", true)
-        putStringArrayListExtra("android.speech.extra.LANGUAGE_DETECTION_ALLOWED_LANGUAGES", langs)
-        putExtra("android.speech.extra.ENABLE_LANGUAGE_SWITCH", "balanced")
-        putStringArrayListExtra("android.speech.extra.LANGUAGE_SWITCH_ALLOWED_LANGUAGES", langs)
+        putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
+        putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES, langs)
+        putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH, RecognizerIntent.LANGUAGE_SWITCH_BALANCED)
+        putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_SWITCH_ALLOWED_LANGUAGES, langs)
       }
     }
 

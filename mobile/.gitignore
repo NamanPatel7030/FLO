@@ -14,3 +14,7 @@ npm-debug.*
 google-services.json
 # Never commit FCM service-account keys
 *service-account*.json
+
+# native module build output (local gradle builds)
+modules/*/android/build/
+modules/*/android/.cxx/

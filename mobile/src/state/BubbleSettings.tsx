@@ -4,7 +4,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { bubble } from '../lib/bubble';
-import { BUBBLE_KEY, DEFAULT_BUBBLE, parseBubbleSettings, toNative, type BubbleSettings } from '../lib/bubbleSettings';
+import { BUBBLE_KEY, DEFAULT_BUBBLE, desktopAccentOf, parseBubbleSettings, toNative, type BubbleSettings } from '../lib/bubbleSettings';
+import { useComputer } from './Computer';
 import { usePrefs } from './Prefs';
 
 interface Ctx {
@@ -12,8 +13,10 @@ interface Ctx {
   update(p: Partial<BubbleSettings>): void;
   /** replace everything (presets, resets) */
   set(next: BubbleSettings): void;
-  /** the colour the bubble really uses (its own, or the app's accent) */
+  /** the colour the bubble really uses (its own, the app's or your computer's accent) */
   accent: string;
+  /** the far end of its gradient */
+  accent2: string;
 }
 
 const C = createContext<Ctx | null>(null);
@@ -56,9 +59,24 @@ export function BubbleSettingsProvider({ children }: { children: React.ReactNode
   }, []);
 
   const value = useMemo(
-    () => (settings && native ? { settings, update, set, accent: native.accent } : null),
+    () => (settings && native ? { settings, update, set, accent: native.accent, accent2: native.accent2 } : null),
     [settings, native, update, set],
   );
   // render the app while loading with defaults (the bubble screens are never the first screen)
-  return <C.Provider value={value ?? { settings: DEFAULT_BUBBLE, update, set, accent: toNative(DEFAULT_BUBBLE, prefs.accent).accent }}>{children}</C.Provider>;
+  const fallback = toNative(DEFAULT_BUBBLE, prefs.accent);
+  return <C.Provider value={value ?? { settings: DEFAULT_BUBBLE, update, set, accent: fallback.accent, accent2: fallback.accent2 }}>{children}</C.Provider>;
+}
+
+/**
+ * Keeps the bubble's copy of your computer's accent up to date (for the "Match my computer" colour),
+ * from the settings the computer publishes. Render inside ComputerProvider.
+ */
+export function DesktopAccentSync() {
+  const { settings, update } = useBubbleSettings();
+  const computer = useComputer();
+  const desktop = desktopAccentOf(computer.state?.settings);
+  useEffect(() => {
+    if (desktop && desktop !== settings.desktopAccent) update({ desktopAccent: desktop });
+  }, [desktop, settings.desktopAccent, update]);
+  return null;
 }

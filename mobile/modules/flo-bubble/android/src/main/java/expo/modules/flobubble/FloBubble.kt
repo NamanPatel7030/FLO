@@ -8,33 +8,39 @@ import android.graphics.Point
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * The floating Flo bubble (one small orb, see FloOrb) and its two helper windows: the "Hide" target
- * that rises at the bottom while you drag, and a caption beside the orb (your words as you speak,
+ * The floating Flo bubble (one small body, see FloOrb) and its two helper windows: the "Hide" target
+ * that rises at the bottom while you drag, and a caption beside the bubble (your words as you speak,
  * or a short note like "Copied").
  *
- * - Drag it anywhere; let go and it glides to the nearest edge (or the side you chose) and
- *   remembers the spot. Drop it on the Hide target to put it away.
- * - At rest it fades to your idle opacity and, after a few seconds, tucks half off the edge. A touch
- *   brings it straight back.
- * - Gestures are reported raw (tap, double-tap, hold start/end); the service decides what they do.
+ * - Drag it anywhere; let go and it glides to the nearest edge (or the side you chose), or stays
+ *   where you dropped it ("free"), and remembers the spot. Drop it on the Hide target to put it away.
+ * - A quick flick away from the edge is the swipe gesture (when it does something).
+ * - At rest it fades to your idle opacity and, after your tuck delay, tucks half off the edge. After
+ *   your auto-hide time it goes away until the next text field. A touch brings it straight back.
+ * - Gestures are reported raw (tap, double-tap, hold start/end, swipe); the service decides what
+ *   they do.
+ * - Every setting (look, size, colours, side, snapping, timings) applies live: applyConfig.
  *
- * Battery: nothing here runs on a timer except one short tuck delay after you let go; there is no
- * redraw while idle (the orb only animates while listening or thinking).
+ * Battery: nothing here runs on a timer except the tuck and auto-hide delays after you let go; there
+ * is no redraw while idle (the bubble only animates while listening or thinking).
  */
 internal class FloBubble(private val ctx: Context, private val wm: WindowManager, private val listener: Listener) {
   interface Listener {
@@ -43,16 +49,20 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     /** A hold began. Return true if the microphone opened. */
     fun onHoldStart(): Boolean
     fun onHoldEnd()
+    /** A flick away from the edge. Return true if it did something (else it was just a drag). */
+    fun onSwipe(): Boolean
     /** Listening or answering: a tap acts at once (it stops) instead of waiting for a double-tap. */
     fun busy(): Boolean
     /** Dropped on the Hide target. */
     fun onDismiss()
+    /** Idle for the auto-hide time. */
+    fun onIdle()
   }
 
   private val main = Handler(Looper.getMainLooper())
   private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
-  private val pad = ctx.dp(13) // room around the orb for the waveform ring and the shadow
-  private val edge = ctx.dp(5) // gap between the orb and the screen edge
+  private val pad = ctx.dp(PAD_DP) // room around the body for the waveform ring and the shadow
+  private val edge = ctx.dp(5) // gap between the body and the screen edge
 
   private var cfg = BubbleConfig()
   private var root: FrameLayout? = null
@@ -68,25 +78,29 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
   private var offline = false
 
   private val tuck = Runnable { tuckAway() }
+  private val idle = Runnable { if (orb?.state == FloOrb.State.IDLE && !listener.busy()) listener.onIdle() }
   private val hideCaption = Runnable { removeCaption() }
 
   val isShown: Boolean get() = root != null
-  private val diameter: Int get() = ctx.dp(cfg.sizeDp)
-  private val win: Int get() = diameter + 2 * pad
+  private val body: Pair<Int, Int> get() = FloOrb.bodySize(ctx, cfg.style, cfg.sizeDp)
+  private val bodyW: Int get() = body.first
+  private val bodyH: Int get() = body.second
+  private val winW: Int get() = bodyW + 2 * pad
+  private val winH: Int get() = bodyH + 2 * pad
 
   // ── showing ────────────────────────────────────────────────────────────────
 
   fun show(c: BubbleConfig) {
     cfg = c
-    if (root != null) return
+    if (root != null) { scheduleIdle(); return }
     val o = FloOrb(ctx)
-    o.configure(diameter, cfg.accent)
+    o.configure(cfg.style, bodyW, bodyH, cfg.accent, cfg.accent2)
     o.offline = offline
     o.contentDescription = describe()
     val r = FrameLayout(ctx)
     r.clipChildren = false
     r.addView(o, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-    val p = overlayParams(win, win).apply {
+    val p = overlayParams(winW, winH).apply {
       gravity = Gravity.TOP or Gravity.START
       flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
     }
@@ -101,38 +115,43 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
       o.alpha = restAlpha()
     }
     scheduleTuck()
+    scheduleIdle()
   }
 
   fun hide() {
     val r = root ?: return
     glide?.cancel(); glide = null
     main.removeCallbacks(tuck)
+    main.removeCallbacks(idle)
     removeTarget()
     removeCaption()
     root = null; orb = null; params = null; tucked = false
     runCatching { wm.removeView(r) }
   }
 
-  /** New settings while showing: size, colour, side and opacity apply at once. */
+  /** New settings while showing: look, size, colours, side, snapping, opacity and timings apply at once. */
   fun applyConfig(c: BubbleConfig) {
     val old = cfg
     cfg = c
     val r = root ?: return
     val o = orb ?: return
     val p = params ?: return
-    o.configure(diameter, cfg.accent)
+    o.configure(cfg.style, bodyW, bodyH, cfg.accent, cfg.accent2)
     o.contentDescription = describe()
-    if (old.sizeDp != c.sizeDp || old.side != c.side) {
-      p.width = win; p.height = win
+    if (old.sizeDp != c.sizeDp || old.style != c.style || old.side != c.side || old.snap != c.snap || old.rememberPosition != c.rememberPosition) {
+      glide?.cancel(); glide = null
+      p.width = winW; p.height = winH
       untuck(false)
       place(p)
       runCatching { wm.updateViewLayout(r, p) }
+      if (caption != null) placeCaption()
     }
     if (o.state == FloOrb.State.IDLE) o.alpha = restAlpha()
-    if (!c.tuck) untuck(true) else scheduleTuck()
+    if (!canTuck()) untuck(true) else scheduleTuck()
+    scheduleIdle()
   }
 
-  /** After a rotation: back on its side at the same relative height. */
+  /** After a rotation (or "Reset position" in the app): back on its side at the same relative spot. */
   fun reposition() {
     val r = root ?: return
     val p = params ?: return
@@ -140,6 +159,7 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     untuck(false)
     place(p)
     runCatching { wm.updateViewLayout(r, p) }
+    if (caption != null) placeCaption()
     scheduleTuck()
   }
 
@@ -149,8 +169,10 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     if (s == FloOrb.State.IDLE) {
       o.animate().alpha(restAlpha()).setStartDelay(0).setDuration(220).start()
       scheduleTuck()
+      scheduleIdle()
     } else {
       main.removeCallbacks(tuck)
+      main.removeCallbacks(idle)
       untuck(true)
       o.animate().alpha(1f).setStartDelay(0).setDuration(120).start()
     }
@@ -163,18 +185,33 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     orb?.offline = on
   }
 
+  /** A haptic tap, made firmer when you chose strong haptics. */
   fun haptic(kind: Int = HapticFeedbackConstants.KEYBOARD_TAP) {
-    if (cfg.haptics) orb?.performHapticFeedback(kind)
+    if (!cfg.haptics) return
+    val k = if (cfg.hapticStrength != "strong") kind else when (kind) {
+      HapticFeedbackConstants.KEYBOARD_TAP, HapticFeedbackConstants.CLOCK_TICK -> HapticFeedbackConstants.VIRTUAL_KEY
+      HapticFeedbackConstants.VIRTUAL_KEY -> HapticFeedbackConstants.LONG_PRESS
+      else -> kind
+    }
+    orb?.performHapticFeedback(k)
   }
 
   private fun restAlpha() = cfg.idleOpacity
 
+  private fun canTuck() = cfg.tuck && cfg.docked
+
   private fun describe(): String {
-    val tap = cfg.action("tap")
-    val hold = cfg.action("longPress")
+    fun say(a: String?) = when (a) {
+      "ask" -> "ask Flo"
+      "dictate" -> "dictate"
+      "openFlo" -> "open Flo"
+      "hide" -> "hide the bubble"
+      else -> null
+    }
     val parts = listOfNotNull(
-      tap?.let { "Tap to ${if (it == "ask") "ask Flo" else "dictate"}" },
-      hold?.let { "hold to ${if (it == "ask") "ask Flo" else "dictate"}" },
+      say(cfg.action("tap"))?.let { "Tap to $it" },
+      say(cfg.action("longPress"))?.let { "hold to $it" },
+      say(cfg.action("doubleTap"))?.let { "double-tap to $it" },
     )
     return "Flo bubble. " + parts.joinToString(", ").ifEmpty { "Drag to move" }
   }
@@ -184,23 +221,29 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
   private fun rightSide(): Boolean = when (cfg.side) {
     "left" -> false
     "right" -> true
-    else -> Prefs.dockRight(ctx)
+    else -> if (cfg.rememberPosition) Prefs.dockRight(ctx) else true
   }
 
-  /** x for the orb resting on a side: the window overhangs the edge so the orb sits [edge] from it. */
-  private fun restX(right: Boolean, screen: Point) = if (right) screen.x - win + pad - edge else -pad + edge
+  /** x for the body resting on a side: the window overhangs the edge so the body sits [edge] from it. */
+  private fun restX(right: Boolean, screen: Point) = if (right) screen.x - winW + pad - edge else -pad + edge
+
+  private fun clampX(x: Int, screen: Point): Int {
+    val lo = -pad + edge
+    return x.coerceIn(lo, max(lo, screen.x - winW + pad - edge))
+  }
 
   private fun place(p: WindowManager.LayoutParams) {
     val screen = screenSize(wm)
-    p.x = restX(rightSide(), screen)
-    val f = Prefs.dockY(ctx)
+    val fx = if (cfg.rememberPosition) Prefs.dockX(ctx) else -1f
+    p.x = if (!cfg.docked && fx >= 0f) clampX((fx * screen.x).roundToInt(), screen) else restX(rightSide(), screen)
+    val f = if (cfg.rememberPosition) Prefs.dockY(ctx) else -1f
     val y = if (f < 0f) (screen.y * 0.56f).roundToInt() else (f * screen.y).roundToInt()
     p.y = clampY(y, screen)
   }
 
   private fun clampY(y: Int, screen: Point): Int {
     val top = ctx.dp(40) - pad
-    return y.coerceIn(top, max(top, screen.y - win - ctx.dp(48) + pad))
+    return y.coerceIn(top, max(top, screen.y - winH - ctx.dp(48) + pad))
   }
 
   private fun moveTo(x: Int, y: Int) {
@@ -212,21 +255,21 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     if (caption != null) placeCaption()
   }
 
-  /** Glide to the nearest side (or the chosen one), then remember the spot. */
-  private fun settle() {
+  /** Glide to the nearest side (or the chosen one, or stay put when free), then remember the spot. */
+  private fun settle(remember: Boolean = true) {
     val r = root ?: return
     val p = params ?: return
     val screen = screenSize(wm)
     val right = when (cfg.side) {
       "left" -> false
       "right" -> true
-      else -> p.x + win / 2 > screen.x / 2
+      else -> p.x + winW / 2 > screen.x / 2
     }
     val x0 = p.x
     val y0 = p.y
-    val x1 = restX(right, screen)
+    val x1 = if (cfg.docked) restX(right, screen) else clampX(p.x, screen)
     val y1 = clampY(p.y, screen)
-    Prefs.setDock(ctx, right, y1.toFloat() / screen.y)
+    if (remember) Prefs.setDock(ctx, right, y1.toFloat() / screen.y, if (cfg.docked) -1f else x1.toFloat() / screen.x)
     haptic()
     glide?.cancel()
     if (!animationsOn() || (x0 == x1 && y0 == y1)) {
@@ -248,19 +291,24 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     scheduleTuck()
   }
 
-  // ── tuck ───────────────────────────────────────────────────────────────────
+  // ── tuck and auto-hide ─────────────────────────────────────────────────────
 
   private fun scheduleTuck() {
     main.removeCallbacks(tuck)
-    if (cfg.tuck && root != null) main.postDelayed(tuck, TUCK_MS)
+    if (canTuck() && root != null) main.postDelayed(tuck, cfg.tuckDelayMs)
+  }
+
+  private fun scheduleIdle() {
+    main.removeCallbacks(idle)
+    if (cfg.autoHideMs > 0 && root != null) main.postDelayed(idle, cfg.autoHideMs)
   }
 
   /** Slide half off the edge (a view translation: no window traffic, drawn by the render thread). */
   private fun tuckAway() {
     val o = orb ?: return
-    if (o.state != FloOrb.State.IDLE || tucked || !cfg.tuck) return
+    if (o.state != FloOrb.State.IDLE || tucked || !canTuck()) return
     tucked = true
-    val shift = (diameter / 2 + edge).toFloat() * (if (rightSide()) 1 else -1)
+    val shift = (bodyW / 2 + edge).toFloat() * (if (rightSide()) 1 else -1)
     if (animationsOn()) o.animate().translationX(shift).setStartDelay(0).setDuration(360).setInterpolator(floEase()).start()
     else o.translationX = shift
   }
@@ -279,7 +327,7 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
   private fun attachTouch(o: FloOrb) {
     val t = Touch()
     o.setOnTouchListener { _, ev -> t.handle(ev) }
-    // TalkBack: a double-tap activates the orb like a tap
+    // TalkBack: a double-tap activates the bubble like a tap
     o.setOnClickListener { if (!t.active) listener.onTap() }
   }
 
@@ -302,9 +350,11 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     private var startX = 0
     private var startY = 0
     private var dragging = false
+    private var dragAt = 0L
     private var held = false
     private var talking = false
     private var overTarget = false
+    private var velocity: VelocityTracker? = null
 
     private val hold = Runnable {
       if (dragging || root == null) return@Runnable
@@ -318,12 +368,16 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
 
     fun handle(ev: MotionEvent): Boolean {
       val p = params ?: return false
+      velocity?.addMovement(ev)
       when (ev.actionMasked) {
         MotionEvent.ACTION_DOWN -> {
           active = true
           downX = ev.rawX; downY = ev.rawY
           dragging = false; held = false; talking = false; overTarget = false
+          velocity?.recycle()
+          velocity = VelocityTracker.obtain().also { it.addMovement(ev) }
           main.removeCallbacks(tuck)
+          main.removeCallbacks(idle)
           untuck(true)
           orb?.animate()?.alpha(1f)?.setStartDelay(0)?.setDuration(90)?.start()
           press(0.92f)
@@ -334,6 +388,7 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
           val dy = ev.rawY - downY
           if (!dragging && !held && dx * dx + dy * dy > slop.toFloat() * slop) {
             dragging = true
+            dragAt = SystemClock.uptimeMillis()
             main.removeCallbacks(hold)
             glide?.cancel(); glide = null
             startX = p.x; startY = p.y
@@ -348,6 +403,10 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
           val up = ev.actionMasked == MotionEvent.ACTION_UP
           when {
             dragging && overTarget && up -> { removeTarget(); dismissAnimated() }
+            dragging && up && flicked() && listener.onSwipe() -> {
+              // a swipe: back to where it rested, without remembering the flick as a new spot
+              removeTarget(); press(1f); moveTo(startX, startY); settle(remember = false)
+            }
             dragging -> { removeTarget(); press(1f); settle() }
             talking -> { press(1f); listener.onHoldEnd() }
             !held && up -> { press(1f); tapped() }
@@ -357,11 +416,26 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
             orb?.animate()?.alpha(restAlpha())?.setStartDelay(600)?.setDuration(260)?.start()
             scheduleTuck()
           }
+          scheduleIdle()
+          velocity?.recycle(); velocity = null
           dragging = false; held = false; talking = false
           main.post { active = false }
         }
       }
       return true
+    }
+
+    /** A short, fast throw away from the edge it rests on (toward the middle of the screen). */
+    private fun flicked(): Boolean {
+      val v = velocity ?: return false
+      if (SystemClock.uptimeMillis() - dragAt > FLICK_MS) return false
+      v.computeCurrentVelocity(1000)
+      val vx = v.xVelocity
+      val vy = v.yVelocity
+      val screen = screenSize(wm)
+      val onRight = startX + winW / 2 > screen.x / 2
+      val inward = if (onRight) -vx else vx
+      return inward > ctx.dp(FLICK_DP_S) && abs(vx) > 1.4f * abs(vy)
     }
 
     /** Follow the finger; near the Hide target, snap onto it. */
@@ -371,13 +445,13 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
       if (tp != null && t != null && t.width > 0) {
         val tcx = tp.x + t.width / 2f
         val tcy = tp.y + ctx.dp(TARGET_DP) / 2f + ctx.dp(6)
-        val near = hypot(x + win / 2f - tcx, y + win / 2f - tcy) < ctx.dp(84)
+        val near = hypot(x + winW / 2f - tcx, y + winH / 2f - tcy) < ctx.dp(84)
         if (near != overTarget) {
           overTarget = near
           haptic(if (near) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP)
           t.animate().scaleX(if (near) 1.18f else 1f).scaleY(if (near) 1.18f else 1f).setDuration(140).setInterpolator(floEase()).start()
         }
-        if (near) { moveTo((tcx - win / 2f).roundToInt(), (tcy - win / 2f).roundToInt()); return }
+        if (near) { moveTo((tcx - winW / 2f).roundToInt(), (tcy - winH / 2f).roundToInt()); return }
       }
       moveTo(x, y)
     }
@@ -447,8 +521,8 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
   // ── the caption ────────────────────────────────────────────────────────────
 
   /**
-   * Show [text] beside the orb (latest words kept when it's long). [holdMs] > 0 hides it after that
-   * long; 0 keeps it until the next call. Null hides it.
+   * Show [text] beside the bubble (latest words kept when it's long). [holdMs] > 0 hides it after
+   * that long; 0 keeps it until the next call. Null hides it.
    */
   fun caption(text: String?, holdMs: Long = 0L, color: Int = Color.WHITE) {
     main.removeCallbacks(hideCaption)
@@ -464,7 +538,7 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     val tv = TextView(ctx)
     tv.textSize = 13f
     tv.typeface = MEDIUM
-    tv.maxLines = 2
+    tv.maxLines = 3
     tv.ellipsize = TextUtils.TruncateAt.START
     tv.setLineSpacing(0f, 1.1f)
     tv.setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(8))
@@ -481,25 +555,25 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
     return tv
   }
 
-  /** Beside the orb, toward the middle of the screen, vertically centred on it. */
+  /** Beside the bubble, toward the middle of the screen, vertically centred on it. */
   private fun placeCaption() {
     val tv = caption ?: return
     val cp = captionParams ?: return
     val p = params ?: return
     val screen = screenSize(wm)
-    val maxW = (screen.x * 0.62f).roundToInt().coerceAtMost(ctx.dp(260))
+    val maxW = (screen.x * 0.62f).roundToInt().coerceAtMost(ctx.dp(280))
     tv.measure(
       View.MeasureSpec.makeMeasureSpec(maxW, View.MeasureSpec.AT_MOST),
       View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
     )
     val w = tv.measuredWidth
     val h = tv.measuredHeight
-    val orbLeft = p.x + pad
-    val orbRight = p.x + pad + diameter
-    val right = p.x + win / 2 > screen.x / 2
+    val bodyLeft = p.x + pad
+    val bodyRight = p.x + pad + bodyW
+    val right = p.x + winW / 2 > screen.x / 2
     val gap = ctx.dp(10)
-    val x = (if (right) orbLeft - gap - w else orbRight + gap).coerceIn(ctx.dp(8), max(ctx.dp(8), screen.x - w - ctx.dp(8)))
-    val y = p.y + win / 2 - h / 2
+    val x = (if (right) bodyLeft - gap - w else bodyRight + gap).coerceIn(ctx.dp(8), max(ctx.dp(8), screen.x - w - ctx.dp(8)))
+    val y = (p.y + winH / 2 - h / 2).coerceIn(ctx.dp(24), max(ctx.dp(24), screen.y - h - ctx.dp(24)))
     if (cp.x == x && cp.y == y && cp.width == w && cp.height == h) return
     cp.x = x; cp.y = y; cp.width = w; cp.height = h
     runCatching { wm.updateViewLayout(tv, cp) }
@@ -514,10 +588,14 @@ internal class FloBubble(private val ctx: Context, private val wm: WindowManager
   }
 
   private companion object {
+    /** Room around the body, in dp (bubbleSettings.ts ORB_PAD). */
+    const val PAD_DP = 13
     /** A still finger for this long starts a hold. */
     const val HOLD_MS = 320L
-    /** Idle this long, then tuck half off the edge. */
-    const val TUCK_MS = 3200L
     const val TARGET_DP = 58
+    /** A flick: let go within this long of starting to move ... */
+    const val FLICK_MS = 260L
+    /** ... at least this fast (dp per second) away from the edge. */
+    const val FLICK_DP_S = 900
   }
 }

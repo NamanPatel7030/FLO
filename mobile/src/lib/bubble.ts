@@ -125,6 +125,15 @@ export const bubble = {
   clearBootPause() {
     call(() => Native?.clearBootPause?.(), undefined);
   },
+  /** Forget where the bubble rests: it moves back to the default spot at once. */
+  resetPosition() {
+    call(() => Native?.resetPosition?.(), undefined);
+  },
+  /** null when the phone can't say (web, older build). */
+  batteryUnrestricted: (): boolean | null => (mock ? true : call<boolean | null>(() => Native?.batteryUnrestricted?.(), null)),
+  openBatterySettings() {
+    call(() => Native?.openBatterySettings?.(), undefined);
+  },
   openSettings() {
     Native?.openSettings();
   },

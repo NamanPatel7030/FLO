@@ -61,12 +61,28 @@ internal object Prefs {
 
   // ── where it rests ─────────────────────────────────────────────────────────
 
-  /** Which side, and its top as a fraction of the screen height (so it survives rotation). */
-  fun setDock(c: Context, right: Boolean, yFraction: Float) =
-    sp(c).edit().putBoolean("dock_right", right).putFloat("dock_y", yFraction.coerceIn(0f, 1f)).remove("y").apply()
+  const val KEY_DOCK_RESET = "dock_reset"
+
+  /**
+   * Which side, its top as a fraction of the screen height and, when it floats free, its left as a
+   * fraction of the width (-1 when docked to a side). Fractions survive rotation.
+   */
+  fun setDock(c: Context, right: Boolean, yFraction: Float, xFraction: Float = -1f) =
+    sp(c).edit()
+      .putBoolean("dock_right", right)
+      .putFloat("dock_y", yFraction.coerceIn(0f, 1f))
+      .putFloat("dock_x", if (xFraction < 0f) -1f else xFraction.coerceIn(0f, 1f))
+      .remove("y")
+      .apply()
   fun dockRight(c: Context): Boolean = sp(c).getBoolean("dock_right", true)
   /** -1 until the bubble has been moved once (then the default spot is used). */
   fun dockY(c: Context): Float = sp(c).getFloat("dock_y", -1f)
+  /** -1 unless it was dropped somewhere free. */
+  fun dockX(c: Context): Float = sp(c).getFloat("dock_x", -1f)
+
+  /** Forget where it rests: back to the default spot (the service moves it at once). */
+  fun resetDock(c: Context) =
+    sp(c).edit().remove("dock_right").remove("dock_y").remove("dock_x").putLong(KEY_DOCK_RESET, System.currentTimeMillis()).apply()
 
   // ── offline questions ──────────────────────────────────────────────────────
 

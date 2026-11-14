@@ -1,0 +1,42 @@
+{
+  "_": "Shared cases for dictation cleanup: src/lib/cleanup.ts (jest) and FloCleanup.kt (gradle unit test) must both pass every one.",
+  "clean": [
+    { "in": "um so the the plan is uh ready", "out": "So the plan is ready" },
+    { "in": "", "out": "" },
+    { "in": "   ", "out": "" },
+    { "in": "hello comma how are you question mark", "out": "Hello, how are you?" },
+    { "in": "Hello, comma how are you", "out": "Hello, how are you" },
+    { "in": "first point new line second point", "out": "First point\nSecond point" },
+    { "in": "dear team new paragraph thanks for today full stop", "out": "Dear team\n\nThanks for today." },
+    { "in": "let's meet Monday scratch that let's meet Tuesday", "out": "Let's meet Tuesday" },
+    { "in": "Send the deck. Book the room scratch that. Call Priya", "out": "Send the deck. Call Priya." },
+    { "in": "i think i'm late", "out": "I think I'm late" },
+    { "in": "this is great exclamation mark", "out": "This is great!" },
+    { "in": "the colors.Like the new ones", "out": "The colors. Like the new ones." },
+    { "in": "running ten minutes late start without me", "out": "Running ten minutes late start without me." },
+    { "in": "running late", "out": "Running late" },
+    { "in": "ok. see you there", "out": "Ok. See you there." },
+    { "in": "open flo flow and ask tory", "words": ["Flo Flow", "Tauri", "tory"], "out": "Open Flo Flow and ask tory." },
+    { "in": "message priya about the figma file", "words": ["Priya", "Figma"], "out": "Message Priya about the Figma file." },
+    { "in": "check www.flo.app or mail me at a.b@flo.app", "punctuation": false, "out": "Check www.flo.app or mail me at a.b@flo.app" },
+    { "in": "मैं कल आऊंगा पूर्ण विराम", "lang": "hi-IN", "out": "मैं कल आऊंगा।" },
+    { "in": "मैं कल आऊंगा और फिर हम मिलेंगे ठीक है", "lang": "hi-IN", "out": "मैं कल आऊंगा और फिर हम मिलेंगे ठीक है।" },
+    { "in": "હું કાલે આવીશ।", "lang": "gu-IN", "out": "હું કાલે આવીશ." },
+    { "in": "kal milte hain i will call you", "lang": "en-IN", "out": "Kal milte hain I will call you." },
+    { "in": "um", "out": "" },
+    { "in": "hmm, okay", "out": "Okay" },
+    { "in": "no no no that is wrong", "punctuation": false, "out": "No that is wrong" },
+    { "in": "send it to them new line", "out": "Send it to them" },
+    { "in": "comma hello", "out": "Hello" }
+  ],
+  "fit": [
+    { "text": "Running late", "before": "", "after": "", "out": "Running late" },
+    { "text": "The deck is ready.", "before": "Hi Priya,", "after": "", "out": " the deck is ready." },
+    { "text": "Priya will join.", "before": "Also", "after": "", "out": " Priya will join." },
+    { "text": "see you.", "before": "Done. ", "after": "", "out": "See you." },
+    { "text": "Tomorrow.", "before": "Let's talk ", "after": "about it", "out": "tomorrow " },
+    { "text": "I can do it.", "before": "Yes", "after": "", "out": " I can do it." },
+    { "text": "Thanks.", "before": "Line one\n", "after": "", "out": "Thanks." },
+    { "text": ", and Raj", "before": "Priya", "after": "", "out": ", and Raj" }
+  ]
+}

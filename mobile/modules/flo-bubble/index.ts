@@ -19,6 +19,11 @@ export interface FloBubbleNative {
   setConfig?(json: string): void;
   /** Flo was opened: a bubble waiting since a restart may come back. */
   clearBootPause?(): void;
+  /** Forget where the bubble rests (back to the default spot). */
+  resetPosition?(): void;
+  /** Flo is exempt from battery optimisation. */
+  batteryUnrestricted?(): boolean;
+  openBatterySettings?(): void;
   isOnline?(): boolean;
   /** JSON [{id, text, at}]: questions the bubble kept while offline. */
   queued?(): string;

@@ -43,6 +43,12 @@ export interface VoiceOptions {
   offline?: boolean;
   /** the user wants on-device recognition even online */
   device?: boolean;
+  /** recognizer punctuation and capitals (Android 13+) */
+  punctuation?: boolean;
+  /** your words and names, for the recognizer to lean toward (Android 13+) */
+  words?: string[];
+  /** tidies the final text (src/lib/cleanup.ts); partial results show as heard */
+  clean?: (text: string) => string;
 }
 
 /** The recognizer options for a start (unit-tested). */
@@ -52,9 +58,15 @@ export function startOptions(o: VoiceOptions) {
     lang: o.lang || 'en-IN',
     interimResults: true,
     continuous: false,
-    addsPunctuation: true,
+    addsPunctuation: o.punctuation !== false,
     requiresOnDeviceRecognition: onDevice,
-    androidIntentOptions: { EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 1800, ...(onDevice ? { EXTRA_PREFER_OFFLINE: true } : {}) },
+    ...(o.words?.length ? { contextualStrings: o.words } : {}),
+    androidIntentOptions: {
+      EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 1800,
+      // type what was said, not "f***"
+      EXTRA_MASK_OFFENSIVE_WORDS: false,
+      ...(onDevice ? { EXTRA_PREFER_OFFLINE: true } : {}),
+    },
   };
 }
 
@@ -86,7 +98,8 @@ export function useVoice(mock = false, options: VoiceOptions = {}): Voice {
           M.addListener('end', () => setListening(false)),
           M.addListener('result', (e) => {
             const best = e.results[0]?.transcript ?? '';
-            if (best) setText(best);
+            const clean = opts.current.clean;
+            if (best) setText(e.isFinal && clean ? clean(best) || best : best);
           }),
           M.addListener('error', (e) => {
             const msg = voiceError(e.error, e.message);

@@ -4,6 +4,7 @@ import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -16,6 +17,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.SpeechRecognizer
 import android.view.HapticFeedbackConstants
@@ -59,6 +61,19 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
   private var holding = false
   private var onDevice = false
   private var heard: String = ""
+  /** continuous listening: what earlier sessions already heard */
+  private val acc = StringBuilder()
+  private var continuous = false
+  private var stopping = false
+  private var sessionStart = 0L
+  private var emptyRuns = 0
+  private var offlineSpeech = false
+  private var formatting = true
+  private var formattingRetried = false
+  /** a recognizer refused punctuation formatting once: don't ask it again this time the service runs */
+  private var formattingRefused = false
+  /** "Hide" gesture: stays away in this app until you switch to another one */
+  private var snoozedIn: String? = null
   private var lastStopAt = 0L
   private var askCancel: AtomicBoolean? = null // the Ask in flight, if any
   private var askScreen: String? = null // what was on screen when you stopped talking (FloScreen)
@@ -75,6 +90,7 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
 
   private val prefsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
     if (key == Prefs.KEY_CONFIG || key == Prefs.KEY_ENABLED || key == "boot_paused") main.post { applyConfig() }
+    if (key == Prefs.KEY_DOCK_RESET) main.post { bubble?.reposition() }
   }
 
   override fun onServiceConnected() {
@@ -142,14 +158,17 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
       if (!busy()) b.hide()
       return
     }
-    if (b.isShown) b.applyConfig(cfg)
-    else if (cfg.showWhen == "always") {
+    if (b.isShown) {
+      // e.g. "Only in these apps" just changed and this app isn't one of them
+      val pkg = runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
+      if (pkg != null && pkg != packageName && !showsIn(pkg) && !busy()) b.hide() else b.applyConfig(cfg)
+    } else if (cfg.showWhen == "always") {
       val pkg = runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
       if (pkg != null && showsIn(pkg)) showNow()
     }
   }
 
-  private fun showsIn(pkg: String?): Boolean = pkg != packageName && pkg !in cfg.hiddenApps
+  private fun showsIn(pkg: String?): Boolean = pkg != packageName && pkg != snoozedIn && cfg.showsIn(pkg)
 
   private fun showNow() {
     main.removeCallbacks(hide)
@@ -184,6 +203,7 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
       AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
         val pkg = e.packageName?.toString()
         if (pkg == SYSTEM_UI) return // the notification shade comes and goes over the app
+        if (snoozedIn != null && pkg != null && pkg != snoozedIn && pkg != packageName && !isKeyboard(pkg)) snoozedIn = null // another app: back again
         if (pkg == packageName || !showsIn(pkg)) {
           if (!busy()) { main.removeCallbacks(hide); bubble?.hide() }
           return
@@ -205,6 +225,11 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
 
   private fun isTypingField(n: AccessibilityNodeInfo): Boolean = n.isEditable && !n.isPassword
 
+  /** The keyboard's own windows come and go while you type: they aren't "another app". */
+  private fun isKeyboard(pkg: String): Boolean = runCatching {
+    Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)?.startsWith("$pkg/") == true
+  }.getOrDefault(false)
+
   // ── gestures (FloBubble.Listener) ──────────────────────────────────────────
 
   override fun busy(): Boolean = listening != null
@@ -213,6 +238,18 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
 
   override fun onDoubleTap() = gesture("doubleTap")
 
+  override fun onSwipe(): Boolean {
+    if (listening != null) return false
+    val action = cfg.action("swipe") ?: return false
+    perform(action, hold = false)
+    return true
+  }
+
+  override fun onIdle() {
+    if (busy() || askCancel != null) return
+    bubble?.hide()
+  }
+
   private fun gesture(g: String) {
     if (listening != null) { stopTalking(); return }
     val action = cfg.action(g)
@@ -220,13 +257,31 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
       bubble?.caption(howTo(), 1800)
       return
     }
-    startListening(action, hold = false)
+    perform(action, hold = false)
+  }
+
+  /** Do [action]: listen for dictation or a question, open Flo, or hide until you switch apps. */
+  private fun perform(action: String, hold: Boolean): Boolean = when (action) {
+    "openFlo" -> {
+      bubble?.haptic(CONFIRM)
+      val i = packageManager.getLaunchIntentForPackage(packageName)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      if (i != null) runCatching { startActivity(i) }
+      false
+    }
+    "hide" -> {
+      snoozedIn = runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
+      bubble?.haptic(CONFIRM)
+      bubble?.hide()
+      if (snoozedIn != null) toast("Flo bubble hidden here. It's back when you switch apps.")
+      false
+    }
+    else -> startListening(action, hold)
   }
 
   override fun onHoldStart(): Boolean {
     if (listening != null) return false
     val action = cfg.action("longPress") ?: run { bubble?.caption(howTo(), 1800); return false }
-    return startListening(action, hold = true)
+    return perform(action, hold = true)
   }
 
   override fun onHoldEnd() = stopTalking()
@@ -241,7 +296,7 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
   /** "Tap to dictate · Hold to ask Flo", from the current settings. */
   private fun howTo(): String {
     val names = mapOf("tap" to "Tap", "longPress" to "Hold", "doubleTap" to "Double-tap")
-    val parts = names.mapNotNull { (g, label) -> cfg.action(g)?.let { "$label to ${if (it == "ask") "ask Flo" else "dictate"}" } }
+    val parts = names.mapNotNull { (g, label) -> cfg.action(g)?.let { "$label to ${when (it) { "ask" -> "ask Flo"; "openFlo" -> "open Flo"; "hide" -> "hide"; else -> "dictate" }}" } }
     return parts.joinToString(" · ").ifEmpty { "Turn on Dictation or Ask in Flo settings." }
   }
 
@@ -284,7 +339,7 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
     island?.dismiss()
     main.removeCallbacks(backToIdle)
     online = FloNet.online(this)
-    val offlineSpeech = !online || SystemClock.uptimeMillis() < deviceUntil
+    offlineSpeech = !online || SystemClock.uptimeMillis() < deviceUntil
     val choice = FloSpeech.create(this, cfg, offlineSpeech)
     if (choice == null) {
       fail("Speech recognition isn't available. Install or update Speech Services by Google.")
@@ -296,6 +351,14 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
     listening = mode
     holding = hold
     heard = ""
+    acc.setLength(0)
+    // you decide when it ends: while holding, or with "tap again to stop"
+    continuous = hold || cfg.stopOn == "tap"
+    stopping = false
+    sessionStart = SystemClock.uptimeMillis()
+    emptyRuns = 0
+    formatting = cfg.punctuation && !formattingRefused
+    formattingRetried = false
     bubble?.setState(FloOrb.State.LISTENING, modeColor(mode))
     bubble?.haptic(HapticFeedbackConstants.VIRTUAL_KEY)
     tone(ToneGenerator.TONE_PROP_BEEP)
@@ -317,38 +380,67 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
       }
       override fun onBufferReceived(buffer: ByteArray?) {}
       override fun onEndOfSpeech() {
-        // tap mode: the recognizer heard you stop; it will deliver the result next
-        if (recognizer === r && !holding) bubble?.setState(FloOrb.State.THINKING, modeColor(mode))
+        // stops at a pause: the recognizer heard you stop; it will deliver the result next
+        if (recognizer === r && !continuous) bubble?.setState(FloOrb.State.THINKING, modeColor(mode))
       }
       override fun onEvent(eventType: Int, params: Bundle?) {}
       override fun onPartialResults(b: Bundle?) {
         if (recognizer !== r) return
         b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let {
           heard = it
-          if (cfg.preview) bubble?.caption(it)
+          if (cfg.preview) bubble?.caption(joined(it))
         }
       }
       override fun onResults(b: Bundle?) {
         if (recognizer !== r) return
         val text = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() } ?: heard
-        finish(mode, text)
+        main.post { segmentDone(r, mode, text) }
       }
       override fun onError(error: Int) {
         if (recognizer !== r) return
-        failed(mode, error)
+        failed(r, mode, error)
       }
     })
-    runCatching { r.startListening(FloSpeech.intent(this, cfg, offlineSpeech, hold)) }.onFailure {
+    if (!beginSession(r)) {
       listening = null; stopRecognizer(); fail("Couldn't start the microphone.")
       return false
     }
     return true
   }
 
+  /** One recognizer session (continuous listening chains several). */
+  private fun beginSession(r: SpeechRecognizer): Boolean =
+    runCatching { r.startListening(FloSpeech.intent(this, cfg, offlineSpeech, continuous, formatting)) }.isSuccess
+
+  /** What was heard in earlier sessions plus [latest]. */
+  private fun joined(latest: String = heard): String =
+    if (acc.isEmpty()) latest else if (latest.isBlank()) acc.toString() else "$acc $latest"
+
+  /**
+   * A session ended with [text]. While you're still holding (or haven't tapped stop) keep listening in
+   * a new session, so a pause never cuts you off; after two silent sessions in a row with nothing new
+   * (tap mode only), or 5 minutes, stop by itself.
+   */
+  private fun segmentDone(r: SpeechRecognizer, mode: String, text: String) {
+    if (listening != mode || recognizer !== r) return
+    if (text.isNotBlank()) {
+      if (acc.isNotEmpty()) acc.append(' ')
+      acc.append(text.trim())
+      emptyRuns = 0
+    } else emptyRuns++
+    heard = ""
+    val longEnough = SystemClock.uptimeMillis() - sessionStart > MAX_LISTEN_MS
+    if (continuous && !stopping && !longEnough && (holding || emptyRuns < 2)) {
+      if (beginSession(r)) return
+    }
+    finish(mode, acc.toString())
+  }
+
   /** You let go (or tapped again): stopping makes the recognizer deliver its final result. */
   private fun stopTalking() {
     val mode = listening ?: return
     lastStopAt = SystemClock.uptimeMillis()
+    stopping = true
     runCatching { recognizer?.stopListening() }
     bubble?.setState(FloOrb.State.THINKING, modeColor(mode))
     // Ask only (never Dictate): read the visible screen now, so the answer fits the conversation
@@ -363,10 +455,20 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
     runCatching { r.destroy() }
   }
 
-  private fun failed(mode: String, error: Int) {
+  private fun failed(r: SpeechRecognizer, mode: String, error: Int) {
     main.post {
-      if (listening != mode) return@post
-      if (heard.isNotBlank()) { finish(mode, heard); return@post }
+      if (listening != mode || recognizer !== r) return@post
+      val silence = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+      // a pause between sentences while you keep going: the next session carries on
+      if (continuous && !stopping && silence) { segmentDone(r, mode, heard); return@post }
+      // a recognizer that can't format this language: ask again without punctuation, once
+      if (formatting && !formattingRetried && heard.isBlank() && acc.isEmpty() && FloSpeech.missingPack(error)) {
+        formattingRetried = true
+        formatting = false
+        formattingRefused = true
+        if (beginSession(r)) return@post
+      }
+      if (joined().isNotBlank()) { finish(mode, joined()); return@post }
       val wasOnDevice = onDevice
       listening = null
       stopRecognizer()
@@ -380,8 +482,7 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
           if (FloSpeech.onDeviceAvailable(this)) "No connection. Try again: Flo will listen on the phone."
           else "Speech needs the internet on this phone. Open Flo, Offline speech, to download it."
         }
-        error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_CLIENT ->
-          "Didn't catch that. Try again."
+        silence || error == SpeechRecognizer.ERROR_CLIENT -> "Didn't catch that. Try again."
         error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Open Flo and allow the microphone."
         error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy. Try again."
         else -> "Couldn't hear that. Try again."
@@ -390,11 +491,16 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
     }
   }
 
-  private fun finish(mode: String, text: String) {
+  /** Tidy what was said (FloCleanup), as you chose. */
+  private fun cleaned(raw: String): String =
+    if (cfg.cleanup) FloCleanup.clean(raw, cfg.langTag, cfg.punctuation, cfg.words) else raw.trim()
+
+  private fun finish(mode: String, raw: String) {
     main.post {
       if (listening != mode) return@post
       listening = null
       stopRecognizer() // the microphone is closed from here on
+      val text = cleaned(raw)
       if (text.isBlank()) { fail("Didn't catch that. Try again."); return@post }
       if (mode == "dictate") {
         val typed = insert(text)
@@ -419,7 +525,10 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
 
   // ── typing into the field ──────────────────────────────────────────────────
 
-  /** Insert at the cursor (or append), with a space when needed; or paste, as you chose. */
+  /**
+   * Insert at the cursor (or append), fitted to what's around it (a capital after a full stop, a
+   * space between words, see FloCleanup.fit); or paste, as you chose.
+   */
   private fun insert(raw: String): Boolean {
     val node = target ?: run { copy(raw); return false }
     runCatching { node.refresh() }
@@ -435,8 +544,11 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
     if (start > end) { val t = start; start = end; end = t }
     val before = current.substring(0, start)
     val after = current.substring(end)
-    val pad = if (before.isNotEmpty() && !before.last().isWhitespace()) " " else ""
-    val piece = pad + raw.trim()
+    val piece = if (cfg.cleanup) {
+      FloCleanup.fit(raw, before, after)
+    } else {
+      (if (before.isNotEmpty() && !before.last().isWhitespace()) " " else "") + raw.trim()
+    }
     val next = before + piece + after
     val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, next) }
     if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
@@ -580,6 +692,8 @@ class FloBubbleService : AccessibilityService(), FloBubble.Listener {
     const val SYSTEM_UI = "com.android.systemui"
     /** Connected this soon after boot = Android started us after a restart. */
     const val BOOT_WINDOW_MS = 4 * 60_000L
+    /** Continuous listening stops by itself after this long. */
+    const val MAX_LISTEN_MS = 5 * 60_000L
     /** Android 11+ has distinct confirm / reject haptics; older phones get the nearest ones. */
     val CONFIRM: Int = if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.KEYBOARD_TAP
     val REJECT: Int = if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.REJECT else HapticFeedbackConstants.LONG_PRESS

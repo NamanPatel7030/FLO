@@ -5,6 +5,7 @@ import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError, describeError } from '../api/client';
 import { speechLang } from '../lib/bubbleSettings';
+import { cleanDictation } from '../lib/cleanup';
 import { useBubbleSettings } from '../state/BubbleSettings';
 import { useOffline } from '../state/Offline';
 import { OfflinePill } from '../ui/OfflinePill';
@@ -51,7 +52,16 @@ export function VoiceScreen({ initialMode = 'ask', autoStart, onClose }: { initi
   const { prefs } = usePrefs();
   const off = useOffline();
   const { settings: bubbleSettings } = useBubbleSettings();
-  const voice = useVoice(flo.mock, { lang: speechLang(bubbleSettings.language).tag, offline: !off.online, device: bubbleSettings.engine === 'device' });
+  const lang = speechLang(bubbleSettings.language).tag;
+  const voice = useVoice(flo.mock, {
+    lang,
+    offline: !off.online,
+    device: bubbleSettings.engine === 'device',
+    punctuation: bubbleSettings.punctuation,
+    words: bubbleSettings.words,
+    // the same cleanup as the bubble (and the desktop's free pass)
+    clean: bubbleSettings.cleanup ? (t) => cleanDictation(t, { lang, punctuation: bubbleSettings.punctuation, words: bubbleSettings.words }) : undefined,
+  });
   const [mode, setMode] = useState<AskMode>(initialMode);
   const [phase, setPhase] = useState<'idle' | 'sending' | 'waiting' | 'answered' | 'failed' | 'saved'>('idle');
   const [saved, setSaved] = useState<string | null>(null);
