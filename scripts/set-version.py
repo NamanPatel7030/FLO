@@ -22,4 +22,4 @@ p = root / "package.json"
 s = p.read_text()
 s = re.sub(r'("version":\s*")[^"]*(")', rf"\g<1>{v}\g<2>", s, count=1)
 p.write_text(s)
-print(f"version → {v}")
+print(f"version -> {v}")
