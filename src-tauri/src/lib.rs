@@ -283,7 +283,19 @@ pub(crate) fn show_dashboard(app: &AppHandle, route: Option<&str>) {
 /// dashboard's sign-in screen is the one place to start. Shown on sign-in, hidden on sign-out.
 pub(crate) fn set_island_visible(app: &AppHandle, on: bool) {
     if let Some(w) = app.get_webview_window("island") {
+        let shown = !w.is_visible().unwrap_or(false) && on;
         let _ = if on { w.show() } else { w.hide() };
+        // Windows / Linux: a window positioned while hidden (the pill waits for sign-in) can come
+        // up wherever the window manager puts it, and GTK reports its position as (0, 0) until it
+        // is moved again, so the next drag started from the screen's corner. Place it once shown.
+        #[cfg(not(target_os = "macos"))]
+        if shown {
+            let rect = *ISLAND_RECT.lock();
+            if let Some((_, _, rw, rh)) = rect {
+                let _ = place_island(app, rw, rh);
+            }
+        }
+        let _ = shown;
     }
 }
 
@@ -315,6 +327,15 @@ fn create_island(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
         b = b.focusable(false);
+    }
+    // desktop E2E test builds on Windows only (see e2e::webview2_overrides)
+    if let Some((args, dir)) = e2e::webview2_overrides() {
+        if let Some(a) = args {
+            b = b.additional_browser_args(&a);
+        }
+        if let Some(d) = dir {
+            b = b.data_directory(d);
+        }
     }
     let win = b.build()?;
     #[cfg(target_os = "macos")]
@@ -594,6 +615,19 @@ pub fn run() {
         return;
     }
     init_logging();
+    let mut context = tauri::generate_context!();
+    // desktop E2E test builds on Windows only: the WebView2 options msedgedriver needs, on the
+    // windows created from tauri.conf.json (the dashboard) too
+    if let Some((args, dir)) = e2e::webview2_overrides() {
+        for w in context.config_mut().app.windows.iter_mut() {
+            if args.is_some() {
+                w.additional_browser_args = args.clone();
+            }
+            if dir.is_some() {
+                w.data_directory = dir.clone();
+            }
+        }
+    }
     // Linux: pick the GTK backend / WebKit renderer before GTK starts (see platform::linux_env_overrides)
     #[cfg(target_os = "linux")]
     platform::prepare_env();
@@ -932,7 +966,7 @@ pub fn run() {
                 }
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Flo")
         .run(|app, event| {
             #[cfg(target_os = "macos")]

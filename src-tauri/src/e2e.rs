@@ -67,6 +67,28 @@ pub fn wav_input() -> Option<std::path::PathBuf> {
     var("FLO_E2E_WAV").map(std::path::PathBuf::from).filter(|p| p.is_file())
 }
 
+/// Windows: what msedgedriver asks WebView2 for (a DevTools port, its own profile folder) through
+/// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS / WEBVIEW2_USER_DATA_FOLDER. On the CI runner WebView2
+/// didn't apply them next to the options wry passes itself, so DevToolsActivePort never appeared
+/// and no session started. In a test build, pass them as the windows' own options instead (with
+/// wry's default arguments kept). (args, data folder); None outside the test mode.
+pub fn webview2_overrides() -> Option<(Option<String>, Option<std::path::PathBuf>)> {
+    if !active() || !cfg!(target_os = "windows") {
+        return None;
+    }
+    let args = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
+        .ok()
+        .filter(|a| !a.trim().is_empty())
+        .map(|a| format!("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection {a}"));
+    let dir = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").map(std::path::PathBuf::from);
+    if args.is_some() || dir.is_some() {
+        log::warn!("E2E: WebView2 args {args:?}, data folder {dir:?}");
+        Some((args, dir))
+    } else {
+        None
+    }
+}
+
 /// Decode a WAV file to mono f32 samples at its own rate.
 pub fn read_wav(path: &std::path::Path) -> anyhow::Result<(Vec<f32>, u32)> {
     let mut r = hound::WavReader::open(path)?;
