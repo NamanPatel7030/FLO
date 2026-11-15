@@ -168,6 +168,14 @@ pub fn e2e_tray(app: tauri::AppHandle, st: tauri::State<'_, crate::state::Shared
     app.run_on_main_thread(move || crate::on_tray_menu(&a, &st, &id)).map_err(|e| e.to_string())
 }
 
+/// Close a window the way its title-bar ✕ does (a close request the app may handle).
+#[tauri::command]
+pub fn e2e_close_window(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    guard()?;
+    use tauri::Manager;
+    app.get_webview_window(&label).ok_or("no such window")?.close().map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

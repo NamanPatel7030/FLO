@@ -179,6 +179,7 @@ pub fn island_drag_start(app: tauri::AppHandle) -> Result<(), String> {
     let pos = w.outer_position().map_err(|e| e.to_string())?;
     let cur = app.cursor_position().map_err(|e| e.to_string())?;
     *DRAG.lock() = Some(((pos.x, pos.y), (cur.x, cur.y)));
+    log::info!("island drag: start at {},{} (cursor {:.0},{:.0})", pos.x, pos.y, cur.x, cur.y);
     #[cfg(target_os = "linux")]
     follow_until_release(app);
     Ok(())
@@ -251,6 +252,7 @@ pub fn island_drag_end(app: tauri::AppHandle) -> Result<(), String> {
     let (x, y) = ((pos.x - area.position.x) as f64 / s, (pos.y - area.position.y) as f64 / s);
     let (ww, wh) = (size.width as f64 / s, size.height as f64 / s);
     let anchor = settle(aw, ah, x, y, ww, wh);
+    log::info!("island drag: dropped at {x:.0},{y:.0} ({ww:.0}x{wh:.0}) → {anchor:?}");
     let key = key_of(&m);
     {
         let mut g = SPOTS.lock();

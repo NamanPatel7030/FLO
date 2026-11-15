@@ -826,6 +826,7 @@ pub fn run() {
             autocontinue::auto_continue_log,
             e2e::e2e_info,
             e2e::e2e_tray,
+            e2e::e2e_close_window,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -891,6 +892,8 @@ pub fn run() {
                 #[cfg(any(target_os = "linux", target_os = "windows"))]
                 if let Ok(Some(urls)) = app.deep_link().get_current() {
                     for url in urls {
+                        // scheme + host only: the query carries a one-time sign-in code
+                        log::info!("started by a link: {}://{}", url.scheme(), url.host_str().unwrap_or(""));
                         account::handle_deep_link(st.clone(), url.to_string());
                         slack::handle_deep_link(st.clone(), url.to_string());
                         google::handle_deep_link(st.clone(), url.to_string());
