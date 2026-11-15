@@ -103,9 +103,15 @@ describe("the pill", () => {
 
   it("drags to a new spot and snaps there", async () => {
     const before = await win("island");
-    const [cx, cy] = centre(before);
+    // grab it like a person does: point at the pill, let the hover panel open, then press on the
+    // island's own edge (not on one of the panel's buttons) and pull
+    os.move(...centre(before));
+    await sleep(1200);
+    const grab = await win("island");
+    const cx = grab.x + grab.width / 2;
+    const cy = grab.y + 4;
     os.move(cx, cy);
-    await sleep(300);
+    await sleep(200);
     os.down();
     const path_ = [];
     for (let i = 1; i <= 12; i++) {

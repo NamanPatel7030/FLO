@@ -91,6 +91,11 @@ jobs:
         run: |
           $setup = Get-ChildItem src-tauri/target/e2e/bundle/nsis/*-setup.exe | Select-Object -First 1
           Start-Process -FilePath $setup.FullName -ArgumentList "/S" -Wait
+          # an installer that starts the app would leave a Flo running, and single-instance would
+          # then swallow every Flo the driver starts
+          Start-Sleep -Seconds 3
+          Get-Process flo-flow -ErrorAction SilentlyContinue | Format-Table Id, StartTime
+          Stop-Process -Name flo-flow -Force -ErrorAction SilentlyContinue
           $exe = @("$env:LOCALAPPDATA\Flo\flo-flow.exe", "$env:ProgramFiles\Flo\flo-flow.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $exe) { Get-ChildItem -Recurse "$env:LOCALAPPDATA" -Filter flo-flow.exe -ErrorAction SilentlyContinue | Select-Object -First 3 | Format-List FullName; throw "installed flo-flow.exe not found" }
           echo "FLO_APP=$exe" >> $env:GITHUB_ENV
@@ -127,11 +132,14 @@ jobs:
         run: |
           $env:FLO_E2E = "1"
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+          $env:WEBVIEW2_USER_DATA_FOLDER = "$env:RUNNER_TEMP\flo-wv2-smoke"
+          Get-Process flo-flow, msedgewebview2 -ErrorAction SilentlyContinue | Format-Table Id, Name, StartTime
           $p = Start-Process -FilePath $env:FLO_APP -PassThru
           Start-Sleep -Seconds 25
           "alive: $(-not $p.HasExited) exit: $($p.ExitCode)"
           try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:9222/json/version -TimeoutSec 5).Content } catch { "debug port: $_" }
-          Get-Process | Where-Object { $_.Name -match 'flo|msedgewebview2' } | Format-Table Id, Name, StartTime
+          Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe' OR Name='flo-flow.exe'" | ForEach-Object { "$($_.ProcessId) <- $($_.ParentProcessId): $($_.CommandLine.Substring(0, [Math]::Min(400, $_.CommandLine.Length)))" }
+          Get-ChildItem "$env:RUNNER_TEMP\flo-wv2-smoke" -ErrorAction SilentlyContinue | Format-Table Name
           $log = "$env:LOCALAPPDATA\Flo\logs\flo.log"
           if (Test-Path $log) { Get-Content $log -Tail 60 } else { "no $log" }
           Get-ChildItem "$env:LOCALAPPDATA\Flo" -ErrorAction SilentlyContinue | Format-Table Name
