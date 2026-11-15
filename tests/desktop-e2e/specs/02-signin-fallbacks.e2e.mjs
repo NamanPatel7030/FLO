@@ -1,6 +1,6 @@
 // The sign-in fallbacks: paste the one-time code when the browser can't hand back the link, a
 // wrong password, email + password, and signing out hides the pill again.
-import { assert, clickButton, ctx, info, invoke, ready, shot, toMain, waitFor } from "../support/app.mjs";
+import { appPids, assert, clickButton, ctx, info, invoke, killApp, openUrlViaOs, ready, shot, sleep, toMain, waitFor } from "../support/app.mjs";
 import { PASSWORD, USER } from "../support/mock-server.mjs";
 
 describe("sign-in fallbacks", () => {
@@ -55,14 +55,22 @@ describe("sign-in fallbacks", () => {
 
   it("cold start: a flo://auth link that STARTS Flo (it wasn't running) still signs in", async () => {
     await invoke("account_logout");
+    // Flo isn't running when the browser comes back: quit it, then open the link through the OS
+    // URL handler (as the browser does), which starts Flo with the link as its only argument.
+    // (Not through the driver: msedgedriver doesn't hand launch arguments to a WebView2 app.)
+    await browser.deleteSession();
+    await waitFor(() => appPids().length === 0, { timeout: 15000, msg: "Flo to quit" });
+    const tokens = ctx().mock.state.tokens.size;
     const code = ctx().mock.issueCode(null);
-    // Flo quits; the browser's link starts it again with the link as its argument
-    await browser.reloadSession({
-      "wdio:enforceWebDriverClassic": true,
-      "tauri:options": { application: ctx().app, args: [`flo://auth?code=${code}`] },
-    });
+    openUrlViaOs(`flo://auth?code=${code}`);
+    await waitFor(() => ctx().mock.state.tokens.size > tokens, { timeout: 30000, msg: "the started Flo to exchange the link's code" });
+    await sleep(2000); // let it store the session
+    killApp();
+    await waitFor(() => appPids().length === 0, { timeout: 15000, msg: "the link-started Flo to quit" });
+    // the next normal start is signed in
+    await browser.reloadSession();
     await ready();
-    await waitFor(async () => (await invoke("account_status")).signedIn, { timeout: 20000, msg: "sign-in from the launch link" });
+    await waitFor(async () => (await invoke("account_status")).signedIn, { timeout: 20000, msg: "signed in after the link-started run" });
     await $("[data-testid=signin]").waitForDisplayed({ reverse: true, timeout: 20000 });
     await shot("cold-start-signed-in");
   });

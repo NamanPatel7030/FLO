@@ -103,13 +103,14 @@ describe("the pill", () => {
 
   it("drags to a new spot and snaps there", async () => {
     const before = await win("island");
-    // grab it like a person does: point at the pill, let the hover panel open, then press on the
-    // island's own edge (not on one of the panel's buttons) and pull
+    // grab it like a person does: point at the pill, let the hover panel open, then press inside
+    // the panel's top padding (not on one of its buttons, and not on the window's outermost
+    // pixels, which Linux treats as a resize border) and pull
     os.move(...centre(before));
     await sleep(1200);
     const grab = await win("island");
     const cx = grab.x + grab.width / 2;
-    const cy = grab.y + 4;
+    const cy = grab.y + 18;
     os.move(cx, cy);
     await sleep(200);
     os.down();
@@ -125,6 +126,8 @@ describe("the pill", () => {
     await sleep(800);
     os.move(5, 5);
     await sleep(800);
+    // ask from the dashboard: it shows whether the app (not just the pill's web view) responds
+    await toMain();
     const after = await win("island");
     assert.ok(Math.abs(after.x - before.x) > 100 && after.y - before.y > 150, `moved (${before.x},${before.y}) → (${after.x},${after.y})`);
     rest = after;

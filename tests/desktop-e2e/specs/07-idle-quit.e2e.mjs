@@ -1,6 +1,6 @@
 // An idle Flo stays cheap (CPU over 60 s, app + its web view processes), and "Quit Flo" from the
 // tray ends every process it started.
-import { appPids, artifact, assert, cpuSeconds, descendants, fs, info, invoke, IS_WIN, markOnboarded, os, ready, signInQuick, sleep, waitFor } from "../support/app.mjs";
+import { appPids, artifact, assert, cpuSeconds, descendants, fs, info, invoke, IS_WIN, markOnboarded, os, ready, signInQuick, sleep, toMain, waitFor } from "../support/app.mjs";
 
 // % of ONE core, averaged over the window (CI machines are slow and share cores; a busy loop or a
 // running animation shows up as 20 %+)
@@ -31,7 +31,14 @@ describe("idle and quit", () => {
     pid = (await info()).pid;
     os.move(5, 700);
     // close the dashboard as a user would; Flo keeps running with just the pill
-    os.closeWindow("Flo");
+    if (IS_WIN) {
+      // Windows: a hidden window of the process can also be titled "Flo", so FindWindow + WM_CLOSE
+      // may hit the wrong one; send the same close request the ✕ sends, to the dashboard itself
+      await toMain();
+      await invoke("e2e_close_window", { label: "main" }).catch(() => {});
+    } else {
+      os.closeWindow("Flo");
+    }
     await waitFor(async () => (await browser.getWindowHandles()).length === 1, { timeout: 10000, msg: "the dashboard to close" });
     await browser.switchToWindow((await browser.getWindowHandles())[0]);
     assert.deepEqual(appPids(), [pid], "Flo keeps running in the pill after the dashboard closes");

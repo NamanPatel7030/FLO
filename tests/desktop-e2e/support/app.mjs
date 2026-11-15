@@ -213,6 +213,13 @@ export function cpuSeconds(pids) {
 }
 
 /** Launch the Flo binary again (as the browser / Start menu would). */
+/** Stop every Flo of this test's binary (one the driver didn't start, e.g. via a link). */
+export function killApp() {
+  const exe = path.basename(ctx().app);
+  if (IS_WIN) spawnSync("taskkill", ["/F", "/T", "/IM", exe], { stdio: "ignore" });
+  else spawnSync("pkill", ["-x", exe.slice(0, 15)], { stdio: "ignore" });
+}
+
 export function launchAgain(args = []) {
   const p = spawn(ctx().app, args, { env: ctx().appEnv, stdio: "ignore", detached: !IS_WIN });
   return new Promise((resolve) => {
