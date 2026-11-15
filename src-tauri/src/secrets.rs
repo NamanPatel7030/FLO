@@ -109,9 +109,19 @@ fn raw_set(name: &str, value: &str) -> Result<()> {
     {
         match entry(name).and_then(|e| Ok(e.set_password(value)?)) {
             Ok(()) => {
+                // Linux: a Secret Service that accepts the write but can't give it back (a keyring
+                // daemon started without an unlocked login collection answers "no result found")
+                // lost the sign-in at every restart. Read it back; keep the private file copy when
+                // the keyring can't return it.
                 #[cfg(target_os = "linux")]
                 if let Some(p) = fallback::path() {
-                    let _ = file_delete(&p, name);
+                    let readable = entry(name).ok().and_then(|e| e.get_password().ok()).as_deref() == Some(value);
+                    if readable || name == "db-key" {
+                        let _ = file_delete(&p, name);
+                    } else {
+                        log::warn!("keyring stored {name} but can't read it back; keeping a private file copy");
+                        return file_set(&p, name, value);
+                    }
                 }
                 Ok(())
             }
