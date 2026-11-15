@@ -1,5 +1,6 @@
 // An idle Flo stays cheap (CPU over 60 s, app + its web view processes), and "Quit Flo" from the
 // tray ends every process it started.
+import { spawnSync } from "node:child_process";
 import { appPids, artifact, assert, cpuSeconds, descendants, fs, info, invoke, IS_WIN, markOnboarded, os, ready, signInQuick, sleep, toMain, waitFor } from "../support/app.mjs";
 
 // % of ONE core, averaged over the window (CI machines are slow and share cores; a busy loop or a
@@ -9,7 +10,11 @@ const WINDOW_S = Number(process.env.FLO_E2E_IDLE_SECONDS ?? 60);
 
 const procName = (pid) => {
   try {
-    return IS_WIN ? String(pid) : fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+    if (IS_WIN) {
+      const r = spawnSync("powershell", ["-NoProfile", "-Command", `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { "$($p.Name) $($p.CommandLine)" }`], { encoding: "utf8" });
+      return r.stdout.trim().slice(0, 240) || "?";
+    }
+    return fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
   } catch {
     return "?";
   }
@@ -76,6 +81,13 @@ describe("idle and quit", () => {
         }
       });
     await waitFor(() => alive().length === 0, { timeout: 10000, msg: "Flo's helper processes to exit" }).catch(() => {});
+    if (alive().length && IS_WIN) {
+      // WebView2's own processes can stay up while msedgedriver still holds its DevTools
+      // connection to them; let the driver go first, then they must exit too
+      console.warn("still running after quit (driver attached):", alive().map((k) => `${k} ${procName(k)}`));
+      await browser.deleteSession().catch(() => {});
+      await waitFor(() => alive().length === 0, { timeout: 15000, msg: "WebView2 to exit after the driver let go" }).catch(() => {});
+    }
     assert.deepEqual(alive().map((k) => `${k} ${names[k]}`), [], "no helper process outlives Flo");
   });
 });

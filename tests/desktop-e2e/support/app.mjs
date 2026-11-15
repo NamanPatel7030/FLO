@@ -69,7 +69,10 @@ export async function toIsland() {
 export async function ready() {
   await waitFor(async () => (await browser.getWindowHandles()).length >= 2, { timeout: 30000, msg: "both windows" });
   await toMain();
-  await waitFor(() => invoke("get_settings"), { timeout: 30000, msg: "the app bridge" });
+  // the very first WebView2 start on a fresh CI runner can keep its renderer busy for 30 s+
+  // ("Timed out receiving message from renderer"): give the first call room, then retry
+  await browser.setTimeout({ script: 60000 }).catch(() => {});
+  await waitFor(() => invoke("get_settings"), { timeout: 120000, interval: 1000, msg: "the app bridge" });
   // and React has drawn the first screen (sidebar, sign-in or setup)
   await waitFor(() => browser.execute(() => !!document.querySelector("aside, [data-testid=signin], [data-testid=onboarding]")), { timeout: 30000, msg: "the first screen" });
 }
