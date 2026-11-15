@@ -120,6 +120,25 @@ jobs:
             sleep 1
             npx wdio run wdio.conf.mjs'
 
+      - name: Smoke-start the installed app with a debug port (Windows diagnostics)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $env:FLO_E2E = "1"
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+          $p = Start-Process -FilePath $env:FLO_APP -PassThru
+          Start-Sleep -Seconds 25
+          "alive: $(-not $p.HasExited) exit: $($p.ExitCode)"
+          try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:9222/json/version -TimeoutSec 5).Content } catch { "debug port: $_" }
+          Get-Process | Where-Object { $_.Name -match 'flo|msedgewebview2' } | Format-Table Id, Name, StartTime
+          $log = "$env:LOCALAPPDATA\Flo\logs\flo.log"
+          if (Test-Path $log) { Get-Content $log -Tail 60 } else { "no $log" }
+          Get-ChildItem "$env:LOCALAPPDATA\Flo" -ErrorAction SilentlyContinue | Format-Table Name
+          msedgedriver --version
+          Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" -ErrorAction SilentlyContinue | Select-Object pv
+          Stop-Process -Name flo-flow -Force -ErrorAction SilentlyContinue
+
       - name: Run (Windows)
         if: runner.os == 'Windows'
         working-directory: tests/desktop-e2e

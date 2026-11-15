@@ -117,7 +117,19 @@ export const config = {
         XDG_CACHE_HOME: path.join(home, ".cache"),
         BROWSER: path.join(HERE, "support/fake-browser.sh"),
       });
-      fs.mkdirSync(path.join(env.XDG_DATA_HOME, "applications"), { recursive: true });
+      // web links → the fake browser, whatever browsers the machine has (a CI runner has Chrome
+      // and Firefox registered; xdg-open would start them instead of honouring $BROWSER)
+      const apps = path.join(env.XDG_DATA_HOME, "applications");
+      fs.mkdirSync(apps, { recursive: true });
+      fs.mkdirSync(env.XDG_CONFIG_HOME, { recursive: true });
+      fs.writeFileSync(
+        path.join(apps, "flo-e2e-browser.desktop"),
+        `[Desktop Entry]\nType=Application\nName=E2E browser\nExec=${env.BROWSER} %u\nNoDisplay=true\nMimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;\n`,
+      );
+      fs.writeFileSync(
+        path.join(env.XDG_CONFIG_HOME, "mimeapps.list"),
+        "[Default Applications]\nx-scheme-handler/http=flo-e2e-browser.desktop\nx-scheme-handler/https=flo-e2e-browser.desktop\ntext/html=flo-e2e-browser.desktop\n",
+      );
     }
     killLeftovers();
     await waitPortFree(DRIVER_PORT);
