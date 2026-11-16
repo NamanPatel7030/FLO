@@ -258,6 +258,44 @@ pub(crate) fn upgrade_target_for(s: &crate::model::Settings, runs_large: bool, r
     (starter || auto_turbo).then_some(target)
 }
 
+/// Models meeting notes use besides the chosen one ("Free up space" keeps them): the Hinglish
+/// model while Hindi meetings are written in Hinglish.
+pub fn meeting_models(s: &crate::model::Settings) -> Vec<&'static str> {
+    if s.stt_provider == "local" && speaks_hindi(s) && HindiScript::from_setting(&s.meeting_hindi) == HindiScript::Hinglish {
+        vec![HINGLISH_MODEL]
+    } else {
+        vec![]
+    }
+}
+
+/// Marker in the models folder: the user deleted the Hinglish model, so Flo doesn't fetch it again.
+pub const NO_AUTO_HINGLISH: &str = ".no-auto-hinglish";
+
+/// Should Flo download the Hinglish model by itself, in the background? For on-device users who
+/// speak Hindi and want Hinglish meeting transcripts, on a machine that keeps it loaded next to
+/// the main model (16 GB, `models_kept`), after setup, under the same rule as the model upgrade
+/// (never when the user picked a model themselves), and never again once they deleted it.
+pub fn hinglish_auto_fetch(s: &crate::model::Settings, runs_large: bool, ram_gb: f64, installed: bool, declined: bool) -> bool {
+    s.stt_provider == "local" && s.onboarded && !s.stt_model_explicit && runs_large && ram_gb >= 15.5 && !meeting_models(s).is_empty() && !installed && !declined && spec(HINGLISH_MODEL).is_some_and(|m| m.available())
+}
+
+/// Free space a background download of the Hinglish model needs: its 1.6 GB download and the
+/// 1.6 GB converted file exist side by side for a moment, plus room to spare.
+pub const HINGLISH_FREE_GB: f64 = 5.0;
+
+/// Free disk space (GB) at `path`, from `df -Pk`; None when unknown.
+pub fn free_disk_gb(path: &Path) -> Option<f64> {
+    let out = std::process::Command::new("df").arg("-Pk").arg(path).output().ok()?;
+    parse_df_free_gb(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The "Available" column (1K blocks) of `df -Pk` output, in GB.
+pub fn parse_df_free_gb(df: &str) -> Option<f64> {
+    let line = df.lines().nth(1)?;
+    let kb: f64 = line.split_whitespace().nth(3)?.parse().ok()?;
+    Some(kb * 1024.0 / 1e9)
+}
+
 /// Where a retried download continues: after the bytes already on disk, but only when the server
 /// answered the Range request with 206 Partial Content.
 pub fn resume_offset(part_len: u64, status: u16) -> u64 {
@@ -977,6 +1015,52 @@ pub fn pick_decode(options: &[(String, (String, f32))], previous: Option<&str>) 
     (0..options.len()).max_by(|&a, &b| key(&options[a]).partial_cmp(&key(&options[b])).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0)
 }
 
+/// In meetings, a detector share for English below this sends the clip through the Hindi decoder
+/// too (when Hindi is one of the languages): English speech scores 0.99–1.00 on a clip-sized
+/// window, Hindi that the detector mistakes for English rarely does.
+pub const MEET_EN_SURE: f32 = 0.97;
+
+/// Hindi-only function words that also appear in the general model's Devanagari spelling of
+/// Hinglish ("है", "को", "का"…). English speech forced through the Hindi decoder comes out as
+/// English words in Devanagari ("आई विल सेंड द डेक") and has (almost) none of them.
+const HINDI_FUNCTION_WORDS: &[&str] = &[
+    "है", "हैं", "था", "थी", "थे", "और", "नहीं", "नही", "मैं", "मुझे", "क्या", "रहा", "रही", "रहे", "हूँ", "हूं", "को", "का", "की", "के",
+    "से", "में", "यह", "वह", "भी", "आप", "हम", "गया", "गई", "करना", "चाहिए", "कि", "तो", "ने", "पर", "हो", "कर", "दिया", "किया",
+    "लेकिन", "अब", "कल", "आज", "तक", "होगा", "हमें", "आपसे", "बात", "देना", "जा", "ये", "वो", "कुछ", "अभी", "सब", "सबको",
+];
+
+/// Share of a Devanagari transcript's words that are Hindi function words.
+pub fn hindi_word_share(text: &str) -> f32 {
+    let words: Vec<String> = text
+        .split(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '?' | '!' | '।' | '"'))
+        .filter(|w| !w.is_empty())
+        .map(|w| w.chars().filter(|c| !matches!(c, '\u{200C}' | '\u{200D}')).collect())
+        .collect();
+    if words.is_empty() {
+        return 0.0;
+    }
+    words.iter().filter(|w| HINDI_FUNCTION_WORDS.contains(&w.as_str())).count() as f32 / words.len() as f32
+}
+
+/// Least share of Hindi function words for a Devanagari decode to count as real Hindi speech.
+pub const HINDI_WORDS_MIN: f32 = 0.12;
+
+/// Of a meeting clip's decodes [(Hindi-family language, …), (other language, …)], the one to keep.
+/// The Hindi decode wins when it is real Hindi (enough Hindi function words) or when the other
+/// decode is Hindi in Roman letters; otherwise `pick_decode` (script, loops, confidence with the
+/// sticky bonus). A fluent English decode of Hindi speech is a translation, whatever its score.
+pub fn pick_meeting_decode(options: &[(String, (String, f32))], previous: Option<&str>) -> usize {
+    let hi = options.iter().position(|(l, _)| decoder_lang(l) == "hi");
+    if let Some(i) = hi {
+        let (t, _) = &options[i].1;
+        let other_romanized = options.iter().enumerate().any(|(j, (_, (o, _)))| j != i && crate::hinglish::looks_hinglish(o));
+        if plausible(t, "hi") && !is_degenerate(t) && (hindi_word_share(t) >= HINDI_WORDS_MIN || other_romanized) {
+            return i;
+        }
+    }
+    pick_decode(options, previous)
+}
+
 /// Softmax of language logits over the candidates: each language's share of the probability.
 pub fn lang_probs(scored: &[(String, f32)]) -> Vec<(String, f32)> {
     let max = scored.iter().map(|(_, l)| *l).filter(|l| l.is_finite()).fold(f32::NEG_INFINITY, f32::max);
@@ -1157,8 +1241,9 @@ pub struct LocalWhisper {
     /// benchmark knobs: skip the input gain normalization; beam size (0/1 = greedy)
     no_normalize: std::sync::atomic::AtomicBool,
     beam: std::sync::atomic::AtomicU32,
+    /// loaded models, most recently used first (`models_kept` of them)
     #[cfg(feature = "local-stt")]
-    ctx: Mutex<Option<(String, Arc<whisper_rs::WhisperContext>)>>,
+    ctx: Mutex<Vec<(String, Arc<whisper_rs::WhisperContext>)>>,
     #[cfg(not(feature = "local-stt"))]
     _p: Mutex<Option<Arc<()>>>,
     /// the ONNX engines (Parakeet, Qwen3-ASR); a model folder goes here instead of whisper.cpp
@@ -1244,7 +1329,7 @@ impl LocalWhisper {
     pub fn unload(&self) {
         #[cfg(feature = "local-stt")]
         {
-            if self.ctx.lock().take().is_some() {
+            if !std::mem::take(&mut *self.ctx.lock()).is_empty() {
                 log::info!("unloaded speech model");
             }
         }
@@ -1260,7 +1345,7 @@ impl LocalWhisper {
         if idle {
             #[cfg(feature = "local-stt")]
             {
-                if self.ctx.lock().take().is_some() {
+                if !std::mem::take(&mut *self.ctx.lock()).is_empty() {
                     log::info!("unloaded speech model after idle");
                 }
             }
@@ -1281,17 +1366,19 @@ impl LocalWhisper {
         *self.last_used.lock() = Some(std::time::Instant::now());
         let key = model_file.to_string_lossy().to_string();
         let mut g = self.ctx.lock();
-        Ok(match g.as_ref() {
-            Some((k, c)) if *k == key => c.clone(),
-            _ => {
-                let mut cp = WhisperContextParameters::default();
-                // flash attention: faster decoding on Metal (no word-level DTW needed for dictation)
-                cp.flash_attn(!self.baseline.load(std::sync::atomic::Ordering::Relaxed));
-                let c = Arc::new(WhisperContext::new_with_params(&key, cp).map_err(|e| anyhow!("load model: {e:?}"))?);
-                *g = Some((key, c.clone()));
-                c
-            }
-        })
+        if let Some(i) = g.iter().position(|(k, _)| *k == key) {
+            let hit = g.remove(i);
+            let c = hit.1.clone();
+            g.insert(0, hit);
+            return Ok(c);
+        }
+        let mut cp = WhisperContextParameters::default();
+        // flash attention: faster decoding on Metal (no word-level DTW needed for dictation)
+        cp.flash_attn(!self.baseline.load(std::sync::atomic::Ordering::Relaxed));
+        let c = Arc::new(WhisperContext::new_with_params(&key, cp).map_err(|e| anyhow!("load model: {e:?}"))?);
+        g.insert(0, (key, c.clone()));
+        g.truncate(models_kept());
+        Ok(c)
     }
 
     #[cfg(feature = "local-stt")]
@@ -1306,7 +1393,7 @@ impl LocalWhisper {
     /// The model is in memory (the next dictation skips loading it).
     #[cfg(feature = "local-stt")]
     pub fn is_loaded(&self) -> bool {
-        self.ctx.lock().is_some() || self.onnx.is_loaded()
+        !self.ctx.lock().is_empty() || self.onnx.is_loaded()
     }
 
     #[cfg(not(feature = "local-stt"))]
@@ -1350,11 +1437,23 @@ impl LocalWhisper {
     /// distant voice brought up to a normal level), then `transcribe`. Dictation, the assistant,
     /// hands-free mode and the accuracy harness all come through here.
     pub fn dictate(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+        let sticky = self.detected.lock().clone();
+        let (text, lang) = self.dictate_hinted(model_file, samples, language, prompt, sticky.as_deref(), false)?;
+        if matches!(language, "" | "auto") {
+            *self.detected.lock() = Some(lang);
+        }
+        Ok(text)
+    }
+
+    /// `dictate` with the previous language given (`transcribe_hinted`) instead of the one this
+    /// engine remembers, which stays untouched: meeting notes keep one per track. Returns the text
+    /// and the language it was written in.
+    pub fn dictate_hinted(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, sticky: Option<&str>, meeting: bool) -> Result<(String, String)> {
         let trimmed = audio::trim_silence(samples);
         let level = audio::speech_level(&trimmed);
         let (audio_in, gain) = if self.no_normalize.load(std::sync::atomic::Ordering::Relaxed) { (trimmed, 1.0) } else { audio::normalize_speech(&trimmed) };
         let t = std::time::Instant::now();
-        let r = self.transcribe(model_file, &audio_in, language, prompt);
+        let r = self.transcribe_hinted(model_file, &audio_in, language, prompt, sticky, meeting);
         // what a report needs to be diagnosable, never the words themselves (those only at debug)
         let model = model_file.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
         log::info!(
@@ -1368,10 +1467,58 @@ impl LocalWhisper {
             self.last_timing.lock().confidence,
             prompt.chars().count(),
         );
-        if let Ok(text) = &r {
+        if let Ok((text, _)) = &r {
             log::debug!("dictate text: {text}");
         }
         r
+    }
+
+    /// Transcribe a clip, with the language of the last "auto" clip as the tie-breaker (and
+    /// remembered for the next one).
+    pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+        let sticky = self.detected.lock().clone();
+        let (text, lang) = self.transcribe_hinted(model_file, samples, language, prompt, sticky.as_deref(), false)?;
+        if matches!(language, "" | "auto") {
+            *self.detected.lock() = Some(lang);
+        }
+        Ok(text)
+    }
+
+    /// The Hinglish model next to `model_file`, when it's downloaded and this computer can keep it
+    /// loaded next to the main model (meeting notes switch between the two clip by clip).
+    pub fn hinglish_model(&self, model_file: &Path) -> Option<PathBuf> {
+        let m = spec(HINGLISH_MODEL)?;
+        let p = model_file.parent()?.join(m.file);
+        (p.exists() && (p == model_file || models_kept() >= 2)).then_some(p)
+    }
+
+    /// One meeting clip (`meetpipe::Transcriber`): `language` from Settings ("auto" = identified
+    /// clip by clip, `hint` = the track's recent language as the tie-breaker; never forced). Never
+    /// translates unless `hindi` asks for English: Hindi speech is written in Devanagari by the
+    /// general model, then in Roman letters by the Hinglish model when it's downloaded
+    /// (`HindiScript::Hinglish`; otherwise `meetpipe` transliterates), or translated by a decode
+    /// in English (`HindiScript::English`). `preview` (live partials) skips the second decode.
+    pub fn meeting_clip(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, hint: Option<&str>, hindi: HindiScript, preview: bool) -> Result<Heard> {
+        let (raw, lang) = self.dictate_hinted(model_file, samples, language, prompt, hint, true)?;
+        let heard = |text: String| Heard { text, lang: lang.clone(), raw: raw.clone() };
+        if lang != "hi" || preview || hindi == HindiScript::Devanagari {
+            return Ok(heard(raw.clone()));
+        }
+        let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
+        let usable = |t: &str| !t.trim().is_empty() && !is_degenerate(t) && !is_hallucination(t, secs);
+        let second = match hindi {
+            HindiScript::Hinglish => match self.hinglish_model(model_file) {
+                // the Hinglish model gets the previous line only when it's in Roman letters
+                Some(apex) => Some(self.dictate_hinted(&apex, samples, HINGLISH, prompt, None, false)?.0),
+                None => None,
+            },
+            HindiScript::English => Some(self.dictate_hinted(model_file, samples, "en", "", None, false)?.0),
+            HindiScript::Devanagari => None,
+        };
+        Ok(match second {
+            Some(t) if usable(&t) => heard(t.trim().to_string()),
+            _ => heard(raw.clone()),
+        })
     }
 
     /// Transcribe a clip.
@@ -1387,14 +1534,17 @@ impl LocalWhisper {
     /// confident; otherwise identify the language among `auto_langs` from the same clip-sized
     /// encoder state (~0.2 s instead of a 30 s window, same accuracy in the benchmark) and decode
     /// again. "hi-en" (Hinglish) is decoded as English steered to Roman-letter Hindi.
+    ///
+    /// `sticky` is the language of the previous clip (the tie-breaker when detection is unsure);
+    /// `meeting` adds the translation guard of `meeting_auto`. Returns the text and its language.
     #[cfg(feature = "local-stt")]
-    pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+    pub fn transcribe_hinted(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, sticky: Option<&str>, meeting: bool) -> Result<(String, String)> {
         if onnx_family(model_file).is_some() || needs_routing(model_file, language) {
             let langs = self.auto_langs.lock().clone();
             match route_model(model_file, language, &langs) {
                 Some(p) if p.as_path() != model_file => {
                     log::info!("stt: {} can't hear {language}; using {}", model_file.display(), p.display());
-                    return self.transcribe(&p, samples, language, prompt);
+                    return self.transcribe_hinted(&p, samples, language, prompt, sticky, meeting);
                 }
                 Some(_) => {
                     if let Some(f) = onnx_family(model_file) {
@@ -1408,18 +1558,23 @@ impl LocalWhisper {
         let mut timing = DecodeTiming::default();
         let lang_in = if language.is_empty() { "auto" } else { language };
         let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
-        let (text, confidence) = if lang_in == HINGLISH {
+        let (text, confidence, out_lang) = if lang_in == HINGLISH {
             let p = if prompt.is_empty() { HINGLISH_PROMPT.to_string() } else { format!("{HINGLISH_PROMPT} {}", prompt_for("en", prompt)) };
             *self.last_lang.lock() = HINGLISH.into();
-            self.decode_checked(model_file, samples, "en", &p, ACCEPT)?.0
+            let (text, conf) = self.decode_checked(model_file, samples, "en", &p, ACCEPT)?.0;
+            (text, conf, HINGLISH.to_string())
         } else if lang_in != "auto" {
             *self.last_lang.lock() = lang_in.into();
             // Gujarati: the Hindi decoder, rewritten in Gujarati script (see `decoder_lang`)
             let (text, conf) = self.decode_checked(model_file, samples, decoder_lang(lang_in), &whisper_prompt(lang_in, prompt), ACCEPT)?.0;
-            (in_script(&text, lang_in), conf)
+            (in_script(&text, lang_in), conf, lang_in.to_string())
+        } else if meeting {
+            let (text, conf, lang) = self.meeting_auto(model_file, samples, prompt, sticky, &mut timing)?;
+            *self.last_lang.lock() = lang.clone();
+            (in_script(&text, &lang), conf, lang)
         } else {
             let cands = self.auto_langs.lock().clone();
-            let sticky = self.detected.lock().clone().filter(|l| cands.is_empty() || cands.contains(l));
+            let sticky = sticky.map(String::from).filter(|l| cands.is_empty() || cands.contains(l));
             let first_lang = sticky.clone().or_else(|| cands.first().cloned()).unwrap_or_else(|| "en".into());
             let first_dec = decoder_lang(&first_lang).to_string();
             let (first, mut state) = self.decode_with(model_file, samples, &first_dec, &whisper_prompt(&first_lang, prompt), DecodeOpts::FAST)?;
@@ -1474,9 +1629,8 @@ impl LocalWhisper {
             };
             // Hindi or Gujarati? Whisper's detector can't tell; the words can
             let lang = final_language(&lid, &text, &cands);
-            *self.detected.lock() = Some(lang.clone());
             *self.last_lang.lock() = lang.clone();
-            (in_script(&text, &lang), conf)
+            (in_script(&text, &lang), conf, lang)
         };
         timing.total_ms = t0.elapsed().as_millis();
         timing.confidence = confidence;
@@ -1488,7 +1642,87 @@ impl LocalWhisper {
             self.last_lang.lock(),
             confidence
         );
-        Ok(text)
+        Ok((text, out_lang))
+    }
+
+    /// Language identification for a meeting clip, built so Hindi never comes out translated.
+    /// Clip by clip, among the "auto" languages, with `sticky` (the track's recent language) only
+    /// as the first guess and tie-breaker. A decode in English of Hindi speech is a fluent,
+    /// confident translation ("I was talking to you."), so English is trusted alone only when the
+    /// detector is near certain (`MEET_EN_SURE`); otherwise both are decoded and the Hindi one
+    /// wins when its words are Hindi (`hindi_word_share`) or the English one is Hindi in Roman
+    /// letters (`hinglish::looks_hinglish`). Returns (text, confidence, language).
+    #[cfg(feature = "local-stt")]
+    fn meeting_auto(&self, model_file: &Path, samples: &[f32], prompt: &str, sticky: Option<&str>, timing: &mut DecodeTiming) -> Result<(String, f32, String)> {
+        let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
+        let cands = self.auto_langs.lock().clone();
+        let sticky = sticky.map(String::from).filter(|l| cands.is_empty() || cands.contains(l));
+        let first_lang = sticky.clone().or_else(|| cands.first().cloned()).unwrap_or_else(|| "en".into());
+        let first_dec = decoder_lang(&first_lang).to_string();
+        let (first, mut state) = self.decode_with(model_file, samples, &first_dec, &whisper_prompt(&first_lang, prompt), DecodeOpts::FAST)?;
+        let td = std::time::Instant::now();
+        let probs = by_decoder(&self.lang_probs_from_state(model_file, &mut state, &cands));
+        timing.detect_ms = td.elapsed().as_millis();
+        timing.detected = true;
+        let (top, p) = probs.first().cloned().unwrap_or((first_lang.clone(), 0.0));
+        let hindi = probs.iter().find(|(l, _)| decoder_lang(l) == "hi").map(|(l, _)| l.clone());
+        // a decode in `l`: the first one when it's the same decoder and good enough, else again
+        let decode = |l: &str| -> Result<(String, f32)> {
+            let d = decoder_lang(l);
+            if d == first_dec && accepted(&first, d, ACCEPT, secs) {
+                return Ok(first.clone());
+            }
+            let fast = if d == first_dec { first.clone() } else { self.decode_with(model_file, samples, d, &whisper_prompt(l, prompt), DecodeOpts::FAST)?.0 };
+            if accepted(&fast, d, ACCEPT, secs) {
+                Ok(fast)
+            } else {
+                self.decode_accurate(model_file, samples, d, &whisper_prompt(l, prompt))
+            }
+        };
+        #[cfg(test)]
+        let debug = std::env::var_os("FLO_DICT_DEBUG").is_some();
+        let Some(hi) = hindi else {
+            // no Hindi among the languages: the detector's pick
+            let r = decode(&top)?;
+            return Ok((r.0, r.1, top));
+        };
+        let hindi_sure = decoder_lang(&top) == "hi" && p >= LID_SURE;
+        let other_sure = decoder_lang(&top) != "hi" && p >= if top == "en" { MEET_EN_SURE } else { LID_SURE };
+        let (text, conf, lid) = if hindi_sure {
+            let r = decode(&top)?;
+            (r.0, r.1, top.clone())
+        } else if other_sure {
+            let r = decode(&top)?;
+            if top == "en" && crate::hinglish::looks_hinglish(&r.0) {
+                // Hinglish speech the detector calls English: write it as Hindi like the rest
+                let h = decode(&hi)?;
+                if plausible(&h.0, "hi") && !is_degenerate(&h.0) {
+                    (h.0, h.1, hi.clone())
+                } else {
+                    (r.0, r.1, top.clone())
+                }
+            } else {
+                (r.0, r.1, top.clone())
+            }
+        } else {
+            // unsure: the Hindi decode and the detector's best other language, compared
+            let other = probs.iter().find(|(l, _)| decoder_lang(l) != "hi").map(|(l, _)| l.clone()).unwrap_or_else(|| "en".into());
+            let h = decode(&hi)?;
+            let o = decode(&other)?;
+            #[cfg(test)]
+            if debug {
+                eprintln!("   meeting unsure {probs:?} sticky {sticky:?} hi {h:?} {other} {o:?}");
+            }
+            let options = vec![(hi.clone(), h), (other.clone(), o)];
+            let i = pick_meeting_decode(&options, sticky.as_deref());
+            let (l, r) = options.into_iter().nth(i).unwrap_or_default();
+            (r.0, r.1, l)
+        };
+        #[cfg(test)]
+        if debug {
+            eprintln!("   meeting lid {probs:?} sticky {sticky:?} → {lid} {text:?}");
+        }
+        Ok((text.clone(), conf, final_language(&lid, &text, &cands)))
     }
 
     /// Fast decode in a known language; when the result isn't `accepted`, decode again with the
@@ -1647,21 +1881,18 @@ impl LocalWhisper {
 
     /// A clip through an ONNX engine (`asr_onnx`): one pass, no prompt (these models take none),
     /// the language read off the transcript, Gujarati rewritten in its own script.
-    fn transcribe_onnx(&self, dir: &Path, f: crate::asr_onnx::Family, samples: &[f32], language: &str) -> Result<String> {
+    fn transcribe_onnx(&self, dir: &Path, f: crate::asr_onnx::Family, samples: &[f32], language: &str) -> Result<(String, String)> {
         // a Whisper model loaded for routed clips (Hindi while Parakeet is chosen) stays loaded
         // next to it; the idle unloader frees both
         let t0 = std::time::Instant::now();
         *self.last_used.lock() = Some(t0);
         let text = collapse_loops(&self.onnx.transcribe(dir, f, samples)?);
         let lang = onnx_language(language, &text, &self.auto_langs.lock().clone());
-        if matches!(language, "" | "auto") {
-            *self.detected.lock() = Some(lang.clone());
-        }
         *self.last_lang.lock() = lang.clone();
         let timing = DecodeTiming { total_ms: t0.elapsed().as_millis(), confidence: 1.0, ..Default::default() };
         *self.last_timing.lock() = timing;
         log::info!("stt: {} ms (onnx {f:?}) lang={lang}", timing.total_ms);
-        Ok(in_script(&text, &lang))
+        Ok((in_script(&text, &lang), lang))
     }
 
     /// Language Whisper last auto-detected ("hi", "gu", "en", …), if any.
@@ -1675,7 +1906,7 @@ impl LocalWhisper {
     }
 
     #[cfg(not(feature = "local-stt"))]
-    pub fn transcribe(&self, m: &Path, s: &[f32], l: &str, _p: &str) -> Result<String> {
+    pub fn transcribe_hinted(&self, m: &Path, s: &[f32], l: &str, _p: &str, _sticky: Option<&str>, _meeting: bool) -> Result<(String, String)> {
         if let Some(f) = onnx_family(m) {
             return self.transcribe_onnx(m, f, s, l);
         }
@@ -1736,6 +1967,53 @@ pub async fn transcribe_cloud(egress: &Egress, provider: &str, model: &str, key:
 #[cfg(all(test, feature = "local-stt"))]
 #[path = "stt_bench.rs"]
 pub(crate) mod bench;
+
+/// The model that writes Hindi in Roman letters (meeting notes use it next to the main model).
+pub const HINGLISH_MODEL: &str = "hinglish-apex";
+
+/// How meeting notes write Hindi speech (Settings → Voice → Meeting notes, `meeting_hindi`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HindiScript {
+    /// Roman letters, English words kept in English ("main kal meeting mein bataunga")
+    #[default]
+    Hinglish,
+    Devanagari,
+    /// translated into English (opt-in; less precise)
+    English,
+}
+
+impl HindiScript {
+    pub fn from_setting(s: &str) -> Self {
+        match s {
+            "devanagari" => HindiScript::Devanagari,
+            "english" => HindiScript::English,
+            _ => HindiScript::Hinglish,
+        }
+    }
+}
+
+/// What a meeting clip said.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Heard {
+    /// the line as it should be shown (Hindi possibly still in Devanagari: `meetpipe` writes it
+    /// in Roman letters when the Hinglish model wasn't used)
+    pub text: String,
+    /// the language spoken ("en", "hi", "gu", "hi-en"); empty when the engine doesn't say
+    pub lang: String,
+    /// the general model's own transcript (the next clip's prompt)
+    pub raw: String,
+}
+
+/// How many speech models stay loaded at once: two on machines with 16 GB or more (meeting notes
+/// switch between the main model and the Hinglish one clip by clip), else one.
+pub fn models_kept() -> usize {
+    static RAM: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    if *RAM.get_or_init(total_ram_gb) >= 15.5 {
+        2
+    } else {
+        1
+    }
+}
 
 /// The "Hinglish" language choice: Hindi/English mixed speech, written in Roman letters.
 pub const HINGLISH: &str = "hi-en";
@@ -1799,14 +2077,14 @@ async fn transcribe_sarvam(egress: &Egress, model: &str, key: &str, samples: &[f
     Ok(parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" "))
 }
 
-/// Installed speech models other than `in_use` — what "Free up space" removes.
-pub fn unused_installed(models_dir: &Path, in_use: &str) -> Vec<&'static ModelSpec> {
-    MODELS.iter().filter(|m| m.id != in_use && models_dir.join(m.file).exists()).collect()
+/// Installed speech models other than `in_use` and `keep` — what "Free up space" removes.
+pub fn unused_installed(models_dir: &Path, in_use: &str, keep: &[&str]) -> Vec<&'static ModelSpec> {
+    MODELS.iter().filter(|m| m.id != in_use && !keep.contains(&m.id) && models_dir.join(m.file).exists()).collect()
 }
 
-/// Delete every installed model except `in_use`; returns MB freed. Never touches the model in use.
-pub fn remove_unused(models_dir: &Path, in_use: &str) -> u64 {
-    unused_installed(models_dir, in_use)
+/// Delete every installed model except `in_use` and `keep` (`meeting_models`); returns MB freed.
+pub fn remove_unused(models_dir: &Path, in_use: &str, keep: &[&str]) -> u64 {
+    unused_installed(models_dir, in_use, keep)
         .into_iter()
         .filter(|m| remove_model_path(&models_dir.join(m.file)).is_ok())
         .map(|m| {
@@ -1944,6 +2222,30 @@ mod upgrade_tests {
 
     fn installed() -> Settings {
         Settings { onboarded: true, stt_provider: "local".into(), stt_model: DEFAULT_MODEL.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn the_hinglish_model_is_fetched_for_hindi_speakers_unless_they_chose_otherwise() {
+        let hindi = Settings { language: "auto".into(), auto_languages: vec!["en".into(), "hi".into()], ..installed() };
+        assert!(hinglish_auto_fetch(&hindi, true, 24.0, false, false));
+        // already there, deleted by the user, a model picked by hand, too little memory
+        assert!(!hinglish_auto_fetch(&hindi, true, 24.0, true, false));
+        assert!(!hinglish_auto_fetch(&hindi, true, 24.0, false, true));
+        assert!(!hinglish_auto_fetch(&Settings { stt_model_explicit: true, ..hindi.clone() }, true, 24.0, false, false));
+        assert!(!hinglish_auto_fetch(&hindi, true, 8.0, false, false));
+        assert!(!hinglish_auto_fetch(&hindi, false, 24.0, false, false));
+        // English only, Devanagari / English transcripts, a cloud engine, setup not done
+        assert!(!hinglish_auto_fetch(&Settings { auto_languages: vec!["en".into()], ..hindi.clone() }, true, 24.0, false, false));
+        assert!(!hinglish_auto_fetch(&Settings { meeting_hindi: "devanagari".into(), ..hindi.clone() }, true, 24.0, false, false));
+        assert!(!hinglish_auto_fetch(&Settings { stt_provider: "sarvam".into(), ..hindi.clone() }, true, 24.0, false, false));
+        assert!(!hinglish_auto_fetch(&Settings { onboarded: false, ..hindi.clone() }, true, 24.0, false, false));
+        // Hinglish chosen as the language counts as speaking Hindi
+        assert!(hinglish_auto_fetch(&Settings { language: "hi-en".into(), ..installed() }, true, 16.0, false, false));
+        assert_eq!(meeting_models(&hindi), vec![HINGLISH_MODEL]);
+        let df = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s5 482797652 407798532 3906250 100% /System/Volumes/Data\n";
+        assert!((parse_df_free_gb(df).unwrap() - 4.0).abs() < 0.01);
+        assert_eq!(parse_df_free_gb(""), None);
+        assert!(meeting_models(&Settings { meeting_hindi: "english".into(), ..hindi }).is_empty());
     }
 
     #[test]
@@ -2300,12 +2602,52 @@ mod tests {
     }
 
     #[test]
+    fn free_up_space_keeps_the_meeting_hinglish_model() {
+        let d = model_dir(&["ggml-large-v3-turbo-q5_0.bin", "ggml-hinglish-apex.bin", "ggml-small-q5_1.bin"]);
+        let ids: Vec<&str> = unused_installed(&d, "large-v3-turbo-q5_0", &[HINGLISH_MODEL]).iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["small-q5_1"]);
+        assert_eq!(remove_unused(&d, "large-v3-turbo-q5_0", &[HINGLISH_MODEL]), 190);
+        assert!(d.join("ggml-hinglish-apex.bin").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn meeting_decodes_never_keep_a_translation_of_hindi() {
+        // "मैं आपसे बात कर रही थी" decoded in English is a fluent translation, more confident
+        let opts = |hi: &str, hc: f32, en: &str, ec: f32| vec![("hi".to_string(), (hi.to_string(), hc)), ("en".to_string(), (en.to_string(), ec))];
+        let o = opts("मैं आपसे बात कर रही थी, लेकिन कॉल कट गया।", 0.82, "I was talking to you, but the call got cut.", 0.93);
+        assert_eq!(pick_meeting_decode(&o, Some("en")), 0);
+        // English decoded as Hinglish in Roman letters: the speech was Hindi
+        let o = opts("मुझे राहुल इनवॉइस", 0.6, "Mujhe Rahul ko invoice bhejna hai", 0.9);
+        assert_eq!(pick_meeting_decode(&o, Some("en")), 0);
+        // English speech forced through the Hindi decoder: English words in Devanagari lose
+        let o = opts("आई विल सेंड द अपडेटेड डेक टू एवरीवन बाय फ्राइडे", 0.8, "I will send the updated deck to everyone by Friday.", 0.95);
+        assert_eq!(pick_meeting_decode(&o, Some("hi")), 1);
+        // an empty or looping Hindi decode never wins on words alone
+        let o = opts("है है है है है है है है है है है है", 0.9, "Okay.", 0.7);
+        assert_eq!(pick_meeting_decode(&o, None), 1);
+        assert!(hindi_word_share("कल सुबह दस बजे मीटिंग है, सबको याद दिला देना।") >= HINDI_WORDS_MIN);
+        assert!(hindi_word_share("आई विल सेंड द डेक") < HINDI_WORDS_MIN);
+        assert_eq!(hindi_word_share(""), 0.0);
+    }
+
+    #[test]
+    fn hindi_script_setting() {
+        assert_eq!(HindiScript::from_setting("hinglish"), HindiScript::Hinglish);
+        assert_eq!(HindiScript::from_setting(""), HindiScript::Hinglish);
+        assert_eq!(HindiScript::from_setting("devanagari"), HindiScript::Devanagari);
+        assert_eq!(HindiScript::from_setting("english"), HindiScript::English);
+        assert_eq!(crate::model::Settings::default().meeting_hindi, "hinglish");
+        assert_eq!(crate::model::Settings::default().meeting_summary_language, "auto");
+    }
+
+    #[test]
     fn free_up_space_keeps_the_model_in_use() {
         let d = model_dir(&["ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo.bin", "ggml-base.en.bin"]);
-        assert_eq!(unused_installed(&d, "base.en").len(), 2);
-        assert_eq!(remove_unused(&d, "base.en"), 574 + 1624);
+        assert_eq!(unused_installed(&d, "base.en", &[]).len(), 2);
+        assert_eq!(remove_unused(&d, "base.en", &[]), 574 + 1624);
         assert!(d.join("ggml-base.en.bin").exists());
-        assert!(unused_installed(&d, "base.en").is_empty());
+        assert!(unused_installed(&d, "base.en", &[]).is_empty());
         std::fs::remove_dir_all(d).ok();
     }
 
@@ -2514,7 +2856,7 @@ mod tier_tests {
             std::fs::write(d.join("parakeet-tdt-0.6b-v2-int8").join("tokens.txt"), b"x").unwrap();
             let r = row(&d).unwrap();
             assert!(r.installed && r.engine == "onnx" && r.best_for == "English");
-            assert_eq!(remove_unused(&d, DEFAULT_MODEL), 661);
+            assert_eq!(remove_unused(&d, DEFAULT_MODEL, &[]), 661);
             assert!(!d.join("parakeet-tdt-0.6b-v2-int8").exists());
         } else {
             assert!(row(&d).is_none(), "not offered where it can't run");

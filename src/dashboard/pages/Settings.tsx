@@ -6,9 +6,9 @@ import { api, on } from "../../lib/api";
 import { permissionItems, useHotkeyStuck, usePermissions } from "../usePermissions";
 import { formatHotkey, formatNumber, hotkeyOptions, hotkeyWords, relativeTime, sameHotkey } from "../../lib/format";
 import { deviceWord, keyStoreName, os, settingsApp, islandWord } from "../../lib/os";
-import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, languageActive, pickLanguage, progressText, routingNote, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
+import { DEFAULT_MODEL, HINGLISH_MODEL, LANGUAGE_CHOICES, advancedModels, languageActive, meetingModels, offerHinglishModel, pickLanguage, progressText, routingNote, speaksHindi, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "../../lib/models";
 import { useSpeechModels, type Download as SpeechDownload } from "../useSpeechModels";
-import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type NotchStyle, type NotchSize, type TaskCaptureLevel, type ThemeMode } from "../../lib/types";
+import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalModel, type ModelProgressEvent, type NetworkLogEntry, type Settings as S, type SttProvider, type HotkeyCombo, type MeetingHindi, type MeetingSummaryLanguage, type NotchStyle, type NotchSize, type TaskCaptureLevel, type ThemeMode } from "../../lib/types";
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
 import { useStore, usePick, usePageArg } from "../store";
@@ -1021,12 +1021,13 @@ function Voice({ s, set }: P) {
           </div>
         )}
       </Card>
+      <MeetingLanguageCard s={s} set={set} models={models} dl={dl[HINGLISH_MODEL]} onDownload={() => download(HINGLISH_MODEL)} />
       {s.sttProvider === "local" && (
         <Card className="p-5">
           <CardTitle>On-device models</CardTitle>
-          {models && unusedModelMb(models, s.sttModel) > 0 && (
+          {models && unusedModelMb(models, s.sttModel, meetingModels(s)) > 0 && (
             <div className="mb-2 flex items-center justify-between gap-3 rounded-xl bg-[var(--glass)] px-3 py-2 text-[12.5px]">
-              <span className="text-muted">Models you aren't using take {unusedModelMb(models, s.sttModel)} MB.</span>
+              <span className="text-muted">Models you aren't using take {unusedModelMb(models, s.sttModel, meetingModels(s))} MB.</span>
               <Button
                 size="sm"
                 icon={<Trash2 size={13} />}
@@ -1065,6 +1066,73 @@ function Voice({ s, set }: P) {
           )}
         </Card>
       )}
+    </div>
+  );
+}
+
+/** Settings → Voice → Meeting notes: how Hindi is written in meeting transcripts, the summary
+ *  language, and the Hinglish model offer. */
+function MeetingLanguageCard({ s, set, models, dl, onDownload }: P & { models: LocalModel[] | null | undefined; dl?: SpeechDownload; onDownload: () => void }) {
+  const hindi = s.meetingHindi ?? "hinglish";
+  return (
+    <div data-testid="meeting-language">
+      <Card className="px-5 py-2">
+        <div className="pt-2">
+          <CardTitle icon={<Mic size={15} />}>Meeting notes</CardTitle>
+        </div>
+        <div className="divide-y divide-[var(--border)]">
+          <Row
+            label="Hindi in meeting transcripts"
+            hint={
+              hindi === "hinglish"
+                ? "Hindi in Roman letters, English words kept in English: “Main kal meeting mein bataunga ki deck ready hai.”"
+                : hindi === "devanagari"
+                  ? "Hindi in Devanagari: “मैं कल मीटिंग में बताऊँगा”."
+                  : "Hindi turned into English. Less precise: meaning can get lost in translation."
+            }
+          >
+            <Select<MeetingHindi>
+              value={hindi}
+              onChange={(v) => set({ meetingHindi: v })}
+              options={[
+                { value: "hinglish", label: "Hinglish (Roman letters)" },
+                { value: "devanagari", label: "Devanagari" },
+                { value: "english", label: "English translation" },
+              ]}
+            />
+          </Row>
+          <Row label="Summary language" hint="Names, Hindi terms and short quotes stay as they were said.">
+            <Select<MeetingSummaryLanguage>
+              value={s.meetingSummaryLanguage ?? "auto"}
+              onChange={(v) => set({ meetingSummaryLanguage: v })}
+              options={[
+                { value: "auto", label: speaksHindi(s) ? "Auto (English for Hindi meetings)" : "Auto (the meeting's language)" },
+                { value: "match", label: "Same as the meeting" },
+                { value: "english", label: "Always English" },
+              ]}
+            />
+          </Row>
+          {offerHinglishModel(models, s) && (
+            <div className="flex flex-wrap items-center justify-between gap-3 py-3 text-[12.5px]" data-testid="hinglish-model-offer">
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">Most precise Hinglish: Whisper Hinglish</div>
+                <div className="text-muted">
+                  {dl?.active
+                    ? `Downloading: ${progressText(dl.received, dl.total, dl.bps)}`
+                    : dl?.error
+                      ? `The download stopped: ${dl.error}`
+                      : "A 1.6 GB on-device model made for Hindi in Roman letters. Until it's downloaded, Flo writes Hindi in Roman letters itself, with a few more spelling slips."}
+                </div>
+              </div>
+              {!dl?.active && (
+                <Button size="sm" icon={<Download size={13} />} onClick={onDownload}>
+                  Download
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }

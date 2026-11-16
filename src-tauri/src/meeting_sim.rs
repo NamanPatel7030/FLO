@@ -27,16 +27,16 @@ pub struct SimStt {
 }
 
 impl Transcriber for SimStt {
-    fn transcribe(&mut self, samples: &[f32], context: &str, lang: Option<&str>) -> anyhow::Result<String> {
+    fn transcribe(&mut self, samples: &[f32], context: &str, req: &meetpipe::LangReq) -> anyhow::Result<stt::Heard> {
         let s = audio::trim_silence(samples);
-        let r = self.w.transcribe(&self.path, &s, lang.unwrap_or(&self.lang), context);
+        let lang = req.fixed.unwrap_or(&self.lang);
+        // FLO_SIM_NO_APEX: as if the Hinglish model weren't downloaded (meetpipe transliterates)
+        let hindi = if std::env::var_os("FLO_SIM_NO_APEX").is_some() && req.hindi == stt::HindiScript::Hinglish { stt::HindiScript::Devanagari } else { req.hindi };
+        let r = self.w.meeting_clip(&self.path, &s, lang, context, req.hint, hindi, req.preview);
         if std::env::var_os("FLO_SIM_DEBUG").is_some() {
-            eprintln!("STT {:.2}s lang {:?} ctx {:?} → {:?} (detected {:?})", s.len() as f32 / 16_000.0, lang, context, r, self.w.detected_lang());
+            eprintln!("STT {:.2}s lang {lang:?} hint {:?} ctx {:?} → {:?}", s.len() as f32 / 16_000.0, req.hint, context, r);
         }
         r
-    }
-    fn detected_lang(&self) -> Option<String> {
-        self.w.detected_lang()
     }
 }
 
@@ -90,6 +90,8 @@ pub fn simulate<T: Transcriber>(stt: T, embedder: Option<Arc<Embedder>>, mic: &[
     let mut cap = Capture::new(dual);
     let mut p = Processor::new(stt, dual, vec![], o.lang.clone());
     p.embedder = embedder.clone();
+    // FLO_SIM_HINDI=devanagari|english|hinglish (default: Hinglish, as in the app)
+    p.hindi = stt::HindiScript::from_setting(&std::env::var("FLO_SIM_HINDI").unwrap_or_default());
     let mut transcript: Vec<MeetingSegment> = vec![];
     let mut removed = 0;
     let total = mic.len().max(call.map(|c| c.len()).unwrap_or(0));
@@ -179,17 +181,37 @@ pub struct Line {
     pub text: &'static str,
     /// pause before this line (from the end of the previous one; negative = overlap)
     pub gap: f64,
+    /// Hindi or Hinglish speech (scored against `reference`, in Roman letters)
+    pub hindi: bool,
+    /// what the transcript should say when it differs from `text` (Devanagari → Hinglish)
+    pub reference: &'static str,
+}
+
+impl Line {
+    /// The expected transcript: Hinglish in Roman letters for Hindi lines.
+    pub fn expected(&self) -> &'static str {
+        if self.reference.is_empty() { self.text } else { self.reference }
+    }
 }
 
 pub const fn you(text: &'static str, gap: f64) -> Line {
-    Line { you: true, voice: "Rishi", text, gap }
+    Line { you: true, voice: "Rishi", text, gap, hindi: false, reference: "" }
 }
-/// you, speaking Hindi (the Indian English voice can't read Devanagari)
-pub const fn you_hi(text: &'static str, gap: f64) -> Line {
-    Line { you: true, voice: "Lekha", text, gap }
+/// you, speaking Hindi (the Indian English voice can't read Devanagari); `roman` is the
+/// expected Hinglish transcript
+pub const fn you_hi(text: &'static str, roman: &'static str, gap: f64) -> Line {
+    Line { you: true, voice: "Lekha", text, gap, hindi: true, reference: roman }
+}
+/// you, speaking Hinglish (Romanized Hindi read by the Indian English voice)
+pub const fn you_hinglish(text: &'static str, gap: f64) -> Line {
+    Line { you: true, voice: "Rishi", text, gap, hindi: true, reference: "" }
 }
 pub const fn them(voice: &'static str, text: &'static str, gap: f64) -> Line {
-    Line { you: false, voice, text, gap }
+    Line { you: false, voice, text, gap, hindi: false, reference: "" }
+}
+/// someone on the call speaking Hindi (Devanagari read by the Hindi voice)
+pub const fn them_hi(text: &'static str, roman: &'static str, gap: f64) -> Line {
+    Line { you: false, voice: "Lekha", text, gap, hindi: true, reference: roman }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -335,6 +357,88 @@ fn coverage(expected: &str, got: &str) -> f64 {
     meetpipe::lcs(&e, &g) as f64 / e.len() as f64
 }
 
+/// How much of a line's words a segment holds. Hindi lines are compared in Roman letters with
+/// Hinglish spellings folded together (a Devanagari segment is transliterated first, so a line
+/// written in the other script still counts as found; `score_languages` judges the script).
+fn line_coverage(line: &Line, got: &str) -> f64 {
+    if !line.hindi {
+        return coverage(line.text, got);
+    }
+    let e = crate::hinglish::norm_words(line.expected());
+    let g = crate::hinglish::norm_words(&crate::hinglish::to_roman(got));
+    if e.is_empty() {
+        return 0.0;
+    }
+    meetpipe::lcs(&e, &g) as f64 / e.len() as f64
+}
+
+/// Accuracy per language: what was shown for each spoken line (every segment on the line's side
+/// that starts during it), against the expected text.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LangEval {
+    pub hindi_lines: usize,
+    /// Hindi lines that came out as an English translation (Latin script, no Hindi words)
+    pub translated: usize,
+    /// Hindi lines shown in Devanagari
+    pub devanagari: usize,
+    /// Hindi lines shown in Roman letters with Hindi words (Hinglish)
+    pub hinglish: usize,
+    /// Hindi lines with nothing shown
+    pub hindi_missing: usize,
+    /// word / character error rate of Hindi lines as shown, against the Hinglish reference
+    pub hindi_wer: f64,
+    pub hindi_cer: f64,
+    /// the same after transliterating any Devanagari (what the script alone costs)
+    pub hindi_wer_roman: f64,
+    pub hindi_cer_roman: f64,
+    pub english_lines: usize,
+    pub english_wer: f64,
+    /// per Hindi line: (expected, shown)
+    pub hindi_out: Vec<(String, String)>,
+}
+
+pub fn score_languages(placed: &[Placed], transcript: &[MeetingSegment]) -> LangEval {
+    use crate::hinglish;
+    let mut ev = LangEval::default();
+    let (mut hw, mut hc, mut hwr, mut hcr, mut ew) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for p in placed {
+        let shown = transcript
+            .iter()
+            .filter(|s| (s.speaker.as_deref() == Some(YOU)) == p.line.you && s.t >= p.start - 1.0 && s.t <= p.end - 0.3)
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if p.line.hindi {
+            ev.hindi_lines += 1;
+            let r = p.line.expected();
+            if shown.trim().is_empty() {
+                ev.hindi_missing += 1;
+            } else if hinglish::has_devanagari(&shown) {
+                ev.devanagari += 1;
+            } else if hinglish::looks_hinglish(&shown) {
+                ev.hinglish += 1;
+            } else {
+                ev.translated += 1;
+            }
+            hw += hinglish::wer(r, &shown).min(1.0);
+            hc += hinglish::cer(r, &shown).min(1.0);
+            let roman = hinglish::to_roman(&shown);
+            hwr += hinglish::wer(r, &roman).min(1.0);
+            hcr += hinglish::cer(r, &roman).min(1.0);
+            ev.hindi_out.push((r.to_string(), shown));
+        } else {
+            ev.english_lines += 1;
+            let (e, g) = (meetpipe::norm_words(p.line.text), meetpipe::norm_words(&shown));
+            ew += if e.is_empty() { 0.0 } else { (hinglish::edit_distance(&e, &g) as f64 / e.len() as f64).min(1.0) };
+        }
+    }
+    let n = ev.hindi_lines.max(1) as f64;
+    (ev.hindi_wer, ev.hindi_cer, ev.hindi_wer_roman, ev.hindi_cer_roman) = (hw / n, hc / n, hwr / n, hcr / n);
+    ev.english_wer = ew / ev.english_lines.max(1) as f64;
+    ev
+}
+
 /// Score a transcript against the lines that were spoken.
 pub fn evaluate(placed: &[Placed], transcript: &[MeetingSegment]) -> Eval {
     let mut ev = Eval { lines: placed.len(), ..Default::default() };
@@ -352,7 +456,7 @@ pub fn evaluate(placed: &[Placed], transcript: &[MeetingSegment]) -> Eval {
             .iter()
             .enumerate()
             .filter(|(j, s)| !used[*j] && s.t >= p.start - 1.0 && s.t <= p.end)
-            .map(|(j, s)| (j, coverage(p.line.text, &s.text)))
+            .map(|(j, s)| (j, line_coverage(&p.line, &s.text)))
             .filter(|(_, c)| *c >= 0.5)
             .max_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((j, c)) = best {
@@ -413,7 +517,7 @@ pub fn evaluate(placed: &[Placed], transcript: &[MeetingSegment]) -> Eval {
         if used[j] {
             continue;
         }
-        let dup = placed.iter().any(|p| s.t >= p.start - 1.0 && s.t <= p.end + 1.0 && coverage(p.line.text, &s.text) >= 0.6);
+        let dup = placed.iter().any(|p| s.t >= p.start - 1.0 && s.t <= p.end + 1.0 && line_coverage(&p.line, &s.text) >= 0.6);
         if dup {
             ev.duplicates += 1;
         } else if meetpipe::norm_words(&s.text).len() >= 2 {
@@ -462,7 +566,58 @@ mod harness {
         "Let's keep the budget under fifty thousand dollars.",
         "Can someone send me the contract before the weekend?",
     ];
-    const H: [&str; 3] = ["कल सुबह दस बजे मीटिंग है, सबको याद दिला देना।", "मुझे राहुल को इनवॉइस भेजना है।", "आज का काम पूरा हो गया, अब घर जा रहा हूँ।"];
+    /// your Hindi lines (Devanagari, read by the Hindi voice) and their Hinglish transcripts
+    const H: [(&str, &str); 3] = [
+        ("कल सुबह दस बजे मीटिंग है, सबको याद दिला देना।", "Kal subah das baje meeting hai, sabko yaad dila dena."),
+        ("मुझे राहुल को इनवॉइस भेजना है।", "Mujhe Rahul ko invoice bhejna hai."),
+        ("आज का काम पूरा हो गया, अब घर जा रहा हूँ।", "Aaj ka kaam poora ho gaya, ab ghar ja raha hoon."),
+    ];
+    /// Hindi on the call, with English words mixed in the way people talk
+    const HC: [(&str, &str); 4] = [
+        ("मैं कल मीटिंग में बताऊँगा कि डेक रेडी है।", "Main kal meeting mein bataunga ki deck ready hai."),
+        ("क्लाइंट ने प्राइसिंग पर फीडबैक दिया है, हमें बजट थोड़ा कम करना होगा।", "Client ne pricing par feedback diya hai, hume budget thoda kam karna hoga."),
+        ("ठीक है, मैं शाम तक रिपोर्ट भेज दूँगी।", "Theek hai, main shaam tak report bhej dungi."),
+        ("मैं आपसे बात कर रही थी, लेकिन कॉल कट गया।", "Main aapse baat kar rahi thi, lekin call cut gaya."),
+    ];
+    /// your Hinglish lines, read in Roman letters by the Indian English voice
+    const R: [&str; 3] = [
+        "Haan, main kal tak presentation bhej dunga, tension mat lo.",
+        "Yaar, client ka feedback abhi tak nahi aaya, kya karein?",
+        "Theek hai, Monday ko meeting rakhte hain aur sab final kar lete hain.",
+    ];
+
+    /// The reported bug: three English turns on each track first (the old pipeline then locked both
+    /// tracks to English), then Hindi on both tracks.
+    fn hindi_after_english() -> Vec<Line> {
+        vec![
+            you(Y[0], 0.0),
+            them("Samantha", A[0], 0.8),
+            you(Y[1], 0.9),
+            them("Daniel", B[0], 0.8),
+            you(Y[2], 0.9),
+            them("Samantha", A[1], 0.8),
+            them_hi(HC[0].0, HC[0].1, 1.0),
+            you_hi(H[0].0, H[0].1, 0.9),
+            them_hi(HC[1].0, HC[1].1, 0.9),
+            you_hi(H[1].0, H[1].1, 0.9),
+            them_hi(HC[3].0, HC[3].1, 0.9),
+            you_hi(H[2].0, H[2].1, 0.9),
+        ]
+    }
+
+    /// A Hinglish meeting: you in Romanized Hinglish, Hindi with English words on the call, one
+    /// English turn.
+    fn hinglish_meeting() -> Vec<Line> {
+        vec![
+            you_hinglish(R[0], 0.0),
+            them_hi(HC[0].0, HC[0].1, 0.9),
+            you_hinglish(R[1], 0.9),
+            them_hi(HC[1].0, HC[1].1, 0.9),
+            them("Samantha", A[2], 1.0),
+            you_hinglish(R[2], 0.9),
+            them_hi(HC[2].0, HC[2].1, 0.9),
+        ]
+    }
 
     fn alternating() -> Vec<Line> {
         vec![
@@ -525,11 +680,14 @@ mod harness {
             },
             Case {
                 name: "hindi_you_english_call",
-                lines: vec![you_hi(H[0], 0.0), them("Samantha", A[0], 0.9), you_hi(H[1], 0.9), them("Daniel", B[0], 0.9), you_hi(H[2], 0.9)],
+                lines: vec![you_hi(H[0].0, H[0].1, 0.0), them("Samantha", A[0], 0.9), you_hi(H[1].0, H[1].1, 0.9), them("Daniel", B[0], 0.9), you_hi(H[2].0, H[2].1, 0.9)],
                 mix: headphones.clone(),
                 opts: SimOpts::default(),
                 tail: 2.0,
             },
+            Case { name: "hindi_after_english", lines: hindi_after_english(), mix: headphones.clone(), opts: SimOpts::default(), tail: 2.0 },
+            Case { name: "hindi_after_english_echo_-20dB", lines: hindi_after_english(), mix: speakers(-20.0), opts: SimOpts::default(), tail: 2.0 },
+            Case { name: "hinglish_meeting", lines: hinglish_meeting(), mix: headphones.clone(), opts: SimOpts::default(), tail: 2.0 },
             Case { name: "stalled_loop_9s_drains_echo_-10dB", lines: alternating(), mix: speakers(-10.0), opts: SimOpts { drain_slices: 30, ..Default::default() }, tail: 2.0 },
         ]
     }
@@ -559,16 +717,44 @@ mod harness {
         let call = if m.mic_only { None } else { Some(call.as_slice()) };
         let r = simulate(stt, emb, &mic, call, o);
         let ev = evaluate(&placed, &r.transcript);
+        let lang = score_languages(&placed, &r.transcript);
         let lines_out: Vec<String> = r.transcript.iter().take(40).map(|s| format!("[{:6.1}] {}: {}", s.t, s.speaker.clone().unwrap_or_default(), s.text)).collect();
-        let v = json!({ "name": name, "eval": ev, "stats": r.stats, "removed": r.removed, "wallSecs": r.wall_secs, "audioSecs": r.audio_secs,
-            "rtf": r.wall_secs / r.audio_secs.max(1.0), "transcript": lines_out });
-        eprintln!("{name}: found {}/{} you_lost {} wrong_side {} dups {} extras {} purity {:.2} ts_max {:.2}s wall {:.1}s",
-            ev.found, ev.lines, ev.you_lost, ev.wrong_side, ev.duplicates, ev.extras, ev.label_purity, ev.ts_err_max, r.wall_secs);
+        let ms_per_clip = r.stats.stt_ms as f64 / r.stats.stt_calls.max(1) as f64;
+        let v = json!({ "name": name, "eval": ev, "lang": lang, "stats": r.stats, "removed": r.removed, "wallSecs": r.wall_secs, "audioSecs": r.audio_secs,
+            "rtf": r.wall_secs / r.audio_secs.max(1.0), "msPerClip": ms_per_clip, "transcript": lines_out });
+        eprintln!("{name}: found {}/{} you_lost {} wrong_side {} dups {} extras {} purity {:.2} ts_max {:.2}s wall {:.1}s stt {:.0} ms/clip (max {}) en_wer {:.3}",
+            ev.found, ev.lines, ev.you_lost, ev.wrong_side, ev.duplicates, ev.extras, ev.label_purity, ev.ts_err_max, r.wall_secs, ms_per_clip, r.stats.stt_max_ms, lang.english_wer);
+        if lang.hindi_lines > 0 {
+            eprintln!("   hindi {}: translated {} devanagari {} hinglish {} missing {} | wer {:.3} cer {:.3} | after transliteration wer {:.3} cer {:.3}",
+                lang.hindi_lines, lang.translated, lang.devanagari, lang.hinglish, lang.hindi_missing, lang.hindi_wer, lang.hindi_cer, lang.hindi_wer_roman, lang.hindi_cer_roman);
+            for (e, g) in &lang.hindi_out {
+                eprintln!("     want {e:?}\n     got  {g:?}");
+            }
+        }
         (v, ev, r)
     }
 
     fn report_path() -> String {
         std::env::var("FLO_SIM_OUT").unwrap_or_else(|_| "/tmp/flo-meeting-sim.json".into())
+    }
+
+    /// Download the Hinglish model (as Settings → Voice would) into the app's models folder:
+    /// `cargo test --release --lib fetch_hinglish_model -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "downloads 1.6 GB"]
+    fn fetch_hinglish_model() {
+        let models = data_dir().join("models");
+        let egress = crate::egress::Egress::new();
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let last = std::cell::Cell::new(0u64);
+        rt.block_on(stt::download_model(&egress, &models, "hinglish-apex", |p| {
+            if p.received / 100_000_000 != last.get() {
+                last.set(p.received / 100_000_000);
+                eprintln!("{} / {} MB", p.received / 1_000_000, p.total / 1_000_000);
+            }
+        }))
+        .expect("download");
+        assert!(models.join("ggml-hinglish-apex.bin").exists());
     }
 
     #[test]
@@ -595,11 +781,14 @@ mod harness {
             check(ev.duplicates == 0, &format!("{} duplicate lines", ev.duplicates));
             check(ev.order_inversions == 0, &format!("{} ordering inversions", ev.order_inversions));
             check(ev.ts_err_max <= 0.8, &format!("timestamp off by {:.2}s", ev.ts_err_max));
-            if c.name.starts_with("hindi") {
-                let deva = r.transcript.iter().filter(|s| s.speaker.as_deref() == Some(YOU) && s.text.chars().any(|ch| ('\u{0900}'..='\u{097F}').contains(&ch))).count();
-                check(deva == 3, &format!("{deva}/3 Hindi lines in Devanagari"));
-                let eng = r.transcript.iter().filter(|s| s.speaker.as_deref() != Some(YOU) && s.text.is_ascii()).count();
-                check(eng == 2, &format!("{eng}/2 English call lines in Latin script"));
+            if c.lines.iter().any(|l| l.hindi) {
+                // Hindi is never translated, and comes out in Roman letters (Hinglish, the default)
+                let n = |k: &str| v["lang"][k].as_u64().unwrap_or(0);
+                check(n("translated") == 0, &format!("{}/{} Hindi lines came out as English translations", n("translated"), n("hindiLines")));
+                check(n("hinglish") == n("hindiLines"), &format!("{}/{} Hindi lines in Hinglish ({} Devanagari, {} missing)", n("hinglish"), n("hindiLines"), n("devanagari"), n("hindiMissing")));
+                let english_call = c.lines.iter().filter(|l| !l.you && !l.hindi).count();
+                let eng = r.transcript.iter().filter(|s| s.speaker.as_deref() != Some(YOU) && s.text.is_ascii() && !crate::hinglish::looks_hinglish(&s.text)).count();
+                check(eng >= english_call, &format!("{eng}/{english_call} English call lines in English"));
             }
             if c.lines.iter().any(|l| l.voice == "Daniel") && c.lines.iter().any(|l| l.voice == "Samantha") {
                 check(ev.voices_separated && ev.label_purity >= 0.8, &format!("speakers not separated (purity {:.2})", ev.label_purity));
@@ -658,6 +847,30 @@ mod tests {
         assert_eq!(e.wrong_side, 2, "{e:?}");
         let e = evaluate(&placed[..1], &[]);
         assert_eq!((e.found, e.you_lost, e.missing.len()), (0, 1, 1));
+    }
+
+    #[test]
+    fn hindi_lines_are_scored_in_roman_letters_and_translations_are_counted() {
+        let placed = vec![
+            Placed { line: you_hi("मुझे राहुल को इनवॉइस भेजना है।", "Mujhe Rahul ko invoice bhejna hai.", 0.0), start: 1.0, end: 3.5 },
+            Placed { line: them_hi("मैं आपसे बात कर रही थी।", "Main aapse baat kar rahi thi.", 0.0), start: 4.0, end: 6.5 },
+            Placed { line: you_hinglish("Haan, main kal tak deck bhej dunga.", 0.0), start: 7.0, end: 9.5 },
+            Placed { line: them("Samantha", "Tuesday works for me.", 0.0), start: 10.0, end: 12.0 },
+        ];
+        let seg = |t: f64, who: &str, text: &str| MeetingSegment { t, text: text.into(), speaker: Some(who.into()) };
+        let tr = vec![
+            seg(1.1, "You", "Mujhe Rahul ko invoice bhejna hai."),
+            seg(4.1, "Speaker 1", "I was talking to you."),
+            seg(7.1, "You", "हाँ, मैं कल तक डेक भेज दूँगा।"),
+            seg(10.1, "Speaker 2", "Tuesday works for me."),
+        ];
+        let l = score_languages(&placed, &tr);
+        assert_eq!((l.hindi_lines, l.hinglish, l.translated, l.devanagari, l.hindi_missing), (3, 1, 1, 1, 0));
+        assert_eq!((l.english_lines, l.english_wer), (1, 0.0));
+        // the Devanagari line is right once transliterated; the translation stays wrong
+        assert!(l.hindi_wer_roman < l.hindi_wer, "{l:?}");
+        // a Devanagari line still counts as found (its script is judged here, not in `evaluate`)
+        assert_eq!(evaluate(&placed, &tr).found, 3);
     }
 
     #[test]

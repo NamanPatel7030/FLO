@@ -4,7 +4,11 @@ const mock = (page: Page) => page.waitForFunction(() => !!(window as any).__floM
 const invoke = (page: Page, cmd: string, args: Record<string, unknown> = {}) =>
   page.evaluate(([c, a]) => (window as any).__floMock.invoke(c, a), [cmd, args] as const);
 /** page.clock.install() keeps time flowing; pause it so the mock meeting timer can't race the test. */
-const freeze = (page: Page) => page.clock.pauseAt(new Date(Date.now() + 2000));
+const freeze = async (page: Page) => {
+  // the dashboard stays covered until the account answer arrives; let it arrive before pausing time
+  await expect(page.getByTestId("account-pending")).toHaveCount(0, { timeout: 15_000 });
+  await page.clock.pauseAt(new Date(Date.now() + 2000));
+};
 const emit = (page: Page, event: string, payload: unknown) =>
   page.evaluate(([e, p]) => (window as any).__floMock.emit(e, p), [event, payload] as const);
 
@@ -190,7 +194,7 @@ test("typing test: 1 minute, finish, apply speed to settings", async ({ page }) 
   await page.clock.install();
   await page.goto("/#/typing");
   await mock(page);
-  await page.clock.pauseAt(new Date(Date.now() + 2000));
+  await freeze(page);
   await page.getByRole("button", { name: "1 min" }).click();
   await page.locator("[data-word]").first().waitFor();
   const words = (await wordsOnScreen(page)).slice(0, 30);
@@ -401,6 +405,65 @@ test("meeting notes: a name heard in the conversation is one click away", async 
   await tip.getByRole("button", { name: "Name them Ana" }).click();
   await expect(page.locator('[data-testid="note-transcript"] [data-speaker="Ana"]')).toHaveCount(2);
   await expect(tip).toHaveCount(0);
+});
+
+test("meeting notes: Flo's own names show how sure it is; guesses are 'Name?' and one click confirms", async ({ page }) => {
+  await page.goto("/#/notes/n1");
+  await mock(page);
+  const tr = page.locator('[data-testid="note-transcript"]');
+  // Rahul was recognized by voice: a confidence badge and a confirm tick on his chip
+  const rahul = page.locator('[data-testid="speaker-chip"][data-speaker="Rahul"]');
+  await expect(rahul.getByTestId("speaker-confidence")).toHaveText("voice 86%");
+  await rahul.getByTestId("speaker-confirm").click();
+  await expect(page.getByText("Confirmed Rahul. Flo will recognize this voice next time.")).toBeVisible();
+  await expect(rahul.getByTestId("speaker-confidence")).toHaveCount(0);
+  // Speaker 2 introduced herself as Ana: "Ana?" in the transcript, with the reason in the tip
+  await expect(page.locator('[data-testid="speaker-suggestion"]')).toContainText("from how they introduced themselves");
+  const guess = tr.getByTestId("speaker-tag-guess").first();
+  await expect(guess).toHaveText("Ana?");
+  await guess.click();
+  await expect(tr.locator('[data-testid="speaker-tag"][data-speaker="Ana"]')).toHaveCount(2);
+  await expect(tr.getByTestId("speaker-tag-guess")).toHaveCount(0);
+  // the voice is now remembered under the confirmed name
+  const voices = await invoke(page, "list_voices");
+  expect(voices.map((v: any) => v.name)).toContain("Ana");
+});
+
+test("meeting notes: 'Who is this?' offers the invite's guests and remembered voices", async ({ page }) => {
+  await page.goto("/#/notes/n1");
+  await mock(page);
+  await page.locator('[data-testid="speaker-chip"][data-speaker="Speaker 1"]').getByTestId("speaker-chip-name").click();
+  const picker = page.getByTestId("speaker-picker");
+  await expect(picker).toBeVisible();
+  // the invite's guests first, then remembered voices; Rahul is already on the call so not offered
+  const options = await picker.getByTestId("speaker-pick").allTextContents();
+  expect(options.slice(0, 3)).toEqual(["Ana Costa", "Meera Iyer", "Meera"]);
+  expect(options).toContain("Meera Iyer");
+  expect(options).not.toContain("Rahul");
+  await picker.getByTestId("speaker-pick").filter({ hasText: "Meera Iyer" }).click();
+  await expect(page.locator('[data-testid="note-transcript"] [data-speaker="Meera Iyer"]')).toHaveCount(2);
+  await expect(picker).toHaveCount(0);
+  // typing a name works too
+  await page.locator('[data-testid="speaker-chip"][data-speaker="Meera Iyer"]').getByTestId("speaker-chip-name").click();
+  await page.getByTestId("speaker-pick-input").fill("Meera");
+  await page.getByTestId("speaker-pick-input").press("Enter");
+  await expect(page.locator('[data-testid="note-transcript"] [data-speaker="Meera"]')).toHaveCount(2);
+});
+
+test("meeting notes: remembered voices can be merged and forgotten", async ({ page }) => {
+  await page.goto("/#/notes/n1");
+  await mock(page);
+  await page.getByTestId("voices-open").click();
+  const rows = page.getByTestId("voice-row");
+  await expect(rows).toHaveCount(3);
+  // "Rahul S." is the same person as "Rahul"
+  await page.locator('[data-testid="voice-row"][data-voice="Rahul S."]').getByTestId("voice-merge").selectOption("Rahul");
+  await expect(rows).toHaveCount(2);
+  await expect(page.getByText("Merged Rahul S. into Rahul")).toBeVisible();
+  await expect(page.locator('[data-testid="voice-row"][data-voice="Rahul"]')).toContainText("35 clips");
+  await page.locator('[data-testid="voice-row"][data-voice="Meera"]').getByTestId("voice-forget").click();
+  await expect(rows).toHaveCount(1);
+  expect((await invoke(page, "list_voices")).map((v: any) => v.name)).toEqual(["Rahul"]);
 });
 
 test("meeting notes: mic-only meetings say so", async ({ page }) => {

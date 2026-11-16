@@ -460,6 +460,29 @@ pub fn rename_speaker(st: State<Shared>, note_id: String, from: String, to: Stri
     meeting::rename_speaker(st.inner(), &note_id, &from, &to).map_err(e)
 }
 
+/// "Yes, that's Rahul": keep a name Flo found and remember the voice.
+#[tauri::command(async)]
+pub fn confirm_speaker(st: State<Shared>, note_id: String, label: String) -> R<Note> {
+    meeting::confirm_speaker(st.inner(), &note_id, &label).map_err(e)
+}
+
+/// Voices Flo remembers (names only; embeddings never leave the Rust side).
+#[tauri::command(async)]
+pub fn list_voices(st: State<Shared>) -> R<Vec<crate::speaker_names::KnownVoice>> {
+    Ok(crate::speaker_names::known_voices(&st.db))
+}
+
+#[tauri::command(async)]
+pub fn forget_voice(st: State<Shared>, name: String) -> R<bool> {
+    st.db.delete_voice(&name).map_err(e)
+}
+
+/// Two remembered voices are the same person: fold `from` into `into`.
+#[tauri::command(async)]
+pub fn merge_voices(st: State<Shared>, from: String, into: String) -> R<()> {
+    crate::speaker_names::merge_voices(&st.db, &from, &into).map_err(e)
+}
+
 #[tauri::command(async)]
 pub fn list_dictionary(st: State<Shared>) -> R<Vec<DictionaryEntry>> {
     st.db.list_dictionary().map_err(e)
@@ -492,6 +515,10 @@ static DOWNLOADING: parking_lot::Mutex<Vec<String>> = parking_lot::Mutex::new(Ve
 
 #[tauri::command]
 pub async fn download_model(st: State<'_, Shared>, id: String) -> R<()> {
+    if id == stt::HINGLISH_MODEL {
+        // asked for again: it may be fetched again after a future delete-by-accident too
+        let _ = std::fs::remove_file(st.models_dir.join(stt::NO_AUTO_HINGLISH));
+    }
     download_once(st.inner(), &id).await.map(|_| ()).map_err(e)
 }
 
@@ -514,10 +541,42 @@ pub(crate) async fn download_once(st: &Shared, id: &str) -> anyhow::Result<bool>
     res.map(|_| true)
 }
 
+/// The background model work after launch / setup: the more accurate main model, then the
+/// Hinglish model for Hindi meetings.
+pub(crate) async fn auto_upgrade_model(st: Shared) {
+    upgrade_main_model(st.clone()).await;
+    auto_fetch_hinglish(st).await;
+}
+
+/// Hindi speakers' meetings in Hinglish: fetch the Hinglish model in the background
+/// (`stt::hinglish_auto_fetch`). Meetings use it as soon as it's on disk; until then Flo writes
+/// Hindi in Roman letters itself. A failed download is tried again on the next launch.
+async fn auto_fetch_hinglish(st: Shared) {
+    let id = stt::HINGLISH_MODEL;
+    let installed = stt::model_path(&st.models_dir, id).is_some_and(|p| p.exists());
+    let declined = st.models_dir.join(stt::NO_AUTO_HINGLISH).exists();
+    if !stt::hinglish_auto_fetch(&st.settings(), stt::this_machine_runs_large(), stt::total_ram_gb(), installed, declined) {
+        return;
+    }
+    if let Some(free) = stt::free_disk_gb(&st.models_dir).filter(|gb| *gb < stt::HINGLISH_FREE_GB) {
+        log::info!("speech model: not fetching {id} by itself, only {free:.1} GB free (Settings → Voice offers it)");
+        return;
+    }
+    log::info!("speech model: downloading {id} in the background (Hindi in meeting notes, in Roman letters)");
+    match download_once(&st, id).await {
+        Ok(true) => {
+            log::info!("speech model: {id} ready for meeting notes");
+            st.toast("info", "Meeting notes now write Hindi in Hinglish with Flo's Hinglish model.".to_string());
+        }
+        Ok(false) => {}
+        Err(err) => log::warn!("speech model {id}: download failed ({err}); will try again next launch"),
+    }
+}
+
 /// Move a setup-installed starter to the more accurate model (`stt::upgrade_target`): download it
 /// in the background, then switch to it once it's on disk, unless the user picked a model
 /// meanwhile. A failed download is tried again on the next launch.
-pub(crate) async fn auto_upgrade_model(st: Shared) {
+async fn upgrade_main_model(st: Shared) {
     let runs_large = stt::this_machine_runs_large();
     let Some(target) = stt::upgrade_target(&st.settings(), runs_large) else { return };
     let installed = stt::model_path(&st.models_dir, target).is_some_and(|p| p.exists());
@@ -572,6 +631,10 @@ pub fn delete_model(st: State<Shared>, id: String) -> R<()> {
     if let Some(p) = stt::model_path(&st.models_dir, &id) {
         stt::remove_model_path(&p).map_err(e)?;
     }
+    if id == stt::HINGLISH_MODEL {
+        // deleted on purpose: don't fetch it again by itself
+        let _ = std::fs::write(st.models_dir.join(stt::NO_AUTO_HINGLISH), b"1");
+    }
     Ok(())
 }
 
@@ -590,10 +653,12 @@ pub fn setup_speech_model(st: State<Shared>) -> String {
     stt::setup_model(&st.settings().stt_model, &st.models_dir).to_string()
 }
 
-/// Settings → Voice → "Free up space": every downloaded model except the one in use. MB freed.
+/// Settings → Voice → "Free up space": every downloaded model except the one in use and the ones
+/// meeting notes use (`stt::meeting_models`). MB freed.
 #[tauri::command(async)]
 pub fn remove_unused_models(st: State<Shared>) -> u64 {
-    stt::remove_unused(&st.models_dir, &st.settings().stt_model)
+    let s = st.settings();
+    stt::remove_unused(&st.models_dir, &s.stt_model, &stt::meeting_models(&s))
 }
 
 // ── attention / permissions ─────────────────────────────────────────────────
@@ -662,6 +727,13 @@ pub fn repair_permissions(app: tauri::AppHandle) -> R<()> {
 }
 
 // ── account (sign-in only) ─────────────────────────────────────────────────
+/// Instant, no-network answer for the first paint (saved sign-in + cached user); the dashboard
+/// then confirms it with `account_status`, which may wait on the account server for seconds.
+#[tauri::command(async)]
+pub fn account_status_cached(st: State<Shared>) -> R<crate::account::AccountStatus> {
+    Ok(crate::account::cached_status(st.inner()))
+}
+
 #[tauri::command]
 pub async fn account_status(st: State<'_, Shared>) -> R<crate::account::AccountStatus> {
     crate::account::allow_host(st.inner());

@@ -193,7 +193,7 @@ fn stt_bench() {
             }),
         );
     }
-    w.ctx.lock().take();
+    w.ctx.lock().clear();
     let mem_unloaded = footprint_mb();
     let report = json!({
         "model": model.file_name().unwrap().to_string_lossy(), "mode": if fixed { "fixed" } else { "auto" },

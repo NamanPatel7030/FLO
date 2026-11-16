@@ -67,6 +67,12 @@ pub struct Settings {
     /// Urdu/Marathi/Nepali, or short English clips as Welsh or Finnish). Empty = English + Hindi
     /// (stt::allowed_languages).
     pub auto_languages: Vec<String>,
+    /// how meeting notes write Hindi speech: "hinglish" (Roman letters, the default) |
+    /// "devanagari" | "english" (translated) — `stt::HindiScript`
+    pub meeting_hindi: String,
+    /// language of meeting summaries and action items: "auto" (the meeting's, but English for
+    /// Hindi / Hinglish meetings) | "match" | "english" — `prompts::meeting_summary_system_in`
+    pub meeting_summary_language: String,
     pub llm_provider: String,
     pub llm_model: String,
     pub local_llm_url: String,
@@ -222,6 +228,8 @@ impl Default for Settings {
             stt_model_explicit: false,
             language: "auto".into(),
             auto_languages: crate::stt::DEFAULT_AUTO_LANGUAGES.iter().map(|l| l.to_string()).collect(),
+            meeting_hindi: "hinglish".into(),
+            meeting_summary_language: "auto".into(),
             llm_provider: "ollama".into(),
             llm_model: "qwen3:8b".into(),
             local_llm_url: "http://127.0.0.1:11434".into(),

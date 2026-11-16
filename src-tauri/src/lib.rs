@@ -21,6 +21,7 @@ mod egress;
 mod floagent;
 mod ggml_convert;
 mod hermes;
+mod hinglish;
 mod handsfree;
 mod hotkey;
 mod island_pos;
@@ -53,6 +54,9 @@ mod session;
 mod selftest;
 mod settings;
 mod speakers;
+mod speaker_names;
+mod meet_screen;
+mod naming_sim;
 mod sysaudio;
 mod vault;
 mod slack;
@@ -705,6 +709,10 @@ pub fn run() {
             commands::stop_meeting,
             commands::meeting_info,
             commands::rename_speaker,
+            commands::confirm_speaker,
+            commands::list_voices,
+            commands::forget_voice,
+            commands::merge_voices,
             commands::list_dictionary,
             commands::add_dictionary,
             commands::remove_dictionary,
@@ -729,6 +737,7 @@ pub fn run() {
             commands::uninstall_claude_hook,
             commands::restart_app,
             commands::account_status,
+            commands::account_status_cached,
             commands::account_login,
             commands::account_google_start,
             commands::account_exchange,

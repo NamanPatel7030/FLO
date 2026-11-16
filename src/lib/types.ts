@@ -38,6 +38,13 @@ export type KeyProvider = "openai" | "anthropic" | "gemini" | "groq" | "openrout
  *  Linux "cmd" is the Win / Super key and "fn" means Ctrl + Win (there's no readable fn key). */
 export type HotkeyCombo = "fn" | "ctrl" | "alt" | "fn+ctrl" | "ctrl+alt" | "cmd+alt" | "fn+shift" | "ctrl+cmd" | "ctrl+shift" | "alt+shift";
 
+/** Hindi in meeting transcripts: Hinglish in Roman letters, Devanagari, or an English translation. */
+export type MeetingHindi = "hinglish" | "devanagari" | "english";
+/** Meeting summaries: "auto" = the meeting's language, but English for Hindi / Hinglish meetings
+ *  (names, Hindi terms and quotes kept as said); "match" = always the meeting's language and
+ *  script; "english" = always English. */
+export type MeetingSummaryLanguage = "auto" | "match" | "english";
+
 export interface Settings {
   /** hold to dictate (default "ctrl") */
   hotkeyDictation: HotkeyCombo;
@@ -75,6 +82,10 @@ export interface Settings {
   language: string;
   /** with language "auto": only these are considered (default en, hi; "Auto + Gujarati" adds gu) */
   autoLanguages?: string[];
+  /** how Hindi speech is written in meeting transcripts (default "hinglish": Roman letters) */
+  meetingHindi?: MeetingHindi;
+  /** language of meeting summaries and action items (default "auto") */
+  meetingSummaryLanguage?: MeetingSummaryLanguage;
   llmProvider: LlmProvider;
   llmModel: string;
   /** Base URL for ollama / lmstudio */
@@ -334,6 +345,23 @@ export interface MeetingInfo {
   knownVoices?: string[];
   /** names from the calendar invite when notes were started from a Google Calendar event */
   attendees?: string[];
+  /** label → how Flo found that name (confidence 0–1); "Name?" suggestions keyed by "Speaker N" */
+  nameInfo?: Record<string, NameGuess>;
+}
+
+/** A speaker name Flo found on its own (all on this Mac). */
+export interface NameGuess {
+  name: string;
+  confidence: number;
+  /** voice = remembered voice, screen = the meeting window, intro = "Hi, I'm Rahul", calendar = 1:1 invite, user = you named it */
+  source: "voice" | "screen" | "intro" | "calendar" | "user";
+}
+
+/** A voice Flo remembers (Notes → Voices). */
+export interface KnownVoice {
+  name: string;
+  samples: number;
+  updatedAt: string;
 }
 
 export interface MeetingEvent {

@@ -80,6 +80,8 @@ const settings: Settings = {
   sttModel: "small-q5_1",
   language: "auto",
   autoLanguages: ["en", "hi"],
+  meetingHindi: "hinglish",
+  meetingSummaryLanguage: "auto",
   llmProvider: "ollama",
   llmModel: "qwen3:8b",
   localLlmUrl: "http://localhost:11434",
@@ -267,6 +269,16 @@ const todos: Todo[] = [
 
 /** n1: names the (mock) summary pass heard in the conversation ("Ana, can you…" → Speaker 2 answers) */
 const mockSpeakerSuggestions: Record<string, string> = { "Speaker 2": "Ana" };
+/** how each name in note n1 was found (Rahul: remembered voice; Ana?: she introduced herself) */
+const mockNameInfo: Record<string, { name: string; confidence: number; source: "voice" | "screen" | "intro" | "calendar" | "user" }> = {
+  Rahul: { name: "Rahul", confidence: 0.86, source: "voice" },
+  "Speaker 2": { name: "Ana", confidence: 0.55, source: "intro" },
+};
+const mockVoices: { name: string; samples: number; updatedAt: string }[] = [
+  { name: "Meera", samples: 14, updatedAt: "2026-11-10T10:00:00Z" },
+  { name: "Rahul", samples: 31, updatedAt: "2026-11-12T10:00:00Z" },
+  { name: "Rahul S.", samples: 4, updatedAt: "2026-11-01T10:00:00Z" },
+];
 
 const notes: Note[] = [
   {
@@ -1021,6 +1033,8 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return null;
     case "open_dashboard":
       return null;
+    case "account_status_cached":
+      return { signedIn: account.signedIn, user: account.signedIn ? account.user : undefined, accountUrl: ACCOUNT_URL, offline: false };
     case "account_status":
       await sleep(120);
       return { signedIn: account.signedIn, user: account.user, accountUrl: ACCOUNT_URL, offline: !account.signedIn && qs().has("offline") };
@@ -1349,7 +1363,14 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
       return stopMockMeeting();
     case "meeting_info": {
       if (args.noteId === "n1")
-        return { capture: "mic+call", voiced: ["Speaker 1", "Speaker 2", "Rahul"], suggestions: { ...mockSpeakerSuggestions }, knownVoices: ["Meera", "Rahul"] };
+        return {
+          capture: "mic+call",
+          voiced: ["Speaker 1", "Speaker 2", "Rahul"],
+          suggestions: { ...mockSpeakerSuggestions },
+          knownVoices: mockVoices.map((v) => v.name),
+          attendees: ["Ana Costa", "Rahul", "Meera Iyer"],
+          nameInfo: { ...mockNameInfo },
+        };
       if (args.noteId === "n2") return { capture: "mic", captureNote: "Call audio capture needs macOS 14.2 or later", voiced: [] };
       const la = liveAttendees as { noteId: string; names: string[] } | null;
       const attendees = la && la.noteId === args.noteId ? la.names : undefined;
@@ -1368,8 +1389,36 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
         n.actionItems = n.actionItems.map((a) => a.replace(re, to));
       }
       delete mockSpeakerSuggestions[args.from];
+      // naming trains the voice memory (like speaker_names::train_voice)
+      delete mockNameInfo[args.from];
+      mockNameInfo[to] = { name: to, confidence: 1, source: "user" };
+      const v = mockVoices.find((x) => x.name === to);
+      if (v) v.samples += 3;
+      else mockVoices.push({ name: to, samples: 3, updatedAt: new Date().toISOString() });
       mockEmit(EV.notes, {});
       return { ...n };
+    }
+    case "confirm_speaker": {
+      const n = notes.find((x) => x.id === args.noteId);
+      if (!/^Speaker \d+$/.test(args.label) && args.label !== "You") mockNameInfo[args.label] = { name: args.label, confidence: 1, source: "user" };
+      mockEmit(EV.notes, {});
+      return n ? { ...n } : null;
+    }
+    case "list_voices":
+      return mockVoices.map((v) => ({ ...v }));
+    case "forget_voice": {
+      const i = mockVoices.findIndex((v) => v.name === args.name);
+      if (i >= 0) mockVoices.splice(i, 1);
+      return i >= 0;
+    }
+    case "merge_voices": {
+      const from = mockVoices.find((v) => v.name === args.from);
+      if (!from) throw new Error(`No remembered voice called ${args.from}`);
+      const into = mockVoices.find((v) => v.name === args.into);
+      if (into) into.samples += from.samples;
+      else mockVoices.push({ ...from, name: args.into });
+      mockVoices.splice(mockVoices.indexOf(from), 1);
+      return null;
     }
     case "list_dictionary":
       return [...dictionary];

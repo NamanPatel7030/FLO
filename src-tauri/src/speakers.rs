@@ -21,8 +21,10 @@ pub const MODEL_BYTES: u64 = 28_281_164;
 /// Same voice within one meeting (online assignment / agglomerative merge).
 pub const SAME_SPEAKER: f32 = 0.50;
 /// A cluster is labelled with a remembered name only above this (stricter: wrong names are worse
-/// than "Speaker 2").
-pub const KNOWN_VOICE: f32 = 0.60;
+/// than "Speaker 2"). Calibrated on CAM++ with the naming simulator (`naming_sim.rs`): the same
+/// voice scores 0.92–0.96 against its remembered centroid, a different but similar-sounding
+/// voice (Karen vs Samantha) 0.65–0.71, other voices 0.2–0.3. 0.60 named the stranger.
+pub const KNOWN_VOICE: f32 = 0.75;
 /// Shorter clips give unreliable embeddings: assign them, but don't let them found clusters.
 pub const MIN_EMBED_SECS: f32 = 1.2;
 
@@ -259,6 +261,31 @@ pub fn agglomerate(embs: &[Vec<f32>], weights: &[f32], threshold: f32) -> Vec<us
     ids
 }
 
+/// Voice-anchored clustering: clips that clearly match a remembered voice (`match_voice`) are
+/// grouped by that voice first; only the rest are clustered among themselves. Without this a
+/// similar-sounding stranger (cosine ≈ 0.65 to a remembered voice, above `SAME_SPEAKER`) was
+/// merged into the remembered speaker's cluster and carried their name. Ids by first appearance.
+pub fn anchored_ids(embs: &[Vec<f32>], weights: &[f32], voices: &[Voice]) -> Vec<usize> {
+    let anchor: Vec<Option<String>> = embs.iter().map(|e| match_voice(e, voices, KNOWN_VOICE).map(|m| m.0)).collect();
+    let free: Vec<usize> = (0..embs.len()).filter(|i| anchor[*i].is_none()).collect();
+    let free_ids = agglomerate(&free.iter().map(|i| embs[*i].clone()).collect::<Vec<_>>(), &free.iter().map(|i| weights.get(*i).copied().unwrap_or(1.0)).collect::<Vec<_>>(), SAME_SPEAKER);
+    // a raw group key per clip, then renumber by first appearance
+    let mut key: Vec<String> = anchor.iter().map(|a| a.as_ref().map(|n| format!("v:{n}")).unwrap_or_default()).collect();
+    for (k, i) in free.iter().enumerate() {
+        key[*i] = format!("c:{}", free_ids[k]);
+    }
+    let mut order: Vec<String> = vec![];
+    key.iter()
+        .map(|k| match order.iter().position(|o| o == k) {
+            Some(p) => p,
+            None => {
+                order.push(k.clone());
+                order.len() - 1
+            }
+        })
+        .collect()
+}
+
 // ── turns inside one segment ───────────────────────────────────────────────
 //
 // The VAD segmenter only cuts on pauses ≥ 700 ms (or at 8 s), so a quick back-and-forth on the
@@ -385,14 +412,18 @@ pub struct Voice {
     pub samples: u32,
 }
 
-/// Best remembered voice for an embedding, if at least `threshold` similar.
+/// Best remembered voice for an embedding, if at least `threshold` similar *and* clearly ahead
+/// of the runner-up (by `VOICE_MARGIN`): two remembered voices that both fit name nobody.
 pub fn match_voice(emb: &[f32], voices: &[Voice], threshold: f32) -> Option<(String, f32)> {
-    voices
-        .iter()
-        .map(|v| (v.name.clone(), cosine(&v.embedding, emb)))
-        .filter(|(_, s)| *s >= threshold)
-        .max_by(|a, b| a.1.total_cmp(&b.1))
+    let mut s: Vec<(String, f32)> = voices.iter().map(|v| (v.name.clone(), cosine(&v.embedding, emb))).collect();
+    s.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let best = s.first()?.clone();
+    let second = s.get(1).map(|x| x.1).unwrap_or(f32::MIN);
+    (best.1 >= threshold && best.1 - second >= VOICE_MARGIN).then_some(best)
 }
+
+/// How far the best remembered voice must beat the second best (cosine).
+pub const VOICE_MARGIN: f32 = 0.08;
 
 /// Name clusters: greedy best-first so two clusters never get the same remembered name; the rest
 /// become "Speaker N" in order of appearance (N skips nothing: 1, 2, 3…).
@@ -400,9 +431,11 @@ pub fn label_clusters(centroids: &[Vec<f32>], voices: &[Voice]) -> Vec<String> {
     let mut labels: Vec<Option<String>> = vec![None; centroids.len()];
     let mut pairs: Vec<(usize, usize, f32)> = vec![];
     for (ci, c) in centroids.iter().enumerate() {
-        for (vi, v) in voices.iter().enumerate() {
-            let s = cosine(c, &v.embedding);
-            if s >= KNOWN_VOICE {
+        let sims: Vec<f32> = voices.iter().map(|v| cosine(c, &v.embedding)).collect();
+        for (vi, &s) in sims.iter().enumerate() {
+            // a cluster that fits two remembered voices about equally names neither
+            let runner_up = sims.iter().enumerate().filter(|(j, _)| *j != vi).map(|(_, x)| *x).fold(f32::MIN, f32::max);
+            if s >= KNOWN_VOICE && s - runner_up >= VOICE_MARGIN {
                 pairs.push((ci, vi, s));
             }
         }
@@ -471,9 +504,12 @@ mod tests {
         ];
         // close to Rahul (cos ≈ 0.98)
         assert_eq!(match_voice(&v(&[1.0, 0.2, 0.0]), &voices, KNOWN_VOICE).map(|m| m.0), Some("Rahul".into()));
-        // halfway between (cos ≈ 0.707 to both) → whichever is higher, still above 0.6
-        let m = match_voice(&v(&[1.0, 1.1, 0.0]), &voices, KNOWN_VOICE).unwrap();
-        assert_eq!(m.0, "Priya");
+        // halfway between (cos 0.67 / 0.74): above the threshold for both, but not clearly
+        // either one → no name (wrong names are worse than "Speaker 2")
+        assert_eq!(match_voice(&v(&[1.0, 1.1, 0.0]), &voices, KNOWN_VOICE), None);
+        // leaning clearly towards Priya (0.55 / 0.83) → Priya
+        assert_eq!(match_voice(&v(&[1.0, 1.5, 0.0]), &voices, KNOWN_VOICE).map(|m| m.0), Some("Priya".into()));
+        assert_eq!(label_clusters(&[v(&[1.0, 1.1, 0.0])], &voices), vec!["Speaker 1"]);
         // a stranger (cos ≈ 0.45 to Rahul) → no name
         assert_eq!(match_voice(&v(&[0.5, 0.0, 1.0]), &voices, KNOWN_VOICE), None);
         assert_eq!(match_voice(&v(&[1.0, 0.0, 0.0]), &[], KNOWN_VOICE), None);
@@ -514,6 +550,22 @@ mod tests {
         assert!(agglomerate(&[], &[], 0.5).is_empty());
         // everyone identical → one speaker
         assert_eq!(agglomerate(&[v(&[1.0, 0.0]), v(&[1.0, 0.01])], &[1.0, 1.0], 0.5), vec![0, 0]);
+    }
+
+    #[test]
+    fn a_similar_stranger_is_not_merged_into_a_remembered_voice() {
+        // Priya remembered; Karen sounds similar (cos ≈ 0.68 to Priya, above SAME_SPEAKER)
+        let priya = v(&[1.0, 0.0, 0.0]);
+        let karen = v(&[0.68, 0.733, 0.0]);
+        let voices = vec![Voice { name: "Priya".into(), embedding: priya.clone(), samples: 9 }];
+        let embs = vec![v(&[1.0, 0.05, 0.0]), karen.clone(), v(&[0.98, 0.0, 0.1]), v(&[0.66, 0.75, 0.02])];
+        // plain clustering merges them …
+        assert_eq!(agglomerate(&embs, &[3.0; 4], SAME_SPEAKER), vec![0, 0, 0, 0]);
+        // … anchored clustering keeps the stranger apart, so she can't inherit Priya's name
+        let ids = anchored_ids(&embs, &[3.0; 4], &voices);
+        assert_eq!(ids, vec![0, 1, 0, 1]);
+        // no voices → same as plain clustering
+        assert_eq!(anchored_ids(&embs, &[3.0; 4], &[]), agglomerate(&embs, &[3.0; 4], SAME_SPEAKER));
     }
 
     #[test]

@@ -103,6 +103,13 @@ pub fn cached_signed_in(st: &Shared) -> bool {
     !enforced(st) || (st.settings().account_user.is_some() && secrets::get_secret(TOKEN).is_some())
 }
 
+/// What the saved sign-in says, without asking the account server.
+pub fn cached_status(st: &Shared) -> AccountStatus {
+    let signed_in = cached_signed_in(st);
+    let user = if signed_in { st.settings().account_user.clone() } else { None };
+    AccountStatus { signed_in, user, account_url: base(st), offline: false }
+}
+
 pub async fn status(st: &Shared) -> AccountStatus {
     let s = status_inner(st).await;
     // the pill follows the account: hidden while signed out

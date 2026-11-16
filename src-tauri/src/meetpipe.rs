@@ -687,44 +687,79 @@ fn runs(v: &[bool]) -> Vec<(usize, usize, bool)> {
 
 // ── language ───────────────────────────────────────────────────────────────
 
-/// Per-track language: a language set in Settings is used as is; with "auto" the track locks
-/// only after three clips in a row agree (one "Hello" before a Hindi meeting no longer forces
-/// every later Hindi sentence through the English decoder).
+/// Per-track language. A language set in Settings is used as is. With "auto" there is no lock:
+/// every clip is identified on its own (a track used to lock after three agreeing clips, and
+/// every later Hindi sentence then went through the English decoder and came out *translated*:
+/// "I was talking to you."). The track's recent language, the most common of its last three
+/// clips, is only the first guess and the tie-breaker, so it sticks through one unclear clip and
+/// moves when the speaker really switches.
 #[derive(Debug, Clone, Default)]
-pub struct LangLock {
+pub struct TrackLang {
     pub fixed: Option<String>,
-    votes: Vec<String>,
+    recent: VecDeque<String>,
 }
 
-impl LangLock {
+impl TrackLang {
     pub fn new(fixed: Option<String>) -> Self {
-        Self { fixed, votes: vec![] }
+        Self { fixed, recent: VecDeque::new() }
     }
-    pub fn current(&self) -> Option<&str> {
-        self.fixed.as_deref()
-    }
-    pub fn observe(&mut self, detected: Option<String>) {
+
+    /// The tie-breaker for the next clip ("auto" only).
+    pub fn hint(&self) -> Option<&str> {
         if self.fixed.is_some() {
+            return None;
+        }
+        // most common of the last three; on a tie the newest
+        let mut best: Option<(&str, usize)> = None;
+        for l in self.recent.iter().rev() {
+            let n = self.recent.iter().filter(|x| *x == l).count();
+            if best.is_none_or(|(_, b)| n > b) {
+                best = Some((l.as_str(), n));
+            }
+        }
+        best.map(|(l, _)| l)
+    }
+
+    pub fn observe(&mut self, lang: &str) {
+        if self.fixed.is_some() || lang.is_empty() {
             return;
         }
-        let Some(l) = detected else { return };
-        self.votes.push(l);
-        if self.votes.len() > 3 {
-            self.votes.remove(0);
+        self.recent.push_back(lang.to_string());
+        while self.recent.len() > 3 {
+            self.recent.pop_front();
         }
-        if self.votes.len() == 3 && self.votes.iter().all(|v| *v == self.votes[0]) {
-            log::info!("meeting: language locked to {}", self.votes[0]);
-            self.fixed = Some(self.votes[0].clone());
-        }
+    }
+}
+
+/// What a meeting clip needs to know about language.
+#[derive(Debug, Clone, Copy)]
+pub struct LangReq<'a> {
+    /// the language set in Settings (None = "auto")
+    pub fixed: Option<&'a str>,
+    /// the track's recent language: a tie-breaker, never forced
+    pub hint: Option<&'a str>,
+    pub hindi: stt::HindiScript,
+    /// a live preview (partial): one decode, no second pass
+    pub preview: bool,
+}
+
+/// Hindi speech is Hindi, in the script the user picked: a line still in Devanagari (no Hinglish
+/// model, a cloud engine, a preview) is written in Roman letters for `Hinglish`, and for
+/// `English` when the translation failed. Gujarati and every other language are left as they are.
+pub fn render_hindi(heard: &stt::Heard, hindi: stt::HindiScript) -> String {
+    let hindi_speech = heard.lang == "hi" || heard.lang == stt::HINGLISH || (heard.lang.is_empty() && crate::hinglish::has_devanagari(&heard.text));
+    if hindi_speech && hindi != stt::HindiScript::Devanagari && crate::hinglish::has_devanagari(&heard.text) {
+        crate::hinglish::to_roman(&heard.text)
+    } else {
+        heard.text.clone()
     }
 }
 
 // ── processing (one worker thread) ─────────────────────────────────────────
 
 pub trait Transcriber {
-    fn transcribe(&mut self, samples: &[f32], context: &str, lang: Option<&str>) -> anyhow::Result<String>;
-    /// language of the last clip, when the engine detected one
-    fn detected_lang(&self) -> Option<String>;
+    /// One clip: what was said, in which language (`stt::LocalWhisper::meeting_clip`).
+    fn transcribe(&mut self, samples: &[f32], context: &str, req: &LangReq) -> anyhow::Result<stt::Heard>;
 }
 
 /// A call-track segment kept for the post-call speaker pass.
@@ -776,6 +811,11 @@ pub struct Stats {
     pub splits: u32,
     pub partials: u32,
     pub stt_ms: u64,
+    /// committed clips sent to speech-to-text, and the slowest one (ms)
+    pub stt_calls: u32,
+    pub stt_max_ms: u64,
+    /// lines of Hindi speech (written in the script of `Processor::hindi`)
+    pub hindi_lines: u32,
     pub audio_secs: f64,
 }
 
@@ -788,10 +828,16 @@ pub struct Processor<T: Transcriber> {
     pub call_segs: Vec<CallSeg>,
     recent: VecDeque<Recent>,
     last_text: [String; 2],
-    pub lang: [LangLock; 2],
+    pub lang: [TrackLang; 2],
+    /// how Hindi is written (Settings → Voice → Meeting notes)
+    pub hindi: stt::HindiScript,
     last_call_label: Option<String>,
     kept_audio_secs: f32,
     pub stats: Stats,
+    /// speaker naming (speaker_names.rs): every committed line's span and label, and a few
+    /// embeddings of your own voice from the mic track
+    pub turns: Vec<crate::speaker_names::Turn>,
+    pub mic_embs: Vec<Vec<f32>>,
 }
 
 impl<T: Transcriber> Processor<T> {
@@ -805,10 +851,13 @@ impl<T: Transcriber> Processor<T> {
             call_segs: vec![],
             recent: VecDeque::new(),
             last_text: [String::new(), String::new()],
-            lang: [LangLock::new(lang.clone()), LangLock::new(lang)],
+            lang: [TrackLang::new(lang.clone()), TrackLang::new(lang)],
+            hindi: stt::HindiScript::default(),
             last_call_label: None,
             kept_audio_secs: 0.0,
             stats: Stats::default(),
+            turns: vec![],
+            mic_embs: vec![],
         }
     }
 
@@ -833,8 +882,10 @@ impl<T: Transcriber> Processor<T> {
             return vec![];
         }
         let tr = if c.mic { MIC } else { CALL };
-        let lang = self.lang[tr].current().map(str::to_string);
-        let Ok(t) = self.stt.transcribe(&c.samples, &self.last_text[tr], lang.as_deref()) else { return vec![] };
+        let (fixed, hint) = (self.lang[tr].fixed.clone(), self.lang[tr].hint().map(str::to_string));
+        let req = LangReq { fixed: fixed.as_deref(), hint: hint.as_deref(), hindi: self.hindi, preview: true };
+        let Ok(heard) = self.stt.transcribe(&c.samples, &self.last_text[tr], &req) else { return vec![] };
+        let t = render_hindi(&heard, self.hindi);
         if t.trim().is_empty() || stt::is_degenerate(&t) {
             return vec![];
         }
@@ -910,13 +961,17 @@ impl<T: Transcriber> Processor<T> {
             } else {
                 who
             };
-            let lang = self.lang[tr].current().map(str::to_string);
+            let (fixed, hint) = (self.lang[tr].fixed.clone(), self.lang[tr].hint().map(str::to_string));
+            let req = LangReq { fixed: fixed.as_deref(), hint: hint.as_deref(), hindi: self.hindi, preview: false };
             let started = std::time::Instant::now();
-            let res = self.stt.transcribe(&samples, &self.last_text[tr], lang.as_deref());
-            self.stats.stt_ms += started.elapsed().as_millis() as u64;
+            let res = self.stt.transcribe(&samples, &self.last_text[tr], &req);
+            let ms = started.elapsed().as_millis() as u64;
+            self.stats.stt_ms += ms;
+            self.stats.stt_calls += 1;
+            self.stats.stt_max_ms = self.stats.stt_max_ms.max(ms);
             self.stats.audio_secs += secs as f64;
-            let mut t = match res {
-                Ok(t) if !t.trim().is_empty() && !stt::is_hallucination(&t, secs) && !stt::is_degenerate(&t) => t.trim().to_string(),
+            let heard = match res {
+                Ok(h) if !h.text.trim().is_empty() && !stt::is_hallucination(&h.text, secs) && !stt::is_degenerate(&h.text) => h,
                 Ok(_) => {
                     self.stats.filtered += 1;
                     continue;
@@ -928,10 +983,34 @@ impl<T: Transcriber> Processor<T> {
                     continue;
                 }
             };
-            if lang.is_none() {
-                self.lang[tr].observe(self.stt.detected_lang());
+            // Whisper repeats its prompt (this track's previous line) for an unclear clip: the
+            // same sentence twice, seconds apart. Ask again without the prompt: the same words
+            // again = really said twice (kept); nothing usable = the repeat is dropped.
+            let mut heard = heard;
+            let said = if heard.raw.trim().is_empty() { heard.text.clone() } else { heard.raw.clone() };
+            if repeats_context(&said, &self.last_text[tr]) || repeats_context(&heard.text, &self.last_text[tr]) {
+                match self.stt.transcribe(&samples, "", &req) {
+                    Ok(h) if !h.text.trim().is_empty() && !stt::is_hallucination(&h.text, secs) && !stt::is_degenerate(&h.text) => {
+                        if !repeats_context(&h.text, &heard.text) {
+                            log::info!("meeting: line at {t0:.1}s repeated the previous one; re-transcribed without context");
+                        }
+                        heard = h;
+                    }
+                    _ => {
+                        self.stats.filtered += 1;
+                        log::info!("meeting: dropped a repeat of the previous line at {t0:.1}s (Whisper echoed its prompt)");
+                        continue;
+                    }
+                }
             }
-            self.last_text[tr] = text::truncate_chars(&t, 200);
+            self.lang[tr].observe(&heard.lang);
+            if heard.lang == "hi" || heard.lang == stt::HINGLISH {
+                self.stats.hindi_lines += 1;
+            }
+            // the next clip's prompt: the general model's own words (same script as its decoder)
+            let raw = if heard.raw.trim().is_empty() { &heard.text } else { &heard.raw };
+            self.last_text[tr] = text::truncate_chars(raw.trim(), 200);
+            let mut t = render_hindi(&heard, self.hindi).trim().to_string();
             // the other track may hold the same words: keep the original, drop the copy
             let mut remove: Vec<(Recent, Option<String>)> = vec![];
             let mut drop_new = false;
@@ -1003,7 +1082,14 @@ impl<T: Transcriber> Processor<T> {
                     None => self.stats.lines = self.stats.lines.saturating_sub(1),
                 }
             }
+            // your voice (mic track, clean stretches only) teaches Flo what you sound like
+            if c.mic && secs >= 1.5 && self.mic_embs.len() < 30 && !matches!(who, Owner::Call) {
+                if let Some(e) = self.embedder.as_ref().and_then(|e| e.embed(&samples)) {
+                    self.mic_embs.push(e);
+                }
+            }
             let speaker = if c.mic { YOU.to_string() } else { self.call_speaker(t0, secs, samples) };
+            self.turns.push(crate::speaker_names::Turn { t0, t1, label: speaker.clone() });
             self.stats.lines += 1;
             self.recent.push_back(Recent { mic: c.mic, t0, t1, text: t.clone(), speaker: speaker.clone(), owner: who });
             while self.recent.front().is_some_and(|r| r.t1 < t0 - 30.0) {
@@ -1032,6 +1118,13 @@ impl<T: Transcriber> Processor<T> {
     }
 }
 
+/// Is `t` the previous line of its track (`ctx`, given to Whisper as the prompt) over again?
+/// Four or more words, the same words in order, and not much more than them.
+pub fn repeats_context(t: &str, ctx: &str) -> bool {
+    let (a, b) = (norm_words(t), norm_words(ctx));
+    a.len() >= 4 && !b.is_empty() && lcs(&a, &b) as f32 >= 0.8 * a.len().max(b.len()) as f32
+}
+
 /// Embeddings for call clips recorded before the voice model was ready.
 pub fn fill_embeddings(segs: &mut [CallSeg], e: &Embedder) {
     for s in segs.iter_mut() {
@@ -1053,7 +1146,8 @@ pub fn recluster(segs: &[CallSeg], voices: &[Voice]) -> Option<(Vec<(f64, Option
     }
     let embs: Vec<Vec<f32>> = with.iter().map(|s| s.emb.clone().unwrap_or_default()).collect();
     let weights: Vec<f32> = with.iter().map(|s| s.secs).collect();
-    let ids = speakers::agglomerate(&embs, &weights, speakers::SAME_SPEAKER);
+    // clips that clearly are a remembered voice are grouped by it first (speakers::anchored_ids)
+    let ids = speakers::anchored_ids(&embs, &weights, voices);
     let k = ids.iter().max().map(|m| m + 1).unwrap_or(0);
     let mut cents: Vec<(Vec<f32>, u32)> = vec![(vec![], 0); k];
     for (e, id) in embs.iter().zip(&ids) {
@@ -1240,33 +1334,79 @@ mod tests {
     }
 
     #[test]
-    fn language_locks_only_after_three_agreeing_clips() {
-        let mut l = LangLock::new(None);
-        l.observe(Some("en".into()));
-        l.observe(Some("hi".into()));
-        l.observe(Some("hi".into()));
-        assert_eq!(l.current(), None);
-        l.observe(Some("hi".into()));
-        assert_eq!(l.current(), Some("hi"));
-        l.observe(Some("en".into()));
-        assert_eq!(l.current(), Some("hi"));
-        let fixed = LangLock::new(Some("gu".into()));
-        assert_eq!(fixed.current(), Some("gu"));
+    fn track_language_is_a_revisable_hint_never_a_lock() {
+        let mut l = TrackLang::new(None);
+        assert_eq!(l.hint(), None);
+        for _ in 0..5 {
+            l.observe("en");
+        }
+        assert_eq!(l.hint(), Some("en"));
+        // one Hindi clip after many English ones: still English as the tie-breaker…
+        l.observe("hi");
+        assert_eq!(l.hint(), Some("en"));
+        // …a second one moves it (the old lock stayed on English for the rest of the meeting)
+        l.observe("hi");
+        assert_eq!(l.hint(), Some("hi"));
+        l.observe("en");
+        assert_eq!(l.hint(), Some("hi"));
+        // a tie goes to the newest
+        let mut t = TrackLang::new(None);
+        t.observe("hi");
+        t.observe("en");
+        assert_eq!(t.hint(), Some("en"));
+        // a language set in Settings is used as is: no hint, nothing learned
+        let mut fixed = TrackLang::new(Some("gu".into()));
+        fixed.observe("hi");
+        assert_eq!((fixed.fixed.as_deref(), fixed.hint()), (Some("gu"), None));
     }
 
-    /// Scripted STT: returns the next text.
-    struct Script(VecDeque<String>);
+    #[test]
+    fn hindi_is_written_in_the_chosen_script_and_nothing_else_changes() {
+        use stt::{Heard, HindiScript};
+        let h = |text: &str, lang: &str| Heard { text: text.into(), lang: lang.into(), raw: text.into() };
+        let deva = h("मैं कल मीटिंग में बताऊँगा कि डेक रेडी है।", "hi");
+        assert_eq!(render_hindi(&deva, HindiScript::Hinglish), "Main kal meeting mein bataunga ki deck ready hai.");
+        assert_eq!(render_hindi(&deva, HindiScript::Devanagari), deva.text);
+        // the translation failed: still never Devanagari when English was asked for
+        assert_eq!(render_hindi(&deva, HindiScript::English), "Main kal meeting mein bataunga ki deck ready hai.");
+        // already Roman (the Hinglish model), English, and Gujarati stay as they are
+        assert_eq!(render_hindi(&h("Main kal deck bhej dunga.", "hi"), HindiScript::Hinglish), "Main kal deck bhej dunga.");
+        assert_eq!(render_hindi(&h("Send the deck.", "en"), HindiScript::Hinglish), "Send the deck.");
+        assert_eq!(render_hindi(&h("હું કાલે આવીશ", "gu"), HindiScript::Hinglish), "હું કાલે આવીશ");
+        // a cloud engine that doesn't name the language: Devanagari is Hindi
+        assert_eq!(render_hindi(&h("ठीक है", ""), HindiScript::Hinglish), "Theek hai");
+    }
+
+    /// Scripted STT: returns the next text (and records the language requests).
+    struct Script(VecDeque<String>, Vec<(Option<String>, Option<String>)>);
     impl Transcriber for Script {
-        fn transcribe(&mut self, _s: &[f32], _c: &str, _l: Option<&str>) -> anyhow::Result<String> {
-            Ok(self.0.pop_front().unwrap_or_default())
+        fn transcribe(&mut self, _s: &[f32], _c: &str, req: &LangReq) -> anyhow::Result<stt::Heard> {
+            self.1.push((req.fixed.map(String::from), req.hint.map(String::from)));
+            let text = self.0.pop_front().unwrap_or_default();
+            let lang = if crate::hinglish::has_devanagari(&text) { "hi" } else { "en" };
+            Ok(stt::Heard { raw: text.clone(), text, lang: lang.into() })
         }
-        fn detected_lang(&self) -> Option<String> {
-            Some("en".into())
+    }
+
+    #[test]
+    fn hindi_after_english_turns_is_never_forced_through_english() {
+        let you = speechy(2.0, 9, 0.2);
+        let silent = vec![0.0f32; you.len()];
+        let script = ["Okay let's start the review", "I can send the deck by Friday", "Let me check the dashboard", "मुझे राहुल को इनवॉइस भेजना है।", "आज का काम पूरा हो गया।"];
+        let mut p = Processor::new(Script(script.iter().map(|s| s.to_string()).collect(), vec![]), false, vec![], None);
+        let mut out = vec![];
+        for k in 0..5 {
+            out.extend(adds(&p.handle(job(true, k * 64_000, you.clone(), &silent))));
         }
+        // every clip went out as "auto" with only a hint, never a forced English
+        assert!(p.stt.1.iter().all(|(fixed, _)| fixed.is_none()), "{:?}", p.stt.1);
+        assert_eq!(p.stt.1[3].1.as_deref(), Some("en"));
+        assert_eq!(out[3].1, "Mujhe rahul ko invoice bhejna hai.");
+        assert_eq!(out[4].1, "Aaj ka kaam pura ho gaya.");
     }
 
     fn proc(texts: &[&str]) -> Processor<Script> {
-        Processor::new(Script(texts.iter().map(|s| s.to_string()).collect()), true, vec![], Some("en".into()))
+        Processor::new(Script(texts.iter().map(|s| s.to_string()).collect(), vec![]), true, vec![], Some("en".into()))
     }
 
     fn job(mic: bool, t0_samples: usize, samples: Vec<f32>, other: &[f32]) -> Job {
@@ -1285,6 +1425,33 @@ mod tests {
         let mut p = proc(&["Let's ship the build on Friday"]);
         let out = p.handle(job(true, 0, you, &silent));
         assert_eq!(adds(&out), vec![("You".into(), "Let's ship the build on Friday".into())]);
+    }
+
+    /// Seen in a real meeting: "The past two, I call you a mouse, baby, hold up." at 0:03 and
+    /// again at 0:12 on the same speaker: Whisper echoed its prompt (the previous line) for an
+    /// unclear clip. The repeat is re-asked without context; nothing usable → dropped.
+    #[test]
+    fn processor_drops_whisper_repeating_its_prompt() {
+        let silent = vec![0.0f32; 48_000];
+        let line = "The past two, I call you a mouse, baby, hold up.";
+        // 2nd clip: echo of the prompt, retry without prompt hears nothing → dropped
+        let mut p = proc(&[line, line, ""]);
+        assert_eq!(adds(&p.handle(job(false, 0, speechy(3.0, 1, 0.2), &silent))).len(), 1);
+        assert!(adds(&p.handle(job(false, 9 * 16_000, speechy(3.0, 2, 0.2), &silent))).is_empty());
+        // 3rd: echo, retry hears the real words → those are kept
+        let mut p = proc(&[line, line, "Okay, let's move to the next item."]);
+        p.handle(job(false, 0, speechy(3.0, 1, 0.2), &silent));
+        let out = adds(&p.handle(job(false, 9 * 16_000, speechy(3.0, 2, 0.2), &silent)));
+        assert_eq!(out.iter().map(|x| x.1.as_str()).collect::<Vec<_>>(), vec!["Okay, let's move to the next item."]);
+        // really said twice (the retry hears it again) → kept; short "yes" repeats aren't touched
+        let mut p = proc(&[line, line, line]);
+        p.handle(job(false, 0, speechy(3.0, 1, 0.2), &silent));
+        assert_eq!(adds(&p.handle(job(false, 9 * 16_000, speechy(3.0, 2, 0.2), &silent))).len(), 1);
+        assert!(!repeats_context("Yes yes", "Yes yes"));
+        assert!(repeats_context("You're the mouse, no, you are.", "You're the mouse no you are"));
+        assert!(!repeats_context("Let's ship the build on Friday and then rest", "Let's ship the build"));
+        // every committed line is a turn for speaker naming
+        assert_eq!(p.turns.len(), 2);
     }
 
     #[test]

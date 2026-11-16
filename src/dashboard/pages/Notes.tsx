@@ -6,7 +6,7 @@ import { splitLive } from "../../lib/liveText";
 import { isStopped, markStopped, stopMeetingNow } from "../../lib/meetingStops";
 import { api, on } from "../../lib/api";
 import { formatClock, formatDuration, relativeTime } from "../../lib/format";
-import { EV, type MeetingEvent, type MeetingInfo, type MeetingSegment, type Note } from "../../lib/types";
+import { EV, type KnownVoice, type MeetingEvent, type MeetingInfo, type MeetingSegment, type NameGuess, type Note } from "../../lib/types";
 import { useStore, usePick, usePageArg } from "../store";
 import { shownName, speakerColor as defaultColor, speakerPalette, speakerStats, splitOwner } from "../../lib/speakers";
 
@@ -22,7 +22,7 @@ function insertSorted(segs: MeetingSegment[], s: MeetingSegment): MeetingSegment
   return [...segs.slice(0, at), s, ...segs.slice(at)];
 }
 
-function useMeetingInfo(noteId: string, refreshKey: unknown) {
+function useMeetingInfo(noteId: string, refreshKey: unknown, tick = 0) {
   const [info, setInfo] = useState<MeetingInfo | null>(null);
   useEffect(() => {
     let alive = true;
@@ -33,8 +33,146 @@ function useMeetingInfo(noteId: string, refreshKey: unknown) {
     return () => {
       alive = false;
     };
-  }, [noteId, refreshKey]);
+  }, [noteId, refreshKey, tick]);
   return info;
+}
+
+const SOURCE_TEXT: Record<NameGuess["source"], string> = {
+  voice: "Flo recognized this voice",
+  screen: "The meeting window showed them speaking",
+  intro: "They introduced themselves",
+  calendar: "The only guest on the calendar invite",
+  user: "You named them",
+};
+
+/** "sounds like Ana …" reason for a suggestion. */
+function suggestionReason(g?: NameGuess): string {
+  switch (g?.source) {
+    case "screen":
+      return "from the meeting window";
+    case "intro":
+      return "from how they introduced themselves";
+    case "calendar":
+      return "from the calendar invite";
+    case "voice":
+      return "by voice";
+    default:
+      return "from the conversation";
+  }
+}
+
+/** "Who is this?": one click on a guest / remembered voice, or type a name. */
+function SpeakerPicker({ who, candidates, onPick, onClose }: { who: string; candidates: string[]; onPick: (to: string) => void; onClose: () => void }) {
+  const [val, setVal] = useState("");
+  return (
+    <div
+      data-testid="speaker-picker"
+      role="dialog"
+      aria-label={`Who is ${who}?`}
+      className="absolute left-0 top-full z-20 mt-1 flex w-60 flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg,white)] p-2 shadow-lg"
+    >
+      <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-faint">Who is {who}?</div>
+      {candidates.map((c) => (
+        <button
+          key={c}
+          type="button"
+          data-testid="speaker-pick"
+          className="rounded-md px-2 py-1 text-left text-[12.5px] hover:bg-[var(--glass)]"
+          onClick={() => {
+            onClose();
+            onPick(c);
+          }}
+        >
+          {c}
+        </button>
+      ))}
+      <input
+        autoFocus
+        data-testid="speaker-pick-input"
+        placeholder="Another name…"
+        aria-label={`Name ${who}`}
+        className="mt-1 rounded-md border border-[var(--border)] bg-[var(--glass)] px-2 py-1 text-[12.5px] outline-none"
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && val.trim()) {
+            onClose();
+            onPick(val.trim());
+          } else if (e.key === "Escape") onClose();
+        }}
+      />
+    </div>
+  );
+}
+
+/** Voices Flo remembers: forget one, or merge two that are the same person. */
+function VoicesPanel({ onToast }: { onToast: (t: { kind: "success" | "info" | "error"; text: string }) => void }) {
+  const [voices, setVoices] = useState<KnownVoice[] | null>(null);
+  const load = () =>
+    api
+      .listVoices()
+      .then((v) => setVoices(v ?? []))
+      .catch(() => setVoices([]));
+  useEffect(() => {
+    load();
+  }, []);
+  if (!voices) return null;
+  return (
+    <div data-testid="voices-panel" className="flex flex-col gap-1 rounded-lg border border-[var(--border)] p-2.5 text-[12px]">
+      <div className="text-[11.5px] text-faint">Voices stay on this Mac. Flo names a speaker only when the voice clearly matches.</div>
+      {voices.length === 0 && <div className="text-muted">No voices yet. Name a speaker and Flo remembers their voice.</div>}
+      {voices.map((v) => (
+        <div key={v.name} data-testid="voice-row" data-voice={v.name} className="flex items-center justify-between gap-2">
+          <span className="font-medium">
+            {v.name} <span className="text-faint">· {v.samples} clips</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            {voices.length > 1 && (
+              <select
+                data-testid="voice-merge"
+                aria-label={`Merge ${v.name} into`}
+                className="rounded-md border border-[var(--border)] bg-[var(--glass)] px-1 py-0.5 text-[11.5px]"
+                value=""
+                onChange={async (e) => {
+                  const into = e.target.value;
+                  if (!into) return;
+                  try {
+                    await api.mergeVoices(v.name, into);
+                    onToast({ kind: "success", text: `Merged ${v.name} into ${into}` });
+                  } catch (err) {
+                    onToast({ kind: "error", text: `Couldn't merge: ${err}` });
+                  }
+                  load();
+                }}
+              >
+                <option value="">Same person as…</option>
+                {voices
+                  .filter((o) => o.name !== v.name)
+                  .map((o) => (
+                    <option key={o.name} value={o.name}>
+                      {o.name}
+                    </option>
+                  ))}
+              </select>
+            )}
+            <button
+              type="button"
+              data-testid="voice-forget"
+              aria-label={`Forget ${v.name}'s voice`}
+              className="rounded-md px-1.5 py-0.5 text-[11.5px] text-muted hover:bg-[var(--glass)] hover:text-red-500"
+              onClick={async () => {
+                await api.forgetVoice(v.name);
+                onToast({ kind: "success", text: `Flo forgot ${v.name}'s voice` });
+                load();
+              }}
+            >
+              Forget
+            </button>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** "You + call audio" vs "Mic only" (with the reason when call audio wasn't captured). */
@@ -61,7 +199,7 @@ function CaptureBadge({ info }: { info: MeetingInfo | null }) {
 }
 
 /** Speaker label in its colour; click to rename (everyone but "You"). */
-function SpeakerTag({ who, me, names, onRename }: { who: string; me?: string; names?: string[]; onRename?: (to: string) => void }) {
+function SpeakerTag({ who, me, names, onRename, guess }: { who: string; me?: string; names?: string[]; onRename?: (to: string) => void; guess?: string }) {
   const speakerColor = useSpeakerColor();
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(who);
@@ -92,7 +230,7 @@ function SpeakerTag({ who, me, names, onRename }: { who: string; me?: string; na
       />
     );
   const canRename = !!onRename && who !== "You";
-  return (
+  const tag = (
     <button
       type="button"
       data-testid="speaker-tag"
@@ -111,10 +249,38 @@ function SpeakerTag({ who, me, names, onRename }: { who: string; me?: string; na
       {canRename && <Pencil size={10} className="opacity-0 transition group-hover:opacity-70" />}
     </button>
   );
+  if (!guess || !onRename) return tag;
+  // a name Flo isn't sure of: "Speaker 2 · Rahul?" — one click makes it so
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {tag}
+      <button
+        type="button"
+        data-testid="speaker-tag-guess"
+        title={`Is this ${guess}? Click to confirm.`}
+        onClick={() => onRename(guess)}
+        className="rounded-full border border-dashed border-[var(--border)] px-1.5 text-[11px] font-medium text-muted hover:text-[var(--fg)]"
+      >
+        {guess}?
+      </button>
+    </span>
+  );
 }
 
 /** Transcript rows: a colour bar per speaker, the name shown whenever the speaker changes. */
-function TranscriptRows({ segs, me, names, onRename }: { segs: MeetingSegment[]; me?: string; names?: string[]; onRename?: (from: string, to: string) => void }) {
+function TranscriptRows({
+  segs,
+  me,
+  names,
+  onRename,
+  guesses,
+}: {
+  segs: MeetingSegment[];
+  me?: string;
+  names?: string[];
+  onRename?: (from: string, to: string) => void;
+  guesses?: Record<string, string>;
+}) {
   const speakerColor = useSpeakerColor();
   return (
     <>
@@ -132,7 +298,7 @@ function TranscriptRows({ segs, me, names, onRename }: { segs: MeetingSegment[];
             <span className="w-11 shrink-0 pt-[1px] font-mono text-[11.5px] tabular-nums text-faint">{formatClock(s.t)}</span>
             {who && <span className="w-[3px] shrink-0 rounded-full" style={{ background: speakerColor(who), opacity: 0.75 }} aria-hidden />}
             <div className="min-w-0">
-              {showWho && <SpeakerTag who={who!} me={me} names={names} onRename={onRename ? (to) => onRename(who!, to) : undefined} />}
+              {showWho && <SpeakerTag who={who!} me={me} names={names} guess={guesses?.[who!]} onRename={onRename ? (to) => onRename(who!, to) : undefined} />}
               <div className="text-[13.5px] leading-relaxed selectable">{s.text}</div>
             </div>
           </motion.div>
@@ -148,33 +314,114 @@ function SpeakersBar({
   me,
   info,
   onRename,
+  onConfirm,
+  onToast,
 }: {
   segs: MeetingSegment[];
   me?: string;
   info: MeetingInfo | null;
   onRename: (from: string, to: string) => void;
+  onConfirm?: (label: string) => void;
+  onToast?: (t: { kind: "success" | "info" | "error"; text: string }) => void;
 }) {
   const speakerColor = useSpeakerColor();
+  const [picking, setPicking] = useState<string | null>(null);
+  const [voicesOpen, setVoicesOpen] = useState(false);
   const stats = speakerStats(segs);
   if (stats.length < 2 && !stats.some((s) => s.who !== "You")) return null;
   const suggestions = Object.entries(info?.suggestions ?? {}).filter(([from]) => stats.some((s) => s.who === from));
+  const present = new Set(stats.map((s) => s.who.toLowerCase()));
+  // "Who is this?" candidates: Flo's guess first, then the invite's guests and remembered voices not on the call yet
+  const candidatesFor = (who: string) =>
+    [...new Set([info?.suggestions?.[who], ...(info?.attendees ?? []), ...(info?.knownVoices ?? [])].filter((n): n is string => !!n && !present.has(n.toLowerCase())))].slice(0, 8);
   return (
     <div className="mb-4 flex flex-col gap-2" data-testid="speakers-bar">
       <div className="flex flex-wrap items-center gap-1.5">
-        {stats.map(({ who, share }) => (
-          <span
-            key={who}
-            data-testid="speaker-chip"
-            data-speaker={who}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--glass)] px-2.5 py-1 text-[12px] font-medium"
+        {stats.map(({ who, share }) => {
+          const g = info?.nameInfo?.[who];
+          // a name Flo found itself (voice / screen) and you haven't confirmed yet
+          const found = g && g.source !== "user" && g.name === who;
+          const guess = info?.suggestions?.[who];
+          return (
+            <span
+              key={who}
+              data-testid="speaker-chip"
+              data-speaker={who}
+              className="relative inline-flex items-center gap-1.5 rounded-full bg-[var(--glass)] px-2.5 py-1 text-[12px] font-medium"
+            >
+              <span className="h-2 w-2 rounded-full" style={{ background: speakerColor(who) }} aria-hidden />
+              {who === "You" ? (
+                <span style={{ color: speakerColor(who) }}>{shownName(who, me)}</span>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="speaker-chip-name"
+                  title={`Who is ${who}?`}
+                  className="hover:underline"
+                  style={{ color: speakerColor(who) }}
+                  onClick={() => setPicking(picking === who ? null : who)}
+                >
+                  {shownName(who, me)}
+                </button>
+              )}
+              {who === "You" && me?.trim() && <span className="text-[10.5px] text-faint">you</span>}
+              {guess && (
+                <button
+                  type="button"
+                  data-testid="speaker-guess"
+                  title={`${SOURCE_TEXT[info?.nameInfo?.[who]?.source ?? "intro"]}. Click to confirm.`}
+                  onClick={() => onRename(who, guess)}
+                  className="rounded-full border border-dashed border-[var(--border)] px-1.5 text-[11px] text-muted hover:text-[var(--fg)]"
+                >
+                  {guess}?
+                </button>
+              )}
+              {found && (
+                <>
+                  <Tooltip text={`${SOURCE_TEXT[g.source]} (${Math.round(g.confidence * 100)}% sure)`}>
+                    <span data-testid="speaker-confidence" data-source={g.source} className="text-[10.5px] tabular-nums text-faint">
+                      {g.source === "voice" ? "voice" : g.source === "screen" ? "screen" : g.source} {Math.round(g.confidence * 100)}%
+                    </span>
+                  </Tooltip>
+                  {onConfirm && (
+                    <button
+                      type="button"
+                      data-testid="speaker-confirm"
+                      aria-label={`Confirm ${who}`}
+                      title={`Yes, this is ${who}`}
+                      onClick={() => onConfirm(who)}
+                      className="rounded-full px-1 text-[11px] text-muted hover:bg-[var(--glass)] hover:text-emerald-500"
+                    >
+                      ✓
+                    </button>
+                  )}
+                </>
+              )}
+              <span className="tabular-nums text-faint">{share}%</span>
+              {picking === who && (
+                <SpeakerPicker
+                  who={shownName(who, me)}
+                  candidates={candidatesFor(who)}
+                  onClose={() => setPicking(null)}
+                  onPick={(to) => (to === who ? onConfirm?.(who) : onRename(who, to))}
+                />
+              )}
+            </span>
+          );
+        })}
+        {onToast && (
+          <button
+            type="button"
+            data-testid="voices-open"
+            aria-expanded={voicesOpen}
+            onClick={() => setVoicesOpen((v) => !v)}
+            className="ml-auto rounded-full px-2 py-1 text-[11.5px] text-faint hover:bg-[var(--glass)] hover:text-[var(--fg)]"
           >
-            <span className="h-2 w-2 rounded-full" style={{ background: speakerColor(who) }} aria-hidden />
-            <span style={{ color: speakerColor(who) }}>{shownName(who, me)}</span>
-            {who === "You" && me?.trim() && <span className="text-[10.5px] text-faint">you</span>}
-            <span className="tabular-nums text-faint">{share}%</span>
-          </span>
-        ))}
+            Voices
+          </button>
+        )}
       </div>
+      {voicesOpen && onToast && <VoicesPanel onToast={onToast} />}
       {suggestions.map(([from, to]) => (
         <div
           key={from}
@@ -186,7 +433,7 @@ function SpeakersBar({
             <span className="font-semibold" style={{ color: speakerColor(from) }}>
               {from}
             </span>{" "}
-            sounds like <span className="font-semibold text-[var(--fg)]">{to}</span> from the conversation.
+            sounds like <span className="font-semibold text-[var(--fg)]">{to}</span> {suggestionReason(info?.nameInfo?.[from])}.
           </span>
           <Button size="sm" variant="glass" onClick={() => onRename(from, to)}>
             Name them {to}
@@ -483,8 +730,18 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
   const { go, refreshNotes } = usePick("go", "refreshNotes");
   const writing = useSummaryPending(note);
   const [added, setAdded] = useState<Set<number>>(new Set());
-  const info = useMeetingInfo(note.id, note.transcript);
+  const [infoTick, setInfoTick] = useState(0);
+  const info = useMeetingInfo(note.id, note.transcript, infoTick);
   const me = useStore((s) => s.settings?.userName);
+  const confirm = async (label: string) => {
+    try {
+      await api.confirmSpeaker(note.id, label);
+      setInfoTick((t) => t + 1);
+      onToast({ kind: "success", text: `Confirmed ${label}. Flo will recognize this voice next time.` });
+    } catch (e) {
+      onToast({ kind: "error", text: `Couldn't confirm: ${e}` });
+    }
+  };
   // rename suggestions: voices Flo knows, names the conversation revealed, and the calendar invite's guests
   const names = [...new Set([...(info?.knownVoices ?? []), ...Object.values(info?.suggestions ?? {}), ...(info?.attendees ?? [])])];
   const rename = async (from: string, to: string) => {
@@ -587,7 +844,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
         {note.transcript.some((s) => s.speaker && s.speaker !== "You") && (
           <p className="-mt-1 mb-3 text-[11.5px] text-faint">Click a speaker's name to rename them everywhere in this note.</p>
         )}
-        <SpeakersBar segs={note.transcript} me={me} info={info} onRename={rename} />
+        <SpeakersBar segs={note.transcript} me={me} info={info} onRename={rename} onConfirm={confirm} onToast={onToast} />
         {names.length > 0 && (
           <datalist id="flo-known-voices">
             {names.map((n) => (
@@ -596,7 +853,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
           </datalist>
         )}
         <div className="flex flex-col gap-2.5" data-testid="note-transcript">
-          <TranscriptRows segs={note.transcript} me={me} names={names} onRename={rename} />
+          <TranscriptRows segs={note.transcript} me={me} names={names} onRename={rename} guesses={info?.suggestions} />
         </div>
       </Card>
     </div>

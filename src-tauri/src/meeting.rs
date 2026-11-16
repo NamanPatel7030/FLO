@@ -55,6 +55,13 @@ pub struct MeetingMeta {
     /// speaker names and given to the summary as hints; never applied silently.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attendees: Vec<String>,
+    /// how each name was found (speaker_names.rs): applied / remembered names keyed by the name,
+    /// "Name?" suggestions keyed by the generic label; with confidence and source
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub name_info: BTreeMap<String, crate::speaker_names::NameGuess>,
+    /// active-speaker readings of the meeting window (participant names + times only)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screen: Vec<crate::speaker_names::ScreenObs>,
 }
 
 /// What the Notes UI needs (no embeddings).
@@ -72,6 +79,8 @@ pub struct MeetingInfo {
     pub known_voices: Vec<String>,
     /// guest names from the calendar invite this meeting was started from
     pub attendees: Vec<String>,
+    /// label → how sure Flo is of that name and where it came from (voice / screen / intro…)
+    pub name_info: BTreeMap<String, crate::speaker_names::NameGuess>,
 }
 
 fn load_meta(st: &Shared, note_id: &str) -> Option<MeetingMeta> {
@@ -85,7 +94,7 @@ fn save_meta(st: &Shared, note_id: &str, m: &MeetingMeta) {
 }
 
 pub fn info(st: &Shared, note_id: &str) -> Option<MeetingInfo> {
-    let mut known_voices: Vec<String> = st.db.list_voices().unwrap_or_default().into_iter().map(|v| v.0).collect();
+    let mut known_voices: Vec<String> = crate::speaker_names::known_voices(&st.db).into_iter().map(|v| v.name).collect();
     known_voices.sort_by_key(|n| n.to_lowercase());
     load_meta(st, note_id).map(|m| MeetingInfo {
         capture: m.capture,
@@ -94,16 +103,21 @@ pub fn info(st: &Shared, note_id: &str) -> Option<MeetingInfo> {
         suggestions: m.suggested,
         known_voices,
         attendees: m.attendees,
+        name_info: m.name_info,
     })
 }
 
 fn load_voices(st: &Shared) -> Vec<Voice> {
-    st.db
-        .list_voices()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(name, blob, samples)| Voice { name, embedding: speakers::blob_to_embedding(&blob), samples })
-        .collect()
+    crate::speaker_names::load_voices(&st.db)
+}
+
+/// Guests of the calendar event happening now (Google Calendar cache; no network), without the
+/// user. Used when notes start without an invite (auto-detected call, the island button).
+fn calendar_attendees_now(st: &Shared) -> Vec<String> {
+    if !crate::google::calendar_on(&st.settings().google) {
+        return vec![];
+    }
+    crate::speaker_names::overlapping_event(&crate::google::cached_events(st), chrono::Utc::now()).map(|(_, guests, _)| guests).unwrap_or_default()
 }
 
 pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> Result<Note> {
@@ -112,7 +126,11 @@ pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> R
 
 /// Start meeting notes with the guest names from a calendar invite (google.rs "Take notes").
 pub fn start_with_attendees(st: Shared, title: Option<String>, project_id: Option<String>, attendees: Vec<String>) -> Result<Note> {
-    let attendees = clean_attendees(&attendees);
+    let mut attendees = clean_attendees(&attendees);
+    if attendees.is_empty() {
+        // no invite given: the calendar event happening now names the likely speakers
+        attendees = calendar_attendees_now(&st);
+    }
     if st.meeting.lock().is_some() {
         return Err(anyhow!("A meeting is already being recorded"));
     }
@@ -157,6 +175,19 @@ pub fn start_with_attendees(st: Shared, title: Option<String>, project_id: Optio
     st.emit(ev::MEETING, MeetingEvent { note_id: note.id.clone(), segment: None, summary: None, elapsed_sec: 0.0, live: true, partial: None, partial_speaker: None });
     st.state(Phase::Listening, Mode::Meeting, Some(note.title.clone()));
     Ok(note)
+}
+
+/// After a meeting with Hindi in it, written in Roman letters by Flo's own transliteration: point
+/// to the Hinglish model (Settings → Voice → Meeting notes), unless it's on disk, Hinglish isn't
+/// wanted, or Flo is about to fetch it by itself.
+fn hinglish_model_hint(st: &Shared, hindi_lines: u32) {
+    let s = st.settings();
+    let installed = stt::model_path(&st.models_dir, stt::HINGLISH_MODEL).is_some_and(|p| p.exists());
+    let fetching = stt::hinglish_auto_fetch(&s, stt::this_machine_runs_large(), stt::total_ram_gb(), installed, st.models_dir.join(stt::NO_AUTO_HINGLISH).exists())
+        && stt::free_disk_gb(&st.models_dir).is_none_or(|gb| gb >= stt::HINGLISH_FREE_GB);
+    if hindi_lines > 0 && !installed && !fetching && !stt::meeting_models(&s).is_empty() {
+        st.toast("info", "Hindi was written in Roman letters by Flo. For more precise Hinglish, download Whisper Hinglish in Settings → Voice.".to_string());
+    }
 }
 
 /// Fetch the 28 MB voice model the first time call audio is captured (background, once).
@@ -208,18 +239,39 @@ pub async fn stop(st: Shared) -> Result<Note> {
 /// Messages to the transcription worker.
 enum Msg {
     Job(Job),
-    Finish(tokio::sync::oneshot::Sender<(Vec<CallSeg>, Vec<Cluster>, meetpipe::Stats)>),
+    Finish(tokio::sync::oneshot::Sender<WorkerDone>),
 }
+
+/// What the worker hands back when the meeting stops.
+#[derive(Default)]
+struct WorkerDone {
+    call_segs: Vec<CallSeg>,
+    clusters: Vec<Cluster>,
+    stats: meetpipe::Stats,
+    turns: Vec<crate::speaker_names::Turn>,
+    mic_embs: Vec<Vec<f32>>,
+}
+
+type LiveNamesRef = Arc<parking_lot::Mutex<crate::speaker_names::LiveNames>>;
 
 /// The app's speech engine for the worker thread (on-device Whisper or the cloud STT).
 struct AppStt(Shared);
 
 impl Transcriber for AppStt {
-    fn transcribe(&mut self, samples: &[f32], context: &str, lang: Option<&str>) -> Result<String> {
-        tauri::async_runtime::block_on(session::transcribe_lang(&self.0, samples.to_vec(), context, lang.map(String::from)))
-    }
-    fn detected_lang(&self) -> Option<String> {
-        if self.0.settings().stt_provider == "local" { self.0.whisper.detected_lang() } else { None }
+    fn transcribe(&mut self, samples: &[f32], context: &str, req: &meetpipe::LangReq) -> Result<stt::Heard> {
+        let st = &self.0;
+        let s = st.settings();
+        if s.stt_provider != "local" {
+            // a cloud engine: the language set in Settings, or its own detection
+            let text = tauri::async_runtime::block_on(session::transcribe_lang(st, samples.to_vec(), context, req.fixed.map(String::from)))?;
+            return Ok(stt::Heard { raw: text.clone(), text, lang: req.fixed.unwrap_or_default().to_string() });
+        }
+        let path = stt::model_path(&st.models_dir, &s.stt_model).ok_or_else(|| anyhow!("Unknown speech model {}", s.stt_model))?;
+        *st.whisper.auto_langs.lock() = stt::allowed_languages(&s.auto_languages);
+        // the user's words bias the model, as in dictation (newest first, bounded)
+        let vocab: Vec<String> = st.db.list_dictionary_recent().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
+        let prompt = crate::dictation::stt_prompt(&vocab, context);
+        st.whisper.meeting_clip(&path, samples, req.fixed.unwrap_or("auto"), &prompt, req.hint, req.hindi, req.preview)
     }
 }
 
@@ -247,8 +299,18 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
     }
     let inflight = Arc::new(AtomicUsize::new(0));
     let committed = Arc::new(AtomicUsize::new(0));
+    // speaker naming: who the meeting window shows as speaking while the call track talks
+    let live_names: LiveNamesRef = Arc::new(parking_lot::Mutex::new(crate::speaker_names::LiveNames {
+        attendees: load_meta(&st, &note_id).map(|m| m.attendees).unwrap_or_default(),
+        ..Default::default()
+    }));
+    let call_speaking = Arc::new(AtomicBool::new(false));
+    let mut call_quiet_since = Instant::now();
+    if dual {
+        tauri::async_runtime::spawn(crate::meet_screen::run(live_names.clone(), started, stop.clone(), call_speaking.clone(), settings.attention_denylist.clone()));
+    }
     let (tx, rx) = std::sync::mpsc::channel::<Msg>();
-    if let Err(e) = spawn_worker(st.clone(), note_id.clone(), dual, lang, rx, inflight.clone(), committed.clone(), stop.clone(), started) {
+    if let Err(e) = spawn_worker(st.clone(), note_id.clone(), dual, lang, rx, inflight.clone(), committed.clone(), stop.clone(), started, live_names.clone()) {
         log::error!("meeting worker didn't start: {e}");
     }
     let mut capture = Capture::new(dual);
@@ -277,6 +339,15 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
             vec![]
         };
         let elapsed = started.elapsed().as_secs_f64();
+        // the screen sampler only looks while someone on the call is (or just was) talking
+        if dual {
+            if crate::audio::rms(&call_slice) >= crate::livetx::SPEECH_RMS {
+                call_quiet_since = Instant::now();
+                call_speaking.store(true, Ordering::SeqCst);
+            } else if call_quiet_since.elapsed() > Duration::from_millis(1500) {
+                call_speaking.store(false, Ordering::SeqCst);
+            }
+        }
         let mut jobs = capture.push(&mic_slice, &call_slice, elapsed);
         if stopping {
             jobs.extend(capture.flush());
@@ -299,10 +370,14 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
         if stopping {
             let (otx, orx) = tokio::sync::oneshot::channel();
             let done = if tx.send(Msg::Finish(otx)).is_ok() { orx.await.ok() } else { None };
-            let (call_segs, clusters, stats) = done.unwrap_or_default();
-            log::info!("meeting: finished after {elapsed:.0}s: {}", serde_json::to_string(&stats).unwrap_or_default());
+            let done = done.unwrap_or_default();
+            log::info!("meeting: finished after {elapsed:.0}s: {}", serde_json::to_string(&done.stats).unwrap_or_default());
+            hinglish_model_hint(&st, done.stats.hindi_lines);
+            let screen = live_names.lock().screen.clone();
             if dual {
-                speaker_pass(&st, &note_id, call_segs, clusters, heard_call).await;
+                speaker_pass(&st, &note_id, done, screen, heard_call).await;
+            } else {
+                learn_self_voice(&st, &done.mic_embs);
             }
             finalize(&st, &note_id, elapsed, summarized_upto).await;
             break;
@@ -336,9 +411,11 @@ fn spawn_worker(
     committed: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     started: Instant,
+    live_names: LiveNamesRef,
 ) -> std::io::Result<()> {
     std::thread::Builder::new().name("flo-meeting-stt".into()).spawn(move || {
         let mut p = Processor::new(AppStt(st.clone()), dual, load_voices(&st), lang);
+        p.hindi = stt::HindiScript::from_setting(&st.settings().meeting_hindi);
         let mut next_embedder_try = Instant::now();
         let mut last_error_toast: Option<Instant> = None;
         while let Ok(msg) = rx.recv() {
@@ -352,18 +429,51 @@ fn spawn_worker(
                             log::info!("meeting: speaker model loaded");
                         }
                     }
-                    let changes = p.handle(job);
+                    let seen = p.turns.len();
+                    let mut changes = p.handle(job);
+                    // live names: new turns feed the screen vote; call lines show a confident name
+                    if p.turns.len() > seen {
+                        let mut ln = live_names.lock();
+                        for t in &p.turns[seen..] {
+                            ln.add_turn(t.clone());
+                        }
+                        name_changes(&ln, &mut changes);
+                    } else {
+                        name_changes(&live_names.lock(), &mut changes);
+                    }
                     apply_changes(&st, &note_id, &stop, started.elapsed().as_secs_f64(), changes, &committed, &mut last_error_toast);
                     inflight.fetch_sub(1, Ordering::SeqCst);
                 }
                 Msg::Finish(reply) => {
-                    let _ = reply.send((std::mem::take(&mut p.call_segs), std::mem::take(&mut p.clusters), p.stats.clone()));
+                    let _ = reply.send(WorkerDone {
+                        call_segs: std::mem::take(&mut p.call_segs),
+                        clusters: std::mem::take(&mut p.clusters),
+                        stats: p.stats.clone(),
+                        turns: std::mem::take(&mut p.turns),
+                        mic_embs: std::mem::take(&mut p.mic_embs),
+                    });
                     break;
                 }
             }
         }
     })?;
     Ok(())
+}
+
+/// Live names: a call line / preview labelled "Speaker 2" shows the participant the meeting
+/// window confidently names for that voice ("Rahul"). The post-call pass decides for good.
+pub fn name_changes(names: &crate::speaker_names::LiveNames, changes: &mut [Change]) {
+    for ch in changes.iter_mut() {
+        match ch {
+            Change::Add(s) => {
+                if let Some(sp) = s.speaker.as_mut() {
+                    *sp = names.display(sp);
+                }
+            }
+            Change::Partial { speaker, .. } => *speaker = names.display(speaker),
+            _ => {}
+        }
+    }
 }
 
 /// Write the worker's results into the note and tell the UI.
@@ -385,7 +495,8 @@ fn apply_changes(st: &Shared, note_id: &str, stop: &AtomicBool, elapsed: f64, ch
             }
             Change::Remove(segm) => {
                 if let Ok(Some(mut n)) = st.db.get_note(note_id) {
-                    n.transcript.retain(|s| !(s.t == segm.t && s.text == segm.text && s.speaker == segm.speaker));
+                    // by time + words (the stored label may be a live name, see `name_changes`)
+                    n.transcript.retain(|s| !(s.t == segm.t && s.text == segm.text));
                     let _ = st.db.upsert_note(&n);
                 }
                 st.emit(ev::NOTES, ());
@@ -408,11 +519,14 @@ fn apply_changes(st: &Shared, note_id: &str, stop: &AtomicBool, elapsed: f64, ch
 
 /// After the call: re-cluster all call segments (better than the live, greedy assignment), name
 /// clusters from remembered voices, relabel the transcript and store the clusters for renaming.
-async fn speaker_pass(st: &Shared, note_id: &str, mut segs: Vec<CallSeg>, live_clusters: Vec<Cluster>, heard_call: bool) {
+async fn speaker_pass(st: &Shared, note_id: &str, done: WorkerDone, screen: Vec<crate::speaker_names::ScreenObs>, heard_call: bool) {
+    let WorkerDone { call_segs: mut segs, clusters: live_clusters, turns, mic_embs, .. } = done;
     let mut meta = load_meta(st, note_id).unwrap_or_else(|| MeetingMeta { capture: CAPTURE_DUAL.into(), ..Default::default() });
     if !heard_call {
         meta.capture_note = Some("Call audio was silent. If others spoke, allow Flo in System Settings → Privacy & Security → Screen & System Audio Recording.".into());
     }
+    learn_self_voice(st, &mic_embs);
+    meta.screen = screen.iter().rev().take(3000).rev().cloned().collect();
     let voices = load_voices(st);
     // embeddings for clips recorded before the voice model was ready
     if segs.iter().any(|s| s.emb.is_none() && s.audio.is_some()) {
@@ -426,18 +540,112 @@ async fn speaker_pass(st: &Shared, note_id: &str, mut segs: Vec<CallSeg>, live_c
         .await
         .unwrap_or_default();
     }
-    let Some((final_labels, clusters)) = meetpipe::recluster(&segs, &voices) else {
+    let Some((final_labels, mut clusters)) = meetpipe::recluster(&segs, &voices) else {
         meta.speakers = live_clusters;
         save_meta(st, note_id, &meta);
         return;
     };
     if let Ok(Some(mut n)) = st.db.get_note(note_id) {
         apply_call_labels(&mut n.transcript, &final_labels);
+        let settings = st.settings();
+        let self_names: Vec<String> = [settings.user_name.clone()].into_iter().filter(|s| !s.trim().is_empty()).collect();
+        let named = name_speakers(&mut n.transcript, &mut clusters, &final_labels, &turns, &screen, &voices, &meta.attendees, &self_names);
+        if !named.outcome.apply.is_empty() || !named.outcome.suggest.is_empty() || !named.outcome.demoted.is_empty() {
+            log::info!("meeting: speaker names: {}", serde_json::to_string(&named.outcome).unwrap_or_default());
+        }
+        meta.suggested = named.suggested;
+        meta.name_info = named.name_info;
         let _ = st.db.upsert_note(&n);
     }
     meta.speakers = clusters;
     save_meta(st, note_id, &meta);
     st.emit(ev::NOTES, ());
+}
+
+/// Store / refresh the user's own voice from this meeting's mic track (`SELF_VOICE`), so the call
+/// app playing it back is labelled "You" and never confused with someone else.
+fn learn_self_voice(st: &Shared, mic_embs: &[Vec<f32>]) {
+    let voices = load_voices(st);
+    let stored = voices.iter().find(|v| v.name == crate::speaker_names::SELF_VOICE);
+    if let Some((emb, n)) = crate::speaker_names::self_voice_update(stored, mic_embs) {
+        let _ = st.db.upsert_voice(crate::speaker_names::SELF_VOICE, &speakers::embedding_to_blob(&emb), n);
+    }
+}
+
+/// Result of naming a meeting's speakers.
+#[derive(Debug, Clone, Default)]
+pub struct Named {
+    pub outcome: crate::speaker_names::NamingOutcome,
+    /// generic label → "Name?" (one-click confirm in the note)
+    pub suggested: BTreeMap<String, String>,
+    pub name_info: BTreeMap<String, crate::speaker_names::NameGuess>,
+}
+
+/// After re-clustering: decide names from voice memory, the meeting window, intros and the
+/// calendar (speaker_names::resolve) and write the confident ones into the transcript and the
+/// clusters. Pure (the live pass and the simulator share it).
+#[allow(clippy::too_many_arguments)]
+pub fn name_speakers(
+    transcript: &mut [MeetingSegment],
+    clusters: &mut [Cluster],
+    final_labels: &[(f64, Option<String>)],
+    turns: &[crate::speaker_names::Turn],
+    screen: &[crate::speaker_names::ScreenObs],
+    voices: &[Voice],
+    attendees: &[String],
+    self_names: &[String],
+) -> Named {
+    use crate::speaker_names as sn;
+    // turns with their final labels (call turns by start time; your turns stay "You")
+    let final_turns: Vec<sn::Turn> = turns
+        .iter()
+        .filter_map(|t| {
+            if t.label == YOU {
+                return Some(t.clone());
+            }
+            let l = final_labels.iter().find(|(s, _)| (*s - t.t0).abs() < 1e-6)?.1.clone()?;
+            Some(sn::Turn { label: l, ..t.clone() })
+        })
+        .collect();
+    let input = sn::NamingInput {
+        clusters: clusters.to_vec(),
+        voices: voices.to_vec(),
+        turns: final_turns,
+        screen: screen.to_vec(),
+        lines: transcript.iter().filter_map(|s| Some((s.speaker.clone()?, s.text.clone()))).collect(),
+        attendees: attendees.to_vec(),
+        self_names: self_names.to_vec(),
+    };
+    let outcome = sn::resolve(&input);
+    let mut named = Named { outcome: outcome.clone(), ..Default::default() };
+    let relabel = |from: &str, to: &str, transcript: &mut [MeetingSegment], clusters: &mut [Cluster]| {
+        speakers::relabel(transcript, from, to);
+        for c in clusters.iter_mut().filter(|c| c.label == from) {
+            c.label = to.to_string();
+        }
+    };
+    // remembered names the screen contradicts go back to "Speaker N" (+ a suggestion)
+    let mut suggest = outcome.suggest.clone();
+    for old in outcome.demoted.keys() {
+        let taken: Vec<String> = clusters.iter().map(|c| c.label.clone()).collect();
+        let generic = speakers::next_speaker_label(&taken.iter().map(String::as_str).collect::<Vec<_>>());
+        relabel(old, &generic, transcript, clusters);
+        if let Some(g) = suggest.remove(old) {
+            suggest.insert(generic, g);
+        }
+    }
+    for (label, g) in &outcome.apply {
+        relabel(label, &g.name, transcript, clusters);
+        named.name_info.insert(g.name.clone(), g.clone());
+    }
+    for (label, g) in &outcome.kept {
+        named.name_info.insert(label.clone(), g.clone());
+    }
+    for (label, g) in suggest {
+        named.suggested.insert(label.clone(), g.name.clone());
+        named.name_info.insert(label, g);
+    }
+    named
 }
 
 /// Relabel call segments (matched by start time; mic segments untouched). Segments without a
@@ -477,29 +685,42 @@ pub fn rename_speaker(st: &Shared, note_id: &str, from: &str, to: &str) -> Resul
     if let Some(mut meta) = load_meta(st, note_id) {
         if let Some(i) = meta.speakers.iter().position(|c| c.label == from) {
             let moved = meta.speakers.remove(i);
-            let merged = match meta.speakers.iter_mut().find(|c| c.label == to) {
+            let (moved_centroid, moved_count) = (moved.centroid.clone(), moved.count);
+            match meta.speakers.iter_mut().find(|c| c.label == to) {
                 Some(c) => {
                     c.centroid = speakers::blend(&c.centroid, c.count, &moved.centroid, moved.count);
                     c.count += moved.count;
-                    c.clone()
                 }
-                None => {
-                    let c = Cluster { label: to.clone(), ..moved };
-                    meta.speakers.push(c.clone());
-                    c
-                }
-            };
-            if to != YOU && !merged.centroid.is_empty() {
-                let voices = load_voices(st);
-                let (emb, samples) = match voices.iter().find(|v| v.name == to) {
-                    Some(v) => (speakers::blend(&v.embedding, v.samples, &merged.centroid, merged.count), v.samples + merged.count),
-                    None => (merged.centroid.clone(), merged.count),
-                };
-                st.db.upsert_voice(&to, &speakers::embedding_to_blob(&emb), samples)?;
+                None => meta.speakers.push(Cluster { label: to.clone(), ..moved }),
+            }
+            // naming / confirming a voice trains Flo's voice memory (the moved cluster's share)
+            if to != YOU && !moved_centroid.is_empty() {
+                crate::speaker_names::train_voice(&st.db, &to, &moved_centroid, moved_count)?;
             }
             meta.suggested.remove(from);
+            meta.name_info.remove(from);
+            meta.name_info.insert(to.clone(), crate::speaker_names::NameGuess { name: to.clone(), confidence: 1.0, source: crate::speaker_names::Source::User });
             save_meta(st, note_id, &meta);
-        } else if meta.suggested.remove(from).is_some() {
+        } else if meta.suggested.remove(from).is_some() | meta.name_info.remove(from).is_some() {
+            save_meta(st, note_id, &meta);
+        }
+    }
+    st.emit(ev::NOTES, ());
+    Ok(n)
+}
+
+/// "Yes, that's Rahul": confirm a name Flo found (screen / remembered voice) without renaming it.
+/// Flo remembers the voice under that name and the name counts as the user's.
+pub fn confirm_speaker(st: &Shared, note_id: &str, label: &str) -> Result<Note> {
+    let n = st.db.get_note(note_id)?.ok_or_else(|| anyhow!("note missing"))?;
+    if let Some(mut meta) = load_meta(st, note_id) {
+        if let Some(c) = meta.speakers.iter().find(|c| c.label == label) {
+            if label != YOU && !is_generic_label(label) && !c.centroid.is_empty() {
+                crate::speaker_names::train_voice(&st.db, label, &c.centroid, c.count)?;
+            }
+        }
+        if !is_generic_label(label) {
+            meta.name_info.insert(label.to_string(), crate::speaker_names::NameGuess { name: label.to_string(), confidence: 1.0, source: crate::speaker_names::Source::User });
             save_meta(st, note_id, &meta);
         }
     }
@@ -757,7 +978,7 @@ async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u
     if !cfgl.is_configured() {
         return None;
     }
-    let mut system = prompts::meeting_summary_system(final_pass);
+    let mut system = prompts::meeting_summary_system_in(final_pass, &s.meeting_summary_language);
     system.push_str(&speaker_prompt_extra(&s.user_name, final_pass));
     system.push_str(&attendee_prompt_extra(attendees));
     if !s.system_prompt.trim().is_empty() {
@@ -807,7 +1028,11 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64, summarized_upto: usi
         let names = speaker_name_suggestions(&raw, &n.transcript);
         if !names.is_empty() {
             if let Some(mut meta) = load_meta(st, note_id) {
-                meta.suggested = names;
+                // the speaker pass's own suggestions (screen / intro / calendar) stay; the model
+                // only fills in labels nothing else had a guess for
+                for (label, name) in names {
+                    meta.suggested.entry(label).or_insert(name);
+                }
                 save_meta(st, note_id, &meta);
             }
         }

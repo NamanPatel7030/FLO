@@ -1,8 +1,9 @@
 import type { LocalModel, Settings } from "./types";
 
-/** MB taken by downloaded speech models other than the one in use (what "Free up space" removes). */
-export function unusedModelMb(models: LocalModel[], inUse: string): number {
-  return models.filter((m) => m.installed && m.id !== inUse).reduce((sum, m) => sum + m.sizeMb, 0);
+/** MB taken by downloaded speech models other than the one in use and the ones in `keep` (what
+ *  "Free up space" removes; mirrors stt::unused_installed). */
+export function unusedModelMb(models: LocalModel[], inUse: string, keep: string[] = []): number {
+  return models.filter((m) => m.installed && m.id !== inUse && !keep.includes(m.id)).reduce((sum, m) => sum + m.sizeMb, 0);
 }
 
 /** What a fresh install uses (mirrors stt::DEFAULT_MODEL): Whisper Small, quantized, 190 MB. */
@@ -100,6 +101,30 @@ export function suggestSarvamForGujarati(s: Pick<Settings, "sttProvider" | "lang
 
 export function switchToSarvam(): Partial<Settings> {
   return { sttProvider: "sarvam", sttModel: "saaras:v3" };
+}
+
+/** Hindi or Hinglish is among the languages you speak (mirrors stt::speaks_hindi). */
+export function speaksHindi(s: Pick<Settings, "language" | "autoLanguages">): boolean {
+  if (s.language.startsWith("hi")) return true;
+  return s.language === "auto" && (s.autoLanguages ?? AUTO_LANGUAGES).some((l) => l.startsWith("hi"));
+}
+
+/** The model that writes Hindi in Roman letters (Settings → Voice → Meeting notes). */
+export const HINGLISH_MODEL = "hinglish-apex";
+
+/** Offer the Hinglish model in the meeting notes card: on-device engine, Hindi spoken, Hinglish
+ *  transcripts wanted, and the model not downloaded yet. Without it Flo converts Devanagari to
+ *  Roman letters itself (less precise). */
+export function offerHinglishModel(models: LocalModel[] | null | undefined, s: Pick<Settings, "sttProvider" | "language" | "autoLanguages" | "meetingHindi">): boolean {
+  if (s.sttProvider !== "local" || !speaksHindi(s) || (s.meetingHindi ?? "hinglish") !== "hinglish") return false;
+  const m = models?.find((x) => x.id === HINGLISH_MODEL);
+  return !!m && !m.installed;
+}
+
+/** Models meeting notes use besides the chosen one, which "Free up space" keeps (mirrors
+ *  stt::meeting_models): the Hinglish model while Hindi meetings are written in Hinglish. */
+export function meetingModels(s: Pick<Settings, "sttProvider" | "language" | "autoLanguages" | "meetingHindi">): string[] {
+  return s.sttProvider === "local" && speaksHindi(s) && (s.meetingHindi ?? "hinglish") === "hinglish" ? [HINGLISH_MODEL] : [];
 }
 
 /** Whisper models a clip falls back to, best first (mirrors stt::FALLBACK_MODELS). */

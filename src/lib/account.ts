@@ -15,6 +15,7 @@ export const EV_ACCOUNT = EV.account;
 
 export const accountApi = {
   status: () => invokeRaw<AccountStatus>("account_status"),
+  cached: () => invokeRaw<AccountStatus>("account_status_cached"),
   login: (email: string, password: string) => invokeRaw<AccountUser>("account_login", { email, password }),
   googleStart: () => invokeRaw<{ state: string }>("account_google_start"),
   exchange: (code: string, state?: string) => invokeRaw<AccountUser>("account_exchange", { code, state }),
@@ -70,6 +71,16 @@ export function holdSignInGate(on: boolean) {
 }
 
 export async function refreshAccount(): Promise<AccountStatus | null> {
+  // first paint: the saved sign-in answers at once (no network), so the dashboard isn't held
+  // behind a blank cover while the account server is slow; the full check follows
+  if (!current) {
+    try {
+      current = await accountApi.cached();
+      emit();
+    } catch {
+      /* older backend: wait for the full check */
+    }
+  }
   try {
     current = await accountApi.status();
   } catch {

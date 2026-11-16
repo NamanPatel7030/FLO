@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, demoReady, languageActive, modelHears, nextSpeed, pickLanguage, progressText, routingNote, setupTarget, suggestSarvamForGujarati, switchToSarvam, unusedModelMb } from "./models";
+import { DEFAULT_MODEL, LANGUAGE_CHOICES, advancedModels, demoReady, languageActive, modelHears, nextSpeed, pickLanguage, progressText, routingNote, setupTarget, suggestSarvamForGujarati, switchToSarvam, unusedModelMb, speaksHindi, offerHinglishModel, meetingModels } from "./models";
 import type { LocalModel } from "./types";
 
 const m = (id: string, sizeMb: number, installed: boolean, tier: LocalModel["tier"] = "advanced"): LocalModel => ({ id, label: id, sizeMb, languages: "", installed, tier, speed: "Fast", accuracy: "Good" });
@@ -90,6 +90,34 @@ describe("unusedModelMb", () => {
   });
   it("is zero when only the model in use is installed", () => {
     expect(unusedModelMb([m("large-v3-turbo-q5_0", 574, true), m("small", 488, false)], "large-v3-turbo-q5_0")).toBe(0);
+  });
+  it("leaves out the models meeting notes use", () => {
+    const list = [m("large-v3-turbo-q5_0", 574, true), m("hinglish-apex", 1618, true), m("small", 488, true)];
+    expect(unusedModelMb(list, "large-v3-turbo-q5_0", ["hinglish-apex"])).toBe(488);
+  });
+});
+
+describe("meeting notes in Hindi", () => {
+  const base = { sttProvider: "local" as const, language: "auto", autoLanguages: ["en", "hi", "gu"], meetingHindi: "hinglish" as const };
+  const apex = (installed: boolean) => [m("large-v3-turbo-q5_0", 574, true), m("hinglish-apex", 1618, installed)];
+  it("knows who speaks Hindi", () => {
+    expect(speaksHindi(base)).toBe(true);
+    expect(speaksHindi({ language: "hi-en", autoLanguages: ["en"] })).toBe(true);
+    expect(speaksHindi({ language: "auto", autoLanguages: ["en"] })).toBe(false);
+    expect(speaksHindi({ language: "en", autoLanguages: ["en", "hi"] })).toBe(false);
+  });
+  it("offers the Hinglish model only while it's missing and Hinglish transcripts are wanted", () => {
+    expect(offerHinglishModel(apex(false), base)).toBe(true);
+    expect(offerHinglishModel(apex(true), base)).toBe(false);
+    expect(offerHinglishModel(apex(false), { ...base, meetingHindi: "devanagari" })).toBe(false);
+    expect(offerHinglishModel(apex(false), { ...base, sttProvider: "sarvam" })).toBe(false);
+    expect(offerHinglishModel(apex(false), { ...base, autoLanguages: ["en"] })).toBe(false);
+    expect(offerHinglishModel(null, base)).toBe(false);
+  });
+  it("keeps the Hinglish model out of Free up space while meetings use it", () => {
+    expect(meetingModels(base)).toEqual(["hinglish-apex"]);
+    expect(meetingModels({ ...base, meetingHindi: "english" })).toEqual([]);
+    expect(meetingModels({ ...base, autoLanguages: ["en"] })).toEqual([]);
   });
 });
 

@@ -132,6 +132,10 @@ export const api = {
   meetingInfo: (noteId: string) => call<MeetingInfo | null>("meeting_info", { noteId }),
   /** "Speaker 2" → "Rahul" across the note; Flo remembers the voice for next time */
   renameSpeaker: (noteId: string, from: string, to: string) => call<Note>("rename_speaker", { noteId, from, to }),
+  confirmSpeaker: (noteId: string, label: string) => call<Note>("confirm_speaker", { noteId, label }),
+  listVoices: () => call<import("./types").KnownVoice[]>("list_voices"),
+  forgetVoice: (name: string) => call<boolean>("forget_voice", { name }),
+  mergeVoices: (from: string, into: string) => call<null>("merge_voices", { from, into }),
 
   listDictionary: () => call<DictionaryEntry[]>("list_dictionary"),
   addDictionary: (word: string, replacement?: string) => call<DictionaryEntry>("add_dictionary", { word, replacement }),

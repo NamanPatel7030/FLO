@@ -182,3 +182,27 @@ test("Settings → Voice: specialist models (Parakeet for English, Hinglish) say
   await page.getByRole("button", { name: /^Hinglish/ }).click();
   await expect(page.getByTestId("model-routing-note")).toHaveText("Hinglish goes to Whisper Hinglish (Oriserve Apex), made for it.");
 });
+
+test("Settings → Voice → Meeting notes: Hindi as Hinglish by default, summary language, and the Hinglish model offer", async ({ page }) => {
+  await page.goto("/#/settings/voice");
+  await mock(page);
+  const card = page.getByTestId("meeting-language");
+  await expect(card).toContainText("Hindi in meeting transcripts");
+  const [hindi, summary] = [card.locator("select").nth(0), card.locator("select").nth(1)];
+  await expect(hindi).toHaveValue("hinglish");
+  await expect(card).toContainText("Main kal meeting mein bataunga ki deck ready hai.");
+  await expect(summary).toHaveValue("auto");
+  await expect(page.getByText(/[—–]/)).toHaveCount(0);
+
+  // Auto speaks Hindi and the Hinglish model isn't downloaded: offered here, with progress
+  const offer = card.getByTestId("hinglish-model-offer");
+  await expect(offer).toContainText("Most precise Hinglish");
+  await offer.getByRole("button", { name: "Download" }).click();
+  await expect.poll(async () => (await calls(page, "download_model")).map((a: any) => a.id)).toContain("hinglish-apex");
+  await expect(offer).toHaveCount(0, { timeout: 10_000 });
+
+  await hindi.selectOption("devanagari");
+  await summary.selectOption("match");
+  await expect.poll(async () => (await invoke(page, "get_settings")).meetingHindi).toBe("devanagari");
+  expect((await invoke(page, "get_settings")).meetingSummaryLanguage).toBe("match");
+});

@@ -177,19 +177,31 @@ first, then details. You may answer in plain markdown instead of JSON.",
     }
 }
 
-pub fn meeting_summary_system(final_pass: bool) -> String {
+/// The meeting summary prompt for a summary language setting (Settings → Voice → Meeting notes,
+/// `meeting_summary_language`): "auto" = the meeting's language, but English for a Hindi or
+/// Hinglish meeting; "match" = the meeting's language and script, Hinglish included; "english".
+/// Whatever the language, names, Hindi terms and quotes stay as they were said.
+pub fn meeting_summary_system_in(final_pass: bool, summary_language: &str) -> String {
     let extra = if final_pass {
         "This is the final summary of the whole meeting."
     } else {
         "The meeting is still in progress. Summarize what has been discussed so far."
     };
+    let lang = match summary_language {
+        "english" => "Write the title, summary and action items in English.",
+        "match" => {
+            "Write the title, summary and action items in the language and script of the transcript: a Hinglish meeting (Hindi in Roman letters mixed with English) gets a Hinglish summary in Roman letters, a Devanagari transcript a Devanagari summary, an English one an English summary."
+        }
+        _ => "Write the title, summary and action items in the transcript's language, except for a meeting held mostly in Hindi or Hinglish: write that one in English.",
+    };
     format!(
         "You summarize meeting transcripts. {extra}\n\
 Respond with ONLY JSON: {{\"title\":\"<short title>\",\"summary\":\"<3-6 concise bullet points as markdown '- ' lines>\",\"actionItems\":[\"<owner if known>: <task>\"]}}.\n\
 Transcript lines look like `[mm:ss] Speaker: text`. `You` is the user taking these notes; other names, or `Speaker N`, are the other participants.\n\
+The transcript may be in Hinglish: Hindi written in Roman letters and mixed with English (\"main kal deck bhej dunga\" means \"I'll send the deck tomorrow\"). Read it as Hindi; it is not misspelled English.\n\
 Write every action item as `Owner: task`, using the person who committed to it or was asked to do it (e.g. `Rahul: send the pricing deck by Friday`, `You: review the PR`). If the owner is unclear, write the task without an owner. Never invent names; keep `Speaker N` labels as they are.\n\
 In the summary, attribute decisions and opinions to the people who voiced them.\n\
-Keep the transcript's language. Do not invent facts. No em dashes."
+{lang} Keep names, Hindi terms and anything you quote exactly as they were said, in the transcript's spelling; never translate or respell a name. Do not invent facts. No em dashes."
     )
 }
 
@@ -475,6 +487,19 @@ pub fn clean_phone_answer(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meeting_summary_reads_hinglish_and_keeps_what_was_said() {
+        for lang in ["auto", "match", "english"] {
+            let p = meeting_summary_system_in(true, lang);
+            assert!(p.contains("Hinglish: Hindi written in Roman letters"), "{lang}");
+            assert!(p.contains("never translate or respell a name"), "{lang}");
+            assert!(p.contains("Keep names, Hindi terms and anything you quote exactly as they were said"), "{lang}");
+            assert!(!p.contains('—'), "{lang}");
+        }
+        assert!(meeting_summary_system_in(true, "auto").contains("mostly in Hindi or Hinglish: write that one in English"));
+        assert!(meeting_summary_system_in(true, "match").contains("a Hinglish meeting (Hindi in Roman letters mixed with English) gets a Hinglish summary"));
+        assert!(meeting_summary_system_in(false, "english").contains("in English."));    }
 
     #[test]
     fn parses_assistant_with_bad_action() {

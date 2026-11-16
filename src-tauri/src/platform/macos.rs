@@ -1156,3 +1156,136 @@ pub fn ocr(rgba: &[u8], width: u32, height: u32) -> Option<String> {
 pub fn has_native_ocr() -> bool {
     true
 }
+
+// ── meeting window reading (meet_screen.rs: who is speaking) ───────────────────────────────────
+
+/// Accessibility strings (titles, descriptions, string values) of one window of `pid` (the one
+/// titled `title`, else its main window), within ~150 ms / 4000 nodes. Secure fields are skipped.
+pub fn window_ax_strings(pid: i32, title: &str) -> Vec<String> {
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    let mut out = vec![];
+    if pid <= 0 {
+        return out;
+    }
+    enable_app_accessibility(pid);
+    unsafe {
+        let appel = AXUIElementCreateApplication(pid);
+        if appel.is_null() {
+            return out;
+        }
+        AXUIElementSetMessagingTimeout(appel, 0.25);
+        let mut win: Option<core_foundation::base::CFTypeRef> = None;
+        if !title.is_empty() {
+            if let Some(ws) = ax_copy(appel, "AXWindows") {
+                if let Some(arr) = CFType::wrap_under_create_rule(ws).downcast::<CFArray>() {
+                    for w in arr.iter() {
+                        let w: *const c_void = *w;
+                        if ax_str(w as AXRef, "AXTitle").as_deref() == Some(title) {
+                            core_foundation::base::CFRetain(w);
+                            win = Some(w);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let win = win.or_else(|| ax_copy(appel, "AXMainWindow")).or_else(|| ax_copy(appel, "AXFocusedWindow"));
+        CFRelease(appel as core_foundation::base::CFTypeRef);
+        let Some(win) = win else { return out };
+        let mut nodes = 0u32;
+        ax_collect(win as AXRef, 0, &mut out, &mut nodes, std::time::Instant::now());
+        CFRelease(win);
+    }
+    out
+}
+
+unsafe fn ax_collect(el: AXRef, depth: u32, out: &mut Vec<String>, nodes: &mut u32, t0: std::time::Instant) {
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    let budget = std::time::Duration::from_millis(150);
+    if depth > 40 || *nodes > 4000 || out.len() > 1500 || t0.elapsed() > budget {
+        return;
+    }
+    *nodes += 1;
+    AXUIElementSetMessagingTimeout(el, 0.1);
+    let role = ax_str(el, "AXRole").unwrap_or_default();
+    if role == "AXSecureTextField" || ax_str(el, "AXSubrole").as_deref() == Some("AXSecureTextField") || matches!(role.as_str(), "AXMenuBar" | "AXMenu" | "AXScrollBar") {
+        return;
+    }
+    for attr in ["AXTitle", "AXDescription", "AXValue"] {
+        if let Some(s) = ax_str(el, attr) {
+            if s.chars().count() <= 200 && !out.contains(&s) {
+                out.push(s);
+            }
+        }
+    }
+    if role == "AXStaticText" {
+        return;
+    }
+    let Some(kids) = ax_copy(el, "AXChildren") else { return };
+    let Some(arr) = CFType::wrap_under_create_rule(kids).downcast::<CFArray>() else { return };
+    for k in arr.iter() {
+        let child: *const c_void = *k;
+        ax_collect(child as AXRef, depth + 1, out, nodes, t0);
+        if t0.elapsed() > budget {
+            break;
+        }
+    }
+}
+
+/// On-device OCR (Apple Vision, fast mode) with each line's box in pixels (y grows downward):
+/// (text, x, y, w, h).
+pub fn ocr_lines(rgba: &[u8], width: u32, height: u32) -> Vec<(String, f32, f32, f32, f32)> {
+    use core_graphics::base::{kCGImageAlphaPremultipliedLast, kCGRenderingIntentDefault};
+    use core_graphics::color_space::CGColorSpace;
+    use core_graphics::data_provider::CGDataProvider;
+    use core_graphics::image::CGImage;
+    use foreign_types::ForeignType;
+    let mut out = vec![];
+    if rgba.len() < (width as usize) * (height as usize) * 4 {
+        return out;
+    }
+    let provider = CGDataProvider::from_buffer(std::sync::Arc::new(rgba.to_vec()));
+    let img = CGImage::new(width as usize, height as usize, 8, 32, width as usize * 4, &CGColorSpace::create_device_rgb(), kCGImageAlphaPremultipliedLast, &provider, false, kCGRenderingIntentDefault);
+    unsafe {
+        let handler: *mut AnyObject = msg_send![class!(VNImageRequestHandler), alloc];
+        let empty: Retained<AnyObject> = msg_send![class!(NSDictionary), dictionary];
+        let handler: *mut AnyObject = msg_send![handler, initWithCGImage: img.as_ptr() as *mut c_void, options: &*empty];
+        if handler.is_null() {
+            return out;
+        }
+        let req: *mut AnyObject = msg_send![class!(VNRecognizeTextRequest), new];
+        let _: () = msg_send![req, setRecognitionLevel: 1isize]; // fast: tile names are large and clear
+        let _: () = msg_send![req, setUsesLanguageCorrection: false];
+        let reqs: Retained<AnyObject> = msg_send![class!(NSArray), arrayWithObject: req];
+        let mut err: *mut AnyObject = std::ptr::null_mut();
+        let ok: bool = msg_send![handler, performRequests: &*reqs, error: &mut err];
+        if ok {
+            let results: *mut AnyObject = msg_send![req, results];
+            if !results.is_null() {
+                let n: usize = msg_send![results, count];
+                for i in 0..n.min(400) {
+                    let obs: *mut AnyObject = msg_send![results, objectAtIndex: i];
+                    let cands: *mut AnyObject = msg_send![obs, topCandidates: 1usize];
+                    let cn: usize = if cands.is_null() { 0 } else { msg_send![cands, count] };
+                    if cn == 0 {
+                        continue;
+                    }
+                    let c: *mut AnyObject = msg_send![cands, objectAtIndex: 0usize];
+                    let s: *mut NSString = msg_send![c, string];
+                    if s.is_null() {
+                        continue;
+                    }
+                    // normalised, origin bottom-left
+                    let r: NSRect = msg_send![obs, boundingBox];
+                    let (w, h) = (width as f64, height as f64);
+                    out.push(((*s).to_string(), (r.origin.x * w) as f32, ((1.0 - r.origin.y - r.size.height) * h) as f32, (r.size.width * w) as f32, (r.size.height * h) as f32));
+                }
+            }
+        }
+        let _: () = msg_send![req, release];
+        let _: () = msg_send![handler, release];
+    }
+    out
+}

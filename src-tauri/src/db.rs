@@ -794,6 +794,19 @@ impl Db {
         Ok(())
     }
 
+    /// Forget a remembered voice. Returns whether it existed.
+    pub fn delete_voice(&self, name: &str) -> Result<bool> {
+        Ok(self.conn.lock().execute("DELETE FROM voices WHERE name=?1", [name])? > 0)
+    }
+
+    /// When a remembered voice was last trained: (name, samples, updated_at).
+    pub fn voice_summaries(&self) -> Result<Vec<(String, u32, String)>> {
+        let c = self.conn.lock();
+        let mut st = c.prepare("SELECT name, samples, updated_at FROM voices ORDER BY name")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     // ── dictionary ──────────────────────────────────────────────────────────
     pub fn list_dictionary(&self) -> Result<Vec<DictionaryEntry>> {
         let c = self.conn.lock();
