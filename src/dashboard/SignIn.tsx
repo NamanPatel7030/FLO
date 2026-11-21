@@ -217,7 +217,8 @@ export function SignIn({ status }: { status: AccountStatus }) {
             <span className="text-[16px] font-semibold tracking-tight">Flo</span>
           </div>
 
-          <div className="mx-auto flex w-full max-w-[380px] flex-1 flex-col justify-center py-10">
+          {/* less air on a short window: Linux system fonts run taller and the page scrolled at 1220 x 800 */}
+          <div className="mx-auto flex w-full max-w-[380px] flex-1 flex-col justify-center py-10 [@media(max-height:840px)]:py-4">
             <AnimatePresence mode="wait" initial={false}>
               {done ? (
                 <motion.div key="done" {...slide(1)} className="flex flex-col items-center text-center" data-testid="signin-success" role="status">

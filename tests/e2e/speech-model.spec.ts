@@ -206,3 +206,19 @@ test("Settings → Voice → Meeting notes: Hindi as Hinglish by default, summar
   await expect.poll(async () => (await invoke(page, "get_settings")).meetingHindi).toBe("devanagari");
   expect((await invoke(page, "get_settings")).meetingSummaryLanguage).toBe("match");
 });
+
+test("Settings → Voice: dictated Hindi is typed as Hinglish by default; translating is an explicit choice", async ({ page }) => {
+  await page.goto("/#/settings/voice");
+  await mock(page);
+  const row = page.getByTestId("dictation-hindi");
+  await expect(row).toContainText("Hindi when you dictate");
+  const select = row.locator("select");
+  await expect(select).toHaveValue("hinglish");
+  await expect(row).toContainText("kal meeting mein deck bhej dena");
+  await select.selectOption("english");
+  await expect(row).toContainText("translated into English by your AI model");
+  await expect.poll(async () => (await invoke(page, "get_settings")).dictationHindi).toBe("english");
+  // meeting notes keep their own choice
+  expect((await invoke(page, "get_settings")).meetingHindi).toBe("hinglish");
+  await expect(page.getByText(/[—–]/)).toHaveCount(0);
+});

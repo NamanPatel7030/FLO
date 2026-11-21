@@ -14,3 +14,14 @@ export function splitLive(prev: string, next: string): { stable: string; added: 
   }
   return { stable: next.slice(0, i), added: next.slice(i) };
 }
+
+/** The newest part of a long live line ("…own the release notes"): a clamped live line would
+ *  otherwise keep its first words and hide what is being said right now. Starts at a word. */
+export function tailText(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(t.length - max);
+  const sp = cut.indexOf(" ");
+  const tail = sp >= 0 && sp < cut.length - 1 ? cut.slice(sp + 1) : cut;
+  return "…" + tail;
+}

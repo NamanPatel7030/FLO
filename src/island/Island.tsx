@@ -1202,7 +1202,7 @@ export default function Island() {
           {notch && swollen && !reduce && (
             <span
               className="pointer-events-none absolute bottom-0 left-0 h-px w-1/3"
-              style={{ background: "linear-gradient(90deg, transparent, #e3f6ff, transparent)", animation: "flo-shimmer-x 0.9s ease-out 1" }}
+              style={{ background: "linear-gradient(90deg, rgba(227,246,255,0), #e3f6ff, rgba(227,246,255,0))", animation: "flo-shimmer-x 0.9s ease-out 1" }}
             />
           )}
           {/* Only the current content is rendered (enter animation only). Exit animations could leave

@@ -95,10 +95,15 @@ export function PresenceSidebarCard() {
           {away ? (
             <>
               <Smartphone size={12} className="mt-[1px] shrink-0 text-amber-300" />
-              <span>{info?.signedIn === false ? "Away · sign in to reach your phone" : "Away · notifications go to your phone"}</span>
+              <span>
+                <span className="whitespace-nowrap">Away ·</span> {info?.signedIn === false ? "sign in to reach your phone" : "notifications go to your phone"}
+              </span>
             </>
           ) : (
-            <span>At your {deviceWord()} · no phone alerts</span>
+            // two phrases that each stay whole: a narrow sidebar wraps between them, never as "· no phone alerts"
+            <span>
+              <span className="whitespace-nowrap">At your {deviceWord()} ·</span> <span className="whitespace-nowrap">no phone alerts</span>
+            </span>
           )}
         </motion.div>
       </AnimatePresence>

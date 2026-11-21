@@ -11,7 +11,8 @@
 //! Config keys (`;` between configs, `,` between keys): model (id in the models folder or a path),
 //! lang (auto | en | hi | hi-en | fixed = each clip in its own language), auto (languages Auto
 //! picks from, `|`-separated), prompt (1 = the dictionary words below as the speech model's
-//! prompt), norm (0 = no input gain normalization), beam (beam size; 0/1 = greedy).
+//! prompt), norm (0 = no input gain normalization), beam (beam size; 0/1 = greedy), hindi
+//! (hinglish | devanagari | english: `dictation_hindi`, how Hindi speech is typed).
 //! FLO_DICT_SCENARIOS=clean,quiet,… limits the scenarios; FLO_DICT_ONLY=prefix limits the clips;
 //! FLO_DICT_OUT=report.json writes every row; FLO_DICT_DEBUG=1 prints the sentences decoded while
 //! talking and the language detector's scores; FLO_DICT_DIRECT=1 decodes each recording in one
@@ -19,7 +20,12 @@
 //!
 //! Scenarios: clean (key pressed 0.25 s early, released 0.4 s late), quiet (-30 dB), silence (1.5 s
 //! before, 2 s after), onset (the first 200 ms of speech lost to a late start), noisy (room noise
-//! 10 dB under the voice). All sit on a -65 dBFS room floor, like a real microphone.
+//! 10 dB under the voice), quiet40 / quiet45 (speech at -40 / -45 dBFS, the levels real users'
+//! microphones deliver). All sit on a -65 dBFS room floor, like a real microphone.
+//!
+//! Hindi / Hinglish clips are also scored against their Roman-letter reference ("roman" in the
+//! manifest, `hinglish::wer` / `cer` with spelling folds) and counted as "translated" when typed
+//! as English; the summary has the translation rate, Hinglish WER/CER, English WER and latency.
 use super::*;
 use crate::livetx::Segmenter;
 use crate::stt::bench::{formatted_wer, read_wav, wer};
@@ -39,10 +45,11 @@ struct Config {
     prompt: bool,
     norm: bool,
     beam: u32,
+    hindi: stt::HindiScript,
 }
 
 fn parse_config(spec: &str, models: &std::path::Path) -> Config {
-    let mut c = Config { name: spec.to_string(), model: PathBuf::new(), lang: "auto".into(), auto: vec!["en".into(), "hi".into(), "gu".into()], prompt: false, norm: true, beam: 0 };
+    let mut c = Config { name: spec.to_string(), model: PathBuf::new(), lang: "auto".into(), auto: vec!["en".into(), "hi".into(), "gu".into()], prompt: false, norm: true, beam: 0, hindi: stt::HindiScript::Hinglish };
     let mut model = "small-q5_1".to_string();
     for kv in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
@@ -53,6 +60,7 @@ fn parse_config(spec: &str, models: &std::path::Path) -> Config {
             "prompt" => c.prompt = v != "0",
             "norm" => c.norm = v != "0",
             "beam" => c.beam = v.parse().unwrap_or(0),
+            "hindi" => c.hindi = stt::HindiScript::from_setting(v),
             _ => panic!("unknown config key {k}"),
         }
     }
@@ -110,6 +118,12 @@ fn scenario(name: &str, clip: &[f32]) -> Vec<f32> {
         "clean" => wrap(clip, 0.25, 0.4),
         // speaking softly / far from the mic: 30 dB quieter, same room floor
         "quiet" => wrap(&clip.iter().map(|v| v * db(-30.0)).collect::<Vec<_>>(), 0.25, 0.4),
+        // the speech levels real microphones deliver (-39..-45 dBFS in users' logs)
+        "quiet40" | "quiet45" => {
+            let target = if name == "quiet40" { -40.0 } else { -45.0 };
+            let k = db(target) / speech_rms(clip).max(1e-9);
+            wrap(&clip.iter().map(|v| v * k).collect::<Vec<_>>(), 0.25, 0.4)
+        }
         // a long hold: 1.5 s before the first word, 2 s after the last
         "silence" => wrap(clip, 1.5, 2.0),
         // the first word started as the key went down: the first 200 ms of speech never arrive
@@ -139,7 +153,7 @@ fn run_pipeline(w: &LocalWhisper, c: &Config, mic: &[f32], lang: &str) -> (Strin
     let t_all = std::time::Instant::now();
     if std::env::var_os("FLO_DICT_DIRECT").is_some() {
         // one decode of the whole recording, no streaming (to tell decoder errors from segmentation)
-        let t = w.dictate(&c.model, mic, lang, &stt_prompt(&vocab, "")).unwrap_or_default();
+        let t = w.dictate_as(&c.model, mic, lang, &stt_prompt(&vocab, ""), c.hindi).map(|h| h.text).unwrap_or_default();
         let ms = t_all.elapsed().as_millis();
         return (local_cleanup(&t, &[]), ms, ms);
     }
@@ -151,7 +165,7 @@ fn run_pipeline(w: &LocalWhisper, c: &Config, mic: &[f32], lang: &str) -> (Strin
         }
         if let Some(a) = on_slice(&mut seg, &mut pending, ch) {
             let secs = a.len() as f32 / 16_000.0;
-            if let Ok(t) = w.dictate(&c.model, &a, lang, &stt_prompt(&vocab, &context)) {
+            if let Ok(t) = w.dictate_as(&c.model, &a, lang, &stt_prompt(&vocab, &context), c.hindi).map(|h| h.text) {
                 if keep_chunk(&t, secs) {
                     context = crate::text::truncate_chars(&t, 200);
                     committed.push(t.trim().to_string());
@@ -169,7 +183,7 @@ fn run_pipeline(w: &LocalWhisper, c: &Config, mic: &[f32], lang: &str) -> (Strin
     let t_tail = std::time::Instant::now();
     let tail = if tail_voiced >= MIN_TAIL_VOICED_MS {
         let ctx = committed.last().map(|c| crate::text::truncate_chars(c, 200)).unwrap_or_default();
-        w.dictate(&c.model, &samples, lang, &stt_prompt(&vocab, &ctx)).unwrap_or_default()
+        w.dictate_as(&c.model, &samples, lang, &stt_prompt(&vocab, &ctx), c.hindi).map(|h| h.text).unwrap_or_default()
     } else {
         String::new()
     };
@@ -208,6 +222,11 @@ fn pct(mut v: Vec<u128>, p: usize) -> u128 {
     }
     v.sort();
     v[(v.len() * p / 100).min(v.len() - 1)]
+}
+
+/// A line typed for Hindi speech that is English: Latin letters without any Hindi word in it.
+fn is_translation(text: &str) -> bool {
+    !text.trim().is_empty() && !crate::hinglish::has_devanagari(text) && !crate::hinglish::looks_hinglish(text)
 }
 
 #[test]
@@ -253,7 +272,20 @@ fn dictation_bench() {
                 // formatting (case + punctuation) as pasted, English only (Indic scripts have none)
                 let fmt = if clang == "en" { formatted_wer(expect, &text).min(alt.map(|a| formatted_wer(a, &text)).unwrap_or(f32::MAX)) } else { 0.0 };
                 println!("[{}] {name:8} {sc:8} wer {e:.2} tail {tail_ms:4} ms lang {:?} | {text}", c.name, w.detected_lang());
+                // Hindi / Hinglish speech: typed as Hinglish, in Devanagari, or translated into English?
+                let hindi_speech = clang == "hi" || clang == "hi-en";
+                // typed from the English decoder (a translation, or English-sounding gibberish)
+                let translated = hindi_speech && is_translation(&text) && w.detected_lang().as_deref() == Some("en");
+                let roman = clip["roman"].as_str();
+                let (hwer, hcer) = match roman {
+                    Some(r) => {
+                        let shown = crate::hinglish::to_roman(&text);
+                        (crate::hinglish::wer(r, &shown).min(1.0), crate::hinglish::cer(r, &shown).min(1.0))
+                    }
+                    None => (0.0, 0.0),
+                };
                 let row = json!({
+                    "translated": translated, "devanagari": crate::hinglish::has_devanagari(&text), "hwer": hwer, "hcer": hcer, "roman": roman.is_some(),
                     "config": c.name, "clip": name, "lang": clang, "kind": clip["kind"], "scenario": sc,
                     "secs": (audio_clip.len() as f32 / 1600.0).round() / 10.0, "wer": e, "fmt_wer": fmt, "tail_ms": tail_ms, "total_ms": total_ms,
                     "detected": w.detected_lang(), "empty": text.trim().is_empty(), "text": text,
@@ -281,6 +313,28 @@ fn dictation_bench() {
         sum.insert("hinglish".into(), json!(group(&|r| r["lang"] == "hi-en").0));
         sum.insert("assistant".into(), json!(group(&|r| r["kind"] == "assistant").0));
         sum.insert("all".into(), json!(group(&|_| true).0));
+        // the Hinglish contract: Hindi / Hinglish speech is never typed as an English translation
+        let hindi_rows: Vec<&Value> = cfg_rows.iter().filter(|r| r["lang"] == "hi" || r["lang"] == "hi-en").collect();
+        let n_hi = hindi_rows.len().max(1) as f64;
+        let rate = |k: &str| (hindi_rows.iter().filter(|r| r[k].as_bool().unwrap()).count() as f64 / n_hi * 1000.0).round() / 1000.0;
+        sum.insert("translated".into(), json!(rate("translated")));
+        sum.insert("translated_n".into(), json!(hindi_rows.iter().filter(|r| r["translated"].as_bool().unwrap()).count()));
+        sum.insert("devanagari".into(), json!(rate("devanagari")));
+        let roman_rows: Vec<&Value> = hindi_rows.iter().copied().filter(|r| r["roman"].as_bool().unwrap()).collect();
+        let mean = |rs: &[&Value], k: &str| ((rs.iter().map(|r| r[k].as_f64().unwrap()).sum::<f64>() / rs.len().max(1) as f64) * 1000.0).round() / 1000.0;
+        sum.insert("hinglish_wer".into(), json!(mean(&roman_rows, "hwer")));
+        sum.insert("hinglish_cer".into(), json!(mean(&roman_rows, "hcer")));
+        let en_rows: Vec<&Value> = cfg_rows.iter().filter(|r| r["lang"] == "en").collect();
+        sum.insert("en_wer".into(), json!(mean(&en_rows, "wer")));
+        // latency per clip, all scenarios: total (decode while talking + at release) and at release
+        for (k, rs) in [("en", &en_rows), ("hi", &hindi_rows)] {
+            let total: Vec<u128> = rs.iter().map(|r| r["total_ms"].as_u64().unwrap() as u128).collect();
+            let tail: Vec<u128> = rs.iter().map(|r| r["tail_ms"].as_u64().unwrap() as u128).collect();
+            sum.insert(format!("{k}_total_ms_p50"), json!(pct(total.clone(), 50)));
+            sum.insert(format!("{k}_total_ms_p95"), json!(pct(total, 95)));
+            sum.insert(format!("{k}_tail_ms_p50"), json!(pct(tail.clone(), 50)));
+            sum.insert(format!("{k}_tail_ms_p95"), json!(pct(tail, 95)));
+        }
         sum.insert("empty".into(), json!(cfg_rows.iter().filter(|r| r["empty"].as_bool().unwrap()).count()));
         let clean: Vec<&Value> = cfg_rows.iter().filter(|r| r["scenario"] == "clean").collect();
         sum.insert("tail_ms_p50".into(), json!(pct(clean.iter().map(|r| r["tail_ms"].as_u64().unwrap() as u128).collect(), 50)));
@@ -330,4 +384,10 @@ fn scenarios_shape_the_audio_like_a_microphone() {
     assert!(!audio::is_digital_silence(&scenario("clean", &vec![0.0; 1600])));
     assert_eq!(canon("ten percent of 4 to-do"), "ten percent of four todo");
     assert_eq!(score("Kal meeting hai", Some("कल मीटिंग है"), "कल मीटिंग है।"), 0.0);
+    assert!(is_translation("Send the deck in tomorrow's meeting."));
+    assert!(!is_translation("Kal meeting mein deck bhej dena."));
+    assert!(!is_translation("कल मीटिंग में डेक भेज देना।"));
+    assert!(!is_translation(""));
+    let q = scenario("quiet40", &clip);
+    assert!((audio::dbfs(speech_rms(&q)) + 40.0).abs() < 1.5, "{}", audio::dbfs(speech_rms(&q)));
 }

@@ -836,6 +836,7 @@ pub fn run() {
             e2e::e2e_info,
             e2e::e2e_tray,
             e2e::e2e_close_window,
+            e2e::e2e_seed_note,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

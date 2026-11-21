@@ -84,6 +84,22 @@ pub fn local_cleanup(raw: &str, dict: &[(String, String)]) -> String {
     text::apply_dictionary(&text::basic_cleanup(&base), dict)
 }
 
+/// Does this dictation go to the AI for an English translation? Only when the user asked for it
+/// (`dictation_hindi` = "english") and the text is Hindi or Hinglish; English is left alone.
+pub fn wants_translation(dictation_hindi: &str, text: &str) -> bool {
+    dictation_hindi == "english" && (crate::hinglish::has_devanagari(text) || crate::hinglish::looks_hinglish(text))
+}
+
+/// A cloud engine's transcript in the user's Hindi script: Devanagari Hindi in Roman letters for
+/// Hinglish (Gujarati and the explicitly chosen Hindi language keep their scripts).
+pub fn cloud_hindi(text: &str, language: &str, hindi: stt::HindiScript) -> String {
+    if stt::dictation_script(language, hindi) == stt::HindiScript::Hinglish && crate::hinglish::has_devanagari(text) {
+        crate::hinglish::to_roman(text)
+    } else {
+        text.to_string()
+    }
+}
+
 #[cfg(all(test, feature = "local-stt"))]
 #[path = "dictation_bench.rs"]
 mod bench;
@@ -91,6 +107,28 @@ mod bench;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_hindi_goes_to_the_ai_for_translation_and_only_when_asked() {
+        assert!(wants_translation("english", "Kal meeting mein deck bhej dena."));
+        assert!(wants_translation("english", "कल मीटिंग में डेक भेज देना।"));
+        assert!(!wants_translation("english", "Send the deck by Friday."));
+        assert!(!wants_translation("hinglish", "Kal meeting mein deck bhej dena."));
+        assert!(!wants_translation("devanagari", "कल मीटिंग में डेक भेज देना।"));
+    }
+
+    #[test]
+    fn cloud_hindi_follows_the_dictation_setting() {
+        use stt::HindiScript::*;
+        let deva = "कल मीटिंग में डेक भेज देना।";
+        assert_eq!(cloud_hindi(deva, "auto", Hinglish), "Kal meeting mein deck bhej dena.");
+        // "Translate to English" types the Hinglish transcript first (the AI translates it)
+        assert_eq!(cloud_hindi(deva, "auto", English), "Kal meeting mein deck bhej dena.");
+        assert_eq!(cloud_hindi(deva, "auto", Devanagari), deva);
+        assert_eq!(cloud_hindi(deva, "hi", Hinglish), deva);
+        assert_eq!(cloud_hindi("હું કાલે આવીશ", "auto", Hinglish), "હું કાલે આવીશ");
+        assert_eq!(cloud_hindi("Send it.", "auto", Hinglish), "Send it.");
+    }
 
     #[test]
     fn prompt_has_dictionary_then_context() {

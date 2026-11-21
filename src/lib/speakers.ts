@@ -61,3 +61,12 @@ export function speakerStats(segs: MeetingSegment[]): { who: string; share: numb
   const total = [...words.values()].reduce((a, b) => a + b, 0) || 1;
   return [...words.entries()].map(([who, n]) => ({ who, share: Math.round((n / total) * 100) }));
 }
+
+/** "hi" for a line with Devanagari, "gu" for Gujarati script, else undefined (Roman Hinglish is
+ *  plain text). Set as `lang` so the system picks a proper Indic font and the line gets room for
+ *  matras above and below. */
+export function indicLang(text: string): "hi" | "gu" | undefined {
+  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu";
+  return undefined;
+}

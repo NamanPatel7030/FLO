@@ -176,6 +176,16 @@ pub fn e2e_close_window(app: tauri::AppHandle, label: String) -> Result<(), Stri
     app.get_webview_window(&label).ok_or("no such window")?.close().map_err(|e| e.to_string())
 }
 
+/// Store a note as a finished meeting would (screenshot tours seed a transcript with speakers,
+/// a summary and action items without needing a call or an AI model).
+#[tauri::command]
+pub fn e2e_seed_note(st: tauri::State<'_, crate::state::Shared>, note: crate::model::Note) -> Result<(), String> {
+    guard()?;
+    st.db.upsert_note(&note).map_err(|e| e.to_string())?;
+    st.emit(crate::model::ev::NOTES, ());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

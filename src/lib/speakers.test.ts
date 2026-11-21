@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shownName, speakerColor, speakerPalette, speakerStats, splitOwner } from "./speakers";
+import { indicLang, shownName, speakerColor, speakerPalette, speakerStats, splitOwner } from "./speakers";
 
 describe("speaker helpers", () => {
   it("shows your own name for You, everyone else as labelled", () => {
@@ -47,5 +47,13 @@ describe("speaker helpers", () => {
       { who: "Speaker 1", share: 60 },
     ]);
     expect(speakerStats([])).toEqual([]);
+  });
+
+  it("tags Hindi / Gujarati lines so the right font and line height apply (Hinglish in Roman stays plain)", () => {
+    expect(indicLang("हाँ, नए कार्ड्स काफ़ी साफ़ दिख रहे हैं।")).toBe("hi");
+    expect(indicLang("बस dark mode में contrast check करना है")).toBe("hi");
+    expect(indicLang("હા, કાર્ડ્સ સરસ લાગે છે")).toBe("gu");
+    expect(indicLang("Haan theek hai, main kal tak kar dungi")).toBeUndefined();
+    expect(indicLang("")).toBeUndefined();
   });
 });

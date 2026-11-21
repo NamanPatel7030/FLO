@@ -83,11 +83,12 @@ fn norm_word(w: &str) -> String {
     w.to_lowercase().replace('’', "'")
 }
 
-/// An everyday English word: never corrected into a term and never extracted as one.
+/// An everyday English word, or Hindi word in Hinglish spelling ("kal", "bhej"): never corrected
+/// into a term and never extracted as one.
 pub fn is_common(w: &str) -> bool {
     let w = norm_word(w);
     let l = lexicon();
-    l.words.contains(w.as_str()) || l.extra.contains(w.as_str())
+    l.words.contains(w.as_str()) || l.extra.contains(w.as_str()) || crate::hinglish::is_common_word(&w)
 }
 
 fn is_function(w: &str) -> bool {
@@ -1492,6 +1493,16 @@ mod tests {
         let ctx = ScreenContext { app: "Mail".into(), terms: extract_terms("Will Turner\nMark Evans\nMay Chen", 50), ..Default::default() };
         let set = build(&Settings::default(), "Mail", Some(&ctx), &[], &[], &[], None).terms;
         assert_eq!(correct("I will mark it, may be", &set).0, "I will mark it, may be");
+    }
+
+    #[test]
+    fn never_turns_hinglish_words_into_screen_terms() {
+        // names on screen that sound like everyday Hindi words
+        let ctx = ScreenContext { app: "Slack".into(), terms: extract_terms("Kali Shah\nBhejan Rao\nDeena Mehta\nMaine Labs\nKyah", 50), ..Default::default() };
+        let set = build(&Settings::default(), "Slack", Some(&ctx), &[], &[], &[], None).terms;
+        for s in ["Kal meeting mein deck bhej dena.", "Main thoda busy hoon, kal baat karte hain.", "Kya tum aaj ghar pe ho?"] {
+            assert_eq!(correct(s, &set).0, s, "changed: {s}");
+        }
     }
 
     #[test]

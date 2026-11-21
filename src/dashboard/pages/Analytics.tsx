@@ -60,7 +60,9 @@ export default function Analytics() {
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-6 gap-3">
+          {/* six across only when they fit whole ("18h 57m" wrapped to two lines in a small window,
+              and at the default 1220 px with Linux's wider system font) */}
+          <div className="grid grid-cols-3 gap-3 min-[1360px]:grid-cols-6" data-testid="analytics-stats">
             <Stat label="Words" value={formatNumber(a.totalWords)} icon={<Type size={13} />} tint="#93ddff" />
             <Stat label="Avg speed" value={`${a.avgWpm}`} sub="words / min" icon={<Gauge size={13} />} tint="#66ceff" />
             <Stat label="Time saved" value={formatDuration(a.minutesSaved * 60)} icon={<Clock size={13} />} tint="#34d399" />

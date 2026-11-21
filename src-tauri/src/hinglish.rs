@@ -576,6 +576,13 @@ pub fn looks_hinglish(s: &str) -> bool {
     s.split_whitespace().map(|w| w.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect::<String>()).any(|w| MARKERS.contains(&w.as_str()))
 }
 
+/// An everyday Hindi word as Hinglish spells it ("kal", "mein", "bhej", "chahiye"): never a
+/// misheard name, so the learned-term corrector leaves it alone (`learning::is_common`).
+pub fn is_common_word(w: &str) -> bool {
+    let w: String = w.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
+    !w.is_empty() && (MARKERS.contains(&w.as_str()) || WORDS.iter().any(|(_, r)| *r == w))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

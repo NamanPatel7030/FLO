@@ -1,6 +1,7 @@
 // Assistant page: ordering, threads and scroll logic (pure; unit-tested in assistantThreads.test.ts).
 import { parseTime } from "./format";
-import type { AssistantResponse, AssistantThread } from "./types";
+import { os } from "./os";
+import type { AssistantResponse, AssistantThread, Platform } from "./types";
 
 /** What the conversation pane shows: one thread, every exchange, or an empty new thread. */
 export type ThreadView = { kind: "thread"; id: string } | { kind: "all" } | { kind: "new" };
@@ -44,8 +45,10 @@ export function upsertThread(threads: AssistantThread[], r: AssistantResponse, a
 
 const SOURCES: Record<string, string> = { notch: "Notch", typed: "Typed", phone: "Phone", agent: "Flo Agent", skill: "Skill" };
 
-/** Human label for where a request came from (null for old exchanges logged before sources). */
-export function sourceLabel(source: string | undefined | null): string | null {
+/** Human label for where a request came from (null for old exchanges logged before sources).
+ *  "notch" requests came from the pill on Windows / Linux. */
+export function sourceLabel(source: string | undefined | null, p: Platform = os()): string | null {
+  if (source === "notch" && p !== "macos") return "Pill";
   return (source && SOURCES[source]) || null;
 }
 

@@ -132,7 +132,8 @@ export function FlowWave({ width, height = 16, kind = "transcribe" }: { width: n
           aria-hidden
           className="pointer-events-none absolute inset-y-0 left-0 w-1/4"
           style={{
-            background: "linear-gradient(90deg, transparent, rgba(227,246,255,0.22), transparent)",
+            // stops of the same colour at 0 alpha: "transparent" (black at 0) drew a dark band on Linux
+            background: "linear-gradient(90deg, rgba(227,246,255,0), rgba(227,246,255,0.22), rgba(227,246,255,0))",
             animation: `flo-sweep ${dur * 1.6}s linear infinite`,
             willChange: "transform",
           }}

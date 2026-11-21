@@ -1,6 +1,7 @@
 // Light pastel sky behind setup: a few big blurred blobs (blue, lilac, mint, peach) drifting
 // slowly. GPU-only (transform on blurred layers); still under prefers-reduced-motion.
 import { motion, useReducedMotion } from "motion/react";
+import { os } from "../../lib/os";
 
 const BLOBS = [
   { c: "#a9dcff", x: "8%", y: "6%", s: 620, d: 28 },
@@ -12,11 +13,15 @@ const BLOBS = [
 
 /** `hue` shifts the sky a little per chapter so the journey feels like it moves somewhere. */
 export function Sky({ hue = 0 }: { hue?: number }) {
-  const reduce = useReducedMotion();
+  // Linux: WebKitGTK paints a filter over the whole window and endlessly drifting layers on the
+  // CPU on many setups; there every setup step faded in seconds late (the real-app screenshots
+  // showed the previous step still ghosting over the next one). A still sky looks the same.
+  const linux = os() === "linux";
+  const reduce = useReducedMotion() || linux;
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
       <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, #f8f9fd, #f2f4fb)" }} />
-      <motion.div className="absolute inset-0" animate={{ filter: `hue-rotate(${hue}deg)` }} transition={{ duration: 1.6, ease: "easeInOut" }}>
+      <motion.div className="absolute inset-0" animate={linux ? undefined : { filter: `hue-rotate(${hue}deg)` }} transition={{ duration: 1.6, ease: "easeInOut" }}>
         {BLOBS.map((b, i) => (
           <motion.div
             key={i}
@@ -30,7 +35,7 @@ export function Sky({ hue = 0 }: { hue?: number }) {
               marginTop: -b.s / 2,
               background: `radial-gradient(circle, ${b.c} 0%, ${b.c}00 68%)`,
               opacity: 0.95,
-              willChange: "transform",
+              willChange: reduce ? undefined : "transform",
             }}
             animate={reduce ? undefined : { x: [0, 50, -36, 0], y: [0, -34, 26, 0], scale: [1, 1.1, 0.95, 1] }}
             transition={reduce ? undefined : { duration: b.d, repeat: Infinity, ease: "easeInOut" }}

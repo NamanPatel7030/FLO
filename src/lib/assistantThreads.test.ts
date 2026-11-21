@@ -71,7 +71,10 @@ describe("upsertThread", () => {
 
 describe("sourceLabel / isNearBottom", () => {
   it("labels where a request came from", () => {
-    expect(sourceLabel("notch")).toBe("Notch");
+    expect(sourceLabel("notch", "macos")).toBe("Notch");
+    // Windows / Linux have a floating pill, not a notch
+    expect(sourceLabel("notch", "windows")).toBe("Pill");
+    expect(sourceLabel("notch", "linux")).toBe("Pill");
     expect(sourceLabel("typed")).toBe("Typed");
     expect(sourceLabel("phone")).toBe("Phone");
     expect(sourceLabel("agent")).toBe("Flo Agent");

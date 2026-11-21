@@ -10,6 +10,8 @@ import type { MeetingInfo } from "./Island";
 import { copyText } from "../lib/clipboard";
 import { speakerPalette } from "../lib/speakers";
 import { CardRow } from "./CardRow";
+import { LiveTail } from "./LiveTail";
+import { tailText } from "../lib/liveText";
 import { isSignInError } from "../lib/account";
 import { NotchViz } from "./Ribbon";
 import { isLongReply, toPlainText } from "../lib/markdown";
@@ -470,10 +472,25 @@ export function IslandContent(p: Props) {
             }
             right={<Waveform bars={10} height={14} barWidth={2.5} color="red" />}
           />
-          <div className={"truncate text-[12px] " + (notch ? "px-5 pb-2" : "px-4 pb-2")} data-testid="island-live-line">
-            <span className={p.meeting.partial ? "text-white/70" : "text-white/55"}>{p.meeting.partial || p.meeting.lastLine || ""}</span>
+          {/* the newest words stay in view: the start slides out under a fade, never "…" */}
+          <LiveTail
+            testId="island-live-line"
+            className={"text-[12px] leading-[18px] " + (notch ? "px-5 pb-2" : "px-5 pb-2.5")}
+            lead={(() => {
+              const who = p.meeting.partial ? p.meeting.partialSpeaker : p.meeting.lines?.[p.meeting.lines.length - 1]?.speaker;
+              const color = speakerPalette([...(p.meeting.lines ?? []).map((l) => l.speaker), p.meeting.partialSpeaker]);
+              return (
+                who && (
+                  <span className="mr-1 inline-block max-w-[9rem] truncate align-bottom font-semibold" style={{ color: color(who) }} data-testid="island-live-speaker">
+                    {who}
+                  </span>
+                )
+              );
+            })()}
+          >
+            <span className={p.meeting.partial ? "text-white/75" : "text-white/55"}>{p.meeting.partial || p.meeting.lastLine || ""}</span>
             <span className="flo-caret" aria-hidden />
-          </div>
+          </LiveTail>
         </div>
       );
 
@@ -535,7 +552,8 @@ export function IslandContent(p: Props) {
                               {p.meeting.partialSpeaker}
                             </span>
                           )}
-                          {p.meeting.partial || p.meeting.lastLine}
+                          {/* the newest words: a two-line clamp kept the first words and hid what's being said now */}
+                          {tailText(p.meeting.partial || p.meeting.lastLine || "", 84)}
                           <span className="flo-caret" aria-hidden />
                         </p>
                       )}
@@ -673,7 +691,7 @@ export function IslandContent(p: Props) {
             </>
           }
         >
-          <button className="block w-full min-w-0 text-left" onClick={() => p.onReminder("open")} title="Open in To-dos">
+          <button className="block w-full min-w-0 text-left" onClick={() => p.onReminder("open")} title={`${t.title} · Open in To-dos`}>
             <span className="block truncate text-[13px] font-semibold">
               Reminder <span className="font-normal text-white/50">· {when}</span>
             </span>

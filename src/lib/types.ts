@@ -84,6 +84,10 @@ export interface Settings {
   autoLanguages?: string[];
   /** how Hindi speech is written in meeting transcripts (default "hinglish": Roman letters) */
   meetingHindi?: MeetingHindi;
+  /** how Hindi / Hinglish speech is typed by dictation and heard by the assistant (default
+   *  "hinglish": Roman letters). "english" = an accurate Hinglish transcript translated by the
+   *  cleanup AI (dictation only; needs an AI provider). */
+  dictationHindi?: MeetingHindi;
   /** language of meeting summaries and action items (default "auto") */
   meetingSummaryLanguage?: MeetingSummaryLanguage;
   llmProvider: LlmProvider;

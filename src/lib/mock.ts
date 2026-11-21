@@ -81,6 +81,7 @@ const settings: Settings = {
   language: "auto",
   autoLanguages: ["en", "hi"],
   meetingHindi: "hinglish",
+  dictationHindi: "hinglish",
   meetingSummaryLanguage: "auto",
   llmProvider: "ollama",
   llmModel: "qwen3:8b",
@@ -331,6 +332,35 @@ const notes: Note[] = [
     transcript: [{ t: 0, text: "What if I could say daily wrap-up and it summarizes every project and drafts my standup." }],
   },
 ];
+// ?crowd=1 adds a long all-hands: many speakers, very long names, Hindi + Hinglish, an hour+ of times
+// (layout tests for speaker chips, the pinned legend and Devanagari line height)
+if (typeof location !== "undefined" && new URLSearchParams(location.search).has("crowd")) {
+  const people = ["You", "Rahul", "Anastasia Konstantinopoulou-Whitfield", "Speaker 1", "Speaker 2", "Speaker 3", "Meera Iyer", "Dr. Bartholomew Montgomery-Ashworth III", "Speaker 4", "Priya"];
+  const lines = [
+    "Okay, let's go through the quarterly numbers first.",
+    "हाँ, नए कार्ड्स काफ़ी साफ़ दिख रहे हैं, बस dark mode में contrast check करना है।",
+    "Haan theek hai, main kal tak component library final kar dungi.",
+    "I think the onboarding drop-off is mostly the permissions step on Windows.",
+    "मुझे लगता है हमें release notes भी इसी हफ़्ते भेज देने चाहिए।",
+    "Can we get the Linux build into the beta channel before the twentieth?",
+  ];
+  notes.unshift({
+    id: "n9",
+    title: "Quarterly all-hands with Northwind, Apollo, the platform team and our new partners in Bengaluru",
+    kind: "meeting",
+    durationSec: 4100,
+    createdAt: iso(20),
+    live: false,
+    summary: "Numbers are up 18% quarter on quarter. The Windows onboarding drop-off is the permissions step; Meera owns the fix. Linux beta targets the 20th.",
+    actionItems: [
+      "Meera Iyer: fix the Windows permissions step",
+      "Anastasia Konstantinopoulou-Whitfield: final component library by Monday",
+      "राहुल: release notes भेजना",
+      "Ship the Linux beta",
+    ],
+    transcript: Array.from({ length: 40 }, (_, i) => ({ t: 30 + i * 100, text: lines[i % lines.length], speaker: people[i % people.length] })),
+  });
+}
 
 const APPS = ["Slack", "Gmail", "Cursor", "Notion", "WhatsApp", "Linear", "Chrome"];
 const history: Dictation[] = Array.from({ length: 28 }, (_, i) => {

@@ -12,7 +12,7 @@ import { EV, ACCENT_PRESETS, type DictionaryEntry, type KeyProvider, type LocalM
 import { NotchViz } from "../../island/Ribbon";
 import { broadcastNotchPreview, deriveGradient, normalizeHex } from "../../lib/theme";
 import { useStore, usePick, usePageArg } from "../store";
-import { Button, Card, CardTitle, FieldHelp, InfoDot, Input, PageHeader, Select, Skeleton, Toggle } from "../ui";
+import { Button, Card, CardTitle, FieldHelp, InfoDot, Input, PageHeader, Select, Skeleton, Toggle, useEdgeFade } from "../ui";
 import { About } from "../About";
 import { Integrations } from "../Integrations";
 import { AiProviderFields, PROVIDERS } from "../AiSetup";
@@ -53,6 +53,7 @@ export default function Settings() {
   }, [pageArg]); // eslint-disable-line react-hooks/exhaustive-deps
   // keep the selected tab in view when the tab row scrolls (narrow window)
   const tabBar = useRef<HTMLDivElement>(null);
+  useEdgeFade(tabBar);
   useEffect(() => {
     const center = () => {
       const bar = tabBar.current;
@@ -79,7 +80,7 @@ export default function Settings() {
       <PageHeader title="Settings" subtitle="Everything runs on your machine. Bring your own keys only if you want cloud models." />
       {/* one row, never wider than the page: it scrolls sideways in a narrow window (it used to push
           the whole page into a horizontal scroll at the minimum window size) */}
-      <div ref={tabBar} data-testid="settings-tabs" className="no-scrollbar glass mb-5 flex w-fit max-w-full overflow-x-auto rounded-xl p-1">
+      <div ref={tabBar} data-testid="settings-tabs" className="no-scrollbar edge-fade glass mb-5 flex w-fit max-w-full overflow-x-auto rounded-xl p-1">
         {TABS.map((t) => (
           <button
             key={t}
@@ -986,7 +987,7 @@ function Voice({ s, set }: P) {
 
       <Card className="p-4">
         <CardTitle icon={<Mic size={15} />}>Language you speak</CardTitle>
-        <FieldHelp>Auto picks English or Hindi for each dictation (Auto + Gujarati adds Gujarati). English is always written in English letters, Hindi in Devanagari and Gujarati in Gujarati script. Pick Hinglish to get Hindi in Roman letters.</FieldHelp>
+        <FieldHelp>Auto picks English or Hindi for each dictation (Auto + Gujarati adds Gujarati). English is always written in English letters and Gujarati in Gujarati script; how Hindi is typed is set below. Flo never turns what you said into a different language unless you ask it to.</FieldHelp>
         {[false, true].map((more) => (
           <div key={String(more)} className={clsx("flex flex-wrap gap-2", more ? "mt-2" : "mt-3")}>
             {LANGUAGE_CHOICES.filter((l) => !!l.more === more).map((l) => {
@@ -1018,6 +1019,30 @@ function Voice({ s, set }: P) {
             <Button size="sm" onClick={() => set(switchToSarvam())}>
               Switch to Sarvam AI
             </Button>
+          </div>
+        )}
+        {speaksHindi(s) && (
+          <div className="mt-3 border-t border-[var(--border)]" data-testid="dictation-hindi">
+            <Row
+              label="Hindi when you dictate"
+              hint={
+                (s.dictationHindi ?? "hinglish") === "hinglish"
+                  ? "Typed as you said it, in Roman letters: “kal meeting mein deck bhej dena”."
+                  : s.dictationHindi === "devanagari"
+                    ? "Typed in Devanagari: “कल मीटिंग में डेक भेज देना”."
+                    : "Heard as Hinglish, then translated into English by your AI model (Settings → AI). Without one, Flo types the Hinglish."
+              }
+            >
+              <Select<MeetingHindi>
+                value={s.dictationHindi ?? "hinglish"}
+                onChange={(v) => set({ dictationHindi: v })}
+                options={[
+                  { value: "hinglish", label: "Hinglish (Roman letters)" },
+                  { value: "devanagari", label: "Devanagari" },
+                  { value: "english", label: "Translate to English" },
+                ]}
+              />
+            </Row>
           </div>
         )}
       </Card>

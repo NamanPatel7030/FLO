@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import clsx from "clsx";
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode, type RefObject } from "react";
 import { HelpCircle } from "lucide-react";
 import type { ProjectStatus, TodoSource } from "../lib/types";
 
@@ -270,7 +270,7 @@ export function Stat({ label, value, sub, icon, tint }: { label: string; value: 
         </span>
         {label}
       </div>
-      <div className="mt-2.5 text-[26px] font-semibold tracking-tight tabular-nums">{value}</div>
+      <div className="mt-2.5 whitespace-nowrap text-[26px] font-semibold tracking-tight tabular-nums">{value}</div>
       {sub && <div className="mt-0.5 text-[11.5px] text-faint">{sub}</div>}
     </Card>
   );
@@ -282,4 +282,29 @@ export function Kbd({ children }: { children: ReactNode }) {
       {children}
     </kbd>
   );
+}
+
+/** A row that scrolls sideways fades out at the edge(s) with more to see, instead of cutting a label
+ *  in half ("eral" … "Ab"). Sets data-fade="start" | "end" | "both" for the .edge-fade class. */
+export function useEdgeFade(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      const start = el.scrollLeft > 1;
+      const end = max - el.scrollLeft > 1;
+      const v = start && end ? "both" : start ? "start" : end ? "end" : "";
+      if (v) el.dataset.fade = v;
+      else delete el.dataset.fade;
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [ref]);
 }

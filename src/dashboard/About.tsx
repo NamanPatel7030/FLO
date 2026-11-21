@@ -516,7 +516,7 @@ export function About() {
 
       {/* attribution the model licences ask for (CC-BY-4.0 for Parakeet) */}
       <p className="mx-auto max-w-[620px] text-center text-[11px] leading-relaxed text-faint" data-testid="about-models">
-        Speech models: Whisper by OpenAI (MIT) via whisper.cpp; Whisper Hindi2Hinglish Apex by Oriserve (Apache-2.0); Parakeet TDT 0.6B v2 by NVIDIA, licensed under CC-BY-4.0. Speaker separation by sherpa-onnx. Word list from SCOWL by Kevin Atkinson.
+        Speech models: Whisper by OpenAI (MIT) via whisper.cpp; Whisper Hindi2Hinglish Apex by Oriserve (Apache-2.0); Parakeet TDT 0.6B v2 by NVIDIA, licensed under CC-BY-4.0. Speaker separation by sherpa-onnx. Word list from SCOWL by Kevin Atkinson. Noto Sans Devanagari and Gujarati fonts by Google (SIL Open Font License).
       </p>
     </div>
   );

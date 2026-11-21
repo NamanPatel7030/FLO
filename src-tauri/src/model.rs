@@ -70,6 +70,10 @@ pub struct Settings {
     /// how meeting notes write Hindi speech: "hinglish" (Roman letters, the default) |
     /// "devanagari" | "english" (translated) — `stt::HindiScript`
     pub meeting_hindi: String,
+    /// how dictation and the assistant write Hindi / Hinglish speech: "hinglish" (Roman letters,
+    /// the default) | "devanagari" | "english" (an accurate Hinglish transcript, then translated
+    /// by the cleanup AI; dictation only) — `stt::HindiScript`. Never a speech-model translation.
+    pub dictation_hindi: String,
     /// language of meeting summaries and action items: "auto" (the meeting's, but English for
     /// Hindi / Hinglish meetings) | "match" | "english" — `prompts::meeting_summary_system_in`
     pub meeting_summary_language: String,
@@ -229,6 +233,7 @@ impl Default for Settings {
             language: "auto".into(),
             auto_languages: crate::stt::DEFAULT_AUTO_LANGUAGES.iter().map(|l| l.to_string()).collect(),
             meeting_hindi: "hinglish".into(),
+            dictation_hindi: "hinglish".into(),
             meeting_summary_language: "auto".into(),
             llm_provider: "ollama".into(),
             llm_model: "qwen3:8b".into(),

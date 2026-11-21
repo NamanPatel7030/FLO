@@ -51,7 +51,25 @@ clips = [
  ("d_hi3", "Lekha", "hi", "dictation", "आज बारिश बहुत तेज़ है, इसलिए मैं घर से काम करूँगा।", None),
  ("d_hien1", "Rishi", "hi-en", "dictation", "Bhai, aaj ka standup thoda late karte hain, mujhe ek client call hai.", "भाई, आज का स्टैंडअप थोड़ा लेट करते हैं, मुझे एक क्लाइंट कॉल है।"),
  ("d_hien2", "Lekha", "hi-en", "dictation", "Kal subah tak deck final kar dena, aur Rahul ko email bhi kar dena.", "कल सुबह तक डेक फाइनल कर देना, और राहुल को ईमेल भी कर देना।"),
+ # Hinglish the way people dictate it (Rishi reading Roman letters): must come out as Hinglish, never translated
+ ("hien_r3", "Rishi", "hi-en", "dictation", "Kal meeting mein deck bhej dena.", None),
+ ("hien_r4", "Rishi", "hi-en", "dictation", "Yaar, mujhe lagta hai ki humein yeh feature next week tak ship karna chahiye.", None),
+ ("hien_r5", "Rishi", "hi-en", "dictation", "Aaj shaam ko main thoda busy hoon, kal baat karte hain.", None),
+ ("hien_r6", "Rishi", "hi-en", "assistant", "Kal subah Priya ko call karna yaad dila dena.", None),
 ]
+
+# Hindi and Hinglish clips in Roman letters: what Flo types for them by default (Hinglish),
+# scored with the meeting harness's spelling folds (`hinglish::wer` / `cer`).
+roman = {
+    "hi1": "Kal subah das baje meeting hai, sabko yaad dila dena.",
+    "hi2": "Mujhe Rahul ko invoice bhejna hai.",
+    "hi3": "Aaj ka kaam poora ho gaya, ab ghar ja raha hoon.",
+    "hi4": "Kya tum shaam ko bazaar se doodh aur sabzi le aaoge?",
+    "cmd6": "Kal subah nau baje mujhe yaad dilana.",
+    "d_hi1": "Meri flight shaam saat baje ki hai, main airport se seedhe office aaunga.",
+    "d_hi2": "Kripya is mahine ki report shukravar tak bhej dijiye.",
+    "d_hi3": "Aaj baarish bahut tez hai, isliye main ghar se kaam karunga.",
+}
 
 RATE = "165"
 
@@ -82,7 +100,8 @@ def main():
     man = []
     for name, voice, lang, kind, text, alt in clips:
         wav = render(out, name, voice, spoken.get(name, text))
-        man.append({"name": name, "voice": voice, "lang": lang, "kind": kind, "text": text, "alt": alt, "wav": wav})
+        man.append({"name": name, "voice": voice, "lang": lang, "kind": kind, "text": text, "alt": alt, "wav": wav,
+                    "roman": roman.get(name, text if lang == "hi-en" else None)})
     with open(os.path.join(out, "manifest.json"), "w") as f:
         json.dump(man, f, ensure_ascii=False, indent=1)
     print(f"{len(man)} clips in {out}")

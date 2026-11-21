@@ -998,10 +998,6 @@ pub fn by_decoder(probs: &[(String, f32)]) -> Vec<(String, f32)> {
 /// English can score 0.94 against the transcript's 0.86 (Hinglish with its first word cut off).
 pub const STICKY_MARGIN: f32 = 0.1;
 
-/// When the detector is unsure, a decode in the previous dictation's language at least this
-/// confident is kept without trying the other language.
-pub const KEEP_SURE: f32 = 0.85;
-
 /// Of decodes of one clip in different languages (language, (text, mean token probability)),
 /// the one to keep: a real transcript in that language's script, without loops, before anything
 /// else; then the one the model is surer of, with `STICKY_MARGIN` in favour of `previous` (the
@@ -1015,10 +1011,72 @@ pub fn pick_decode(options: &[(String, (String, f32))], previous: Option<&str>) 
     (0..options.len()).max_by(|&a, &b| key(&options[a]).partial_cmp(&key(&options[b])).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0)
 }
 
-/// In meetings, a detector share for English below this sends the clip through the Hindi decoder
-/// too (when Hindi is one of the languages): English speech scores 0.99–1.00 on a clip-sized
-/// window, Hindi that the detector mistakes for English rarely does.
+/// A detector share for English below this sends the clip through the Hindi decoder too (when
+/// Hindi is one of the languages), in dictation and meetings alike: English speech scores
+/// 0.99–1.00 on a clip-sized window, Hindi that the detector mistakes for English rarely does.
 pub const MEET_EN_SURE: f32 = 0.97;
+
+/// The decodes an "auto" clip gets (`LocalWhisper::auto_guarded`), from the detector's best
+/// language `top` and its share `p`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoPlan {
+    /// Hindi (or Gujarati) for sure: the Hindi decoder only
+    Hindi,
+    /// another language for sure (English at `MEET_EN_SURE`): that decoder only; an English
+    /// result with Hindi words in it is Hinglish and gets the Hindi decoder after all
+    Other,
+    /// unsure: the Hindi decode and the best other one, compared by `pick_meeting_decode`
+    Both,
+}
+
+/// Below this mean token probability a confident-detector English decode is checked against the
+/// Hindi decode too. Low on purpose: English in a noisy room decodes at 0.6–0.7 and the Hindi
+/// decoder's take on it can carry a Hindi word or two ("Add a to-do to call Priya tomorrow" →
+/// "और … क्या तुमोरो" won at 0.7 in the benchmark).
+pub const EN_DOUBT: f32 = 0.5;
+
+/// Is an English decode, with the detector sure of English, possibly Hindi speech after all?
+/// Hindi words in Roman letters ("kal", "mein": Hinglish), an unsure decode, or mostly words that
+/// aren't English: Hinglish read with an English accent comes out as "Cal Meeting Mindec Bejdina."
+/// at detector share 1.0; or far too few words for the clip (`secs` of speech): "Haan bhai, main
+/// abhi office pahunch gaya hoon" came out as "I'm sorry." at 0.999 "en". Plain English is none
+/// of these and stays one decode.
+pub fn english_in_doubt(text: &str, confidence: f32, secs: f32) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    if crate::hinglish::looks_hinglish(text) {
+        return true;
+    }
+    // a word cut off at the end of a dictation ("zero.") is unsure but not worth a Hindi decode
+    if confidence < EN_DOUBT && secs >= 1.0 {
+        return true;
+    }
+    let words: Vec<&str> = text.split(|c: char| !c.is_alphabetic() && c != '\'').filter(|w| w.chars().count() > 1).collect();
+    if secs >= 2.0 && (text.split_whitespace().count() as f32) < secs * 0.8 {
+        return true;
+    }
+    let unknown = words.iter().filter(|w| !crate::learning::is_common(w)).count();
+    unknown >= 2 && unknown * 2 >= words.len()
+}
+
+/// Which decodes an "auto" clip needs. Never trusts the detector's "English" for Hindi speech
+/// unless it is near certain: decoding Hindi as English yields a fluent, confident *translation*
+/// ("Send the deck in the meeting tomorrow.") instead of what was said. `hindi_allowed`: Hindi
+/// (or Gujarati) is one of the languages Auto picks from.
+pub fn auto_plan(top: &str, p: f32, hindi_allowed: bool) -> AutoPlan {
+    if !hindi_allowed {
+        return AutoPlan::Other;
+    }
+    if decoder_lang(top) == "hi" {
+        return if p >= LID_SURE { AutoPlan::Hindi } else { AutoPlan::Both };
+    }
+    if p >= if top == "en" { MEET_EN_SURE } else { LID_SURE } {
+        AutoPlan::Other
+    } else {
+        AutoPlan::Both
+    }
+}
 
 /// Hindi-only function words that also appear in the general model's Devanagari spelling of
 /// Hinglish ("है", "को", "का"…). English speech forced through the Hindi decoder comes out as
@@ -1054,11 +1112,17 @@ pub fn pick_meeting_decode(options: &[(String, (String, f32))], previous: Option
     if let Some(i) = hi {
         let (t, _) = &options[i].1;
         let other_romanized = options.iter().enumerate().any(|(j, (_, (o, _)))| j != i && crate::hinglish::looks_hinglish(o));
-        if plausible(t, "hi") && !is_degenerate(t) && (hindi_word_share(t) >= HINDI_WORDS_MIN || other_romanized) {
+        if real_hindi(t) || (other_romanized && plausible(t, "hi") && !is_degenerate(t)) {
             return i;
         }
     }
     pick_decode(options, previous)
+}
+
+/// A Hindi-decoder transcript that is real Hindi speech: Devanagari, no loop, enough Hindi
+/// function words (English speech through the Hindi decoder has almost none).
+pub fn real_hindi(t: &str) -> bool {
+    plausible(t, "hi") && !is_degenerate(t) && hindi_word_share(t) >= HINDI_WORDS_MIN
 }
 
 /// Softmax of language logits over the candidates: each language's share of the probability.
@@ -1435,25 +1499,36 @@ impl LocalWhisper {
 
     /// The Flo key's on-device speech-to-text: the audio front end (silence trimmed, a soft or
     /// distant voice brought up to a normal level), then `transcribe`. Dictation, the assistant,
-    /// hands-free mode and the accuracy harness all come through here.
+    /// hands-free mode and the accuracy harness all come through here. Hindi speech comes out as
+    /// Hinglish (`dictate_as` with `HindiScript::Hinglish`).
     pub fn dictate(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
+        Ok(self.dictate_as(model_file, samples, language, prompt, HindiScript::Hinglish)?.text)
+    }
+
+    /// `dictate` with Hindi written as `hindi` (Settings → Voice, `dictation_hindi`). The same
+    /// decision as meeting notes (`meeting_clip`): Hindi speech is never typed as the speech
+    /// model's English translation. `HindiScript::English` gives the Hinglish transcript here; the
+    /// cleanup AI translates it (a Whisper translation drops words). An explicitly chosen Hindi
+    /// language keeps Devanagari unless Hinglish was asked for some other way.
+    pub fn dictate_as(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, hindi: HindiScript) -> Result<Heard> {
+        let script = dictation_script(language, hindi);
         let sticky = self.detected.lock().clone();
-        let (text, lang) = self.dictate_hinted(model_file, samples, language, prompt, sticky.as_deref(), false)?;
-        if matches!(language, "" | "auto") {
-            *self.detected.lock() = Some(lang);
+        let heard = self.meeting_clip(model_file, samples, language, prompt, sticky.as_deref(), script, false)?;
+        if matches!(language, "" | "auto") && !heard.lang.is_empty() {
+            *self.detected.lock() = Some(heard.lang.clone());
         }
-        Ok(text)
+        Ok(Heard { text: crate::meetpipe::render_hindi(&heard, script), ..heard })
     }
 
     /// `dictate` with the previous language given (`transcribe_hinted`) instead of the one this
     /// engine remembers, which stays untouched: meeting notes keep one per track. Returns the text
-    /// and the language it was written in.
-    pub fn dictate_hinted(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, sticky: Option<&str>, meeting: bool) -> Result<(String, String)> {
+    /// and the language it was written in (no Hinglish rendering: see `meeting_clip`).
+    pub fn dictate_hinted(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, sticky: Option<&str>) -> Result<(String, String)> {
         let trimmed = audio::trim_silence(samples);
         let level = audio::speech_level(&trimmed);
         let (audio_in, gain) = if self.no_normalize.load(std::sync::atomic::Ordering::Relaxed) { (trimmed, 1.0) } else { audio::normalize_speech(&trimmed) };
         let t = std::time::Instant::now();
-        let r = self.transcribe_hinted(model_file, &audio_in, language, prompt, sticky, meeting);
+        let r = self.transcribe_hinted(model_file, &audio_in, language, prompt, sticky);
         // what a report needs to be diagnosable, never the words themselves (those only at debug)
         let model = model_file.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
         log::info!(
@@ -1477,7 +1552,7 @@ impl LocalWhisper {
     /// remembered for the next one).
     pub fn transcribe(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str) -> Result<String> {
         let sticky = self.detected.lock().clone();
-        let (text, lang) = self.transcribe_hinted(model_file, samples, language, prompt, sticky.as_deref(), false)?;
+        let (text, lang) = self.transcribe_hinted(model_file, samples, language, prompt, sticky.as_deref())?;
         if matches!(language, "" | "auto") {
             *self.detected.lock() = Some(lang);
         }
@@ -1492,14 +1567,15 @@ impl LocalWhisper {
         (p.exists() && (p == model_file || models_kept() >= 2)).then_some(p)
     }
 
-    /// One meeting clip (`meetpipe::Transcriber`): `language` from Settings ("auto" = identified
-    /// clip by clip, `hint` = the track's recent language as the tie-breaker; never forced). Never
-    /// translates unless `hindi` asks for English: Hindi speech is written in Devanagari by the
-    /// general model, then in Roman letters by the Hinglish model when it's downloaded
-    /// (`HindiScript::Hinglish`; otherwise `meetpipe` transliterates), or translated by a decode
-    /// in English (`HindiScript::English`). `preview` (live partials) skips the second decode.
+    /// One meeting clip (`meetpipe::Transcriber`), and one dictation clip (`dictate_as`):
+    /// `language` from Settings ("auto" = identified clip by clip, `hint` = the track's recent
+    /// language as the tie-breaker; never forced). Never translates unless `hindi` asks for
+    /// English: Hindi speech is written in Devanagari by the general model, then in Roman letters
+    /// by the Hinglish model when it's downloaded (`HindiScript::Hinglish`; otherwise
+    /// `meetpipe::render_hindi` transliterates), or translated by a decode in English
+    /// (`HindiScript::English`, meetings only). `preview` (live partials) skips the second decode.
     pub fn meeting_clip(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, hint: Option<&str>, hindi: HindiScript, preview: bool) -> Result<Heard> {
-        let (raw, lang) = self.dictate_hinted(model_file, samples, language, prompt, hint, true)?;
+        let (raw, lang) = self.dictate_hinted(model_file, samples, language, prompt, hint)?;
         let heard = |text: String| Heard { text, lang: lang.clone(), raw: raw.clone() };
         if lang != "hi" || preview || hindi == HindiScript::Devanagari {
             return Ok(heard(raw.clone()));
@@ -1509,10 +1585,10 @@ impl LocalWhisper {
         let second = match hindi {
             HindiScript::Hinglish => match self.hinglish_model(model_file) {
                 // the Hinglish model gets the previous line only when it's in Roman letters
-                Some(apex) => Some(self.dictate_hinted(&apex, samples, HINGLISH, prompt, None, false)?.0),
+                Some(apex) => Some(self.dictate_hinted(&apex, samples, HINGLISH, prompt, None)?.0),
                 None => None,
             },
-            HindiScript::English => Some(self.dictate_hinted(model_file, samples, "en", "", None, false)?.0),
+            HindiScript::English => Some(self.dictate_hinted(model_file, samples, "en", "", None)?.0),
             HindiScript::Devanagari => None,
         };
         Ok(match second {
@@ -1530,21 +1606,21 @@ impl LocalWhisper {
     /// full 30 s window (accurate, ~1 s) — instead of the old retry that only caught loops and
     /// re-ran Whisper's slowest settings.
     ///
-    /// `language` "auto" is adaptive: decode in the language used last and keep it when Whisper is
-    /// confident; otherwise identify the language among `auto_langs` from the same clip-sized
-    /// encoder state (~0.2 s instead of a 30 s window, same accuracy in the benchmark) and decode
-    /// again. "hi-en" (Hinglish) is decoded as English steered to Roman-letter Hindi.
+    /// `language` "auto": decode in the language used last, identify the language among
+    /// `auto_langs` from the same clip-sized encoder state (~0.2 s instead of a 30 s window) and
+    /// decode again only when needed, never keeping an English translation of Hindi speech
+    /// (`auto_guarded`). "hi-en" (Hinglish) is decoded as English steered to Roman-letter Hindi.
     ///
-    /// `sticky` is the language of the previous clip (the tie-breaker when detection is unsure);
-    /// `meeting` adds the translation guard of `meeting_auto`. Returns the text and its language.
+    /// `sticky` is the language of the previous clip (the first guess and the tie-breaker when
+    /// detection is unsure). Returns the text and its language.
     #[cfg(feature = "local-stt")]
-    pub fn transcribe_hinted(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, sticky: Option<&str>, meeting: bool) -> Result<(String, String)> {
+    pub fn transcribe_hinted(&self, model_file: &Path, samples: &[f32], language: &str, prompt: &str, sticky: Option<&str>) -> Result<(String, String)> {
         if onnx_family(model_file).is_some() || needs_routing(model_file, language) {
             let langs = self.auto_langs.lock().clone();
             match route_model(model_file, language, &langs) {
                 Some(p) if p.as_path() != model_file => {
                     log::info!("stt: {} can't hear {language}; using {}", model_file.display(), p.display());
-                    return self.transcribe_hinted(&p, samples, language, prompt, sticky, meeting);
+                    return self.transcribe_hinted(&p, samples, language, prompt, sticky);
                 }
                 Some(_) => {
                     if let Some(f) = onnx_family(model_file) {
@@ -1557,7 +1633,6 @@ impl LocalWhisper {
         let t0 = std::time::Instant::now();
         let mut timing = DecodeTiming::default();
         let lang_in = if language.is_empty() { "auto" } else { language };
-        let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
         let (text, confidence, out_lang) = if lang_in == HINGLISH {
             let p = if prompt.is_empty() { HINGLISH_PROMPT.to_string() } else { format!("{HINGLISH_PROMPT} {}", prompt_for("en", prompt)) };
             *self.last_lang.lock() = HINGLISH.into();
@@ -1568,67 +1643,8 @@ impl LocalWhisper {
             // Gujarati: the Hindi decoder, rewritten in Gujarati script (see `decoder_lang`)
             let (text, conf) = self.decode_checked(model_file, samples, decoder_lang(lang_in), &whisper_prompt(lang_in, prompt), ACCEPT)?.0;
             (in_script(&text, lang_in), conf, lang_in.to_string())
-        } else if meeting {
-            let (text, conf, lang) = self.meeting_auto(model_file, samples, prompt, sticky, &mut timing)?;
-            *self.last_lang.lock() = lang.clone();
-            (in_script(&text, &lang), conf, lang)
         } else {
-            let cands = self.auto_langs.lock().clone();
-            let sticky = sticky.map(String::from).filter(|l| cands.is_empty() || cands.contains(l));
-            let first_lang = sticky.clone().or_else(|| cands.first().cloned()).unwrap_or_else(|| "en".into());
-            let first_dec = decoder_lang(&first_lang).to_string();
-            let (first, mut state) = self.decode_with(model_file, samples, &first_dec, &whisper_prompt(&first_lang, prompt), DecodeOpts::FAST)?;
-            // which language was that? one decoder step on the encoder output we already have
-            let td = std::time::Instant::now();
-            let probs = by_decoder(&self.lang_probs_from_state(model_file, &mut state, &cands));
-            timing.detect_ms = td.elapsed().as_millis();
-            timing.detected = true;
-            let (mut lid, p) = probs.first().cloned().unwrap_or((first_lang.clone(), 0.0));
-            let dec = decoder_lang(&lid).to_string();
-            // Unsure detector, but the decode in the language of the last dictation is a clean,
-            // confident transcript: keep it (a second decode costs ~0.3–0.5 s, and translations
-            // of Hindi into English scored 0.47–0.81 in `lid_probe`, rarely above this).
-            let keep_first = p < LID_SURE
-                && sticky.as_deref().is_some_and(|s| decoder_lang(s) == first_dec)
-                && probs.iter().take(2).any(|(l, _)| decoder_lang(l) == first_dec)
-                && accepted(&first, &first_dec, KEEP_SURE, secs);
-            let (text, conf) = if keep_first {
-                lid = first_lang.clone();
-                first
-            } else if p < LID_SURE && probs.len() > 1 {
-                // The detector is guessing: on a clip this short it sometimes calls Hindi English
-                // (0.56 "en" for "कल सुबह नौ बजे मुझे याद दिलाना" in the benchmark), and decoding
-                // Hindi as English yields a fluent, confident *translation*. Decode in both and
-                // keep the transcript the model is surer of (a translation scores lower).
-                let mut options: Vec<(String, (String, f32))> = vec![];
-                for (l, _) in probs.iter().take(2) {
-                    let d = decoder_lang(l);
-                    let fast = if d == first_dec { first.clone() } else { self.decode_with(model_file, samples, d, &whisper_prompt(l, prompt), DecodeOpts::FAST)?.0 };
-                    // a fast decode that came back empty or unsure gets the full window before
-                    // it's compared (an empty Hindi decode once lost to an English translation)
-                    let r = if accepted(&fast, d, ACCEPT, secs) { fast } else { self.decode_accurate(model_file, samples, d, &whisper_prompt(l, prompt))? };
-                    options.push((l.clone(), r));
-                }
-                #[cfg(test)]
-                if std::env::var_os("FLO_DICT_DEBUG").is_some() {
-                    eprintln!("   uncertain {probs:?} sticky {sticky:?} options {options:?}");
-                }
-                let i = pick_decode(&options, sticky.as_deref());
-                let (l, r) = options.swap_remove(i);
-                lid = l;
-                r
-            } else if dec == first_dec {
-                if accepted(&first, &dec, ACCEPT, secs) {
-                    first
-                } else {
-                    self.decode_accurate(model_file, samples, &dec, &whisper_prompt(&lid, prompt))?
-                }
-            } else {
-                // e.g. Hindi after English: the first decode was a translation, not a transcript
-                self.decode_checked(model_file, samples, &dec, &whisper_prompt(&lid, prompt), ACCEPT)?.0
-            };
-            // Hindi or Gujarati? Whisper's detector can't tell; the words can
-            let lang = final_language(&lid, &text, &cands);
+            let (text, conf, lang) = self.auto_guarded(model_file, samples, prompt, sticky, &mut timing)?;
             *self.last_lang.lock() = lang.clone();
             (in_script(&text, &lang), conf, lang)
         };
@@ -1645,15 +1661,16 @@ impl LocalWhisper {
         Ok((text, out_lang))
     }
 
-    /// Language identification for a meeting clip, built so Hindi never comes out translated.
-    /// Clip by clip, among the "auto" languages, with `sticky` (the track's recent language) only
-    /// as the first guess and tie-breaker. A decode in English of Hindi speech is a fluent,
-    /// confident translation ("I was talking to you."), so English is trusted alone only when the
-    /// detector is near certain (`MEET_EN_SURE`); otherwise both are decoded and the Hindi one
-    /// wins when its words are Hindi (`hindi_word_share`) or the English one is Hindi in Roman
-    /// letters (`hinglish::looks_hinglish`). Returns (text, confidence, language).
+    /// Language identification for an "auto" clip (dictation, the assistant and meeting notes),
+    /// built so Hindi never comes out translated. Among the "auto" languages, with `sticky` (the
+    /// previous clip's language) only as the first guess and tie-breaker. A decode in English of
+    /// Hindi speech is a fluent, confident translation ("I was talking to you."), so English is
+    /// trusted alone only when the detector is near certain (`auto_plan`); otherwise both are
+    /// decoded and the Hindi one wins when its words are Hindi (`hindi_word_share`) or the English
+    /// one is Hindi in Roman letters (`hinglish::looks_hinglish`). Clearly English speech costs one
+    /// decode, as before. Returns (text, confidence, language).
     #[cfg(feature = "local-stt")]
-    fn meeting_auto(&self, model_file: &Path, samples: &[f32], prompt: &str, sticky: Option<&str>, timing: &mut DecodeTiming) -> Result<(String, f32, String)> {
+    fn auto_guarded(&self, model_file: &Path, samples: &[f32], prompt: &str, sticky: Option<&str>, timing: &mut DecodeTiming) -> Result<(String, f32, String)> {
         let secs = samples.len() as f32 / audio::TARGET_RATE as f32;
         let cands = self.auto_langs.lock().clone();
         let sticky = sticky.map(String::from).filter(|l| cands.is_empty() || cands.contains(l));
@@ -1681,26 +1698,29 @@ impl LocalWhisper {
         };
         #[cfg(test)]
         let debug = std::env::var_os("FLO_DICT_DEBUG").is_some();
+        let plan = auto_plan(&top, p, hindi.is_some());
         let Some(hi) = hindi else {
             // no Hindi among the languages: the detector's pick
             let r = decode(&top)?;
             return Ok((r.0, r.1, top));
         };
-        let hindi_sure = decoder_lang(&top) == "hi" && p >= LID_SURE;
-        let other_sure = decoder_lang(&top) != "hi" && p >= if top == "en" { MEET_EN_SURE } else { LID_SURE };
-        let (text, conf, lid) = if hindi_sure {
+        let (text, conf, lid) = if plan == AutoPlan::Hindi {
             let r = decode(&top)?;
             (r.0, r.1, top.clone())
-        } else if other_sure {
+        } else if plan == AutoPlan::Other {
             let r = decode(&top)?;
-            if top == "en" && crate::hinglish::looks_hinglish(&r.0) {
-                // Hinglish speech the detector calls English: write it as Hindi like the rest
+            if top == "en" && english_in_doubt(&r.0, r.1, secs) {
+                // Hinglish speech the detector calls English (Hindi words in Roman letters, an
+                // unsure decode, or words that aren't English): the Hindi decode settles it
                 let h = decode(&hi)?;
-                if plausible(&h.0, "hi") && !is_degenerate(&h.0) {
-                    (h.0, h.1, hi.clone())
-                } else {
-                    (r.0, r.1, top.clone())
+                #[cfg(test)]
+                if debug {
+                    eprintln!("   english in doubt {r:?} hi {h:?}");
                 }
+                let options = vec![(hi.clone(), h), (top.clone(), r)];
+                let i = pick_meeting_decode(&options, sticky.as_deref());
+                let (l, r) = options.into_iter().nth(i).unwrap_or_default();
+                (r.0, r.1, l)
             } else {
                 (r.0, r.1, top.clone())
             }
@@ -1708,19 +1728,24 @@ impl LocalWhisper {
             // unsure: the Hindi decode and the detector's best other language, compared
             let other = probs.iter().find(|(l, _)| decoder_lang(l) != "hi").map(|(l, _)| l.clone()).unwrap_or_else(|| "en".into());
             let h = decode(&hi)?;
-            let o = decode(&other)?;
-            #[cfg(test)]
-            if debug {
-                eprintln!("   meeting unsure {probs:?} sticky {sticky:?} hi {h:?} {other} {o:?}");
+            if real_hindi(&h.0) {
+                // `pick_meeting_decode` keeps real Hindi whatever the other decode says: skip it
+                (h.0, h.1, hi.clone())
+            } else {
+                let o = decode(&other)?;
+                #[cfg(test)]
+                if debug {
+                    eprintln!("   auto unsure {probs:?} sticky {sticky:?} hi {h:?} {other} {o:?}");
+                }
+                let options = vec![(hi.clone(), h), (other.clone(), o)];
+                let i = pick_meeting_decode(&options, sticky.as_deref());
+                let (l, r) = options.into_iter().nth(i).unwrap_or_default();
+                (r.0, r.1, l)
             }
-            let options = vec![(hi.clone(), h), (other.clone(), o)];
-            let i = pick_meeting_decode(&options, sticky.as_deref());
-            let (l, r) = options.into_iter().nth(i).unwrap_or_default();
-            (r.0, r.1, l)
         };
         #[cfg(test)]
         if debug {
-            eprintln!("   meeting lid {probs:?} sticky {sticky:?} → {lid} {text:?}");
+            eprintln!("   auto lid {probs:?} sticky {sticky:?} → {lid} {text:?}");
         }
         Ok((text.clone(), conf, final_language(&lid, &text, &cands)))
     }
@@ -1906,7 +1931,7 @@ impl LocalWhisper {
     }
 
     #[cfg(not(feature = "local-stt"))]
-    pub fn transcribe_hinted(&self, m: &Path, s: &[f32], l: &str, _p: &str, _sticky: Option<&str>, _meeting: bool) -> Result<(String, String)> {
+    pub fn transcribe_hinted(&self, m: &Path, s: &[f32], l: &str, _p: &str, _sticky: Option<&str>) -> Result<(String, String)> {
         if let Some(f) = onnx_family(m) {
             return self.transcribe_onnx(m, f, s, l);
         }
@@ -1989,6 +2014,18 @@ impl HindiScript {
             "english" => HindiScript::English,
             _ => HindiScript::Hinglish,
         }
+    }
+}
+
+/// How a dictation clip's Hindi is written, from the language setting and `dictation_hindi`:
+/// "English" is the Hinglish transcript (the cleanup AI translates it, never the speech model),
+/// and the language "Hindi" (हिन्दी) picked explicitly keeps Devanagari, as it always did (Auto
+/// and Hinglish follow the setting; "devanagari" applies to all).
+pub fn dictation_script(language: &str, hindi: HindiScript) -> HindiScript {
+    match hindi {
+        HindiScript::English => HindiScript::Hinglish,
+        HindiScript::Hinglish if language == "hi" => HindiScript::Devanagari,
+        h => h,
     }
 }
 
@@ -2212,6 +2249,88 @@ mod language_tests {
         assert_eq!(opts[pick_decode(&opts, Some("gu"))].0, "hi");
         // without a previous language the surer one wins
         assert_eq!(opts[pick_decode(&opts, None)].0, "en");
+    }
+
+    #[test]
+    fn dictation_trusts_english_alone_only_when_the_detector_is_near_certain() {
+        // the user's report: Hinglish dictations typed in English, the detector at 0.8–0.96 "en"
+        for p in [0.42, 0.66, 0.8, 0.9, 0.96] {
+            assert_eq!(auto_plan("en", p, true), AutoPlan::Both, "en at {p}");
+        }
+        // clearly English stays one decode (fast)
+        assert_eq!(auto_plan("en", 0.97, true), AutoPlan::Other);
+        assert_eq!(auto_plan("en", 0.999, true), AutoPlan::Other);
+        assert_eq!(auto_plan("hi", 0.85, true), AutoPlan::Hindi);
+        assert_eq!(auto_plan("gu", 0.9, true), AutoPlan::Hindi);
+        assert_eq!(auto_plan("hi", 0.6, true), AutoPlan::Both);
+        // no Hindi among the languages: nothing to guard
+        assert_eq!(auto_plan("en", 0.5, false), AutoPlan::Other);
+    }
+
+    #[test]
+    fn a_sure_english_decode_of_hinglish_is_checked_against_hindi() {
+        // Hinglish read with an English accent (the detector at 1.0 "en"), from the benchmark
+        assert!(english_in_doubt("Cal Meeting Mindec Bejdina.", 0.9, 2.0));
+        assert!(english_in_doubt("Mujhe kal subah daas baje yaad dilah deena.", 0.9, 3.0));
+        assert!(english_in_doubt("Send the deck.", 0.4, 1.0));
+        assert!(!english_in_doubt("zero.", 0.37, 0.8));
+        // noisy English with an unsure decoder but English words: one decode, kept
+        assert!(!english_in_doubt("I have to do to call FIA tomorrow.", 0.64, 2.8));
+        // 3.7 s of Hinglish heard as two English words
+        assert!(english_in_doubt("I'm sorry.", 0.9, 3.7));
+        assert!(!english_in_doubt("I'm sorry.", 0.9, 1.0));
+        // plain English, names and all, stays one decode
+        for t in [
+            "Send the updated deck to Rahul by Friday evening.",
+            "Okay, mark the invoice task as done and open Slack.",
+            "Can we move the stand-up to 10:30? Also, Sneha from Bengaluru is joining the call.",
+            "Thanks for the update. I'll review the Figma designs tonight and share feedback on Slack.",
+            "Please review the pull request before lunch and leave comments on the authentication changes.",
+            "",
+        ] {
+            assert!(!english_in_doubt(t, 0.9, 4.0), "{t}");
+        }
+    }
+
+    #[test]
+    fn a_dictated_english_translation_of_hindi_never_wins() {
+        // Hinglish dictation ("kal meeting mein deck bhej dena"): the English decode is a
+        // translation, more confident than the transcript, after an English dictation
+        let o = vec![
+            ("hi".to_string(), ("कल मीटिंग में डेक भेज देना।".to_string(), 0.81)),
+            ("en".to_string(), ("Send the deck in tomorrow's meeting.".to_string(), 0.95)),
+        ];
+        assert_eq!(pick_meeting_decode(&o, Some("en")), 0);
+        // a quiet clip: both decodes less sure, the translation still loses
+        let o = vec![
+            ("hi".to_string(), ("आज शाम को मैं थोड़ा बिज़ी हूँ, कल बात करते हैं।".to_string(), 0.52)),
+            ("en".to_string(), ("I'm a bit busy this evening, let's talk tomorrow.".to_string(), 0.66)),
+        ];
+        assert_eq!(pick_meeting_decode(&o, Some("en")), 0);
+        // the English decoder kept the Hindi words (Hinglish in Roman letters): Hindi it is
+        let o = vec![
+            ("hi".to_string(), ("यार मुझे लगता है फीचर नेक्स्ट वीक शिप करना चाहिए".to_string(), 0.7)),
+            ("en".to_string(), ("Yaar mujhe lagta hai feature next week ship karna chahiye".to_string(), 0.8)),
+        ];
+        assert_eq!(pick_meeting_decode(&o, Some("en")), 0);
+        // English speech: the Hindi decoder writes English words in Devanagari, English wins
+        let o = vec![
+            ("hi".to_string(), ("सेंड द अपडेटेड डेक टू राहुल बाय फ्राइडे।".to_string(), 0.7)),
+            ("en".to_string(), ("Send the updated deck to Rahul by Friday.".to_string(), 0.9)),
+        ];
+        assert_eq!(pick_meeting_decode(&o, Some("en")), 1);
+    }
+
+    #[test]
+    fn dictation_writes_hindi_the_way_the_setting_says() {
+        assert_eq!(HindiScript::from_setting(&crate::model::Settings::default().dictation_hindi), HindiScript::Hinglish);
+        assert_eq!(dictation_script("auto", HindiScript::Hinglish), HindiScript::Hinglish);
+        // translation is the AI's job: the speech model gives the accurate Hinglish transcript
+        assert_eq!(dictation_script("auto", HindiScript::English), HindiScript::Hinglish);
+        assert_eq!(dictation_script("auto", HindiScript::Devanagari), HindiScript::Devanagari);
+        assert_eq!(dictation_script(HINGLISH, HindiScript::Hinglish), HindiScript::Hinglish);
+        // the explicitly picked Hindi language keeps Devanagari
+        assert_eq!(dictation_script("hi", HindiScript::Hinglish), HindiScript::Devanagari);
     }
 }
 

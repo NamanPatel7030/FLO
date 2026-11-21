@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
 import { ArrowDown, ListChecks, Mic, Pencil, Plus, Radio, Sparkles, Square, StickyNote, Trash2, Copy, Users } from "lucide-react";
@@ -8,7 +8,8 @@ import { api, on } from "../../lib/api";
 import { formatClock, formatDuration, relativeTime } from "../../lib/format";
 import { EV, type KnownVoice, type MeetingEvent, type MeetingInfo, type MeetingSegment, type NameGuess, type Note } from "../../lib/types";
 import { useStore, usePick, usePageArg } from "../store";
-import { shownName, speakerColor as defaultColor, speakerPalette, speakerStats, splitOwner } from "../../lib/speakers";
+import { indicLang, shownName, speakerColor as defaultColor, speakerPalette, speakerStats, splitOwner } from "../../lib/speakers";
+import { deviceWord } from "../../lib/os";
 
 /** Per-note speaker colours (no two people share one); falls back to the global mapping. */
 const ColorCtx = createContext<(who?: string) => string>(defaultColor);
@@ -64,20 +65,41 @@ function suggestionReason(g?: NameGuess): string {
 /** "Who is this?": one click on a guest / remembered voice, or type a name. */
 function SpeakerPicker({ who, candidates, onPick, onClose }: { who: string; candidates: string[]; onPick: (to: string) => void; onClose: () => void }) {
   const [val, setVal] = useState("");
+  const box = useRef<HTMLDivElement>(null);
+  // a chip near the right edge opens its picker leftwards (never past the window: no sideways scroll)
+  const [alignRight, setAlignRight] = useState(false);
+  useLayoutEffect(() => {
+    const r = box.current?.getBoundingClientRect();
+    if (r && r.right > window.innerWidth - 12) setAlignRight(true);
+  }, []);
+  // a click anywhere else closes it (clicks on its own chip toggle it there)
+  useEffect(() => {
+    const chip = box.current?.parentElement;
+    const down = (e: PointerEvent) => {
+      if (chip && !chip.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener("pointerdown", down);
+    return () => document.removeEventListener("pointerdown", down);
+  }, [onClose]);
   return (
     <div
+      ref={box}
       data-testid="speaker-picker"
       role="dialog"
       aria-label={`Who is ${who}?`}
-      className="absolute left-0 top-full z-20 mt-1 flex w-60 flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg,white)] p-2 shadow-lg"
+      className={clsx(
+        "absolute top-full z-30 mt-1 flex w-60 flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg,white)] p-2 shadow-lg",
+        alignRight ? "right-0" : "left-0",
+      )}
     >
-      <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-faint">Who is {who}?</div>
+      <div className="truncate px-1 text-[11px] font-semibold uppercase tracking-wider text-faint">Who is {who}?</div>
       {candidates.map((c) => (
         <button
           key={c}
           type="button"
           data-testid="speaker-pick"
-          className="rounded-md px-2 py-1 text-left text-[12.5px] hover:bg-[var(--glass)]"
+          className="truncate rounded-md px-2 py-1 text-left text-[12.5px] hover:bg-[var(--glass)]"
+          title={c}
           onClick={() => {
             onClose();
             onPick(c);
@@ -119,14 +141,14 @@ function VoicesPanel({ onToast }: { onToast: (t: { kind: "success" | "info" | "e
   if (!voices) return null;
   return (
     <div data-testid="voices-panel" className="flex flex-col gap-1 rounded-lg border border-[var(--border)] p-2.5 text-[12px]">
-      <div className="text-[11.5px] text-faint">Voices stay on this Mac. Flo names a speaker only when the voice clearly matches.</div>
+      <div className="text-[11.5px] text-faint">Voices stay on this {deviceWord()}. Flo names a speaker only when the voice clearly matches.</div>
       {voices.length === 0 && <div className="text-muted">No voices yet. Name a speaker and Flo remembers their voice.</div>}
       {voices.map((v) => (
         <div key={v.name} data-testid="voice-row" data-voice={v.name} className="flex items-center justify-between gap-2">
-          <span className="font-medium">
-            {v.name} <span className="text-faint">· {v.samples} clips</span>
+          <span className="min-w-0 truncate font-medium" title={v.name}>
+            {v.name} <span className="text-faint">· {v.samples} {v.samples === 1 ? "clip" : "clips"}</span>
           </span>
-          <span className="flex items-center gap-1.5">
+          <span className="flex shrink-0 items-center gap-1.5">
             {voices.length > 1 && (
               <select
                 data-testid="voice-merge"
@@ -183,7 +205,7 @@ function CaptureBadge({ info }: { info: MeetingInfo | null }) {
     <span
       data-testid="capture-mode"
       className={clsx(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-sans text-[11px] font-medium",
+        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 font-sans text-[11px] font-medium",
         dual ? "bg-sky-500/15 text-sky-600 dark:text-sky-300" : "bg-[var(--glass)] text-muted",
       )}
     >
@@ -242,24 +264,24 @@ function SpeakerTag({ who, me, names, onRename, guess }: { who: string; me?: str
         setVal(who);
         setEditing(true);
       }}
-      className={clsx("group inline-flex items-center gap-1 text-[12px] font-semibold", canRename && "cursor-pointer hover:underline")}
+      className={clsx("group inline-flex min-w-0 max-w-full items-center gap-1 text-[12px] font-semibold", canRename && "cursor-pointer hover:underline")}
       style={{ color }}
     >
-      {shownName(who, me)}
+      <span className="truncate">{shownName(who, me)}</span>
       {canRename && <Pencil size={10} className="opacity-0 transition group-hover:opacity-70" />}
     </button>
   );
   if (!guess || !onRename) return tag;
   // a name Flo isn't sure of: "Speaker 2 · Rahul?" — one click makes it so
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
       {tag}
       <button
         type="button"
         data-testid="speaker-tag-guess"
         title={`Is this ${guess}? Click to confirm.`}
         onClick={() => onRename(guess)}
-        className="rounded-full border border-dashed border-[var(--border)] px-1.5 text-[11px] font-medium text-muted hover:text-[var(--fg)]"
+        className="max-w-[10rem] shrink-0 truncate rounded-full border border-dashed border-[var(--border)] px-1.5 text-[11px] font-medium text-muted hover:text-[var(--fg)]"
       >
         {guess}?
       </button>
@@ -274,32 +296,45 @@ function TranscriptRows({
   names,
   onRename,
   guesses,
+  live,
 }: {
   segs: MeetingSegment[];
   me?: string;
   names?: string[];
   onRename?: (from: string, to: string) => void;
   guesses?: Record<string, string>;
+  /** live meeting: new lines slide in. A saved note opens still (hundreds of rows animating a
+   *  blur at once stuttered, most of all on Linux) */
+  live?: boolean;
 }) {
   const speakerColor = useSpeakerColor();
+  // an hour-long meeting's times ("1:02:03") need a wider column than "12:03"
+  const timeW = segs.some((s) => s.t >= 3600) ? "w-14" : "w-11";
   return (
     <>
       {segs.map((s, i) => {
         const who = s.speaker;
         const showWho = !!who && (i === 0 || segs[i - 1].speaker !== who);
+        const lang = indicLang(s.text);
         return (
           <motion.div
             key={`${s.t}:${i}`}
-            initial={{ opacity: 0, y: 8, filter: "blur(3px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            className={clsx("flex gap-3", showWho && i > 0 && "mt-1.5")}
+            initial={live ? { opacity: 0, y: 8 } : false}
+            animate={{ opacity: 1, y: 0 }}
+            className={clsx("flex gap-3", showWho && i > 0 && "mt-2")}
             data-testid="transcript-row"
           >
-            <span className="w-11 shrink-0 pt-[1px] font-mono text-[11.5px] tabular-nums text-faint">{formatClock(s.t)}</span>
+            <span className={clsx(timeW, "shrink-0 pt-[2px] text-right font-mono text-[11.5px] tabular-nums text-faint")}>{formatClock(s.t)}</span>
             {who && <span className="w-[3px] shrink-0 rounded-full" style={{ background: speakerColor(who), opacity: 0.75 }} aria-hidden />}
-            <div className="min-w-0">
-              {showWho && <SpeakerTag who={who!} me={me} names={names} guess={guesses?.[who!]} onRename={onRename ? (to) => onRename(who!, to) : undefined} />}
-              <div className="text-[13.5px] leading-relaxed selectable">{s.text}</div>
+            <div className="min-w-0 flex-1">
+              {showWho && (
+                <div className="mb-0.5 flex min-w-0">
+                  <SpeakerTag who={who!} me={me} names={names} guess={guesses?.[who!]} onRename={onRename ? (to) => onRename(who!, to) : undefined} />
+                </div>
+              )}
+              <div lang={lang} dir="auto" data-testid="transcript-text" className={clsx("selectable break-words text-[13.5px]", lang ? "leading-[1.8]" : "leading-relaxed")}>
+                {s.text}
+              </div>
             </div>
           </motion.div>
         );
@@ -308,7 +343,8 @@ function TranscriptRows({
   );
 }
 
-/** Everyone on the call: colour, name, share of the talking, and one-click names Flo heard. */
+/** Everyone on the call: colour, name, share of the talking, and one-click names Flo heard. The
+ *  row of chips stays pinned at the top while you read down the transcript (a legend). */
 function SpeakersBar({
   segs,
   me,
@@ -335,112 +371,128 @@ function SpeakersBar({
   const candidatesFor = (who: string) =>
     [...new Set([info?.suggestions?.[who], ...(info?.attendees ?? []), ...(info?.knownVoices ?? [])].filter((n): n is string => !!n && !present.has(n.toLowerCase())))].slice(0, 8);
   return (
-    <div className="mb-4 flex flex-col gap-2" data-testid="speakers-bar">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {stats.map(({ who, share }) => {
-          const g = info?.nameInfo?.[who];
-          // a name Flo found itself (voice / screen) and you haven't confirmed yet
-          const found = g && g.source !== "user" && g.name === who;
-          const guess = info?.suggestions?.[who];
-          return (
-            <span
-              key={who}
-              data-testid="speaker-chip"
-              data-speaker={who}
-              className="relative inline-flex items-center gap-1.5 rounded-full bg-[var(--glass)] px-2.5 py-1 text-[12px] font-medium"
+    <>
+      {/* pinned while reading; a crowd (7+) would pin half the screen, so it scrolls away then */}
+      <div data-testid="speakers-legend" className={clsx("speaker-legend z-10 -mx-2 mb-3 rounded-xl px-2 py-2", stats.length <= 6 ? "sticky top-0" : "relative")}>
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="speakers-bar">
+          {stats.map(({ who, share }) => {
+            const g = info?.nameInfo?.[who];
+            // a name Flo found itself (voice / screen) and you haven't confirmed yet
+            const found = g && g.source !== "user" && g.name === who;
+            const guess = info?.suggestions?.[who];
+            const name = shownName(who, me);
+            return (
+              <span
+                key={who}
+                data-testid="speaker-chip"
+                data-speaker={who}
+                className="relative inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--glass)] py-[3px] pl-2 pr-2.5 text-[12px] font-medium"
+              >
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: speakerColor(who) }} aria-hidden />
+                {who === "You" ? (
+                  <span data-testid="speaker-chip-label" className="min-w-0 max-w-[11rem] truncate" style={{ color: speakerColor(who) }} title={name}>
+                    {name}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    data-testid="speaker-chip-name"
+                    title={`Who is ${name}?`}
+                    aria-haspopup="dialog"
+                    aria-expanded={picking === who}
+                    className="min-w-0 max-w-[11rem] truncate hover:underline"
+                    style={{ color: speakerColor(who) }}
+                    onClick={() => setPicking(picking === who ? null : who)}
+                  >
+                    {name}
+                  </button>
+                )}
+                {who === "You" && me?.trim() && <span className="shrink-0 text-[10.5px] text-faint">you</span>}
+                {guess && (
+                  <button
+                    type="button"
+                    data-testid="speaker-guess"
+                    title={`${SOURCE_TEXT[info?.nameInfo?.[who]?.source ?? "intro"]}. Click to confirm.`}
+                    onClick={() => onRename(who, guess)}
+                    className="max-w-[8rem] shrink-0 truncate rounded-full border border-dashed border-[var(--border)] px-1.5 text-[11px] text-muted hover:text-[var(--fg)]"
+                  >
+                    {guess}?
+                  </button>
+                )}
+                {found && (
+                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-500/10 pl-1.5 pr-0.5 text-emerald-700 dark:text-emerald-300">
+                    <Tooltip text={`${SOURCE_TEXT[g.source]} (${Math.round(g.confidence * 100)}% sure)`}>
+                      <span data-testid="speaker-confidence" data-source={g.source} className="text-[10.5px] tabular-nums">
+                        {g.source} {Math.round(g.confidence * 100)}%
+                      </span>
+                    </Tooltip>
+                    {onConfirm ? (
+                      <button
+                        type="button"
+                        data-testid="speaker-confirm"
+                        aria-label={`Confirm ${who}`}
+                        title={`Yes, this is ${who}`}
+                        onClick={() => onConfirm(who)}
+                        className="flex h-4 w-4 items-center justify-center rounded-full text-[10px] hover:bg-emerald-500/20"
+                      >
+                        ✓
+                      </button>
+                    ) : (
+                      <span className="w-1" />
+                    )}
+                  </span>
+                )}
+                <span className="shrink-0 border-l border-[var(--border)] pl-1.5 tabular-nums text-faint" title="Share of the talking">
+                  {share}%
+                </span>
+                {picking === who && (
+                  <SpeakerPicker
+                    who={name}
+                    candidates={candidatesFor(who)}
+                    onClose={() => setPicking(null)}
+                    onPick={(to) => (to === who ? onConfirm?.(who) : onRename(who, to))}
+                  />
+                )}
+              </span>
+            );
+          })}
+          {onToast && (
+            <button
+              type="button"
+              data-testid="voices-open"
+              aria-expanded={voicesOpen}
+              onClick={() => setVoicesOpen((v) => !v)}
+              className="ml-auto shrink-0 rounded-full px-2 py-1 text-[11.5px] text-faint hover:bg-[var(--glass)] hover:text-[var(--fg)]"
             >
-              <span className="h-2 w-2 rounded-full" style={{ background: speakerColor(who) }} aria-hidden />
-              {who === "You" ? (
-                <span style={{ color: speakerColor(who) }}>{shownName(who, me)}</span>
-              ) : (
-                <button
-                  type="button"
-                  data-testid="speaker-chip-name"
-                  title={`Who is ${who}?`}
-                  className="hover:underline"
-                  style={{ color: speakerColor(who) }}
-                  onClick={() => setPicking(picking === who ? null : who)}
-                >
-                  {shownName(who, me)}
-                </button>
-              )}
-              {who === "You" && me?.trim() && <span className="text-[10.5px] text-faint">you</span>}
-              {guess && (
-                <button
-                  type="button"
-                  data-testid="speaker-guess"
-                  title={`${SOURCE_TEXT[info?.nameInfo?.[who]?.source ?? "intro"]}. Click to confirm.`}
-                  onClick={() => onRename(who, guess)}
-                  className="rounded-full border border-dashed border-[var(--border)] px-1.5 text-[11px] text-muted hover:text-[var(--fg)]"
-                >
-                  {guess}?
-                </button>
-              )}
-              {found && (
-                <>
-                  <Tooltip text={`${SOURCE_TEXT[g.source]} (${Math.round(g.confidence * 100)}% sure)`}>
-                    <span data-testid="speaker-confidence" data-source={g.source} className="text-[10.5px] tabular-nums text-faint">
-                      {g.source === "voice" ? "voice" : g.source === "screen" ? "screen" : g.source} {Math.round(g.confidence * 100)}%
-                    </span>
-                  </Tooltip>
-                  {onConfirm && (
-                    <button
-                      type="button"
-                      data-testid="speaker-confirm"
-                      aria-label={`Confirm ${who}`}
-                      title={`Yes, this is ${who}`}
-                      onClick={() => onConfirm(who)}
-                      className="rounded-full px-1 text-[11px] text-muted hover:bg-[var(--glass)] hover:text-emerald-500"
-                    >
-                      ✓
-                    </button>
-                  )}
-                </>
-              )}
-              <span className="tabular-nums text-faint">{share}%</span>
-              {picking === who && (
-                <SpeakerPicker
-                  who={shownName(who, me)}
-                  candidates={candidatesFor(who)}
-                  onClose={() => setPicking(null)}
-                  onPick={(to) => (to === who ? onConfirm?.(who) : onRename(who, to))}
-                />
-              )}
-            </span>
-          );
-        })}
-        {onToast && (
-          <button
-            type="button"
-            data-testid="voices-open"
-            aria-expanded={voicesOpen}
-            onClick={() => setVoicesOpen((v) => !v)}
-            className="ml-auto rounded-full px-2 py-1 text-[11.5px] text-faint hover:bg-[var(--glass)] hover:text-[var(--fg)]"
-          >
-            Voices
-          </button>
-        )}
-      </div>
-      {voicesOpen && onToast && <VoicesPanel onToast={onToast} />}
-      {suggestions.map(([from, to]) => (
-        <div
-          key={from}
-          data-testid="speaker-suggestion"
-          className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[var(--border)] px-2.5 py-1.5 text-[12px] text-muted"
-        >
-          <Sparkles size={12} className="text-brand-500" />
-          <span>
-            <span className="font-semibold" style={{ color: speakerColor(from) }}>
-              {from}
-            </span>{" "}
-            sounds like <span className="font-semibold text-[var(--fg)]">{to}</span> {suggestionReason(info?.nameInfo?.[from])}.
-          </span>
-          <Button size="sm" variant="glass" onClick={() => onRename(from, to)}>
-            Name them {to}
-          </Button>
+              Voices
+            </button>
+          )}
         </div>
-      ))}
-    </div>
+      </div>
+      {(voicesOpen && onToast) || suggestions.length > 0 ? (
+        <div className="mb-4 flex flex-col gap-2">
+          {voicesOpen && onToast && <VoicesPanel onToast={onToast} />}
+          {suggestions.map(([from, to]) => (
+            <div
+              key={from}
+              data-testid="speaker-suggestion"
+              className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[var(--border)] px-2.5 py-1.5 text-[12px] text-muted"
+            >
+              <Sparkles size={12} className="shrink-0 text-brand-500" />
+              <span className="min-w-0 flex-1">
+                <span className="font-semibold" style={{ color: speakerColor(from) }}>
+                  {from}
+                </span>{" "}
+                sounds like <span className="font-semibold text-[var(--fg)]">{to}</span> {suggestionReason(info?.nameInfo?.[from])}.
+              </span>
+              <Button size="sm" variant="glass" onClick={() => onRename(from, to)}>
+                Name them {to}
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -448,15 +500,38 @@ function SpeakersBar({
 function ActionItemText({ item, me }: { item: string; me?: string }) {
   const speakerColor = useSpeakerColor();
   const { owner, task } = splitOwner(item);
-  if (!owner) return <span className="text-[13px]">• {task}</span>;
   return (
-    <span className="text-[13px]">
-      •{" "}
-      <span data-testid="action-owner" className="font-semibold" style={{ color: speakerColor(owner) }}>
-        {shownName(owner, me)}
+    <span className="flex min-w-0 items-start gap-2 text-[13px] leading-relaxed">
+      <span className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: owner ? speakerColor(owner) : "var(--fg-faint)" }} aria-hidden />
+      <span lang={indicLang(item)} className="min-w-0 break-words">
+        {owner && (
+          <>
+            <span data-testid="action-owner" className="font-semibold" style={{ color: speakerColor(owner) }}>
+              {shownName(owner, me)}
+            </span>
+            {": "}
+          </>
+        )}
+        {task}
       </span>
-      : {task}
     </span>
+  );
+}
+
+/** Delete with one confirm click (the note, its transcript and summary are gone for good). */
+function DeleteNoteButton({ onDelete }: { onDelete: () => void }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return armed ? (
+    <Button size="sm" variant="danger" icon={<Trash2 size={13} />} onClick={onDelete} aria-label="Confirm delete note">
+      Delete note?
+    </Button>
+  ) : (
+    <Button size="sm" variant="danger" icon={<Trash2 size={13} />} aria-label="Delete note" title="Delete note" onClick={() => setArmed(true)} />
   );
 }
 
@@ -467,6 +542,13 @@ export default function Notes() {
   const live = notes?.find((n) => n.live);
   const selectedId = pageArg ?? live?.id ?? notes?.[0]?.id;
   const selected = notes?.find((n) => n.id === selectedId);
+  // opening another note starts at its top (a long note scrolled to the end left the next, shorter
+  // one out of view: an empty page)
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const scroller = root.current?.closest(".overflow-y-auto");
+    if (scroller && scroller.scrollTop > 0) scroller.scrollTo({ top: 0 });
+  }, [selectedId]);
 
   const start = async () => {
     const n = await api.startMeeting(title.trim() || undefined);
@@ -475,7 +557,7 @@ export default function Notes() {
   };
 
   return (
-    <div>
+    <div ref={root}>
       <PageHeader
         title="Notes"
         subtitle="Meeting notes with live transcription and summaries, recorded and processed on this device."
@@ -497,37 +579,40 @@ export default function Notes() {
           <Empty icon={<StickyNote size={18} />} title="No notes yet" hint="Start a meeting and Flo transcribes, summarizes, and pulls out action items." />
         </Card>
       ) : (
-        <div className="grid grid-cols-[280px_1fr] gap-4">
-          <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-[minmax(0,232px)_minmax(0,1fr)] items-start gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+          <nav aria-label="Notes" data-testid="notes-list" className="no-scrollbar sticky top-3 flex max-h-[calc(100vh-7rem)] flex-col gap-1.5 overflow-y-auto">
             {notes.map((n) => (
               <button
                 key={n.id}
                 onClick={() => go("notes", n.id)}
-                className={clsx("rounded-xl px-3 py-2.5 text-left transition", n.id === selectedId ? "glass-strong" : "hover:bg-[var(--glass)]")}
+                aria-current={n.id === selectedId ? "true" : undefined}
+                className={clsx("shrink-0 rounded-xl px-3 py-2.5 text-left transition", n.id === selectedId ? "glass-strong" : "hover:bg-[var(--glass)]")}
               >
                 <div className="flex items-center gap-1.5 text-[13.5px] font-medium">
                   {n.live && <span className="h-2 w-2 shrink-0 rounded-full bg-red-500 animate-pulse" />}
                   <span className="truncate">{n.title}</span>
                 </div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-faint">
-                  {n.live ? "Recording" : relativeTime(n.createdAt)} · {formatDuration(n.durationSec)}
+                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11.5px] text-faint">
+                  <span className="shrink-0">
+                    {n.live ? "Recording" : relativeTime(n.createdAt)} · {formatDuration(n.durationSec)}
+                  </span>
                   {n.projectId && (
                     <>
-                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: projects?.find((p) => p.id === n.projectId)?.color }} />
-                      {projects?.find((p) => p.id === n.projectId)?.name}
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: projects?.find((p) => p.id === n.projectId)?.color }} />
+                      <span className="truncate">{projects?.find((p) => p.id === n.projectId)?.name}</span>
                     </>
                   )}
                 </div>
               </button>
             ))}
-          </div>
-          <AnimatePresence mode="wait">
-            {selected && (
-              <motion.div key={selected.id} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}>
-                {selected.live ? <LiveNote note={selected} /> : <NoteDetail note={selected} onToast={toast} />}
-              </motion.div>
-            )}
-          </AnimatePresence>
+          </nav>
+          {/* the next note fades straight in: waiting for the old one to fade out first doubled the
+              delay, and on a slow Linux webview the detail stayed blank for seconds */}
+          {selected && (
+            <motion.div key={selected.id} className="min-w-0" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.16, ease: "easeOut" }}>
+              {selected.live ? <LiveNote note={selected} /> : <NoteDetail note={selected} onToast={toast} />}
+            </motion.div>
+          )}
         </div>
       )}
     </div>
@@ -602,19 +687,21 @@ function LiveNote({ note }: { note: Note }) {
     <div className="flex flex-col gap-4">
       <Card strong className="relative overflow-hidden p-5">
         <div className="pointer-events-none absolute -left-10 -top-10 h-32 w-32 rounded-full bg-red-500 opacity-20 blur-3xl" />
-        <div className="relative flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="relative flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             {stopping ? (
-              <span className="relative flex h-3 w-3 rounded-full bg-brand-300 shadow-[0_0_10px_rgba(102,206,255,0.8)]" />
+              <span className="relative flex h-3 w-3 shrink-0 rounded-full bg-brand-300 shadow-[0_0_10px_rgba(102,206,255,0.8)]" />
             ) : (
-              <span className="relative flex h-3 w-3">
+              <span className="relative flex h-3 w-3 shrink-0">
                 <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-60" />
                 <span className="relative h-3 w-3 rounded-full bg-red-500" />
               </span>
             )}
-            <div>
-              <div className="text-[17px] font-semibold">{note.title}</div>
-              <div className="flex items-center gap-2 font-mono text-[13px] tabular-nums text-muted">
+            <div className="min-w-0">
+              <div className="truncate text-[17px] font-semibold" title={note.title}>
+                {note.title}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[13px] tabular-nums text-muted">
                 <span
                   data-testid="recording-state"
                   className={clsx("font-sans text-[11px] font-semibold uppercase tracking-wider", stopping ? "text-brand-500 dark:text-brand-300" : "text-red-500")}
@@ -645,7 +732,7 @@ function LiveNote({ note }: { note: Note }) {
         <div ref={scroller} onScroll={onScroll} className="flex max-h-[46vh] flex-col gap-2.5 overflow-y-auto pr-1" data-testid="live-transcript">
           <AnimatePresence initial={false}>
             <ColorCtx.Provider value={speakerPalette(segs.map((x) => x.speaker))}>
-              <TranscriptRows segs={segs} me={me} />
+              <TranscriptRows segs={segs} me={me} live />
             </ColorCtx.Provider>
           </AnimatePresence>
           <div className="flex gap-3" data-testid="live-line">
@@ -696,7 +783,7 @@ function LiveLine({ text, placeholder }: { text: string; placeholder: string }) 
       </span>
     );
   return (
-    <span className="selectable text-[13.5px] leading-relaxed text-[var(--fg)]/70" aria-live="polite">
+    <span lang={indicLang(text)} className={clsx("selectable text-[13.5px] text-[var(--fg)]/70", indicLang(text) ? "leading-[1.8]" : "leading-relaxed")} aria-live="polite">
       {stable}
       <span key={stable.length + ":" + added} className="flo-type-in">
         {added}
@@ -759,9 +846,9 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
     <ColorCtx.Provider value={palette}>
     <div className="flex flex-col gap-4">
       <Card strong className="p-5">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="text-[19px] font-semibold tracking-tight">{note.title}</div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="break-words text-[19px] font-semibold leading-snug tracking-tight">{note.title}</div>
             <div className="mt-0.5 text-[12.5px] text-faint">
               {new Date(note.createdAt).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · {formatDuration(note.durationSec)}
             </div>
@@ -771,7 +858,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
               </div>
             )}
           </div>
-          <div className="flex gap-1.5">
+          <div className="flex shrink-0 gap-1.5">
             <Button
               size="sm"
               icon={<Copy size={13} />}
@@ -782,11 +869,8 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
             >
               Copy
             </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              icon={<Trash2 size={13} />}
-              onClick={async () => {
+            <DeleteNoteButton
+              onDelete={async () => {
                 await api.deleteNote(note.id);
                 go("notes");
               }}
@@ -818,7 +902,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
             </div>
             <div className="flex flex-col gap-1">
               {note.actionItems.map((a, i) => (
-                <div key={i} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-[var(--glass)]">
+                <div key={i} data-testid="action-item" className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 hover:bg-[var(--glass)]">
                   <ActionItemText item={a} me={me} />
                   <Button
                     size="sm"
@@ -839,6 +923,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
           </div>
         )}
       </Card>
+      {note.transcript.length > 0 && (
       <Card className="p-5">
         <CardTitle>Transcript</CardTitle>
         {note.transcript.some((s) => s.speaker && s.speaker !== "You") && (
@@ -856,6 +941,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
           <TranscriptRows segs={note.transcript} me={me} names={names} onRename={rename} guesses={info?.suggestions} />
         </div>
       </Card>
+      )}
     </div>
     </ColorCtx.Provider>
   );

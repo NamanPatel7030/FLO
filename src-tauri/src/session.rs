@@ -325,12 +325,21 @@ fn save(st: &Shared, mode: Mode, app: &str, raw: &str, final_text: &str, duratio
 
 /// STT with the configured provider. Personal dictionary words are passed as a prompt hint.
 /// Same, with extra context (e.g. the previous sentence in a meeting) for better continuity.
+/// Dictation, the assistant and hands-free mode: Hindi / Hinglish speech is typed the way Settings →
+/// Voice → "Hindi when you dictate" says (Hinglish in Roman letters by default), never as the
+/// speech model's English translation.
 pub async fn transcribe_with_prompt(st: &Shared, samples: Vec<f32>, context: &str) -> Result<String> {
-    transcribe_lang(st, samples, context, None).await
+    let hindi = stt::HindiScript::from_setting(&st.settings().dictation_hindi);
+    transcribe_in(st, samples, context, None, hindi).await
 }
 
 /// `lang_override` forces a language ("hi"/"gu"/…) instead of the user's setting (meetings lock it).
+/// Hindi stays in Devanagari: meeting notes write it their own way (`meetpipe::render_hindi`).
 pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang_override: Option<String>) -> Result<String> {
+    transcribe_in(st, samples, context, lang_override, stt::HindiScript::Devanagari).await
+}
+
+async fn transcribe_in(st: &Shared, samples: Vec<f32>, context: &str, lang_override: Option<String>, hindi: stt::HindiScript) -> Result<String> {
     let s = st.settings();
     // learned words bias the speech model; newest first and bounded (Whisper keeps ~224 prompt tokens)
     let vocab: Vec<String> = st.db.list_dictionary_recent().unwrap_or_default().into_iter().map(|d| d.replacement.unwrap_or(d.word)).collect();
@@ -340,7 +349,7 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
         let w = st.whisper.clone();
         *w.auto_langs.lock() = stt::allowed_languages(&s.auto_languages);
         let lang = lang_override.clone().unwrap_or_else(|| s.language.clone());
-        tokio::task::spawn_blocking(move || w.dictate(&path, &samples, &lang, &prompt)).await?
+        tokio::task::spawn_blocking(move || w.dictate_as(&path, &samples, &lang, &prompt, hindi).map(|h| h.text)).await?
     } else {
         // cloud STT bills per second of audio → drop leading/trailing silence
         let samples = audio::trim_silence(&samples);
@@ -350,7 +359,9 @@ pub async fn transcribe_lang(st: &Shared, samples: Vec<f32>, context: &str, lang
         let lang = lang_override.unwrap_or_else(|| s.language.clone());
         let text = stt::transcribe_cloud(&st.egress, &s.stt_provider, &s.stt_model, &key, &samples, &lang, &prompt).await?;
         // Gujarati in Gujarati script, whatever script the engine wrote it in
-        Ok(stt::cloud_script(&text, &lang, &stt::allowed_languages(&s.auto_languages)))
+        let text = stt::cloud_script(&text, &lang, &stt::allowed_languages(&s.auto_languages));
+        // and Hindi in Roman letters when that's how the user wants it typed
+        Ok(dictation::cloud_hindi(&text, &lang, hindi))
     }
 }
 
@@ -383,6 +394,36 @@ async fn cleanup_text(st: &Shared, raw: &str, app: &str, learned: &crate::learni
     let final_pass = |t: String| text::apply_dictionary(&t, &dict);
     let base = text::apply_dictionary(&text::tidy_transcript(raw), &dict);
     let cfg = LlmConfig::from_settings(&s);
+    // "Translate to English": the accurate Hinglish transcript, translated by the AI
+    if dictation::wants_translation(&s.dictation_hindi, &base) {
+        if !cfg.is_configured() {
+            st.toast("info", "Translating Hindi into English needs an AI model (Settings → AI). Typed what you said instead.");
+            return dictation::local_cleanup(raw, &dict);
+        }
+        let system = prompts::translate_dictation_system(app, &vocab);
+        let req = ChatRequest {
+            system: &system,
+            user: &base,
+            image_b64: None,
+            json: false,
+            purpose: Purpose::Cleanup,
+            cloud_allowed: cfg::is_cloud_llm(&s.llm_provider),
+            max_tokens: (text::word_count(&base) * 3 + 40).min(2000),
+        };
+        return match tokio::time::timeout(std::time::Duration::from_millis(5000), llm::chat(&st.egress, &cfg, req)).await {
+            Ok(Ok(out)) if !out.trim().is_empty() => final_pass(text::strip_ai_dashes(&text::strip_llm_wrapping(&out))),
+            other => {
+                let why = match other {
+                    Ok(Err(e)) => e.to_string(),
+                    Err(_) => "it took too long".into(),
+                    Ok(Ok(_)) => "the AI returned nothing".into(),
+                };
+                log::warn!("dictation translation failed: {why}");
+                st.toast("info", format!("Couldn't translate into English ({why}). Typed what you said instead."));
+                dictation::local_cleanup(raw, &dict)
+            }
+        };
+    }
     // free local pass unless the transcript actually needs the LLM (fillers, corrections, long text)
     if !s.cleanup_enabled || !cfg.is_configured() || !text::needs_llm_cleanup(&base) {
         return dictation::local_cleanup(raw, &dict);
