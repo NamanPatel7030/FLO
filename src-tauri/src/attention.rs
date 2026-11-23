@@ -44,19 +44,43 @@ pub fn blocked_reason(s: &crate::model::Settings) -> Option<String> {
 
 /// Focused window as a compact JPEG (longest side ≤ `max_side`) → (app, base64). For "Go deeper".
 pub fn capture_focused_jpeg(max_side: u32) -> Option<(String, String)> {
-    use base64::Engine;
-    use xcap::image::{codecs::jpeg::JpegEncoder, DynamicImage};
     let me = std::process::id();
     let w = xcap::Window::all().ok()?.into_iter().find(|w| {
         w.is_focused().unwrap_or(false) && !w.is_minimized().unwrap_or(false) && w.pid().map(|p| p != me).unwrap_or(true)
     })?;
     let app = w.app_name().unwrap_or_default();
-    let img = DynamicImage::ImageRgba8(w.capture_image().ok()?);
+    let img = w.capture_image().ok()?;
+    Some((app, jpeg_b64(img, max_side)?))
+}
+
+/// An RGBA capture as a JPEG (longest side ≤ `max_side`), base64.
+fn jpeg_b64(img: xcap::image::RgbaImage, max_side: u32) -> Option<String> {
+    use base64::Engine;
+    use xcap::image::{codecs::jpeg::JpegEncoder, DynamicImage};
+    let img = DynamicImage::ImageRgba8(img);
     let img = if img.width().max(img.height()) > max_side { img.resize(max_side, max_side, xcap::image::imageops::FilterType::Triangle) } else { img };
     let rgb = img.to_rgb8();
     let mut buf = Vec::new();
     JpegEncoder::new_with_quality(&mut buf, 72).encode_image(&rgb).ok()?;
-    Some((app, base64::engine::general_purpose::STANDARD.encode(buf)))
+    Some(base64::engine::general_purpose::STANDARD.encode(buf))
+}
+
+/// The focused window (not Flo's) captured once for the assistant: (app, title, OCR text, a JPEG
+/// when `jpeg_side` is given). None without a capturable window.
+pub fn capture_focused_for_assistant(jpeg_side: Option<u32>) -> Option<(String, String, Option<String>, Option<String>)> {
+    let me = std::process::id();
+    let w = xcap::Window::all().ok()?.into_iter().find(|w| {
+        w.is_focused().unwrap_or(false) && !w.is_minimized().unwrap_or(false) && w.pid().map(|p| p != me).unwrap_or(true)
+    })?;
+    let app = w.app_name().unwrap_or_default();
+    let title = w.title().unwrap_or_default();
+    let img = w.capture_image().ok()?;
+    if img.width() < 50 || img.height() < 50 {
+        return None;
+    }
+    let text = if platform::has_native_ocr() { platform::ocr(img.as_raw(), img.width(), img.height()) } else { None };
+    let jpeg = jpeg_side.and_then(|side| jpeg_b64(img, side));
+    Some((app, title, text, jpeg))
 }
 
 pub fn status(st: &Shared) -> AttentionStatus {

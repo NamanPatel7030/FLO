@@ -228,6 +228,12 @@ pub fn set_api_key(provider: &str, key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Tests only (the screen eval's live run): use this key for `provider` without the keychain.
+#[cfg(test)]
+pub fn use_key_for_tests(provider: &str, key: &str) {
+    CACHE.lock().get_or_insert_with(Default::default).insert(provider.to_string(), key.to_string());
+}
+
 pub fn get_api_key(provider: &str) -> Option<String> {
     if let Some(k) = CACHE.lock().as_ref().and_then(|m| m.get(provider).cloned()) {
         return Some(k);

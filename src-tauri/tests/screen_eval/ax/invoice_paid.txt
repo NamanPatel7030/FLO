@@ -1,0 +1,9 @@
+Invoice #1042
+Status: Paid
+Paid on Nov 12, 2026 by Visa ending 4242
+Item | Qty | Amount
+Brand workshop | 1 | $900.00
+Logo revisions | 3 | $270.00
+Tax (9.75%) | $114.50
+Total | $1,284.50
+Download PDF

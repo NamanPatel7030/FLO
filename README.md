@@ -54,6 +54,10 @@ Same codebase. Island = frosted capsule bottom-right. Build on a Windows machine
 cd src-tauri && cargo test --lib     # 48 Rust tests (egress, prompts/parsers, db, analytics, hotkeys, Claude hooks…)
 npm test                             # 17 UI tests
 ```
+Assistant screen eval (34 spoken questions about saved screens in `src-tauri/tests/screen_eval`, before vs now):
+`cd src-tauri && cargo test --release --lib screen_eval_report -- --ignored --nocapture` (offline: does the answer reach
+the model). Add `FLO_EVAL_LIVE=1 ANTHROPIC_API_KEY=…` to also ask the real model (Haiku by default, `FLO_EVAL_MODEL`) and
+grade the answers with latency. Re-render the fixtures with `node src-tauri/tests/screen_eval/render.mjs`.
 
 ## Architecture
 `docs/01-reverse-engineering.md` — how Wispr Flow & Lemon work (static analysis of the installed apps).
@@ -66,6 +70,7 @@ src-tauri/src/
   assistant.rs  context (projects, to-dos, notes, selection, screen) → JSON actions → execute
   meeting.rs    live note-taker
   attention.rs  focused-window OCR → new text → to-do extraction
+  screen_ctx.rs what the assistant reads of the front window (accessibility, OCR fallback) + trimming
   claude.rs     Claude Code hook install + localhost listener
   egress.rs     network allow-list + log      llm.rs / stt.rs  providers
   db.rs         SQLCipher storage + analytics  platform/       macOS + Windows native code

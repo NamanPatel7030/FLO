@@ -288,6 +288,19 @@ unsafe fn ax_str(el: AXRef, attr: &str) -> Option<String> {
 /// link titles), at most `max_chars`, within ~120 ms. Password fields are never read; when one has
 /// focus nothing is read at all (`secure`).
 pub fn focused_window_text(max_chars: usize) -> Option<super::WindowText> {
+    focused_window_text_ex(max_chars, AxRead { budget_ms: 120, nodes: 3000, rich: false })
+}
+
+/// How much of the window to read. `rich` (the assistant): table rows on one line, the browser's
+/// tab strip and toolbars skipped, pop-up and checkbox values kept, and the page's URL.
+#[derive(Clone, Copy)]
+pub struct AxRead {
+    pub budget_ms: u64,
+    pub nodes: u32,
+    pub rich: bool,
+}
+
+pub fn focused_window_text_ex(max_chars: usize, opts: AxRead) -> Option<super::WindowText> {
     let app = frontmost_app();
     if app.pid <= 0 {
         return None;
@@ -305,7 +318,7 @@ pub fn focused_window_text(max_chars: usize) -> Option<super::WindowText> {
             let secure = [ax_str(el, "AXRole"), ax_str(el, "AXSubrole")].iter().flatten().any(|r| r == "AXSecureTextField");
             CFRelease(el);
             if secure {
-                return Some(super::WindowText { secure: true, text: String::new() });
+                return Some(super::WindowText { secure: true, ..Default::default() });
             }
         }
         let appel = AXUIElementCreateApplication(app.pid);
@@ -316,52 +329,109 @@ pub fn focused_window_text(max_chars: usize) -> Option<super::WindowText> {
         let win = ax_copy(appel, "AXFocusedWindow").or_else(|| ax_copy(appel, "AXMainWindow"));
         CFRelease(appel as core_foundation::base::CFTypeRef);
         let Some(win) = win else { return Some(super::WindowText::default()) };
-        let mut out = String::new();
-        let mut nodes = 0u32;
-        ax_walk(win as AXRef, 0, &mut out, &mut nodes, std::time::Instant::now(), max_chars);
+        let mut w = AxWalk { out: String::new(), nodes: 0, t0: std::time::Instant::now(), max: max_chars, opts, url: None };
+        w.walk(win as AXRef, 0);
         CFRelease(win);
-        Some(super::WindowText { secure: false, text: out })
+        Some(super::WindowText { secure: false, text: w.out, url: w.url })
     }
 }
 
-unsafe fn ax_walk(el: AXRef, depth: u32, out: &mut String, nodes: &mut u32, t0: std::time::Instant, max: usize) {
-    use core_foundation::array::CFArray;
-    use core_foundation::base::{CFType, TCFType};
-    if depth > 40 || *nodes > 3000 || out.len() >= max || t0.elapsed() > std::time::Duration::from_millis(120) {
-        return;
+struct AxWalk {
+    out: String,
+    nodes: u32,
+    t0: std::time::Instant,
+    max: usize,
+    opts: AxRead,
+    url: Option<String>,
+}
+
+impl AxWalk {
+    fn done(&self) -> bool {
+        self.out.len() >= self.max || self.t0.elapsed() > std::time::Duration::from_millis(self.opts.budget_ms)
     }
-    *nodes += 1;
-    AXUIElementSetMessagingTimeout(el, 0.1);
-    let role = ax_str(el, "AXRole").unwrap_or_default();
-    if role == "AXSecureTextField" || ax_str(el, "AXSubrole").as_deref() == Some("AXSecureTextField") {
-        return;
+
+    unsafe fn walk(&mut self, el: AXRef, depth: u32) {
+        use core_foundation::base::{CFType, TCFType};
+        if depth > 40 || self.nodes > self.opts.nodes || self.done() {
+            return;
+        }
+        self.nodes += 1;
+        AXUIElementSetMessagingTimeout(el, 0.1);
+        let role = ax_str(el, "AXRole").unwrap_or_default();
+        if role == "AXSecureTextField" || ax_str(el, "AXSubrole").as_deref() == Some("AXSecureTextField") {
+            return;
+        }
+        if matches!(role.as_str(), "AXMenuBar" | "AXMenu" | "AXScrollBar" | "AXImage") {
+            return;
+        }
+        if self.opts.rich && matches!(role.as_str(), "AXToolbar" | "AXTabGroup") && depth <= 3 {
+            return; // the browser's tab strip and toolbar: the page is what's asked about
+        }
+        if self.opts.rich && self.url.is_none() && role == "AXWebArea" {
+            self.url = ax_url(el);
+        }
+        if self.opts.rich && role == "AXRow" {
+            // a table row on one line ("Plan | Price | Credits"), so values stay with their labels
+            let start = self.out.len();
+            self.kids(el, depth);
+            let row: Vec<String> = self.out[start..].lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+            self.out.truncate(start);
+            if !row.is_empty() {
+                self.out.push_str(&row.join(" | "));
+                self.out.push('\n');
+            }
+            return;
+        }
+        let text = match role.as_str() {
+            "AXStaticText" | "AXTextField" | "AXTextArea" | "AXComboBox" => ax_str(el, "AXValue"),
+            "AXButton" | "AXLink" | "AXHeading" | "AXCell" | "AXRadioButton" | "AXTab" | "AXWindow" => ax_str(el, "AXTitle").or_else(|| ax_str(el, "AXDescription")),
+            "AXPopUpButton" if self.opts.rich => ax_str(el, "AXValue").or_else(|| ax_str(el, "AXTitle")),
+            "AXCheckBox" if self.opts.rich => ax_str(el, "AXTitle").map(|t| {
+                let on = ax_copy(el, "AXValue")
+                    .and_then(|v| CFType::wrap_under_create_rule(v).downcast::<core_foundation::number::CFNumber>())
+                    .and_then(|n| n.to_i64())
+                    .unwrap_or(0);
+                format!("[{}] {t}", if on != 0 { "x" } else { " " })
+            }),
+            _ => None,
+        };
+        let leaf = role == "AXStaticText";
+        if let Some(t) = text {
+            let room = self.max.saturating_sub(self.out.len());
+            self.out.extend(t.chars().take(room.min(4000)));
+            self.out.push('\n');
+        }
+        if leaf {
+            return; // its children repeat its text
+        }
+        self.kids(el, depth);
     }
-    if matches!(role.as_str(), "AXMenuBar" | "AXMenu" | "AXScrollBar" | "AXImage") {
-        return;
-    }
-    let text = match role.as_str() {
-        "AXStaticText" | "AXTextField" | "AXTextArea" | "AXComboBox" => ax_str(el, "AXValue"),
-        "AXButton" | "AXLink" | "AXHeading" | "AXCell" | "AXRadioButton" | "AXTab" | "AXWindow" => ax_str(el, "AXTitle").or_else(|| ax_str(el, "AXDescription")),
-        _ => None,
-    };
-    let leaf = role == "AXStaticText";
-    if let Some(t) = text {
-        let room = max.saturating_sub(out.len());
-        out.extend(t.chars().take(room.min(4000)));
-        out.push('\n');
-    }
-    if leaf {
-        return; // its children repeat its text
-    }
-    let Some(kids) = ax_copy(el, "AXChildren") else { return };
-    let Some(arr) = CFType::wrap_under_create_rule(kids).downcast::<CFArray>() else { return };
-    for k in arr.iter() {
-        let child: *const c_void = *k;
-        ax_walk(child as AXRef, depth + 1, out, nodes, t0, max);
-        if out.len() >= max || t0.elapsed() > std::time::Duration::from_millis(120) {
-            break;
+
+    unsafe fn kids(&mut self, el: AXRef, depth: u32) {
+        use core_foundation::array::CFArray;
+        use core_foundation::base::{CFType, TCFType};
+        let Some(kids) = ax_copy(el, "AXChildren") else { return };
+        let Some(arr) = CFType::wrap_under_create_rule(kids).downcast::<CFArray>() else { return };
+        for k in arr.iter() {
+            let child: *const c_void = *k;
+            self.walk(child as AXRef, depth + 1);
+            if self.done() {
+                break;
+            }
         }
     }
+}
+
+/// A web area's page address (`AXURL`, a CFURL).
+unsafe fn ax_url(el: AXRef) -> Option<String> {
+    use core_foundation::base::{CFType, TCFType};
+    let v = ax_copy(el, "AXURL")?;
+    let t = CFType::wrap_under_create_rule(v);
+    let s = match t.downcast::<core_foundation::url::CFURL>() {
+        Some(u) => u.get_string().to_string(),
+        None => t.downcast::<core_foundation::string::CFString>()?.to_string(),
+    };
+    s.starts_with("http").then_some(s)
 }
 
 #[link(name = "Vision", kind = "framework")]

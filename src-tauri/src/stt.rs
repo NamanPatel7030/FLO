@@ -1352,6 +1352,44 @@ pub fn route_model(chosen: &Path, language: &str, auto_langs: &[String]) -> Opti
     FALLBACK_MODELS.iter().filter_map(|id| spec(id)).map(|m| dir.join(m.file)).find(|p| p.exists())
 }
 
+/// The models to load when the Flo key goes down: the ones the clip will really be decoded with,
+/// most important last (it ends up most recently used, so it is never the one evicted). With the
+/// Hinglish model chosen and language Auto, clips go to the general Whisper model (the Hinglish
+/// one can't tell languages apart), so that one has to be warm: warming the chosen file instead
+/// loaded a model the clip never used and left the real one to a cold load on every request (or,
+/// on a Mac that keeps one model, each evicting the other). With room for two models the Hinglish
+/// one stays loaded too, for the second pass over Hindi speech.
+pub fn warm_targets(chosen: &Path, language: &str, auto_langs: &[String], kept: usize) -> Vec<PathBuf> {
+    let routed = if onnx_family(chosen).is_some() || needs_routing(chosen, language) {
+        route_model(chosen, language, auto_langs)
+    } else {
+        Some(chosen.to_path_buf())
+    };
+    let Some(routed) = routed else { return vec![] };
+    let mut out = vec![];
+    let second_pass = kept >= 2 && matches!(language, "" | "auto" | "hi") && onnx_family(&routed).is_none();
+    if let (true, Some(m), Some(dir)) = (second_pass, spec(HINGLISH_MODEL), routed.parent()) {
+        let p = dir.join(m.file);
+        if p.exists() && p != routed {
+            out.push(p);
+        }
+    }
+    out.push(routed);
+    out
+}
+
+/// Load, in the background, the speech models the next clip will be decoded with (`warm_targets`
+/// for the user's model and language).
+pub fn warm_in_background(w: Arc<LocalWhisper>, models_dir: &Path, s: &crate::model::Settings) {
+    let Some(path) = model_path(models_dir, &s.stt_model) else { return };
+    let (lang, langs) = (s.language.clone(), allowed_languages(&s.auto_languages));
+    tauri::async_runtime::spawn_blocking(move || {
+        for p in warm_targets(&path, &lang, &langs, models_kept()) {
+            w.warm(&p);
+        }
+    });
+}
+
 /// Does a clip for a Whisper model need `route_model`? Only when a language-specific model is
 /// involved (the chosen one is one, or one for this language is downloaded); otherwise the chosen
 /// Whisper model always transcribes, with no file checks per clip.
@@ -2718,6 +2756,27 @@ mod tests {
         assert_eq!(remove_redundant(&d, "large-v3-turbo-q5_0"), 0);
         assert!(d.join("ggml-large-v3-turbo.bin").exists());
         std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn key_down_warms_the_model_the_clip_really_goes_to() {
+        let d = model_dir(&["ggml-large-v3-turbo.bin", "ggml-hinglish-apex.bin"]);
+        let apex = d.join("ggml-hinglish-apex.bin");
+        let turbo = d.join("ggml-large-v3-turbo.bin");
+        let auto = vec!["en".to_string(), "hi".to_string()];
+        // the user's case: Hinglish model chosen, language Auto → Auto clips go to turbo
+        assert_eq!(warm_targets(&apex, "auto", &auto, 1), vec![turbo.clone()], "one model kept: only the one that decodes");
+        assert_eq!(warm_targets(&apex, "auto", &auto, 2), vec![apex.clone(), turbo.clone()], "two kept: turbo last (most recent)");
+        // Hinglish chosen as the language: the Hinglish model decodes it
+        assert_eq!(warm_targets(&apex, HINGLISH, &auto, 1), vec![apex.clone()]);
+        // a general model chosen: that one
+        assert_eq!(warm_targets(&turbo, "en", &auto, 1), vec![turbo.clone()]);
+        assert_eq!(warm_targets(&turbo, "auto", &auto, 2), vec![apex.clone(), turbo.clone()]);
+        // nothing that can hear Auto downloaded: nothing to warm (the clip will say so)
+        let d2 = model_dir(&["ggml-hinglish-apex.bin"]);
+        assert!(warm_targets(&d2.join("ggml-hinglish-apex.bin"), "auto", &auto, 1).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&d2);
     }
 
     #[test]

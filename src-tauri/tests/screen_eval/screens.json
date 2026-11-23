@@ -1,0 +1,74 @@
+[
+  {
+    "id": "elevenlabs_subscription",
+    "app": "Google Chrome",
+    "title": "Subscription | ElevenLabs",
+    "url": "https://elevenlabs.io/app/subscription"
+  },
+  {
+    "id": "pricing_table",
+    "app": "Safari",
+    "title": "Pricing - Linework",
+    "url": "https://linework.app/pricing"
+  },
+  {
+    "id": "vscode_error",
+    "app": "Code",
+    "title": "UserList.tsx — web-app",
+    "url": ""
+  },
+  {
+    "id": "gmail_thread",
+    "app": "Google Chrome",
+    "title": "Invoice INV-2291 for November - priya@acme.co - Gmail",
+    "url": "https://mail.google.com/mail/u/0/#inbox/FMfcgzQX"
+  },
+  {
+    "id": "slack_channel",
+    "app": "Slack",
+    "title": "launch (Channel) - Northwind - Slack",
+    "url": ""
+  },
+  {
+    "id": "jira_ticket",
+    "app": "Google Chrome",
+    "title": "[FLO-482] Export fails for large workspaces - Jira",
+    "url": "https://northwind.atlassian.net/browse/FLO-482"
+  },
+  {
+    "id": "revenue_dashboard",
+    "app": "Google Chrome",
+    "title": "Dashboard - Payments",
+    "url": "https://dashboard.payments.example/dashboard"
+  },
+  {
+    "id": "invoice_paid",
+    "app": "Google Chrome",
+    "title": "Invoice #1042 - Harbor Studio",
+    "url": "https://billing.harborstudio.example/invoices/1042"
+  },
+  {
+    "id": "code_editor",
+    "app": "Cursor",
+    "title": "pricing.py — shop",
+    "url": ""
+  },
+  {
+    "id": "signup_form",
+    "app": "Google Chrome",
+    "title": "Create your account - Orbit",
+    "url": "https://orbit.example/signup"
+  },
+  {
+    "id": "server_logs",
+    "app": "Google Chrome",
+    "title": "Logs - api-prod - Render",
+    "url": "https://dashboard.render.example/web/api-prod/logs"
+  },
+  {
+    "id": "design_canvas",
+    "app": "Figma",
+    "title": "Onboarding v3 - Figma",
+    "url": ""
+  }
+]

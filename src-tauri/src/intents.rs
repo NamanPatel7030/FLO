@@ -113,6 +113,16 @@ fn open_target(target: &str) -> Option<Intent> {
     Some(Intent { reply: format!("Opening {}", title_case(t)), action: AssistantAction::OpenApp { name: title_case(t) } })
 }
 
+/// An "open <x>" where <x> is no app or site Flo knows, so it was only a guess at an app name
+/// ("open billing", "show me the invoice"). With a web page in front, that is a part of the page
+/// to go to, which the assistant (reading the page) handles better than a failing app launch.
+pub fn is_guessed_app(a: &AssistantAction) -> bool {
+    match a {
+        AssistantAction::OpenApp { name } => !APPS.iter().any(|(_, app)| app.eq_ignore_ascii_case(name)),
+        _ => false,
+    }
+}
+
 /// MCP servers with a public remote endpoint we're confident about. Others get a blank URL the
 /// user fills in from the provider's docs.
 pub const KNOWN_MCP: &[(&str, &str, Option<&str>)] = &[
@@ -312,6 +322,15 @@ mod tests {
         );
         assert_eq!(act("ask claude about rust lifetimes"), Some(AssistantAction::OpenUrl { url: "https://claude.ai/new?q=rust+lifetimes".into() }));
         assert!(matches!(act("ask perplexity best laptops 2026"), Some(AssistantAction::OpenUrl { .. })));
+    }
+
+    #[test]
+    fn unknown_open_targets_are_marked_as_guesses() {
+        assert!(is_guessed_app(&act("open billing").unwrap()));
+        assert!(is_guessed_app(&act("show me the invoice").unwrap()));
+        assert!(!is_guessed_app(&act("open slack").unwrap()));
+        assert!(!is_guessed_app(&act("open VS Code").unwrap()));
+        assert!(!is_guessed_app(&act("open youtube").unwrap()));
     }
 
     #[test]

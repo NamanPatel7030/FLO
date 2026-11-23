@@ -348,10 +348,7 @@ pub fn start(st: &Shared) -> Result<()> {
     // warm the local speech model so the first request isn't slow
     let s = st.settings();
     if s.stt_provider == "local" {
-        if let Some(path) = stt::model_path(&st.models_dir, &s.stt_model) {
-            let w = st.whisper.clone();
-            tauri::async_runtime::spawn_blocking(move || w.warm(&path));
-        }
+        stt::warm_in_background(st.whisper.clone(), &st.models_dir, &s);
     }
     tauri::async_runtime::spawn(listen_loop(st.clone(), gen));
     Ok(())

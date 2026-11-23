@@ -1,0 +1,35 @@
+Simple pricing for every team
+Billed monthly. Save 20% with annual billing.
+Starter | Pro | Team
+Price | $9 / month | $29 / month | $79 / month
+Seats | 1 | 5 | 25
+Storage | 10 GB | 100 GB | 1 TB
+SSO (SAML) | No | No | Yes
+Priority support | No | Yes | Yes
+Start free trial
+FAQ
+Question 1: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 2: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 3: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 4: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 5: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 6: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 7: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 8: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 9: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 10: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 11: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 12: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 13: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 14: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 15: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 16: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 17: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 18: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 19: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 20: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 21: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 22: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 23: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 24: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Question 25: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.

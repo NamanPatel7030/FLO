@@ -1,0 +1,34 @@
+Your work
+Projects
+Filters
+Dashboards
+Teams
+Flo board
+Backlog
+Releases
+Projects / Flo / FLO-482
+Export fails for large workspaces
+Description
+Exporting a workspace with more than 5,000 notes times out after 30 seconds and the download never starts.
+Details
+Status | In Progress
+Assignee | Ananya Kulkarni
+Reporter | Daniel Wright
+Priority | High
+Due date | Dec 5, 2026
+Sprint | Sprint 42
+Story points | 5
+Linked issues | is blocked by FLO-479 (Streaming zip writer)
+Activity
+Comment 1: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 2: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 3: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 4: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 5: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 6: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 7: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 8: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 9: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 10: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 11: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.
+Comment 12: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.

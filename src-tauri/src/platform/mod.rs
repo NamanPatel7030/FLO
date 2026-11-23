@@ -36,6 +36,22 @@ pub struct FrontApp {
 pub struct WindowText {
     pub secure: bool,
     pub text: String,
+    /// the page's address when the window is a browser (macOS `AXURL`; the assistant's read only)
+    pub url: Option<String>,
+}
+
+/// The front window's text for the assistant: a deeper read than `focused_window_text` (it runs
+/// while the user is still speaking, so it may take longer), with table rows kept on one line and
+/// a browser's URL. Elsewhere the same as `focused_window_text`.
+pub fn assistant_window_text(max_chars: usize) -> Option<WindowText> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::focused_window_text_ex(max_chars, macos::AxRead { budget_ms: 400, nodes: 8000, rich: true })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        focused_window_text(max_chars)
+    }
 }
 
 pub type HotkeyCallback =Box<dyn Fn(HotkeyEvent) + Send + Sync + 'static>;

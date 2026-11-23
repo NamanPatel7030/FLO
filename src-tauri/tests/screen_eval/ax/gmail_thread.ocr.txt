@@ -1,0 +1,21 @@
+Compose
+Inbox 214
+Starred
+Snoozed
+Sent
+Drafts 3
+Labels
+Clients
+Receipts
+Invoice INV-2291 for November
+Daniel WrightNov 18, 9:12 AM
+
+Hi Priya, could you send over the November invoice when you get a chance? Thanks, Daniel
+
+Priya ShahNov 19, 4:40 PM
+
+Hi Daniel, attached is invoice INV-2291 for $4,250.00. Payment is due on December 15, 2026. Bank details are on page 2. Best, Priya
+
+INV-2291.pdf
+
+ReplyForward

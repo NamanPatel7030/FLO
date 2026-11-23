@@ -4,11 +4,12 @@ use crate::egress::Purpose;
 use crate::llm::{self, ChatRequest, LlmConfig};
 use crate::model::*;
 use crate::platform::{self, FrontApp};
+use crate::screen_ctx::{self, ScreenSnap};
 use crate::state::Shared;
 use crate::{db, meeting, prompts, settings as cfg, text};
 use anyhow::{anyhow, Result};
 
-pub fn build_context(st: &Shared, query: &str, selection: Option<&str>, front: &FrontApp, screen: Option<&str>) -> String {
+pub fn build_context(st: &Shared, query: &str, selection: Option<&str>, front: &FrontApp, screen: Option<&ScreenSnap>) -> String {
     let s = st.settings();
     let now = chrono::Local::now();
     let mut c = format!("Today: {} ({})\n", now.format("%Y-%m-%d %H:%M"), now.format("%A"));
@@ -58,8 +59,9 @@ pub fn build_context(st: &Shared, query: &str, selection: Option<&str>, front: &
     if let Some(sel) = selection {
         c.push_str(&format!("\nSelected text in {}:\n\"\"\"\n{}\n\"\"\"\n", front.name, text::truncate_chars(sel, 4000)));
     }
+    // the screen last: closest to the question, and the main source for "what's the total"
     if let Some(scr) = screen {
-        c.push_str(&format!("\nVisible text on screen (OCR, may be noisy):\n\"\"\"\n{}\n\"\"\"\n", text::truncate_chars(scr, 2000)));
+        c.push_str(&screen_ctx::screen_section(scr, query, screen_ctx::SCREEN_BUDGET));
     }
     c
 }
@@ -70,7 +72,7 @@ struct Ctx {
     query: String,
     selection: Option<String>,
     front: FrontApp,
-    screen: Option<String>,
+    screen: Option<ScreenSnap>,
 }
 static RECENT: parking_lot::Mutex<Vec<(String, Ctx)>> = parking_lot::Mutex::new(Vec::new());
 
@@ -147,7 +149,8 @@ pub fn request_language(query: &str) -> &'static str {
         "hai", "hain", "kya", "kyun", "kaise", "nahi", "nahin", "mujhe", "mera", "meri", "mere", "tum", "aap", "karo", "karna",
         "kar", "kal", "aaj", "abhi", "bhi", "batao", "bata", "chahiye", "kuch", "kaun", "kahan", "yaar", "accha", "acha", "theek",
         "haan", "matlab", "wala", "wali", "raha", "rahi", "hoga", "dena", "lena", "sab", "kitna", "kab", "ka", "ki", "ke", "ko",
-        "mein",
+        "mein", "kitne", "kitni", "bache", "bacha", "bachi", "baki", "baaki", "kisne", "bheja", "bheji", "kaunsa", "kaunsi", "hua",
+        "hui", "tha", "thi", "gaya", "gayi", "dikhao", "dikha", "kyon", "wahan", "yahan", "iska", "uska",
     ];
     let words: Vec<String> = query.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(|w| w.to_lowercase()).collect();
     let hits = words.iter().filter(|w| HINGLISH.contains(&w.as_str())).count();
@@ -253,8 +256,47 @@ pub async fn followup(st: &Shared, id: &str, mode: &str) -> Result<AssistantResp
     run_mode(st, &c.query, c.selection, &c.front, c.screen, mode).await
 }
 
-pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>) -> Result<AssistantResponse> {
-    run_mode(st, query, selection, front, screen, "quick").await
+/// A spoken request (the Flo key, hands-free). The last spoken exchanges of the past few minutes
+/// come along, so "and how many have I used?" right after "how many credits are left?" works.
+pub async fn run(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<ScreenSnap>) -> Result<AssistantResponse> {
+    let turns = if thread_turns().is_empty() { voice_turns(std::time::Instant::now()) } else { thread_turns() };
+    let r = with_thread(turns, run_mode(st, query, selection, front, screen, "quick")).await;
+    if let Ok(resp) = &r {
+        remember_voice(query, &resp.reply);
+    }
+    r
+}
+
+/// Spoken exchanges kept for follow-ups: (when, question, answer), oldest first.
+static VOICE: parking_lot::Mutex<Vec<(std::time::Instant, String, String)>> = parking_lot::Mutex::new(Vec::new());
+/// A spoken follow-up continues the conversation for this long after the last answer.
+pub const VOICE_FOLLOWUP: std::time::Duration = std::time::Duration::from_secs(180);
+
+fn remember_voice(query: &str, reply: &str) {
+    let mut v = VOICE.lock();
+    v.push((std::time::Instant::now(), query.to_string(), reply.to_string()));
+    let extra = v.len().saturating_sub(3);
+    v.drain(..extra);
+}
+
+/// The spoken turns still fresh at `now` (each within `VOICE_FOLLOWUP` of the next).
+fn voice_turns(now: std::time::Instant) -> Vec<(String, String)> {
+    recent_turns(&VOICE.lock(), now)
+}
+
+/// Pure (unit-tested): the turns of the current spoken conversation. A gap longer than
+/// `VOICE_FOLLOWUP` starts a new one.
+pub fn recent_turns(all: &[(std::time::Instant, String, String)], now: std::time::Instant) -> Vec<(String, String)> {
+    let mut start = all.len();
+    let mut after = now;
+    for (i, (at, _, _)) in all.iter().enumerate().rev() {
+        if after.saturating_duration_since(*at) > VOICE_FOLLOWUP {
+            break;
+        }
+        start = i;
+        after = *at;
+    }
+    all[start..].iter().map(|(_, q, a)| (q.clone(), a.clone())).collect()
 }
 
 /// How long the assistant may wait on the AI for one answer (it includes a pending Keychain
@@ -283,7 +325,7 @@ pub fn handed_to_screen(resp: &AssistantResponse) -> bool {
         .any(|(a, r)| matches!(a, AssistantAction::Automate { .. }) && r.map(|r| !r.starts_with("⚠️")).unwrap_or(false))
 }
 
-pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>, mode: &str) -> Result<AssistantResponse> {
+pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<ScreenSnap>, mode: &str) -> Result<AssistantResponse> {
     let t0 = std::time::Instant::now();
     let r = run_mode_inner(st, query, selection, front, screen, mode).await;
     // log the outcome (never the words) so a request is never silent in the log
@@ -299,7 +341,7 @@ pub async fn run_mode(st: &Shared, query: &str, selection: Option<String>, front
     r
 }
 
-async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<String>, mode: &str) -> Result<AssistantResponse> {
+async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, front: &FrontApp, screen: Option<ScreenSnap>, mode: &str) -> Result<AssistantResponse> {
     let ctx = Ctx { query: query.to_string(), selection: selection.clone(), front: front.clone(), screen: screen.clone() };
     // Slack is read live only when the request is about it (a word check, no network)
     // (a pending Keychain prompt must not hold the answer)
@@ -315,7 +357,9 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
     // 1) instant local commands ("open Slack", "google …", "play … on youtube") — no AI needed
     // ("search Slack for …" is a Slack read, not a web search)
     if selection.is_none() && mode == "quick" && !slack_ask && !gmail_ask && !calendar_ask {
-        if let Some(intent) = crate::intents::parse(query) {
+        // "open billing" with a web page in front is a part of that page, not an app called Billing
+        let on_a_page = screen.as_ref().is_some_and(|s| s.url.is_some() || is_browser(&s.app));
+        if let Some(intent) = crate::intents::parse(query).filter(|i| !(on_a_page && crate::intents::is_guessed_app(&i.action))) {
             let result = execute(st, &intent.action, front, false).await;
             let (reply, results) = match result {
                 Ok(r) => (intent.reply, vec![r]),
@@ -353,7 +397,7 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
             .filter(|c| c.kind == "mcp" && c.enabled && k.connections.contains(&c.id))
             .collect();
         if !servers.is_empty() {
-            return tokio::time::timeout(TOOLS_TIMEOUT, run_skill_with_tools(st, query, k, &servers, front, screen.as_deref(), mode))
+            return tokio::time::timeout(TOOLS_TIMEOUT, run_skill_with_tools(st, query, k, &servers, front, screen.as_ref(), mode))
                 .await
                 .map_err(|_| too_slow(TOOLS_TIMEOUT))?;
         }
@@ -385,11 +429,11 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
     if !cfgl.is_configured() {
         return Err(anyhow!("Pick an AI model in Settings → AI to ask questions (“open …” and “google …” work without one)."));
     }
-    // screen OCR is the largest prompt cost — only include it when the request is about the screen
-    // (always in deep mode, where a screenshot is attached as well)
     // a "write" skill is a writing task: it reads the screen and types the result
     let drafting = skill.is_some() || text::is_writing_request(query);
-    let screen = screen.filter(|_| mode == "deep" || drafting || text::wants_screen_context(query));
+    // the screen goes with every question (it was read while the user spoke): people ask "how many
+    // credits are left" without saying "on my screen". Only plain arithmetic leaves it out.
+    let screen = screen.filter(|_| s.assistant_screen_context && (mode != "quick" || drafting || !screen_ctx::self_contained(query)));
     let s_web = mode == "web";
     if s_web && !llm::supports_web(&s.llm_provider) {
         // provider can't search: hand the question to Perplexity instead of guessing
@@ -409,26 +453,34 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
         });
     }
     // a screenshot for deep answers, and for drafts so the model reads the conversation it replies to
-    let wants_image = mode == "deep" || (drafting && llm::supports_vision(&s.llm_provider));
-    let image = if wants_image && s.assistant_screen_context && crate::platform::permissions().screen {
+    let vision = llm::supports_vision(&s.llm_provider);
+    let wants_image = mode == "deep" || (drafting && vision);
+    // a quick answer gets one only when the window's text says too little (a canvas, a video) or the
+    // question is about how something looks; the one taken with the OCR is reused
+    let quick_image = !wants_image && mode == "quick" && screen.is_some() && screen_ctx::want_screenshot(screen.as_ref(), query, vision);
+    let shot = |side: u32, wait: std::time::Duration| async move {
         // a screenshot that hangs must not hold the answer: go on without it
-        tokio::time::timeout(std::time::Duration::from_secs(8), tokio::task::spawn_blocking(|| crate::attention::capture_focused_jpeg(1280)))
+        tokio::time::timeout(wait, tokio::task::spawn_blocking(move || crate::attention::capture_focused_jpeg(side)))
             .await
             .ok()
             .and_then(|r| r.ok())
             .flatten()
             .map(|(_, b)| b)
+    };
+    let can_shoot = s.assistant_screen_context && crate::platform::permissions().screen;
+    let image = if wants_image && can_shoot {
+        shot(1280, std::time::Duration::from_secs(8)).await
+    } else if quick_image {
+        match screen.as_ref().and_then(|x| x.jpeg.clone()) {
+            Some(j) => Some(j),
+            None if can_shoot => shot(1024, QUICK_SHOT_WAIT).await,
+            None => None,
+        }
     } else {
         None
     };
-    let context = build_context(st, query, selection.as_deref(), front, screen.as_deref());
-    let mut system = prompts::assistant_system(&context);
-    system.push_str(prompts::assistant_mode_note(mode));
-    system.push_str(reply_language_note(query));
-    system.push_str(&thread_note(&thread_turns()));
-    if drafting {
-        system.push_str(prompts::DRAFTING_NOTE);
-    }
+    let context = build_context(st, query, selection.as_deref(), front, screen.as_ref());
+    let mut system = core_system(&context, query, mode, screen.is_some(), drafting, &thread_turns());
     if let Some(k) = &skill {
         system.push_str(&prompts::skill_note(&k.name, &k.instructions, &k.platforms));
         system.push_str(&skill_docs(st, k));
@@ -537,6 +589,32 @@ async fn run_mode_inner(st: &Shared, query: &str, selection: Option<String>, fro
     })
 }
 
+/// The system prompt's core: the assistant's rules and context, the mode, the screen rules when
+/// the screen is in the context, the reply language, the conversation so far and the writing note.
+/// (Skills, Slack, Gmail, Calendar and the user's own instructions are added after it.)
+pub fn core_system(context: &str, query: &str, mode: &str, has_screen: bool, drafting: bool, turns: &[(String, String)]) -> String {
+    let mut system = prompts::assistant_system(context);
+    system.push_str(prompts::assistant_mode_note(mode));
+    if has_screen {
+        system.push_str(screen_ctx::SCREEN_RULES);
+    }
+    system.push_str(reply_language_note(query));
+    system.push_str(&thread_note(turns));
+    if drafting {
+        system.push_str(prompts::DRAFTING_NOTE);
+    }
+    system
+}
+
+/// Longest wait for a quick answer's screenshot before answering from the text alone.
+const QUICK_SHOT_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Is this app a web browser (its window is a web page)?
+pub fn is_browser(app: &str) -> bool {
+    let a = app.to_lowercase();
+    ["chrome", "safari", "firefox", "edge", "brave", "arc", "opera", "vivaldi", "chromium", "orion", "zen", "dia"].iter().any(|b| a.split(|c: char| !c.is_alphanumeric()).any(|w| w == *b))
+}
+
 /// Longest wait for Slack data before answering without it.
 const SLACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
@@ -572,7 +650,7 @@ async fn run_skill_with_tools(
     k: &crate::model::Skill,
     servers: &[crate::model::Connection],
     front: &FrontApp,
-    screen: Option<&str>,
+    screen: Option<&ScreenSnap>,
     mode: &str,
 ) -> Result<AssistantResponse> {
     let s = st.settings();
@@ -871,6 +949,36 @@ mod thread_and_language_tests {
         assert_eq!(request_language("Suurin suurin kautta."), "en");
         assert!(reply_language_note("Suurin suurin kautta.").contains("English"));
         assert_eq!(request_language("What's blocked across my projects?"), "en");
+    }
+
+    #[test]
+    fn spoken_hinglish_questions_about_the_screen_are_hinglish() {
+        assert_eq!(super::request_language("kitne credits bache hain"), "hinglish");
+        assert_eq!(super::request_language("last message kisne bheja"), "hinglish");
+        assert_eq!(super::request_language("How many credits are left?"), "en");
+        assert_eq!(super::request_language("who sent the last message"), "en");
+    }
+
+    #[test]
+    fn a_spoken_follow_up_continues_only_a_fresh_conversation() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let t = |secs: u64, q: &str| (now - Duration::from_secs(secs), q.to_string(), format!("answer to {q}"));
+        // the last answer 20 s ago: it comes along
+        let turns = super::recent_turns(&[t(900, "old"), t(60, "credits left?"), t(20, "which plan")], now);
+        assert_eq!(turns.iter().map(|(q, _)| q.as_str()).collect::<Vec<_>>(), vec!["credits left?", "which plan"]);
+        // nothing for minutes: a new conversation
+        assert!(super::recent_turns(&[t(600, "credits left?")], now).is_empty());
+        assert!(super::recent_turns(&[], now).is_empty());
+    }
+
+    #[test]
+    fn browsers_are_recognised() {
+        assert!(super::is_browser("Google Chrome"));
+        assert!(super::is_browser("Safari"));
+        assert!(super::is_browser("Arc"));
+        assert!(!super::is_browser("Slack"));
+        assert!(!super::is_browser("Visual Studio Code"));
     }
 
     #[test]

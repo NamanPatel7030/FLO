@@ -1,0 +1,10 @@
+1  DEFAULT_DISCOUNT = 0.15
+2  MAX_DISCOUNT = 0.4
+3
+4  def calculate_discount(total, code=None):
+5      """Return the discount amount for an order total."""
+6      rate = DEFAULT_DISCOUNT
+7      if code == "VIP":
+8          rate = 0.25
+9      return round(total * min(rate, MAX_DISCOUNT), 2)
+Ln 4, Col 5 Python 3.12

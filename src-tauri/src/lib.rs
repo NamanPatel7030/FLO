@@ -50,6 +50,9 @@ mod perm_guide;
 mod push;
 mod autocontinue;
 mod secrets;
+mod screen_ctx;
+#[cfg(test)]
+mod screen_eval;
 mod session;
 mod selftest;
 mod settings;

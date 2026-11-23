@@ -1,0 +1,12 @@
+Create your account
+Full name
+Parth G
+Work email *
+
+Company
+Flo Labs
+Password *
+Plan
+Pro
+* required
+Create account

@@ -1,0 +1,17 @@
+Create your account
+
+Full name 
+
+Work email * 
+
+Company 
+
+Password * 
+
+Plan 
+Starter
+Pro
+
+* required
+
+Create account

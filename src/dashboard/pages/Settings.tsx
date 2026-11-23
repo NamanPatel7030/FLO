@@ -1357,7 +1357,7 @@ function Privacy({ s, set }: P) {
       <SyncCard />
       <Card className="divide-y divide-[var(--border)] px-5 py-2">
         <Toggle label="Assistant may use your cloud AI (BYOK)" hint={`On: your question, any selected text and screen text are sent to the cloud provider you chose (with your key). Off: the assistant uses a local model only and nothing leaves this ${deviceWord()}.`} checked={s.assistantCloudAllowed} onChange={(v) => set({ assistantCloudAllowed: v })} />
-        <Toggle label="Assistant can see the active window" hint="On: when you ask, a screenshot of the front window is read for context (sent to the cloud only if the toggle above is on). Off: the assistant never looks at your screen." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />
+        <Toggle label="Assistant can see the active window" hint="On: while you ask, the front window's text is read (a screenshot too when the text says little or you ask how something looks), so questions like “how many credits are left?” are answered from your screen. Sent to the cloud only if the toggle above is on. Apps on the Attention denylist and password fields are never read. Off: the assistant never looks at your screen." checked={s.assistantScreenContext} onChange={(v) => set({ assistantScreenContext: v })} />
         <Toggle
           label="Reuse recent answers"
           hint="Ask the same thing again within 10 minutes and Flo answers instantly from memory, without another AI call. Never for web searches or questions about today."

@@ -4,7 +4,7 @@ use crate::egress::Purpose;
 use crate::llm::{self, ChatRequest, LlmConfig};
 use crate::model::*;
 use crate::state::{ActiveSession, Shared};
-use crate::{assistant, attention, dictation, platform, prompts, settings as cfg, stt, text};
+use crate::{assistant, dictation, platform, prompts, settings as cfg, stt, text};
 use anyhow::{anyhow, Result};
 use std::time::Instant;
 
@@ -67,8 +67,10 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
     let selection = if mode == Mode::Assistant { platform::copy_selection() } else { None };
     log::info!("listening ({mode:?}): microphone open {mic_ms} ms after the key, ready {} ms", t_press.elapsed().as_millis());
     let s = st.settings();
-    let screen = if mode == Mode::Assistant && s.assistant_screen_context && platform::permissions().screen {
-        Some(tauri::async_runtime::spawn_blocking(|| attention::capture_focused_text().map(|(_, _, t)| t)))
+    // the front window's text (accessibility first, OCR as a fallback), read while the user speaks
+    let screen = if mode == Mode::Assistant && s.assistant_screen_context {
+        let (s2, f2) = (s.clone(), front.clone());
+        Some(tauri::async_runtime::spawn_blocking(move || crate::screen_ctx::capture(&s2, &f2, platform::permissions().screen)))
     } else {
         None
     };
@@ -80,13 +82,11 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
         return Ok(());
     }
     let started = Instant::now();
-    // speed: start loading the speech model now, in parallel with the user talking
+    // speed: start loading the speech model now, in parallel with the user talking (the one the
+    // clip will really go to: Auto with the Hinglish model chosen decodes with the general one)
     let local = s.stt_provider == "local";
     if local {
-        if let Some(path) = stt::model_path(&st.models_dir, &s.stt_model) {
-            let w = st.whisper.clone();
-            tauri::async_runtime::spawn_blocking(move || w.warm(&path));
-        }
+        stt::warm_in_background(st.whisper.clone(), &st.models_dir, &s);
     }
     // speed: transcribe finished sentences while still talking (dictation and assistant, on-device),
     // so on release only the last few seconds still need decoding
@@ -194,6 +194,7 @@ async fn stream_while_talking(st: Shared, started: Instant, buf: std::sync::Arc<
 async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     let ActiveSession { mode, recorder, front, selection, started, screen, stream, stream_task, .. } = sess;
     let duration_ms = started.elapsed().as_millis() as u64;
+    let released = Instant::now();
     // the notch flips to "transcribing" the instant the key is released — before we wait on the
     // background decoder or stop the mic — so release always feels immediate
     st.state(Phase::Transcribing, mode, None);
@@ -267,14 +268,18 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
         }
         Mode::Assistant => {
             st.state(Phase::Thinking, mode, None);
+            // read while the user spoke; a read still going (a slow OCR) may not hold the answer long
             let screen_text = match screen {
-                Some(h) => h.await.ok().flatten(),
+                Some(h) => tokio::time::timeout(SCREEN_WAIT, h).await.ok().and_then(|r| r.ok()).flatten(),
                 None => None,
             };
             // a misheard name on screen is fixed before the assistant reads the request
             let raw = crate::learning::correct(&raw, &crate::learning::prepare(st, &front.name).terms).0;
             crate::learning::on_assistant_query(st, &raw, &front.name);
+            let heard_ms = released.elapsed().as_millis();
             let mut resp = assistant::run(st, &raw, selection, &front, screen_text).await?;
+            // the number that matters to the user: key up → answer on screen (never the words)
+            log::info!("assistant: key release → answer {} ms (speech + screen {heard_ms} ms)", released.elapsed().as_millis());
             save(st, mode, &front.name, &raw, &resp.reply, duration_ms, t0.elapsed().as_millis() as u64);
             assistant::log_exchange(st, &mut resp, "notch");
             st.emit(ev::ASSISTANT, resp);
@@ -283,6 +288,9 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     }
     Ok(())
 }
+
+/// Longest wait, after the key is released, for the screen read that started when it went down.
+const SCREEN_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
 
 #[derive(Debug, PartialEq)]
 enum SilentHold {

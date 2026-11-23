@@ -24,8 +24,8 @@ pub struct ActiveSession {
     /// dictation: sentences transcribed while still talking (on-device STT)
     pub stream: Option<std::sync::Arc<StreamBuf>>,
     pub stream_task: Option<tauri::async_runtime::JoinHandle<()>>,
-    /// OCR text of the focused window, captured in the background (assistant only)
-    pub screen: Option<tauri::async_runtime::JoinHandle<Option<String>>>,
+    /// the focused window read for the assistant (accessibility text, OCR fallback), in the background
+    pub screen: Option<tauri::async_runtime::JoinHandle<Option<crate::screen_ctx::ScreenSnap>>>,
 }
 
 /// Shared between a dictation session and its background transcriber.

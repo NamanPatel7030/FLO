@@ -1,0 +1,21 @@
+EXPLORER
+src
+components
+UserList.tsx
+UserCard.tsx
+api.ts
+App.tsx
+package.json
+39  export function UserList({ users }: Props) {
+40    const sorted = useSorted(users);
+41    return (
+42      <ul>{sorted.items.map((u) => <UserCard key={u.id} user={u} />)}</ul>
+43    );
+44  }
+TERMINAL
+Uncaught TypeError: Cannot read properties of undefined (reading 'map')
+    at UserList (src/components/UserList.tsx:42:27)
+    at renderWithHooks (react-dom.development.js:16305:18)
+    at mountIndeterminateComponent (react-dom.development.js:20074:13)
+
+Ln 42, Col 27 Spaces: 2 UTF-8 TypeScript React

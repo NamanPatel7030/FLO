@@ -630,7 +630,7 @@ pub fn focused_window_text(_max_chars: usize) -> Option<super::WindowText> {
             Ok(el) => el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(true),
             Err(_) => false,
         };
-        Some(super::WindowText { secure, text: String::new() })
+        Some(super::WindowText { secure, ..Default::default() })
     }
 }
 

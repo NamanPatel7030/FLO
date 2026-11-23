@@ -759,30 +759,38 @@ pub fn needs_llm_cleanup(raw: &str) -> bool {
 /// Should the assistant see the screen for this request? (OCR text is the biggest prompt cost.)
 /// "Draft / write / reply / wish …" — the user wants text written for the place they're in.
 /// These always get the screen (text + screenshot) so the draft answers what's actually there.
+/// A question about a message ("who sent the last message", "did she reply?") is not one: it
+/// asks for a fact, and only an explicit "draft / write / compose" makes it a writing task.
 pub fn is_writing_request(query: &str) -> bool {
     let q = format!(" {} ", query.to_lowercase());
+    const EXPLICIT: &[&str] = &[" draft", " write", " compose", " rewrite", " rephrase", " polish"];
+    if EXPLICIT.iter().any(|c| q.contains(c)) {
+        return true;
+    }
+    if asks_a_fact(query) {
+        return false;
+    }
     const CUES: &[&str] = &[
-        " draft", " write", " compose", " reply", " respond", " rewrite", " rephrase", " polish",
-        " message", " email", " e-mail", " mail ", " dm ", " wish", " congratulat", " caption", " tweet",
+        " reply", " respond", " message", " email", " e-mail", " mail ", " dm ", " wish", " congratulat", " caption", " tweet",
         " post ", " comment", " follow up", " follow-up", " tell them", " tell him", " tell her",
         " text him", " text her", " answer him", " answer her", " make it ", " make a message",
     ];
     CUES.iter().any(|c| q.contains(c))
 }
 
-pub fn wants_screen_context(query: &str) -> bool {
-    if is_writing_request(query) {
-        return true;
+/// Does the request ask for a fact ("who sent…", "when did…", "what did the email say")?
+fn asks_a_fact(query: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    let words: Vec<&str> = q.split(|c: char| !(c.is_alphanumeric() || c == '\'')).filter(|w| !w.is_empty()).collect();
+    const STARTS: &[&str] = &["who", "who's", "whose", "when", "where", "which", "did", "does", "has", "have", "was", "were", "is", "are", "what's", "whats"];
+    const WHAT_FACT: &[&str] = &["did", "does", "do", "is", "was", "were", "time", "date", "day"];
+    // Hinglish: "kisne bheja", "kab aaya", "kya likha hai"
+    const HINGLISH: &[&str] = &["kisne", "kab", "kaun", "kitne", "kitna", "kya"];
+    match words.first() {
+        Some(w) if STARTS.contains(w) => true,
+        Some(&"what") => words.get(1).is_some_and(|w| WHAT_FACT.contains(w)),
+        _ => words.iter().any(|w| HINGLISH.contains(w)) && !words.iter().any(|w| matches!(*w, "likho" | "likh" | "bhejo" | "bolo")),
     }
-    let q = format!(" {} ", query.to_lowercase());
-    const CUES: &[&str] = &[
-        " screen", " this ", " this?", " this.", " these ", " here", " above", " below", " reply", " respond",
-        " answer this", " summari", " what does it", " what is this", " explain", " translate", " this email",
-        " this message", " this page", " this doc", " on my screen", " that message", " that email",
-        " what am i looking at", " what's this", " what is that", " this error", " this code", " fix this", " this chart",
-        " this table", " in front of me", " visible",
-    ];
-    CUES.iter().any(|c| q.contains(c))
 }
 
 /// Which skill does a spoken request invoke? A skill matches when the request contains its name
@@ -1237,16 +1245,6 @@ mod tests {
     }
 
     #[test]
-    fn screen_context_only_when_relevant() {
-        assert!(wants_screen_context("reply to this saying I'll join"));
-        assert!(wants_screen_context("what's on my screen"));
-        assert!(!wants_screen_context("add a to-do to Apollo: send the deck"));
-        assert!(!wants_screen_context("what's blocked across my projects"));
-        // drafting always sees the screen (the request that used to go out blind)
-        assert!(wants_screen_context("draft a message to the team for happy Dhanteras"));
-    }
-
-    #[test]
     fn writing_requests_are_recognised() {
         assert!(is_writing_request("draft a message to the team for happy Dhanteras"));
         assert!(is_writing_request("write an email to Rahul about the invoice"));
@@ -1255,6 +1253,16 @@ mod tests {
         assert!(!is_writing_request("open Slack"));
         assert!(!is_writing_request("what's the weather"));
         assert!(!is_writing_request("add a to-do to Apollo: send the deck"));
+        assert!(is_writing_request("can you reply to Rahul saying yes"));
+        assert!(is_writing_request("what should I reply to this"));
+        // questions about a message are not requests to write one
+        assert!(!is_writing_request("who sent the last message"));
+        assert!(!is_writing_request("when did she reply?"));
+        assert!(!is_writing_request("what did the email say"));
+        assert!(!is_writing_request("did Rahul respond to my message"));
+        assert!(!is_writing_request("last message kisne bheja"));
+        // unless they ask for the text itself
+        assert!(is_writing_request("who should I write to about this? draft it"));
     }
 
     #[test]
