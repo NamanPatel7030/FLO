@@ -1,6 +1,6 @@
 [package]
 name = "flo-flow"
-version = "0.1.9"
+version = "0.1.10"
 description = "Flo: local-first voice dictation, assistant, meeting notes and to-dos"
 authors = ["Naman Patel"]
 edition = "2021"
