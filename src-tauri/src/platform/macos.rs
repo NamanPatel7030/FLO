@@ -55,6 +55,7 @@ extern "C" {
         size: *mut u32,
         data: *mut c_void,
     ) -> i32;
+    fn AudioObjectGetPropertyDataSize(id: u32, addr: *const AudioAddr, qualifier_size: u32, qualifier: *const c_void, size: *mut u32) -> i32;
 }
 #[repr(C)]
 struct AudioAddr {
@@ -81,6 +82,87 @@ pub fn mic_in_use() -> bool {
         let a = AudioAddr { selector: fourcc(b"gone"), scope: glob, element: 0 };
         AudioObjectGetPropertyData(dev, &a, 0, std::ptr::null(), &mut size, &mut running as *mut u32 as *mut c_void) == 0 && running != 0
     }
+}
+
+/// Apps (bundle ids) recording from any microphone right now, Flo itself excluded, so a call can
+/// be seen while Flo also records. Core Audio process objects (macOS 14.2+); None on older macOS.
+pub fn mic_users_others() -> Option<Vec<String>> {
+    unsafe {
+        let glob = fourcc(b"glob");
+        let a = AudioAddr { selector: fourcc(b"prs#"), scope: glob, element: 0 };
+        let mut size: u32 = 0;
+        if AudioObjectGetPropertyDataSize(1, &a, 0, std::ptr::null(), &mut size) != 0 {
+            return None;
+        }
+        let n = size as usize / std::mem::size_of::<u32>();
+        let mut ids = vec![0u32; n];
+        if n > 0 && AudioObjectGetPropertyData(1, &a, 0, std::ptr::null(), &mut size, ids.as_mut_ptr() as *mut c_void) != 0 {
+            return None;
+        }
+        ids.truncate(size as usize / std::mem::size_of::<u32>());
+        let me = std::process::id() as i32;
+        let mut out = vec![];
+        for id in ids {
+            let mut pid: i32 = 0;
+            let mut sz = std::mem::size_of::<i32>() as u32;
+            let pa = AudioAddr { selector: fourcc(b"ppid"), scope: glob, element: 0 };
+            if AudioObjectGetPropertyData(id, &pa, 0, std::ptr::null(), &mut sz, &mut pid as *mut i32 as *mut c_void) != 0 || pid == me {
+                continue;
+            }
+            let mut on: u32 = 0;
+            let mut sz = std::mem::size_of::<u32>() as u32;
+            let ra = AudioAddr { selector: fourcc(b"piri"), scope: glob, element: 0 };
+            if AudioObjectGetPropertyData(id, &ra, 0, std::ptr::null(), &mut sz, &mut on as *mut u32 as *mut c_void) != 0 || on == 0 {
+                continue;
+            }
+            let mut s: core_foundation::string::CFStringRef = std::ptr::null();
+            let mut sz = std::mem::size_of::<core_foundation::string::CFStringRef>() as u32;
+            let ba = AudioAddr { selector: fourcc(b"pbid"), scope: glob, element: 0 };
+            let bundle = if AudioObjectGetPropertyData(id, &ba, 0, std::ptr::null(), &mut sz, &mut s as *mut _ as *mut c_void) == 0 && !s.is_null() {
+                use core_foundation::base::TCFType;
+                core_foundation::string::CFString::wrap_under_create_rule(s).to_string()
+            } else {
+                String::new()
+            };
+            out.push(if bundle.is_empty() { format!("pid:{pid}") } else { bundle });
+        }
+        Some(out)
+    }
+}
+
+/// Titles of every window of the app with this pid, via accessibility (window titles from
+/// CGWindowList need Screen Recording; these don't). At most 30, within ~0.3 s.
+pub fn app_window_titles(pid: i32) -> Vec<String> {
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    let mut out = vec![];
+    if pid <= 0 {
+        return out;
+    }
+    unsafe {
+        let appel = AXUIElementCreateApplication(pid);
+        if appel.is_null() {
+            return out;
+        }
+        AXUIElementSetMessagingTimeout(appel, 0.3);
+        if let Some(ws) = ax_copy(appel, "AXWindows") {
+            if let Some(arr) = CFType::wrap_under_create_rule(ws).downcast::<CFArray>() {
+                for w in arr.iter().take(30) {
+                    let w: *const c_void = *w;
+                    if let Some(t) = ax_str(w as AXRef, "AXTitle").filter(|t| !t.is_empty()) {
+                        out.push(t);
+                    }
+                }
+            }
+        }
+        CFRelease(appel as core_foundation::base::CFTypeRef);
+    }
+    out
+}
+
+/// Zoom's media host runs only while a Zoom meeting is joined.
+pub fn zoom_in_meeting() -> bool {
+    running("CptHost", true)
 }
 
 fn running(pattern: &str, exact: bool) -> bool {
@@ -1107,7 +1189,7 @@ pub fn request_microphone() {
         let st: isize = msg_send![class!(AVCaptureDevice), authorizationStatusForMediaType: &*media];
         if st == 0 {
             // NotDetermined → opening the mic triggers the system prompt
-            if let Ok(r) = crate::audio::Recorder::start(|_| {}) {
+            if let Ok(r) = crate::audio::Recorder::start_as("permission prompt", |_| {}) {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 let _ = r.stop();
             }

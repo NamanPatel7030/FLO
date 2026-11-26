@@ -89,7 +89,8 @@ test("Home shows the next meeting once Google is connected", async ({ page }) =>
   await expect(page.getByTestId("home-next-meeting")).toHaveCount(0);
   await connectGoogle(page);
   await expect(page.getByTestId("home-next-meeting")).toContainText(/Next: Design sync in \d+ min/);
-  await expect(page.getByRole("button", { name: "Join Meet" })).toBeVisible();
+  // the next-meeting card and Today's meetings both offer Join
+  await expect(page.getByRole("button", { name: "Join Meet" }).first()).toBeVisible();
 });
 
 test("agenda widget: asks to connect, then lists today's meetings with the next one and Join chips", async ({ page }) => {

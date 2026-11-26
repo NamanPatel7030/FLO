@@ -28,6 +28,8 @@ use std::time::{Duration, Instant};
 const SUMMARY_EVERY_SECS: u64 = 120;
 /// final pass sends the whole transcript only below this size; above it, summary + tail
 const FULL_TRANSCRIPT_MAX_CHARS: usize = 12_000;
+/// with a cloud model (large context) the final pass reads the whole transcript up to this size
+const FULL_TRANSCRIPT_MAX_CHARS_CLOUD: usize = 48_000;
 pub const YOU: &str = "You";
 pub const OTHERS: &str = "Others";
 pub const CAPTURE_DUAL: &str = "mic+call";
@@ -62,6 +64,83 @@ pub struct MeetingMeta {
     /// active-speaker readings of the meeting window (participant names + times only)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub screen: Vec<crate::speaker_names::ScreenObs>,
+    /// the calendar meeting these notes were taken in (automatic notes / "Take notes")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<EventLink>,
+}
+
+/// A calendar invite guest, as kept with the note (for names, the summary and a follow-up draft).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Guest {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub email: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub organizer: bool,
+}
+
+/// The calendar meeting a note belongs to.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventLink {
+    pub event_id: String,
+    /// event id + start (Home links notes by this)
+    pub occurrence: String,
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// the other guests (not declined), organizer marked
+    #[serde(default)]
+    pub guests: Vec<Guest>,
+    /// the user's own name on the invite
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_name: Option<String>,
+    /// started by automatic notes (not a click)
+    #[serde(default)]
+    pub auto: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub html_link: Option<String>,
+}
+
+impl EventLink {
+    pub fn from_event(e: &crate::google::CalendarEvent, auto: bool) -> EventLink {
+        let name_of = |a: &crate::google::CalendarAttendee| if a.name.trim().is_empty() { crate::google::name_from_email(&a.email) } else { a.name.trim().to_string() };
+        EventLink {
+            event_id: e.id.clone(),
+            occurrence: crate::google::alert_id(e),
+            title: e.title.clone(),
+            start: e.start.clone(),
+            end: e.end.clone(),
+            description: e.description.clone(),
+            guests: crate::google::others(e).into_iter().map(|a| Guest { name: name_of(a), email: a.email.clone(), organizer: a.organizer }).filter(|g| !g.name.is_empty()).take(30).collect(),
+            self_name: e.attendees.iter().find(|a| a.is_self).map(name_of).filter(|n| !n.is_empty()),
+            auto,
+            html_link: e.html_link.clone(),
+        }
+    }
+
+    /// Guest names for speaker naming (cleaned, ≤ 20).
+    pub fn guest_names(&self) -> Vec<String> {
+        clean_attendees(&self.guests.iter().map(|g| g.name.clone()).collect::<Vec<_>>())
+    }
+}
+
+/// The calendar meeting a note was taken in, for the Notes page.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventInfo {
+    pub event_id: String,
+    pub occurrence: String,
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    pub guests: Vec<Guest>,
+    pub auto: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_link: Option<String>,
 }
 
 /// What the Notes UI needs (no embeddings).
@@ -81,6 +160,9 @@ pub struct MeetingInfo {
     pub attendees: Vec<String>,
     /// label → how sure Flo is of that name and where it came from (voice / screen / intro…)
     pub name_info: BTreeMap<String, crate::speaker_names::NameGuess>,
+    /// the calendar meeting these notes belong to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<EventInfo>,
 }
 
 fn load_meta(st: &Shared, note_id: &str) -> Option<MeetingMeta> {
@@ -104,6 +186,7 @@ pub fn info(st: &Shared, note_id: &str) -> Option<MeetingInfo> {
         known_voices,
         attendees: m.attendees,
         name_info: m.name_info,
+        event: m.event.map(|e| EventInfo { event_id: e.event_id, occurrence: e.occurrence, title: e.title, start: e.start, end: e.end, guests: e.guests, auto: e.auto, html_link: e.html_link }),
     })
 }
 
@@ -111,13 +194,14 @@ fn load_voices(st: &Shared) -> Vec<Voice> {
     crate::speaker_names::load_voices(&st.db)
 }
 
-/// Guests of the calendar event happening now (Google Calendar cache; no network), without the
-/// user. Used when notes start without an invite (auto-detected call, the island button).
-fn calendar_attendees_now(st: &Shared) -> Vec<String> {
-    if !crate::google::calendar_on(&st.settings().google) {
-        return vec![];
-    }
-    crate::speaker_names::overlapping_event(&crate::google::cached_events(st), chrono::Utc::now()).map(|(_, guests, _)| guests).unwrap_or_default()
+/// When the recording's call track last had speech (unix s; 0 = not yet / no recording).
+static CALL_AUDIO_AT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Seconds since someone on the call was last heard (automatic notes: is the call still on?).
+/// None when nothing records or no call audio was heard yet.
+pub fn call_audio_ago() -> Option<u64> {
+    let at = CALL_AUDIO_AT.load(Ordering::SeqCst);
+    (at > 0).then(|| (chrono::Utc::now().timestamp() - at).max(0) as u64)
 }
 
 pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> Result<Note> {
@@ -127,10 +211,45 @@ pub fn start(st: Shared, title: Option<String>, project_id: Option<String>) -> R
 /// Start meeting notes with the guest names from a calendar invite (google.rs "Take notes").
 pub fn start_with_attendees(st: Shared, title: Option<String>, project_id: Option<String>, attendees: Vec<String>) -> Result<Note> {
     let mut attendees = clean_attendees(&attendees);
+    let mut event = None;
     if attendees.is_empty() {
         // no invite given: the calendar event happening now names the likely speakers
-        attendees = calendar_attendees_now(&st);
+        if let Some(e) = calendar_event_now(&st) {
+            attendees = EventLink::from_event(&e, false).guest_names();
+            event = Some(e);
+        }
     }
+    let link = event.as_ref().map(|e| EventLink::from_event(e, false));
+    start_inner(st, title, project_id, attendees, link)
+}
+
+/// Notes for a calendar meeting (automatic notes, or "Take notes" on its card): titled with the
+/// event, its guests as the speaker candidates from the first second, its invite as context for
+/// the summary, and filed under the event on Home. `part` > 1: the call was rejoined.
+pub fn start_for_event(st: Shared, e: &crate::google::CalendarEvent, auto: bool, part: u32) -> Result<Note> {
+    let link = EventLink::from_event(e, auto);
+    let title = if part > 1 { format!("{} (part {part})", e.title) } else { e.title.clone() };
+    let occ = link.occurrence.clone();
+    let note = start_inner(st.clone(), Some(title), None, link.guest_names(), Some(link))?;
+    crate::google::link_note(&st, &occ, &note.id);
+    Ok(note)
+}
+
+/// The timed calendar event overlapping now (cache only), for notes started without an invite.
+fn calendar_event_now(st: &Shared) -> Option<crate::google::CalendarEvent> {
+    if !crate::google::calendar_on(&st.settings().google) {
+        return None;
+    }
+    let events = crate::google::cached_events(st);
+    let (title, _, _) = crate::speaker_names::overlapping_event(&events, chrono::Utc::now())?;
+    let now = chrono::Utc::now();
+    events
+        .into_iter()
+        .filter(|e| e.title == title && !e.all_day && !e.declined)
+        .min_by_key(|e| crate::google::start_of(e, &chrono::Utc).map(|s| (now - s).num_seconds().abs()).unwrap_or(i64::MAX))
+}
+
+fn start_inner(st: Shared, title: Option<String>, project_id: Option<String>, attendees: Vec<String>, event: Option<EventLink>) -> Result<Note> {
     if st.meeting.lock().is_some() {
         return Err(anyhow!("A meeting is already being recorded"));
     }
@@ -149,7 +268,7 @@ pub fn start_with_attendees(st: Shared, title: Option<String>, project_id: Optio
     };
     st.db.upsert_note(&note)?;
     let app = st.clone();
-    let recorder = Recorder::start(move |rms| {
+    let recorder = Recorder::start_as("meeting", move |rms| {
         // only drive the island waveform when no push-to-talk session is active
         if app.session.lock().is_none() {
             app.emit(ev::LEVEL, LevelEvent { rms });
@@ -160,14 +279,15 @@ pub fn start_with_attendees(st: Shared, title: Option<String>, project_id: Optio
         Ok(t) => Some(t),
         Err(e) => {
             log::warn!("call audio unavailable, recording mic only: {e}");
-            save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_MIC.into(), capture_note: Some(e.to_string()), attendees: attendees.clone(), ..Default::default() });
+            save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_MIC.into(), capture_note: Some(e.to_string()), attendees: attendees.clone(), event: event.clone(), ..Default::default() });
             None
         }
     };
     if tap.is_some() {
-        save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_DUAL.into(), attendees: attendees.clone(), ..Default::default() });
+        save_meta(&st, &note.id, &MeetingMeta { capture: CAPTURE_DUAL.into(), attendees: attendees.clone(), event: event.clone(), ..Default::default() });
         ensure_speaker_model(&st);
     }
+    CALL_AUDIO_AT.store(0, Ordering::SeqCst);
     let stop = Arc::new(AtomicBool::new(false));
     let task = tauri::async_runtime::spawn(run_loop(st.clone(), note.id.clone(), recorder, tap, stop.clone()));
     *st.meeting.lock() = Some(MeetingHandle { note_id: note.id.clone(), stop, task });
@@ -220,6 +340,7 @@ pub async fn stop(st: Shared) -> Result<Note> {
             .ok_or_else(|| anyhow!("No meeting is running"));
     };
     h.stop.store(true, Ordering::SeqCst);
+    CALL_AUDIO_AT.store(0, Ordering::SeqCst);
     let mut note = st.db.get_note(&h.note_id)?.ok_or_else(|| anyhow!("note missing"))?;
     note.live = false;
     st.db.upsert_note(&note)?;
@@ -343,6 +464,7 @@ async fn run_loop(st: Shared, note_id: String, recorder: Recorder, tap: Option<S
         if dual {
             if crate::audio::rms(&call_slice) >= crate::livetx::SPEECH_RMS {
                 call_quiet_since = Instant::now();
+                CALL_AUDIO_AT.store(chrono::Utc::now().timestamp(), Ordering::SeqCst);
                 call_speaking.store(true, Ordering::SeqCst);
             } else if call_quiet_since.elapsed() > Duration::from_millis(1500) {
                 call_speaking.store(false, Ordering::SeqCst);
@@ -548,7 +670,13 @@ async fn speaker_pass(st: &Shared, note_id: &str, done: WorkerDone, screen: Vec<
     if let Ok(Some(mut n)) = st.db.get_note(note_id) {
         apply_call_labels(&mut n.transcript, &final_labels);
         let settings = st.settings();
-        let self_names: Vec<String> = [settings.user_name.clone()].into_iter().filter(|s| !s.trim().is_empty()).collect();
+        // the user under every name they may show up as: Settings, and their name on the invite
+        let mut self_names: Vec<String> = [settings.user_name.clone()].into_iter().filter(|s| !s.trim().is_empty()).collect();
+        if let Some(n) = meta.event.as_ref().and_then(|e| e.self_name.clone()) {
+            if !self_names.iter().any(|s| s.eq_ignore_ascii_case(&n)) {
+                self_names.push(n);
+            }
+        }
         let named = name_speakers(&mut n.transcript, &mut clusters, &final_labels, &turns, &screen, &voices, &meta.attendees, &self_names);
         if !named.outcome.apply.is_empty() || !named.outcome.suggest.is_empty() || !named.outcome.demoted.is_empty() {
             log::info!("meeting: speaker names: {}", serde_json::to_string(&named.outcome).unwrap_or_default());
@@ -931,8 +1059,8 @@ async fn summarize_incremental(st: &Shared, note_id: &str, from: usize) -> Optio
     }
     let new_lines = n.transcript[from..].iter().map(seg_line).collect::<Vec<_>>().join("\n");
     let user = prompts::meeting_update_user(&n.summary, &new_lines);
-    let attendees = load_meta(st, note_id).map(|m| m.attendees).unwrap_or_default();
-    let (parsed, _) = summarize_with(st, &user, false, 700, &attendees).await?;
+    let meta = load_meta(st, note_id).unwrap_or_default();
+    let (parsed, _) = summarize_with(st, &user, false, 700, &meta).await?;
     Some((parsed, n.transcript.len()))
 }
 
@@ -944,7 +1072,9 @@ async fn summarize(st: &Shared, note_id: &str, summarized_upto: usize) -> Option
         return None;
     }
     let full = transcript_text(&n);
-    let long = full.len() > FULL_TRANSCRIPT_MAX_CHARS && !n.summary.trim().is_empty();
+    // detailed notes want the whole transcript: up to ~an hour with a cloud model
+    let max = if cfg::is_cloud_llm(&st.settings().llm_provider) { FULL_TRANSCRIPT_MAX_CHARS_CLOUD } else { FULL_TRANSCRIPT_MAX_CHARS };
+    let long = full.len() > max && !n.summary.trim().is_empty();
     let user = if !long {
         text::truncate_chars(&full, 60_000)
     } else {
@@ -955,8 +1085,8 @@ async fn summarize(st: &Shared, note_id: &str, summarized_upto: usize) -> Option
         let tail: String = rest.chars().rev().take(FULL_TRANSCRIPT_MAX_CHARS).collect::<Vec<_>>().into_iter().rev().collect();
         prompts::meeting_final_long_user(&n.summary, &n.action_items, &tail)
     };
-    let attendees = load_meta(st, note_id).map(|m| m.attendees).unwrap_or_default();
-    summarize_with(st, &user, true, 1200, &attendees).await.map(|(p, raw)| (p, raw, long))
+    let meta = load_meta(st, note_id).unwrap_or_default();
+    summarize_with(st, &user, true, 3000, &meta).await.map(|(p, raw)| (p, raw, long))
 }
 
 /// Action items of a long meeting: the final pass's list plus earlier ones it didn't repeat.
@@ -971,20 +1101,69 @@ pub fn merge_action_items(earlier: &[String], latest: &[String]) -> Vec<String> 
     out
 }
 
+/// The user's name for `You`: Settings, else their name on the calendar invite.
+pub fn user_display_name(s: &crate::model::Settings, meta: &MeetingMeta) -> String {
+    let n = s.user_name.trim();
+    if !n.is_empty() {
+        return n.to_string();
+    }
+    meta.event.as_ref().and_then(|e| e.self_name.clone()).unwrap_or_default()
+}
+
+/// System prompt + user message for a summary call: the live rolling summary, or (final pass) the
+/// detailed notes, with who `You` is, the invite's guests as name hints and the invite as context.
+pub fn summary_request(s: &crate::model::Settings, user: &str, final_pass: bool, meta: &MeetingMeta) -> (String, String) {
+    let mut system = if final_pass { prompts::meeting_notes_system(&s.meeting_summary_language) } else { prompts::meeting_summary_system_in(false, &s.meeting_summary_language) };
+    let me = user_display_name(s, meta);
+    system.push_str(&speaker_prompt_extra(&me, final_pass));
+    if final_pass && !me.is_empty() {
+        let first = me.split_whitespace().next().unwrap_or(&me);
+        system.push_str(&format!(" In the notes (not the action items), call `You` {}.", text::truncate_chars(first, 30)));
+    }
+    system.push_str(&attendee_prompt_extra(&meta.attendees));
+    if !s.system_prompt.trim().is_empty() {
+        system.push_str(&format!("\nUser's instructions: {}", text::truncate_chars(s.system_prompt.trim(), 1000)));
+    }
+    let body = match meta.event.as_ref().filter(|_| final_pass) {
+        Some(e) => {
+            let organizer = e.guests.iter().find(|g| g.organizer).map(|g| g.name.clone());
+            let guests: Vec<String> = e.guests.iter().map(|g| g.name.clone()).collect();
+            format!("{}{user}", prompts::meeting_context(&e.title, organizer.as_deref(), &guests, e.description.as_deref()))
+        }
+        None => user.to_string(),
+    };
+    (system, body)
+}
+
+/// Owners the model wrote as the user's own name ("Jake: send the deck") are the user's items:
+/// write them as `You` so they file as your to-dos. A first name alone counts only when no guest
+/// shares it.
+pub fn owners_as_you(items: &[String], user_names: &[String], guests: &[String]) -> Vec<String> {
+    let first = |n: &str| n.split_whitespace().next().unwrap_or("").to_lowercase();
+    let guest_firsts: Vec<String> = guests.iter().map(|g| first(g)).collect();
+    let is_me = |o: &str| {
+        user_names.iter().any(|n| {
+            let n = n.trim();
+            !n.is_empty() && (o.eq_ignore_ascii_case(n) || (o.to_lowercase() == first(n) && !guest_firsts.contains(&first(n))))
+        })
+    };
+    items
+        .iter()
+        .map(|item| match split_owner(item) {
+            (Some(o), task) if is_me(&o) => format!("{YOU}: {task}"),
+            _ => item.clone(),
+        })
+        .collect()
+}
+
 /// Returns the parsed summary and the raw model output (final pass: also carries `speakerNames`).
-async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u32, attendees: &[String]) -> Option<(prompts::ParsedSummary, String)> {
+async fn summarize_with(st: &Shared, user: &str, final_pass: bool, max_tokens: u32, meta: &MeetingMeta) -> Option<(prompts::ParsedSummary, String)> {
     let s = st.settings();
     let cfgl = LlmConfig::from_settings(&s);
     if !cfgl.is_configured() {
         return None;
     }
-    let mut system = prompts::meeting_summary_system_in(final_pass, &s.meeting_summary_language);
-    system.push_str(&speaker_prompt_extra(&s.user_name, final_pass));
-    system.push_str(&attendee_prompt_extra(attendees));
-    if !s.system_prompt.trim().is_empty() {
-        system.push_str(&format!("\nUser's instructions: {}", text::truncate_chars(s.system_prompt.trim(), 1000)));
-    }
-    let body = user.to_string();
+    let (system, body) = summary_request(&s, user, final_pass, meta);
     let req = ChatRequest {
         system: &system,
         user: &body,
@@ -1039,6 +1218,10 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64, summarized_upto: usi
         if !s.summary.is_empty() {
             n.summary = s.summary;
         }
+        let meta = load_meta(st, note_id).unwrap_or_default();
+        let settings = st.settings();
+        let me: Vec<String> = [settings.user_name.clone(), meta.event.as_ref().and_then(|e| e.self_name.clone()).unwrap_or_default()].into_iter().filter(|x| !x.trim().is_empty()).collect();
+        s.action_items = owners_as_you(&s.action_items, &me, &meta.attendees);
         n.action_items = s.action_items.clone();
         if n.title.starts_with("Meeting ") && !s.title.trim().is_empty() {
             n.title = s.title.trim().to_string();
@@ -1063,7 +1246,60 @@ async fn finalize(st: &Shared, note_id: &str, elapsed: f64, summarized_upto: usi
     st.emit(ev::NOTES, ());
     st.emit(ev::MEETING, MeetingEvent { note_id: n.id.clone(), segment: None, summary: Some(n.summary.clone()), elapsed_sec: elapsed, live: false, partial: None, partial_speaker: None });
     st.toast("success", format!("Notes ready: {}", n.title));
+    if st.settings().system_notifications && !n.transcript.is_empty() {
+        crate::reminders::notify(&format!("Notes ready: {}", n.title), &notes_ready_body(&n));
+    }
+    if load_meta(st, note_id).is_some_and(|m| m.event.is_some()) {
+        st.emit(crate::google::EV_AGENDA, ());
+    }
     crate::push::notify(st, crate::push::meeting_payload(&n.title, &n.id, n.action_items.len())); // phone, only while Away
+}
+
+/// "3 action items · 42 min" for the Notes-ready notification.
+pub fn notes_ready_body(n: &Note) -> String {
+    let mins = (n.duration_sec / 60.0).round().max(1.0) as u64;
+    match n.action_items.len() {
+        0 => format!("{mins} min meeting. Open Flo for the summary."),
+        1 => format!("1 action item · {mins} min"),
+        k => format!("{k} action items · {mins} min"),
+    }
+}
+
+// ── follow-up email (a draft only: Flo never sends it) ─────────────────────────
+
+/// A follow-up email to the guests, written from the notes. Never sent by Flo: the user copies
+/// it or opens it in Gmail's compose window and sends it themselves.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowupDraft {
+    /// guest addresses from the invite (the user excluded)
+    pub to: Vec<String>,
+    pub subject: String,
+    pub body: String,
+}
+
+pub fn followup_recipients(meta: &MeetingMeta) -> Vec<String> {
+    meta.event.as_ref().map(|e| e.guests.iter().filter(|g| crate::gmail::is_address(&g.email)).map(|g| g.email.clone()).collect()).unwrap_or_default()
+}
+
+pub async fn followup_draft(st: &Shared, note_id: &str) -> Result<FollowupDraft> {
+    let n = st.db.get_note(note_id)?.ok_or_else(|| anyhow!("Note not found"))?;
+    if n.summary.trim().is_empty() {
+        return Err(anyhow!("This meeting has no summary yet"));
+    }
+    let meta = load_meta(st, note_id).unwrap_or_default();
+    let s = st.settings();
+    let cfgl = LlmConfig::from_settings(&s);
+    if !cfgl.is_configured() {
+        return Err(anyhow!("Add an AI model in Settings → AI to draft emails"));
+    }
+    let me = user_display_name(&s, &meta);
+    let system = prompts::followup_email_system(&me);
+    let user = prompts::followup_email_user(&n.title, &meta.attendees, &n.summary, &n.action_items);
+    let req = ChatRequest { system: &system, user: &user, image_b64: None, json: true, purpose: Purpose::Meeting, cloud_allowed: cfg::is_cloud_llm(&s.llm_provider), max_tokens: 900 };
+    let raw = llm::chat(&st.egress, &cfgl, req).await?;
+    let (subject, body) = prompts::parse_followup(&raw, &n.title);
+    Ok(FollowupDraft { to: followup_recipients(&meta), subject, body: text::strip_ai_dashes(&body) })
 }
 
 #[cfg(test)]
@@ -1260,5 +1496,76 @@ mod tests {
         let m: MeetingMeta = serde_json::from_str(r#"{"capture":"mic"}"#).unwrap();
         assert_eq!(m.capture, "mic");
         assert!(m.speakers.is_empty() && m.capture_note.is_none());
+    }
+
+    fn s(x: &str) -> String {
+        x.to_string()
+    }
+
+    fn invite() -> crate::google::CalendarEvent {
+        use crate::google::CalendarAttendee;
+        let p = |n: &str, e: &str, me: bool, r: &str, org: bool| CalendarAttendee { name: n.into(), email: e.into(), is_self: me, response: r.into(), organizer: org };
+        crate::google::CalendarEvent {
+            id: "ev1".into(),
+            title: "Pricing review".into(),
+            start: "2026-11-26T10:00:00Z".into(),
+            end: "2026-11-26T10:30:00Z".into(),
+            join_url: Some("https://meet.google.com/abc-defg-hij".into()),
+            join_kind: Some("meet".into()),
+            description: Some("Agenda: Q3 pricing".into()),
+            attendees: vec![
+                p("Jake Patel", "jakeinworld.99@gmail.com", true, "accepted", false),
+                p("Priya Patel", "priya@x.com", false, "accepted", true),
+                p("", "rahul.sharma@x.com", false, "needsAction", false),
+                p("Declined Dan", "dan@x.com", false, "declined", false),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn calendar_invite_becomes_the_notes_context() {
+        let link = EventLink::from_event(&invite(), true);
+        assert_eq!(link.occurrence, "ev1@2026-11-26T10:00:00Z");
+        // the guests are the speaker candidates from the start: no decliners, not the user
+        assert_eq!(link.guest_names(), vec![s("Priya Patel"), s("Rahul Sharma")]);
+        assert_eq!(link.self_name.as_deref(), Some("Jake Patel"));
+        assert!(link.guests[0].organizer && link.auto);
+        // round trip in the meta, and old metas without an event still load
+        let meta = MeetingMeta { attendees: link.guest_names(), event: Some(link.clone()), ..Default::default() };
+        let back: MeetingMeta = serde_json::from_str(&serde_json::to_string(&meta).unwrap()).unwrap();
+        assert_eq!(back.event, Some(link));
+        assert_eq!(followup_recipients(&back), vec![s("priya@x.com"), s("rahul.sharma@x.com")]);
+        // the final notes get the invite as background; the live summary doesn't
+        let mut st = crate::model::Settings::default();
+        st.user_name = String::new();
+        let (system, user) = summary_request(&st, "[00:05] Priya Patel: hi", true, &meta);
+        assert!(system.contains("## Key points"), "{system}");
+        assert!(system.contains("`You` is Jake Patel"), "the invite names the user when Settings doesn't: {system}");
+        assert!(system.contains("call `You` Jake"));
+        assert!(system.contains("Priya Patel, Rahul Sharma"));
+        assert!(user.starts_with("Background from the calendar invite") && user.contains("Organizer: Priya Patel") && user.contains("Agenda: Q3 pricing") && user.ends_with("[00:05] Priya Patel: hi"));
+        let (live_sys, live_user) = summary_request(&st, "x", false, &meta);
+        assert!(!live_sys.contains("## Key points") && live_user == "x");
+        st.user_name = "Jake".into();
+        assert!(summary_request(&st, "x", true, &meta).0.contains("`You` is Jake, the user"));
+    }
+
+    #[test]
+    fn owners_named_like_the_user_file_as_yours() {
+        let items = vec![s("Jake: send the deck (due Friday)"), s("Jake Patel: book the room"), s("Priya Patel: update copy"), s("ship it"), s("You: review")];
+        let me = vec![s("Jake Patel")];
+        assert_eq!(owners_as_you(&items, &me, &[s("Priya Patel")]), vec![s("You: send the deck (due Friday)"), s("You: book the room"), s("Priya Patel: update copy"), s("ship it"), s("You: review")]);
+        // another Jake in the meeting: only the full name is the user
+        assert_eq!(owners_as_you(&items[..2], &me, &[s("Jake Miller")]), vec![s("Jake: send the deck (due Friday)"), s("You: book the room")]);
+    }
+
+    #[test]
+    fn notes_ready_notification() {
+        let mut n = note("n", "Sync");
+        n.duration_sec = 1500.0;
+        assert_eq!(notes_ready_body(&n), "25 min meeting. Open Flo for the summary.");
+        n.action_items = vec![s("a"), s("b")];
+        assert_eq!(notes_ready_body(&n), "2 action items · 25 min");
     }
 }

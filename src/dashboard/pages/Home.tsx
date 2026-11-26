@@ -15,6 +15,7 @@ import { Ocean } from "../../island/Ocean";
 import { CalendarClock, Video } from "lucide-react";
 import { joinLabel, nextEvent, nextHeadline, eventTimeLabel } from "../../lib/meetingAlert";
 import { openLink, useCalendar } from "../../lib/useCalendar";
+import { TodayMeetings } from "../TodayMeetings";
 
 export default function Home() {
   const { settings, todos, projects, notes, geo, go } = usePick("settings", "todos", "projects", "notes", "geo", "go");
@@ -74,6 +75,7 @@ export default function Home() {
       </Card>
 
       <NextMeeting />
+      <TodayMeetings />
 
       {/* today stats */}
       <div className="grid grid-cols-4 gap-4">

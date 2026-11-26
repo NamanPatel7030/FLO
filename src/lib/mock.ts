@@ -25,7 +25,7 @@ import type {
   Settings,
   Todo,
   TodoStatus, Skill, Connection } from "./types";
-import { DEFAULT_GOOGLE_SETTINGS, EV, type CalendarEvent, type GoogleStatus, type MeetingAlert, type ThemeMode } from "./types";
+import { DEFAULT_GOOGLE_SETTINGS, EV, type AgendaItem, type CalendarEvent, type GoogleStatus, type MeetingAlert, type ThemeMode } from "./types";
 import { countWords } from "./format";
 import { codeMock, UNHANDLED } from "./mockCode";
 import { mockChecks, mockFix } from "./mockPlatform";
@@ -301,6 +301,37 @@ const notes: Note[] = [
       { t: 95, text: "Yes, I can have it by Monday.", speaker: "Speaker 2" },
       { t: 160, text: "We should double-check contrast for the charts in dark mode.", speaker: "Speaker 1" },
       { t: 240, text: "Launch target is still the twentieth.", speaker: "Speaker 2" },
+    ],
+  },
+  {
+    id: "n5",
+    title: "Weekly product sync",
+    kind: "meeting",
+    durationSec: 1710,
+    createdAt: iso(230),
+    live: false,
+    summary: [
+      "## Overview",
+      "Priya, Rahul and Jake reviewed the new pricing page and the onboarding drop-off. They agreed to ship the pricing page Thursday and test a shorter onboarding.",
+      "## Key points",
+      "### Pricing page",
+      "- **Priya Shah**: the annual plan toggle confused 3 of 5 testers; proposed showing the monthly price first [02:14]",
+      "- **Jake**: agreed, and asked to keep the student discount visible [03:40]",
+      "### Onboarding",
+      "- **Rahul Mehta**: 41% of new users drop at the calendar step [08:05]",
+      "## Decisions",
+      "- Ship the pricing page on Thursday (Priya, Jake) [12:30]",
+      "## Questions and follow-ups",
+      "- Is the calendar step needed on day one? (Rahul) [09:12]",
+    ].join("\n"),
+    actionItems: ["Priya Shah: update the pricing copy (due Wednesday)", "You: send the onboarding numbers to the team (due tomorrow)", "Rahul Mehta: prototype a 3-step onboarding"],
+    transcript: [
+      { t: 2, text: "Let's start with the pricing page.", speaker: "You" },
+      { t: 134, text: "Three of five testers were confused by the annual toggle. I'd show the monthly price first.", speaker: "Priya Shah" },
+      { t: 220, text: "Agreed, and let's keep the student discount visible.", speaker: "You" },
+      { t: 485, text: "On onboarding, forty-one percent of new users drop at the calendar step.", speaker: "Rahul Mehta" },
+      { t: 552, text: "Do we even need the calendar step on day one?", speaker: "Rahul Mehta" },
+      { t: 750, text: "Okay, pricing page ships Thursday.", speaker: "Priya Shah" },
     ],
   },
   {
@@ -690,6 +721,14 @@ function stopMockMeeting(): Note | null {
     }, 900);
   }
   liveNote = null;
+  if (n && liveEvent?.noteId === n.id) {
+    noteEvents[n.id] = { occurrence: liveEvent.occurrence, auto: liveEvent.auto };
+    liveEvent = null;
+  }
+  if (recordingOcc) {
+    recordingOcc = null;
+    mockEmit(EV.agenda, null);
+  }
   mockEmit(EV.state, { phase: "done", mode: "meeting", message: "Notes saved" });
   setTimeout(() => mockEmit(EV.state, { phase: "idle", mode: "meeting" }), 1200);
   mockEmit(EV.notes, {});
@@ -928,6 +967,77 @@ function mockGoogleDeepLink(code = "google_handoff_demo_123456") {
   mockEmit(EV.calendar, googleEvents());
   return true;
 }
+// ── today's agenda + automatic notes (calendar_agenda, autonotes.rs) ──────────
+/** a meeting earlier today whose notes were taken automatically (note n5) */
+const STANDUP: CalendarEvent = {
+  id: "ev_standup",
+  calendarId: "primary",
+  title: "Weekly product sync",
+  start: atMin(-230),
+  end: atMin(-200),
+  allDay: false,
+  joinUrl: "https://meet.google.com/kqr-wxyz-abc",
+  joinKind: "meet",
+  attendees: [me, { ...guest("Priya Shah"), organizer: true }, guest("Rahul Mehta")],
+  declined: false,
+  description: "Agenda: pricing page, onboarding drop-off",
+};
+const agendaPrefs: Record<string, boolean> = {};
+const agendaLinks: Record<string, string[]> = { [`${STANDUP.id}@${STANDUP.start}`]: ["n5"] };
+let recordingOcc: string | null = null;
+const occOf = (e: CalendarEvent) => `${e.id}@${e.start}`;
+const isAgendaMeeting = (e: CalendarEvent) => !e.allDay && !e.declined && !["focusTime", "outOfOffice"].includes(e.eventType ?? "") && (!!e.joinUrl || e.attendees.some((a) => !a.self && a.response !== "declined"));
+const notesDefault = (e: CalendarEvent) => e.joinKind === "meet" || e.joinKind === "zoom" || e.joinKind === "teams";
+function mockAgenda(): AgendaItem[] {
+  if (!googleStatus?.calendar || settings.google?.calendar === false) return [];
+  // "today": the fixtures within the next 12 h (the 26 h one is tomorrow), plus this morning's sync
+  return [STANDUP, ...googleFixtures().filter((e) => new Date(e.start).getTime() < GOOGLE_T0 + 12 * 3600_000)]
+    .filter(isAgendaMeeting)
+    .map((e) => ({ ...e, occurrence: occOf(e), takeNotes: agendaPrefs[e.id] ?? notesDefault(e), noteIds: (agendaLinks[occOf(e)] ?? []).filter((id) => notes.some((n) => n.id === id)), recording: recordingOcc === occOf(e) }));
+}
+let liveEvent: { noteId: string; occurrence: string; auto: boolean } | null = null;
+const noteEvents: Record<string, { occurrence: string; auto: boolean }> = { n5: { occurrence: `${STANDUP.id}@${STANDUP.start}`, auto: true } };
+function startEventNotes(occurrence: string, auto: boolean): Note {
+  const item = mockAgenda().find((i) => i.occurrence === occurrence);
+  if (!item) throw new Error("That meeting is no longer on your calendar");
+  if (liveNote) throw new Error("A meeting is already being recorded");
+  sessionMode = "meeting";
+  const n = startMockMeeting(item.title);
+  liveAttendees = { noteId: n.id, names: item.attendees.filter((a) => !a.self).map((a) => a.name) };
+  liveEvent = { noteId: n.id, occurrence, auto };
+  (agendaLinks[occurrence] ??= []).push(n.id);
+  recordingOcc = occurrence;
+  mockEmit(EV.agenda, null);
+  return n;
+}
+function eventInfo(noteId: string) {
+  const link = noteEvents[noteId] ?? (liveEvent?.noteId === noteId ? liveEvent : null);
+  if (!link) return undefined;
+  const e = [STANDUP, ...googleFixtures()].find((x) => occOf(x) === link.occurrence);
+  if (!e) return undefined;
+  return { eventId: e.id, occurrence: link.occurrence, title: e.title, start: e.start, end: e.end, auto: link.auto, guests: e.attendees.filter((a) => !a.self).map((a) => ({ name: a.name, email: a.email, organizer: !!a.organizer })) };
+}
+/** Test hook: the meeting app joined the call (meeting_detect's signal). Like autonotes.rs, it
+ *  records only when automatic notes are on and agreed to and the meeting's "Take notes" is on. */
+export function mockCallJoined(occurrence?: string): Note | null {
+  const g = settings.google;
+  const item = occurrence ? mockAgenda().find((i) => i.occurrence === occurrence) : mockAgenda().find((i) => i.joinUrl && new Date(i.end).getTime() > Date.now());
+  if (!item || !g?.autoNotes || !g.autoNotesConsent || !item.takeNotes || liveNote) return null;
+  const n = startEventNotes(item.occurrence, true);
+  mockEmit(EV.toast, { kind: "info", text: `Taking notes: ${n.title}` });
+  return n;
+}
+/** Test hook: the call ended (the meeting app left the call): an automatic recording stops. */
+export function mockCallEnded(): Note | null {
+  if (!recordingOcc || !liveEvent?.auto) return null;
+  const n = stopMockMeeting();
+  if (n) {
+    mockEmit(EV.toast, { kind: "info", text: "Stopped taking notes: the call ended. Writing them up…" });
+    setTimeout(() => mockEmit(EV.toast, { kind: "success", text: `Notes ready: ${n.title}` }), 950);
+  }
+  return n;
+}
+
 /** alerts fired in this preview (google_meeting_action looks them up by id) */
 const meetingAlerts = new Map<string, MeetingAlert>();
 /** attendee names for the meeting started from a calendar alert (meeting_info.attendees) */
@@ -1402,10 +1512,12 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
           nameInfo: { ...mockNameInfo },
         };
       if (args.noteId === "n2") return { capture: "mic", captureNote: "Call audio capture needs macOS 14.2 or later", voiced: [] };
+      const event = eventInfo(args.noteId);
+      if (args.noteId === "n5") return { capture: "mic+call", voiced: ["Priya Shah", "Rahul Mehta"], attendees: ["Priya Shah", "Rahul Mehta"], event };
       const la = liveAttendees as { noteId: string; names: string[] } | null;
       const attendees = la && la.noteId === args.noteId ? la.names : undefined;
-      if (liveNote && args.noteId === liveNote.id) return { capture: "mic+call", voiced: [], ...(attendees ? { attendees } : {}) };
-      return attendees ? { capture: "mic+call", voiced: [], attendees } : null;
+      if (liveNote && args.noteId === liveNote.id) return { capture: "mic+call", voiced: [], ...(attendees ? { attendees } : {}), ...(event ? { event } : {}) };
+      return attendees ? { capture: "mic+call", voiced: [], attendees, ...(event ? { event } : {}) } : null;
     }
     case "rename_speaker": {
       const n = notes.find((x) => x.id === args.noteId);
@@ -1690,6 +1802,26 @@ export async function mockInvoke(cmd: string, args: Record<string, any> = {}): P
           return "Dismissed";
       }
     }
+    case "calendar_agenda":
+      return mockAgenda();
+    case "set_event_notes":
+      agendaPrefs[args.eventId] = !!args.on;
+      mockEmit(EV.agenda, null);
+      return mockAgenda();
+    case "start_event_notes":
+      return startEventNotes(args.occurrence, false);
+    case "meeting_followup_draft": {
+      const n = notes.find((x) => x.id === args.noteId);
+      if (!n) throw new Error("Note not found");
+      if (!n.summary.trim()) throw new Error("This meeting has no summary yet");
+      const ev = eventInfo(n.id);
+      const items = n.actionItems.map((a) => `- ${a.replace(/^You:\s*/, "I'll ")}`).join("\n");
+      return {
+        to: (ev?.guests ?? []).map((g) => g.email).filter(Boolean),
+        subject: `Follow-up: ${n.title}`,
+        body: `Hi all,\n\nThanks for the time today. Next steps:\n${items}\n\nBest,\n${(settings.userName || "Me").split(" ")[0]}`,
+      };
+    }
     case "gmail_sync_now":
       if (!googleStatus?.gmail) throw new Error("Connect Gmail first");
       return GMAIL.filter((m) => m.needsReply).length;
@@ -1880,6 +2012,9 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
     googleRevoked: () => googleRevoked,
     /** fire EV.meetingAlert (default: "Design sync" in 5 min with a Meet link and 3 guests) */
     meetingAlert: mockMeetingAlert,
+    /** automatic notes: the meeting app joined / left the call (meeting_detect's signals) */
+    callJoined: mockCallJoined,
+    callEnded: mockCallEnded,
     /** now playing: "spotify" | "youtube" | "paused" | "none" | a NowPlaying | null → emits EV.nowPlaying */
     setNowPlaying: (v: unknown) => emitNowPlaying(mediaSet(v as never)),
   };

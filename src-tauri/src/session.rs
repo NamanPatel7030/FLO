@@ -58,7 +58,11 @@ pub fn start(st: &Shared, mode: Mode, via_hotkey: bool) -> Result<()> {
     // selected) used to run before it, so an assistant command spoken right away lost its first word
     let t_press = Instant::now();
     let app = st.clone();
-    let recorder = Recorder::start(move |rms| app.emit(ev::LEVEL, LevelEvent { rms }))
+    let path = match mode {
+        Mode::Assistant => "assistant",
+        _ => "dictation",
+    };
+    let recorder = Recorder::start_as(path, move |rms| app.emit(ev::LEVEL, LevelEvent { rms }))
         .map_err(|e| anyhow!("Microphone unavailable ({e}). Allow Flo in System Settings → Privacy → Microphone."))?;
     let mic_ms = t_press.elapsed().as_millis();
     let front = st.target_app();
@@ -198,15 +202,18 @@ async fn finish(st: &Shared, sess: ActiveSession) -> Result<()> {
     // the notch flips to "transcribing" the instant the key is released — before we wait on the
     // background decoder or stop the mic — so release always feels immediate
     st.state(Phase::Transcribing, mode, None);
-    // let the background transcriber finish the sentence it's on, then take what's left
+    // the microphone closes the moment the key is up: the background transcriber can no longer
+    // take samples (the session is gone), so what the recorder holds is the tail, whatever it does
     if let Some(buf) = &stream {
         buf.stop.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+    let tail = tokio::task::spawn_blocking(move || recorder.stop()).await?;
+    // let the background transcriber finish the sentence it's on, then take what's left
     if let Some(t) = stream_task {
         let _ = t.await;
     }
     let mut samples = stream.as_ref().map(|b| std::mem::take(&mut *b.pending.lock())).unwrap_or_default();
-    samples.extend(tokio::task::spawn_blocking(move || recorder.stop()).await?);
+    samples.extend(tail);
     let committed: Vec<String> = stream.as_ref().map(|b| b.committed.lock().clone()).unwrap_or_default();
     // require real speech; a silent hold must never paste a hallucinated sentence
     let tail_voiced = audio::voiced_ms(&samples);

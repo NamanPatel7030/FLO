@@ -438,6 +438,19 @@ pub fn mic_in_use() -> bool {
     !mic_users().is_empty()
 }
 
+/// Apps recording from a microphone, Flo excluded (automatic meeting notes, autonotes.rs).
+pub fn mic_users_others() -> Option<Vec<String>> {
+    Some(mic_users())
+}
+
+pub fn zoom_in_meeting() -> bool {
+    false
+}
+
+pub fn app_window_titles(_pid: i32) -> Vec<String> {
+    vec![]
+}
+
 pub fn detect_call_app() -> String {
     super::call_label(&frontmost_app().name, &frontmost_window_title().unwrap_or_default(), &mic_users())
 }

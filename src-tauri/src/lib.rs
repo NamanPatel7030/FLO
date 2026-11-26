@@ -41,6 +41,7 @@ mod skillgen;
 mod mcp;
 mod media;
 mod meeting_detect;
+mod autonotes;
 mod model;
 mod platform;
 mod prompts;
@@ -771,6 +772,10 @@ pub fn run() {
             commands::google_events,
             commands::google_refresh_events,
             commands::google_meeting_action,
+            commands::calendar_agenda,
+            commands::set_event_notes,
+            commands::start_event_notes,
+            commands::meeting_followup_draft,
             commands::gmail_sync_now,
             commands::confirm_action,
             commands::stop_agent,
@@ -921,6 +926,9 @@ pub fn run() {
                 platform::set_hotkeys(hotkey::HotkeyConfig::from_strings(&s.hotkey_dictation, &s.hotkey_assistant));
             }
             start_hotkeys(st.clone());
+            // safety net: the microphone is never left open while nothing is recording
+            let st_mic = st.clone();
+            audio::spawn_watchdog(move || st_mic.session.lock().is_some() || st_mic.meeting.lock().is_some() || handsfree::is_active());
             meeting_detect::spawn(st.clone());
             slack::spawn(st.clone());
             google::spawn(st.clone());

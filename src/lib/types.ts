@@ -351,6 +351,21 @@ export interface MeetingInfo {
   attendees?: string[];
   /** label → how Flo found that name (confidence 0–1); "Name?" suggestions keyed by "Speaker N" */
   nameInfo?: Record<string, NameGuess>;
+  /** the calendar meeting these notes were taken in */
+  event?: MeetingEventInfo;
+}
+
+/** The calendar meeting a note belongs to. */
+export interface MeetingEventInfo {
+  eventId: string;
+  occurrence: string;
+  title: string;
+  start: string;
+  end: string;
+  guests: { name: string; email?: string; organizer?: boolean }[];
+  /** started by automatic notes */
+  auto: boolean;
+  htmlLink?: string;
 }
 
 /** A speaker name Flo found on its own (all on this Mac). */
@@ -881,6 +896,8 @@ export const EV = {
   google: "flo://google",
   /** payload: CalendarEvent[]: fresh calendar cache after each poll */
   calendar: "flo://calendar",
+  /** today's agenda changed (toggles, a note linked, recording started/stopped): reload calendar_agenda */
+  agenda: "flo://agenda",
   /** payload: MeetingAlert: a meeting is about to start (same id re-sent with phase "now") */
   meetingAlert: "flo://meeting-alert",
   /** payload: {id}: the alert was dismissed elsewhere or the meeting ended: close the card */
@@ -901,9 +918,15 @@ export interface GoogleSettings {
   calendars: string[];
   /** turn emails that need a reply into to-dos. default true */
   gmailTodos: boolean;
+  /** take notes by themselves for calendar meetings with "Take notes" on, once the call is joined. default false */
+  autoNotes?: boolean;
+  /** the user accepted what automatic notes record (asked once) */
+  autoNotesConsent?: boolean;
+  /** morning notification with today's meetings. default true */
+  morningBrief?: boolean;
 }
 
-export const DEFAULT_GOOGLE_SETTINGS: GoogleSettings = { calendar: true, gmail: true, alertMinutes: 5, alertSolo: false, calendars: [], gmailTodos: true };
+export const DEFAULT_GOOGLE_SETTINGS: GoogleSettings = { calendar: true, gmail: true, alertMinutes: 5, alertSolo: false, calendars: [], gmailTodos: true, autoNotes: false, autoNotesConsent: false, morningBrief: true };
 
 /** google_status: the connected account and which scopes were granted. */
 export interface GoogleStatus {
@@ -926,6 +949,8 @@ export interface CalendarAttendee {
   self: boolean;
   /** accepted | declined | tentative | needsAction */
   response: string;
+  /** organized the event */
+  organizer?: boolean;
 }
 
 export type JoinKind = "meet" | "zoom" | "teams" | "other";
@@ -944,6 +969,29 @@ export interface CalendarEvent {
   attendees: CalendarAttendee[];
   declined: boolean;
   htmlLink?: string;
+  /** the invite's description, plain text */
+  description?: string;
+  /** focusTime | outOfOffice | … (absent for a plain event) */
+  eventType?: string;
+}
+
+/** One of today's meetings on Home (calendar_agenda): the event + automatic notes state. */
+export interface AgendaItem extends CalendarEvent {
+  /** event id + start: what notes are filed under */
+  occurrence: string;
+  /** "Take notes" is on for this meeting */
+  takeNotes: boolean;
+  /** notes taken during this meeting (oldest first) */
+  noteIds: string[];
+  /** Flo is recording this meeting right now */
+  recording: boolean;
+}
+
+/** A follow-up email written from a meeting's notes. A draft only: Flo never sends it. */
+export interface FollowupDraft {
+  to: string[];
+  subject: string;
+  body: string;
 }
 
 export interface MeetingAlert {

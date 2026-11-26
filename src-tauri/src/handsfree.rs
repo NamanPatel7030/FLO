@@ -333,7 +333,7 @@ pub fn start(st: &Shared) -> Result<()> {
     if is_active() {
         return Ok(());
     }
-    let rec = Recorder::start(|_| {}).map_err(|e| anyhow!("Microphone unavailable ({e}). Allow Flo in System Settings → Privacy → Microphone."))?;
+    let rec = Recorder::start_as("agent mode", |_| {}).map_err(|e| anyhow!("Microphone unavailable ({e}). Allow Flo in System Settings → Privacy → Microphone."))?;
     if let Ok(mut r) = REC.lock() {
         *r = Some(rec);
     }

@@ -65,10 +65,37 @@ const CALL: usize = 1;
 
 /// One track's timeline: the time of each sample, from the number of samples received (exact,
 /// jitter-free), anchored to the wall clock on the first delivery and again after a gap.
-#[derive(Debug, Default, Clone)]
+///
+/// A track that keeps drifting the same way is not losing audio: its device runs at another rate
+/// than the one it declared (the call tap said 48 kHz while the speakers clocked it at 96 kHz, so
+/// it delivered two seconds per second and re-anchored every 1.2 s for a whole meeting). After
+/// `DRIFT_GAPS` re-anchors in one direction the real rate is measured and the timeline scaled.
+#[derive(Debug, Clone)]
 pub struct Clock {
     end: Option<f64>,
+    /// track seconds per declared-rate second (1.0 unless the device's real rate differs)
+    scale: f64,
+    /// rate measurement: (wall time it began, audio seconds at the declared rate since)
+    meter: Option<(f64, f64)>,
+    /// re-anchors in a row in one direction, each soon after the last: + the track fell behind,
+    /// - it ran ahead
+    gaps: i32,
+    last_gap: f64,
+    reanchors: u32,
 }
+
+impl Default for Clock {
+    fn default() -> Self {
+        Self { end: None, scale: 1.0, meter: None, gaps: 0, last_gap: f64::NEG_INFINITY, reanchors: 0 }
+    }
+}
+
+/// re-anchors in the same direction before the track's real rate is measured
+const DRIFT_GAPS: i32 = 3;
+/// shortest measurement trusted for a rate correction
+const DRIFT_MIN_SECS: f64 = 2.0;
+/// re-anchors further apart than this are separate losses of audio, not drift
+const DRIFT_WINDOW_SECS: f64 = 10.0;
 
 impl Clock {
     /// Start time of `n` samples drained at wall time `now` (seconds since the meeting began).
@@ -76,18 +103,70 @@ impl Clock {
         if n == 0 {
             return self.end.unwrap_or(now.max(0.0));
         }
-        let dur = n as f64 / RATE;
-        let wall = (now - dur).max(0.0);
+        let raw = n as f64 / RATE;
+        let wall = (now - raw * self.scale).max(0.0);
         let start = match self.end {
-            Some(e) if (wall - e).abs() <= GAP_SECS => e,
-            Some(e) => {
-                log::info!("meeting: track clock re-anchored ({:+.1}s)", wall - e);
+            None => {
+                // measured from after the first delivery, which may hold audio from before `now` = 0
+                self.meter = Some((now, 0.0));
                 wall
             }
-            None => wall,
+            Some(e) => {
+                if let Some(m) = self.meter.as_mut() {
+                    m.1 += raw;
+                }
+                let off = wall - e;
+                if off.abs() <= GAP_SECS {
+                    e
+                } else {
+                    self.reanchors += 1;
+                    let dir = if off > 0.0 { 1 } else { -1 };
+                    let streak = self.gaps.signum() == dir && now - self.last_gap <= DRIFT_WINDOW_SECS;
+                    self.gaps = if streak { self.gaps + dir } else { dir };
+                    self.last_gap = now;
+                    if !streak {
+                        // a fresh measurement from here: earlier losses of audio don't count
+                        self.meter = Some((now, 0.0));
+                    }
+                    if self.gaps.abs() >= DRIFT_GAPS && self.correct_rate(now) {
+                        (now - raw * self.scale).max(0.0)
+                    } else {
+                        if self.gaps.abs() == 1 {
+                            log::info!("meeting: track clock re-anchored ({off:+.1}s)");
+                        }
+                        wall
+                    }
+                }
+            }
         };
-        self.end = Some(start + dur);
+        self.end = Some(start + raw * self.scale);
         start
+    }
+
+    /// Measure the track's real rate and scale its timeline to it. False when the measurement is
+    /// too short or the rate is already right (then it was lost audio after all).
+    fn correct_rate(&mut self, now: f64) -> bool {
+        let Some((w0, audio)) = self.meter else { return false };
+        let span = now - w0;
+        if span < DRIFT_MIN_SECS || audio <= 0.0 {
+            return false;
+        }
+        let ratio = audio / span; // declared-rate seconds delivered per real second
+        let scale = (1.0 / ratio).clamp(0.2, 5.0);
+        if ((scale - self.scale) / self.scale).abs() < 0.05 {
+            return false;
+        }
+        log::warn!("meeting: a track delivers {ratio:.2}x real time (its device runs at another sample rate); timeline corrected");
+        self.scale = scale;
+        self.meter = Some((now, 0.0));
+        self.gaps = 0;
+        true
+    }
+
+    /// Times this clock jumped to the wall clock (tests).
+    #[cfg(test)]
+    pub fn reanchors(&self) -> u32 {
+        self.reanchors
     }
 }
 
@@ -1218,6 +1297,54 @@ mod tests {
         let t = c.place(4800, 23.6);
         assert!((t - 23.3).abs() < 1e-6, "{t}");
         assert_eq!(c.place(0, 30.0), t + 0.3);
+    }
+
+    /// The call tap declared 48 kHz while the speakers clocked it at 96 kHz: two seconds of
+    /// audio per second. It re-anchored every 1.2 s for a whole 35-minute meeting; now the rate
+    /// is measured after a few seconds and the timeline follows the wall clock without jumping.
+    #[test]
+    fn a_track_running_at_twice_its_rate_stops_reanchoring() {
+        let mut c = Clock::default();
+        let mut now = 0.0;
+        let mut last = 0.0;
+        for _ in 0..(35 * 60 * 10 / 3) {
+            now += 0.3;
+            last = c.place(9600, now); // 0.6 s at the declared rate, every 0.3 s
+        }
+        assert!(c.reanchors() <= DRIFT_GAPS as u32, "re-anchored {} times", c.reanchors());
+        assert!((c.scale - 0.5).abs() < 0.02, "scale {}", c.scale);
+        assert!((now - (last + 0.3)).abs() < GAP_SECS, "timeline {last} vs wall {now}");
+    }
+
+    /// The first delivery holds audio from before the meeting clock started (the mic opened while
+    /// the call tap was starting): one re-anchor, no rate change.
+    #[test]
+    fn a_backlog_on_the_first_delivery_is_not_a_rate_problem() {
+        let mut c = Clock::default();
+        c.place(16_000 * 3 / 2, 0.3); // 1.5 s drained 0.3 s in
+        let mut now = 0.3;
+        for _ in 0..200 {
+            now += 0.3;
+            c.place(4800, now);
+        }
+        assert_eq!(c.reanchors(), 1);
+        assert_eq!(c.scale, 1.0);
+    }
+
+    /// Losing audio now and then (sleep, a device switch) re-anchors each time, never rescales.
+    #[test]
+    fn occasional_lost_audio_reanchors_without_rescaling() {
+        let mut c = Clock::default();
+        let mut now = 0.0;
+        for k in 0..600 {
+            now += 0.3;
+            if k % 100 == 50 {
+                now += 5.0; // nothing delivered for 5 s
+            }
+            c.place(4800, now);
+        }
+        assert_eq!(c.reanchors(), 6);
+        assert_eq!(c.scale, 1.0);
     }
 
     /// Three sentences with real pauses. Whatever the drain size (300 ms like the live loop, or

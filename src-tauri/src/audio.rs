@@ -2,6 +2,7 @@
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +18,128 @@ pub struct Recorder {
     shared: Arc<Mutex<Shared>>,
     stop_tx: mpsc::Sender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
+}
+
+// ── microphone lifetime accounting ──────────────────────────────────────────
+//
+// The macOS microphone indicator stays on for as long as any input stream exists, so Flo counts
+// them where it matters: a `StreamToken` lives inside each stream's data callback, which the audio
+// backend frees only when the stream is really gone. (cpal 0.15 on macOS never freed a stream
+// opened on an enumerated device: its disconnect listener held the stream itself, so every
+// recording left the microphone running and filling memory until Flo quit.)
+
+static OPEN_STREAMS: AtomicUsize = AtomicUsize::new(0);
+
+/// Input streams that exist right now (opened and not yet freed by the audio backend).
+pub fn open_streams() -> usize {
+    OPEN_STREAMS.load(Ordering::SeqCst)
+}
+
+/// Counts one input stream from creation until the backend drops its data callback.
+pub(crate) struct StreamToken {
+    path: &'static str,
+}
+
+impl StreamToken {
+    pub(crate) fn new(path: &'static str) -> Self {
+        let n = OPEN_STREAMS.fetch_add(1, Ordering::SeqCst) + 1;
+        log::info!("mic streams open: {n} ({path})");
+        Self { path }
+    }
+}
+
+impl Drop for StreamToken {
+    fn drop(&mut self) {
+        let n = OPEN_STREAMS.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
+        log::info!("mic streams open: {n} ({} closed)", self.path);
+        if n == 0 {
+            log::info!("microphone released");
+        }
+    }
+}
+
+/// A recorder whose capture thread is running, so the watchdog can close it by name.
+struct LiveRecorder {
+    id: u64,
+    path: &'static str,
+    since: Instant,
+    stop: mpsc::Sender<()>,
+}
+
+static LIVE: Mutex<Vec<LiveRecorder>> = Mutex::new(Vec::new());
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn register(path: &'static str, stop: &mpsc::Sender<()>) -> u64 {
+    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+    LIVE.lock().push(LiveRecorder { id, path, since: Instant::now(), stop: stop.clone() });
+    id
+}
+
+fn unregister(id: u64) {
+    LIVE.lock().retain(|r| r.id != id);
+}
+
+/// Recorders whose capture thread is still running: (path, seconds open).
+#[cfg(test)]
+pub fn live_recorders() -> Vec<(&'static str, u64)> {
+    LIVE.lock().iter().map(|r| (r.path, r.since.elapsed().as_secs())).collect()
+}
+
+/// How long the microphone may stay open with nothing recording before the watchdog closes it.
+/// Longer than any legitimate gap (a recorder opens a moment before its session is stored).
+pub const WATCHDOG_GRACE: Duration = Duration::from_secs(4);
+
+/// The watchdog's decision, kept pure for tests: which recorders (ids) to close now. `idle_since`
+/// is when "something open, nothing recording" began (reset whenever that isn't the case).
+fn lingering(in_use: bool, open: bool, now: Instant, idle_since: &mut Option<Instant>, live: &[(u64, Instant)], grace: Duration) -> Vec<u64> {
+    if in_use || !open {
+        *idle_since = None;
+        return vec![];
+    }
+    let since = *idle_since.get_or_insert(now);
+    if now.duration_since(since) < grace {
+        return vec![];
+    }
+    live.iter().filter(|(_, opened)| now.duration_since(*opened) >= grace).map(|(id, _)| *id).collect()
+}
+
+/// One watchdog pass. Returns the paths it closed.
+fn watchdog_pass(in_use: bool, idle_since: &mut Option<Instant>, warned_orphans: &mut bool, grace: Duration) -> Vec<&'static str> {
+    let open = open_streams() > 0 || !LIVE.lock().is_empty();
+    let now = Instant::now();
+    let snapshot: Vec<(u64, Instant)> = LIVE.lock().iter().map(|r| (r.id, r.since)).collect();
+    let ids = lingering(in_use, open, now, idle_since, &snapshot, grace);
+    let mut closed = vec![];
+    for id in ids {
+        let rec = LIVE.lock().iter().find(|r| r.id == id).map(|r| (r.path, r.stop.clone(), r.since));
+        if let Some((path, stop, since)) = rec {
+            log::warn!("microphone left open by {path} for {}s with nothing recording; closing it", since.elapsed().as_secs());
+            let _ = stop.send(());
+            unregister(id); // its thread exits on the signal; never signal it twice
+            closed.push(path);
+        }
+    }
+    // streams nobody owns any more (the backend didn't free them): say so once
+    let orphans = idle_since.is_some_and(|s| now.duration_since(s) >= grace * 2) && LIVE.lock().is_empty() && open_streams() > 0;
+    if orphans && !*warned_orphans {
+        log::error!("{} microphone stream(s) still open with no recorder: the audio backend did not release them", open_streams());
+    }
+    *warned_orphans = orphans;
+    closed
+}
+
+/// Safety net: every second, if `in_use` says nothing should be recording (no push-to-talk
+/// session, meeting or agent mode) but a recorder is still running, close it within
+/// `WATCHDOG_GRACE` and log a warning naming the path that left it open.
+pub fn spawn_watchdog(in_use: impl Fn() -> bool + Send + 'static) {
+    let _ = std::thread::Builder::new().name("flo-mic-watchdog".into()).spawn(move || {
+        let mut idle_since = None;
+        let mut warned = false;
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            watchdog_pass(in_use(), &mut idle_since, &mut warned, WATCHDOG_GRACE);
+        }
+    });
 }
 
 /// Input devices that delivered pure zeros this run (a Bluetooth speaker that macOS made the
@@ -74,7 +197,7 @@ pub(crate) fn device_order(default: Option<&str>, all: &[String], silent: &[Stri
     out
 }
 
-fn open_stream(dev: &cpal::Device, sh: &Arc<Mutex<Shared>>, level: &Arc<Mutex<dyn LevelFeed + Send>>) -> Result<cpal::Stream> {
+fn open_stream(dev: &cpal::Device, sh: &Arc<Mutex<Shared>>, level: &Arc<Mutex<dyn LevelFeed + Send>>, path: &'static str) -> Result<cpal::Stream> {
     let cfg = dev.default_input_config()?;
     let channels = cfg.channels() as usize;
     {
@@ -88,9 +211,12 @@ fn open_stream(dev: &cpal::Device, sh: &Arc<Mutex<Shared>>, level: &Arc<Mutex<dy
         ($t:ty, $conv:expr) => {{
             let sh2 = sh.clone();
             let lv = level.clone();
+            // freed with the callback, i.e. only when the backend really lets go of the stream
+            let token = StreamToken::new(path);
             dev.build_input_stream(
                 &stream_cfg,
                 move |data: &[$t], _| {
+                    let _ = &token;
                     let mono: Vec<f32> =
                         data.chunks(channels).map(|f| f.iter().map(|s| $conv(*s)).sum::<f32>() / channels as f32).collect();
                     lv.lock().feed_samples(&mono);
@@ -112,6 +238,99 @@ fn open_stream(dev: &cpal::Device, sh: &Arc<Mutex<Shared>>, level: &Arc<Mutex<dy
     Ok(stream)
 }
 
+/// Owns the cpal stream (it is !Send on macOS) from opening to closing; see `Recorder::start`.
+fn capture_thread(path: &'static str, sh: Arc<Mutex<Shared>>, stop_rx: mpsc::Receiver<()>, ready_tx: mpsc::Sender<Result<()>>, on_level: impl Fn(f32) + Send + 'static) {
+    let host = cpal::default_host();
+    let level: Arc<Mutex<dyn LevelFeed + Send>> = Arc::new(Mutex::new(LevelMeter::new(on_level)));
+    let devices: Vec<cpal::Device> = host.input_devices().map(|d| d.collect()).unwrap_or_default();
+    let names: Vec<String> = devices.iter().map(|d| d.name().unwrap_or_default()).collect();
+    let default = host.default_input_device().and_then(|d| d.name().ok());
+    let order = device_order(default.as_deref(), &names, &silent_now());
+    let find = |n: &str| devices.iter().zip(&names).find(|(_, dn)| dn.as_str() == n).map(|(d, _)| d.clone());
+
+    // open the first device that starts
+    let mut idx = 0;
+    let mut current: Option<(cpal::Stream, String)> = None;
+    let mut last_err = anyhow!("No microphone found. Connect one, or choose one in System Settings → Sound → Input.");
+    while idx < order.len() {
+        let name = order[idx].clone();
+        idx += 1;
+        let Some(dev) = find(&name) else { continue };
+        match open_stream(&dev, &sh, &level, path) {
+            Ok(s) => {
+                current = Some((s, name));
+                break;
+            }
+            Err(e) => {
+                log::warn!("microphone {name}: {e}");
+                last_err = e;
+            }
+        }
+    }
+    let Some((mut stream, mut name)) = current else {
+        let _ = ready_tx.send(Err(last_err));
+        return;
+    };
+    *LAST_DEVICE.lock() = name.clone();
+    let _ = ready_tx.send(Ok(()));
+
+    // watch the first moments: pure zeros with another mic available → switch
+    let mut probe_until = Instant::now() + SILENT_PROBE;
+    loop {
+        match stop_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        if Instant::now() < probe_until || idx >= order.len() {
+            continue;
+        }
+        let silent = {
+            let s = sh.lock();
+            !s.buf.is_empty() && is_digital_silence(&s.buf)
+        };
+        if !silent {
+            idx = order.len(); // this one works: stop probing
+            continue;
+        }
+        log::warn!("microphone {name} sends only silence; trying another");
+        {
+            let mut sd = SILENT_DEVICES.lock();
+            sd.retain(|(n, _)| n != &name);
+            sd.push((name.clone(), Instant::now()));
+        }
+        let mut switched = false;
+        while idx < order.len() {
+            let next = order[idx].clone();
+            idx += 1;
+            let Some(dev) = find(&next) else { continue };
+            close(std::mem::replace(&mut stream, match open_stream(&dev, &sh, &level, path) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("microphone {next}: {e}");
+                    continue;
+                }
+            }));
+            log::info!("microphone: switched from {name} to {next}");
+            name = next;
+            *LAST_DEVICE.lock() = name.clone();
+            probe_until = Instant::now() + SILENT_PROBE;
+            switched = true;
+            break;
+        }
+        if !switched {
+            idx = order.len();
+        }
+    }
+    close(stream);
+}
+
+/// Stop the device first, then free the stream: a stopped stream turns the microphone (and the
+/// macOS indicator) off even if a backend keeps the object alive.
+fn close(stream: cpal::Stream) {
+    let _ = stream.pause();
+    drop(stream);
+}
+
 trait LevelFeed {
     fn feed_samples(&mut self, s: &[f32]);
 }
@@ -125,113 +344,51 @@ impl Recorder {
     /// Start recording. Uses the system's default input, but if it delivers pure zeros for the
     /// first moments (a Bluetooth speaker macOS made the default input, a muted mic) and another
     /// microphone exists, switches to that one mid-press and remembers the silent device for the
-    /// rest of the run. `on_level` receives 0..1 ~30×/s.
-    pub fn start(on_level: impl Fn(f32) + Send + 'static) -> Result<Self> {
+    /// rest of the run. `on_level` receives 0..1 ~30×/s. `path` names who opened the microphone
+    /// ("dictation", "meeting", …) in the log and in the watchdog's warning.
+    pub fn start_as(path: &'static str, on_level: impl Fn(f32) + Send + 'static) -> Result<Self> {
         let shared = Arc::new(Mutex::new(Shared { buf: Vec::new(), rate: TARGET_RATE }));
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         // desktop E2E test builds only (inert in release builds; see e2e.rs)
         if let Some(wav) = crate::e2e::wav_input() {
-            return Self::start_from_wav(&wav, shared, stop_tx, stop_rx, on_level);
+            return Self::start_from_wav(&wav, shared, stop_tx, stop_rx, on_level, path);
         }
         let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
         let sh = shared.clone();
+        let id = register(path, &stop_tx);
         // cpal::Stream is !Send on macOS → own it on a dedicated thread.
-        let thread = std::thread::Builder::new().name("flo-audio".into()).spawn(move || {
-            let host = cpal::default_host();
-            let level: Arc<Mutex<dyn LevelFeed + Send>> = Arc::new(Mutex::new(LevelMeter::new(on_level)));
-            let devices: Vec<cpal::Device> = host.input_devices().map(|d| d.collect()).unwrap_or_default();
-            let names: Vec<String> = devices.iter().map(|d| d.name().unwrap_or_default()).collect();
-            let default = host.default_input_device().and_then(|d| d.name().ok());
-            let order = device_order(default.as_deref(), &names, &silent_now());
-            let find = |n: &str| devices.iter().zip(&names).find(|(_, dn)| dn.as_str() == n).map(|(d, _)| d.clone());
-
-            // open the first device that starts
-            let mut idx = 0;
-            let mut current: Option<(cpal::Stream, String)> = None;
-            let mut last_err = anyhow!("No microphone found. Connect one, or choose one in System Settings → Sound → Input.");
-            while idx < order.len() {
-                let name = order[idx].clone();
-                idx += 1;
-                let Some(dev) = find(&name) else { continue };
-                match open_stream(&dev, &sh, &level) {
-                    Ok(s) => {
-                        current = Some((s, name));
-                        break;
-                    }
-                    Err(e) => {
-                        log::warn!("microphone {name}: {e}");
-                        last_err = e;
-                    }
-                }
+        let spawned = std::thread::Builder::new().name("flo-audio".into()).spawn(move || {
+            capture_thread(path, sh, stop_rx, ready_tx, on_level);
+            unregister(id);
+        });
+        let thread = match spawned {
+            Ok(t) => t,
+            Err(e) => {
+                unregister(id);
+                return Err(e.into());
             }
-            let Some((mut stream, mut name)) = current else {
-                let _ = ready_tx.send(Err(last_err));
-                return;
-            };
-            *LAST_DEVICE.lock() = name.clone();
-            let _ = ready_tx.send(Ok(()));
-
-            // watch the first moments: pure zeros with another mic available → switch
-            let mut probe_until = Instant::now() + SILENT_PROBE;
-            loop {
-                match stop_rx.recv_timeout(Duration::from_millis(50)) {
-                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                }
-                if Instant::now() < probe_until || idx >= order.len() {
-                    continue;
-                }
-                let silent = {
-                    let s = sh.lock();
-                    !s.buf.is_empty() && is_digital_silence(&s.buf)
-                };
-                if !silent {
-                    idx = order.len(); // this one works: stop probing
-                    continue;
-                }
-                log::warn!("microphone {name} sends only silence; trying another");
-                {
-                    let mut sd = SILENT_DEVICES.lock();
-                    sd.retain(|(n, _)| n != &name);
-                    sd.push((name.clone(), Instant::now()));
-                }
-                let mut switched = false;
-                while idx < order.len() {
-                    let next = order[idx].clone();
-                    idx += 1;
-                    let Some(dev) = find(&next) else { continue };
-                    drop(std::mem::replace(&mut stream, match open_stream(&dev, &sh, &level) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            log::warn!("microphone {next}: {e}");
-                            continue;
-                        }
-                    }));
-                    log::info!("microphone: switched from {name} to {next}");
-                    name = next;
-                    *LAST_DEVICE.lock() = name.clone();
-                    probe_until = Instant::now() + SILENT_PROBE;
-                    switched = true;
-                    break;
-                }
-                if !switched {
-                    idx = order.len();
-                }
-            }
-            drop(stream);
-        })?;
+        };
         ready_rx.recv_timeout(Duration::from_secs(5)).map_err(|_| anyhow!("microphone did not start"))??;
         Ok(Self { shared, stop_tx, thread: Some(thread) })
     }
 
     /// E2E test mode: play a WAV file into the recording in real time (20 ms frames), then
     /// near-silence until stopped, as a microphone would deliver it.
-    fn start_from_wav(path: &std::path::Path, shared: Arc<Mutex<Shared>>, stop_tx: mpsc::Sender<()>, stop_rx: mpsc::Receiver<()>, on_level: impl Fn(f32) + Send + 'static) -> Result<Self> {
-        let (samples, rate) = crate::e2e::read_wav(path)?;
-        shared.lock().rate = rate;
+    fn start_from_wav(wav: &std::path::Path, shared: Arc<Mutex<Shared>>, stop_tx: mpsc::Sender<()>, stop_rx: mpsc::Receiver<()>, on_level: impl Fn(f32) + Send + 'static, path: &'static str) -> Result<Self> {
+        let (samples, rate) = crate::e2e::read_wav(wav)?;
         *LAST_DEVICE.lock() = "E2E WAV".into();
+        Self::start_samples(samples, rate, shared, stop_tx, stop_rx, on_level, path)
+    }
+
+    /// A recorder fed from memory instead of a device (E2E builds and tests). It is counted and
+    /// watched exactly like a real microphone.
+    fn start_samples(samples: Vec<f32>, rate: u32, shared: Arc<Mutex<Shared>>, stop_tx: mpsc::Sender<()>, stop_rx: mpsc::Receiver<()>, on_level: impl Fn(f32) + Send + 'static, path: &'static str) -> Result<Self> {
+        shared.lock().rate = rate;
         let sh = shared.clone();
+        let id = register(path, &stop_tx);
+        let token = StreamToken::new(path);
         let thread = std::thread::Builder::new().name("flo-audio-e2e".into()).spawn(move || {
+            let _token = token;
             let mut level = LevelMeter::new(on_level);
             let frame = (rate as usize / 50).max(1);
             let hush: Vec<f32> = (0..frame).map(|i| if i % 2 == 0 { 1e-4 } else { -1e-4 }).collect();
@@ -252,8 +409,16 @@ impl Recorder {
                 level.feed(chunk);
                 sh.lock().buf.extend_from_slice(chunk);
             }
+            unregister(id);
         })?;
         Ok(Self { shared, stop_tx, thread: Some(thread) })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn start_fake(path: &'static str) -> Self {
+        let (stop_tx, stop_rx) = mpsc::channel::<()>();
+        let shared = Arc::new(Mutex::new(Shared { buf: Vec::new(), rate: TARGET_RATE }));
+        Self::start_samples(vec![0.05; 3200], TARGET_RATE, shared, stop_tx, stop_rx, |_| {}, path).expect("fake recorder")
     }
 
     /// Drain everything captured so far, resampled to 16 kHz.
@@ -617,14 +782,156 @@ mod device_order_tests {
 }
 
 #[cfg(test)]
+mod mic_lifetime {
+    //! Every way a recording ends must close the microphone (stream count back to where it was).
+    use super::*;
+
+    /// the counters are process-wide: these tests take turns
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn settle(want: usize) -> usize {
+        let t = Instant::now();
+        while open_streams() != want && t.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        open_streams()
+    }
+
+    #[test]
+    fn stop_closes_the_microphone() {
+        let _g = SERIAL.lock();
+        let base = open_streams();
+        let r = Recorder::start_fake("dictation");
+        assert_eq!(open_streams(), base + 1);
+        assert!(live_recorders().iter().any(|(p, _)| *p == "dictation"));
+        let _ = r.stop();
+        assert_eq!(settle(base), base);
+        assert!(!live_recorders().iter().any(|(p, _)| *p == "dictation"));
+    }
+
+    /// cancel, a tap released during start, an error after the mic opened (signed out, no
+    /// model, assistant failure): the recorder is simply dropped
+    #[test]
+    fn dropping_without_stop_closes_the_microphone() {
+        let _g = SERIAL.lock();
+        let base = open_streams();
+        let r = Recorder::start_fake("assistant");
+        assert_eq!(open_streams(), base + 1);
+        drop(r);
+        assert_eq!(settle(base), base);
+    }
+
+    /// fn pressed five times in a few seconds, some presses ending before they started
+    #[test]
+    fn rapid_presses_leave_nothing_open() {
+        let _g = SERIAL.lock();
+        let base = open_streams();
+        for i in 0..20 {
+            let r = Recorder::start_fake("assistant");
+            if i % 2 == 0 {
+                let _ = r.stop();
+            } else {
+                drop(r);
+            }
+        }
+        assert_eq!(settle(base), base);
+    }
+
+    /// a new recorder put where the old one was (agent mode started twice, a session replaced)
+    #[test]
+    fn a_replaced_recorder_is_closed() {
+        let _g = SERIAL.lock();
+        let base = open_streams();
+        let mut slot = Some(Recorder::start_fake("hands-free"));
+        assert_eq!(open_streams(), base + 1);
+        drop(slot.replace(Recorder::start_fake("hands-free")));
+        assert_eq!(settle(base + 1), base + 1);
+        drop(slot.take());
+        assert_eq!(settle(base), base);
+    }
+
+    #[test]
+    fn watchdog_closes_a_recorder_nobody_stopped() {
+        let _g = SERIAL.lock();
+        let base = open_streams();
+        // kept somewhere and never dropped: only the watchdog can close it
+        std::mem::forget(Recorder::start_fake("leaky test path"));
+        assert_eq!(open_streams(), base + 1);
+        let (mut idle, mut warned) = (None, false);
+        // something is recording → hands off
+        assert!(watchdog_pass(true, &mut idle, &mut warned, Duration::ZERO).is_empty());
+        assert_eq!(open_streams(), base + 1);
+        // nothing is → closed, by name
+        let closed = watchdog_pass(false, &mut idle, &mut warned, Duration::ZERO);
+        assert_eq!(closed, vec!["leaky test path"]);
+        assert_eq!(settle(base), base);
+        assert!(!live_recorders().iter().any(|(p, _)| *p == "leaky test path"));
+    }
+
+    #[test]
+    fn watchdog_waits_out_the_grace_period() {
+        let t0 = Instant::now();
+        let g = Duration::from_secs(4);
+        let live = [(1u64, t0)];
+        let mut idle = None;
+        // a recorder opens a moment before its session is stored: not closed then
+        assert!(lingering(false, true, t0, &mut idle, &live, g).is_empty());
+        assert!(lingering(false, true, t0 + Duration::from_secs(3), &mut idle, &live, g).is_empty());
+        assert_eq!(lingering(false, true, t0 + Duration::from_secs(4), &mut idle, &live, g), vec![1]);
+        // a session starting resets the clock
+        assert!(lingering(true, true, t0 + Duration::from_secs(5), &mut idle, &live, g).is_empty());
+        assert_eq!(idle, None);
+        assert!(lingering(false, true, t0 + Duration::from_secs(6), &mut idle, &live, g).is_empty());
+        // nothing open → nothing to do
+        assert!(lingering(false, false, t0 + Duration::from_secs(60), &mut idle, &live, g).is_empty());
+    }
+}
+
+#[cfg(test)]
 mod live_mic_probe {
     /// Manual check on a real Mac: `cargo test --release --lib live_mic_probe -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn records_from_a_working_microphone() {
-        let r = super::Recorder::start(|_| {}).expect("start");
+        let r = super::Recorder::start_as("live probe", |_| {}).expect("start");
         std::thread::sleep(std::time::Duration::from_millis(1500));
         let s = r.stop();
         println!("device={} samples={} silent={} rms={:.5}", super::last_device_name(), s.len(), super::is_digital_silence(&s), super::rms(&s));
+    }
+
+    /// The real microphone is released when a recording ends: the stream count (held by the
+    /// backend's data callback) is back to zero. With cpal 0.15 on macOS it stayed at one per
+    /// recording forever. `cargo test --release --lib live_mic_probe -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_microphone_is_released_after_every_recording() {
+        use std::time::{Duration, Instant};
+        let _ = env_logger::builder().is_test(true).filter_level(log::LevelFilter::Info).try_init();
+        let wait_zero = || {
+            let t = Instant::now();
+            while super::open_streams() != 0 && t.elapsed() < Duration::from_secs(3) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            super::open_streams()
+        };
+        // stop
+        let t = Instant::now();
+        let r = super::Recorder::start_as("live stop", |_| {}).expect("start");
+        assert_eq!(super::open_streams(), 1);
+        std::thread::sleep(Duration::from_millis(2000));
+        let s = r.stop();
+        let secs = t.elapsed().as_secs_f64();
+        println!("captured {:.2}s of audio in {secs:.2}s wall ({:.2}x)", s.len() as f64 / 16_000.0, s.len() as f64 / 16_000.0 / secs);
+        assert_eq!(wait_zero(), 0, "stopped recorder left the microphone open");
+        // dropped (cancel / error paths)
+        drop(super::Recorder::start_as("live drop", |_| {}).expect("start"));
+        assert_eq!(wait_zero(), 0, "dropped recorder left the microphone open");
+        // rapid presses
+        for _ in 0..5 {
+            let r = super::Recorder::start_as("live rapid", |_| {}).expect("start");
+            std::thread::sleep(Duration::from_millis(150));
+            let _ = r.stop();
+        }
+        assert_eq!(wait_zero(), 0, "rapid presses left the microphone open");
     }
 }

@@ -26,6 +26,15 @@ pub fn set_hotkeys(_cfg: crate::hotkey::HotkeyConfig) {}
 pub fn mic_in_use() -> bool {
     false
 }
+pub fn mic_users_others() -> Option<Vec<String>> {
+    None
+}
+pub fn zoom_in_meeting() -> bool {
+    false
+}
+pub fn app_window_titles(_pid: i32) -> Vec<String> {
+    vec![]
+}
 pub fn detect_call_app() -> String {
     "a call".into()
 }

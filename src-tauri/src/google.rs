@@ -236,7 +236,7 @@ pub(crate) async fn post(st: &Shared, url: &str, body: &Value) -> Result<Value> 
 
 // ── calendar: parsing (pure) ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarAttendee {
     pub name: String,
@@ -245,9 +245,12 @@ pub struct CalendarAttendee {
     pub is_self: bool,
     /// accepted | declined | tentative | needsAction
     pub response: String,
+    /// organized this event
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub organizer: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarEvent {
     pub id: String,
@@ -271,6 +274,12 @@ pub struct CalendarEvent {
     pub declined: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub html_link: Option<String>,
+    /// the invite's description as plain text (≤ 1500 chars): context for the meeting summary
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Google's eventType when not a plain event: focusTime | outOfOffice | fromGmail …
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -360,7 +369,13 @@ pub fn parse_event(v: &Value, calendar_id: &str) -> Option<CalendarEvent> {
         .map(|a| {
             let email = a["email"].as_str().unwrap_or("").to_string();
             let name = a["displayName"].as_str().filter(|n| !n.trim().is_empty()).map(|n| n.trim().to_string()).unwrap_or_else(|| name_from_email(&email));
-            CalendarAttendee { name, email, is_self: a["self"].as_bool().unwrap_or(false), response: a["responseStatus"].as_str().unwrap_or("needsAction").to_string() }
+            CalendarAttendee {
+                name,
+                email,
+                is_self: a["self"].as_bool().unwrap_or(false),
+                response: a["responseStatus"].as_str().unwrap_or("needsAction").to_string(),
+                organizer: a["organizer"].as_bool().unwrap_or(false),
+            }
         })
         .collect();
     let declined = attendees.iter().any(|a| a.is_self && a.response == "declined");
@@ -382,7 +397,37 @@ pub fn parse_event(v: &Value, calendar_id: &str) -> Option<CalendarEvent> {
         attendees,
         declined,
         html_link: v["htmlLink"].as_str().filter(|l| l.starts_with("https://")).map(String::from),
+        description: v["description"].as_str().map(plain_description).filter(|d| !d.is_empty()),
+        event_type: v["eventType"].as_str().filter(|t| *t != "default").map(String::from),
     })
+}
+
+/// An invite's HTML description → short plain text (tags dropped, entities decoded, whitespace
+/// collapsed, ≤ 1500 chars). Only used as context for the meeting summary.
+pub fn plain_description(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut tag = String::new();
+    for c in html.chars() {
+        match c {
+            '<' => {
+                in_tag = true;
+                tag.clear();
+            }
+            '>' if in_tag => {
+                in_tag = false;
+                let t = tag.trim_start_matches('/').split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+                if matches!(t.as_str(), "br" | "p" | "div" | "li" | "ul" | "ol" | "tr" | "h1" | "h2" | "h3") {
+                    out.push('\n');
+                }
+            }
+            _ if in_tag => tag.push(c),
+            _ => out.push(c),
+        }
+    }
+    let decoded = out.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&");
+    let lines: Vec<String> = decoded.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect();
+    crate::text::truncate_chars(&lines.join("\n"), 1500)
 }
 
 /// "priya.shah@x.com" → "Priya Shah" (for guests without a display name).
@@ -431,6 +476,88 @@ pub fn tidy(mut events: Vec<CalendarEvent>) -> Vec<CalendarEvent> {
     let mut seen = std::collections::HashSet::new();
     events.retain(|e| seen.insert((e.id.clone(), e.start.clone())));
     events
+}
+
+// ── today's meetings (Home agenda, automatic notes) (pure) ──────────────────────
+
+/// Today's agenda changed (meetings, "Take notes" toggles, a note linked or recording): reload it.
+pub const EV_AGENDA: &str = "flo://agenda";
+
+/// A real meeting worth listing and taking notes for: timed, not declined, not a focus / out-of-
+/// office block, and with a video link or at least one other guest.
+pub fn is_agenda_meeting(e: &CalendarEvent) -> bool {
+    !e.all_day && !e.declined && !matches!(e.event_type.as_deref(), Some("focusTime" | "outOfOffice" | "workingLocation")) && (e.join_url.is_some() || !others(e).is_empty())
+}
+
+/// "Take notes" starts on for meetings held on Meet, Zoom or Teams.
+pub fn notes_default(e: &CalendarEvent) -> bool {
+    matches!(e.join_kind.as_deref(), Some("meet" | "zoom" | "teams"))
+}
+
+/// The event's "Take notes" toggle: the user's choice for this event, else the default.
+pub fn notes_on(e: &CalendarEvent, prefs: &HashMap<String, bool>) -> bool {
+    prefs.get(&e.id).copied().unwrap_or_else(|| notes_default(e))
+}
+
+/// Starts on the local calendar day of `now`.
+pub fn is_today<Tz: TimeZone>(e: &CalendarEvent, now: &DateTime<Tz>) -> bool {
+    start_of(e, &now.timezone()).is_some_and(|t| t.date_naive() == now.date_naive())
+}
+
+/// One row of Home's "Today" list.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgendaItem {
+    #[serde(flatten)]
+    pub event: CalendarEvent,
+    /// event id + start (one per occurrence; what notes are linked by)
+    pub occurrence: String,
+    /// "Take notes" is on for this meeting
+    pub take_notes: bool,
+    /// notes taken during this meeting (oldest first)
+    pub note_ids: Vec<String>,
+    /// Flo is recording this meeting right now
+    pub recording: bool,
+}
+
+/// Today's meetings in start order, with their toggles and linked notes.
+pub fn agenda_items<Tz: TimeZone>(events: &[CalendarEvent], prefs: &HashMap<String, bool>, links: &HashMap<String, Vec<String>>, recording: Option<&str>, now: &DateTime<Tz>) -> Vec<AgendaItem> {
+    events
+        .iter()
+        .filter(|e| is_agenda_meeting(e) && is_today(e, now))
+        .map(|e| {
+            let occ = alert_id(e);
+            AgendaItem { take_notes: notes_on(e, prefs), note_ids: links.get(&occ).cloned().unwrap_or_default(), recording: recording == Some(occ.as_str()), occurrence: occ, event: e.clone() }
+        })
+        .collect()
+}
+
+/// The morning brief ("3 meetings today" + the first ones) for today's agenda, None when nothing
+/// is left today.
+pub fn brief_text<Tz: TimeZone>(items: &[AgendaItem], now: &DateTime<Tz>) -> Option<(String, String)>
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let left: Vec<&AgendaItem> = items.iter().filter(|i| end_of(&i.event, &now.timezone()).is_none_or(|t| t > *now)).collect();
+    if left.is_empty() {
+        return None;
+    }
+    let title = if left.len() == 1 { "1 meeting today".to_string() } else { format!("{} meetings today", left.len()) };
+    let mut body: Vec<String> = left.iter().take(3).filter_map(|i| start_of(&i.event, &now.timezone()).map(|t| format!("{} {}", hm(&t), i.event.title))).collect();
+    if left.len() > 3 {
+        body.push(format!("+{} more", left.len() - 3));
+    }
+    let notes = left.iter().filter(|i| i.take_notes).count();
+    let mut b = body.join(" · ");
+    if notes > 0 {
+        b.push_str(&format!(". Notes on for {notes}."));
+    }
+    Some((title, b))
+}
+
+/// Send the brief once a day, in the morning (6:00 to noon), when today wasn't briefed yet.
+pub fn brief_due(hour: u32, today: &str, last: Option<&str>) -> bool {
+    (6..12).contains(&hour) && last != Some(today)
 }
 
 // ── meeting alerts (pure) ────────────────────────────────────────────────────
@@ -875,6 +1002,92 @@ pub fn cached_events(st: &Shared) -> Vec<CalendarEvent> {
     v
 }
 
+// ── today's meetings (live: toggles, linked notes, morning brief) ────────────────
+
+const PREFS_KEY: &str = "notes_prefs";
+const LINKS_KEY: &str = "event_notes";
+const BRIEF_KEY: &str = "brief_day";
+
+fn cache_map<V: serde::de::DeserializeOwned>(st: &Shared, key: &str) -> HashMap<String, V> {
+    st.db.google_cache_get(key).ok().flatten().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default()
+}
+
+fn save_cache<V: Serialize>(st: &Shared, key: &str, v: &V) {
+    if let Ok(j) = serde_json::to_string(v) {
+        let _ = st.db.google_cache_set(key, &j);
+    }
+}
+
+/// Per-event "Take notes" choices (event id → on).
+pub fn notes_prefs(st: &Shared) -> HashMap<String, bool> {
+    cache_map(st, PREFS_KEY)
+}
+
+/// The user turned "Take notes" on or off for one meeting.
+pub fn set_event_notes(st: &Shared, event_id: &str, on: bool) {
+    let mut m = notes_prefs(st);
+    // only the meetings still in the calendar window keep a choice
+    let live: std::collections::HashSet<String> = cached_events(st).into_iter().map(|e| e.id).collect();
+    m.retain(|k, _| live.contains(k));
+    m.insert(event_id.to_string(), on);
+    save_cache(st, PREFS_KEY, &m);
+    st.emit(EV_AGENDA, ());
+}
+
+/// Notes taken during each meeting occurrence ("event@start" → note ids).
+pub fn note_links(st: &Shared) -> HashMap<String, Vec<String>> {
+    cache_map(st, LINKS_KEY)
+}
+
+/// File a meeting note under the calendar occurrence it was taken in. Links older than 30 days
+/// are dropped.
+pub fn link_note(st: &Shared, occurrence: &str, note_id: &str) {
+    let mut m = note_links(st);
+    let cutoff = Local::now() - CDuration::days(30);
+    m.retain(|k, _| k.rsplit_once('@').and_then(|(_, s)| parse_when(s, &Local)).is_none_or(|t| t > cutoff));
+    let v = m.entry(occurrence.to_string()).or_default();
+    if !v.iter().any(|n| n == note_id) {
+        v.push(note_id.to_string());
+    }
+    save_cache(st, LINKS_KEY, &m);
+    st.emit(EV_AGENDA, ());
+}
+
+/// Home's "Today" list (cache only; no network). Deleted notes drop out of the links.
+pub fn agenda(st: &Shared) -> Vec<AgendaItem> {
+    if !calendar_on(&st.settings().google) {
+        return vec![];
+    }
+    let mut links = note_links(st);
+    for v in links.values_mut() {
+        v.retain(|id| st.db.get_note(id).ok().flatten().is_some());
+    }
+    let rec = crate::autonotes::recording_occurrence();
+    agenda_items(&cached_events(st), &notes_prefs(st), &links, rec.as_deref(), &Local::now())
+}
+
+/// The morning brief, once a day (calendar fetched today, 6:00 to noon, with meetings left).
+fn brief_tick(st: &Shared) {
+    let s = st.settings();
+    if !s.google.morning_brief {
+        return;
+    }
+    let now = Local::now();
+    let today = now.format("%Y-%m-%d").to_string();
+    let last: Option<String> = st.db.google_cache_get(BRIEF_KEY).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
+    if !brief_due(chrono::Timelike::hour(&now), &today, last.as_deref()) {
+        return;
+    }
+    let items = agenda(st);
+    save_cache(st, BRIEF_KEY, &today);
+    if let Some((title, body)) = brief_text(&items, &now) {
+        if s.system_notifications {
+            crate::reminders::notify(&title, &body);
+        }
+        st.toast("info", format!("{title}: {body}"));
+    }
+}
+
 pub async fn list_calendars(st: &Shared) -> Result<Vec<GoogleCalendar>> {
     let v = get(st, &format!("{CAL_API}/users/me/calendarList"), &[("minAccessRole", "reader".into()), ("maxResults", "100".into())]).await?;
     let chosen = st.settings().google.calendars;
@@ -934,6 +1147,7 @@ pub async fn refresh_events(st: &Shared) -> Result<Vec<CalendarEvent>> {
         let _ = st.db.google_cache_set(CACHE_KEY, &j);
     }
     st.emit(EV_CALENDAR, &events);
+    st.emit(EV_AGENDA, ());
     crate::phone_state::poke();
     Ok(events)
 }
@@ -1004,10 +1218,9 @@ pub async fn meeting_action(st: &Shared, id: &str, action: &str) -> Result<Strin
             ))
         }
         "notes" => {
-            let names: Vec<String> = others(&e).iter().map(|a| a.name.clone()).collect();
             let st2 = st.clone();
-            let title = e.title.clone();
-            let n = tokio::task::spawn_blocking(move || crate::meeting::start_with_attendees(st2, Some(title), None, names)).await??;
+            let e2 = e.clone();
+            let n = tokio::task::spawn_blocking(move || crate::meeting::start_for_event(st2, &e2, false, 1)).await??;
             close(st, true);
             Ok(n.title)
         }
@@ -1114,6 +1327,10 @@ pub fn spawn(st: Shared) {
                     }
                 }
                 alerts_tick(&st);
+                // only from a fetch made today (a stale cache would brief yesterday's meetings)
+                if LAST_FETCH.lock().is_some() {
+                    brief_tick(&st);
+                }
             }
             if gmail_on(&s) && s.gmail_todos && (woke || last_gmail.map(|t| t.elapsed() >= POLL_EVERY).unwrap_or(true)) {
                 last_gmail = Some(std::time::Instant::now());
@@ -1383,5 +1600,108 @@ mod tests {
         let dup = CalendarEvent { calendar_id: "work".into(), ..a.clone() };
         let t = tidy(vec![a.clone(), b, dup]);
         assert_eq!(t.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["early", "abc123_20261110T043000Z"]);
+    }
+
+    #[test]
+    fn reads_organizer_description_and_event_type() {
+        let mut v = raw_event();
+        v["attendees"][1]["organizer"] = json!(true);
+        v["description"] = json!("<p>Agenda:</p><ul><li>Pricing &amp; plans</li><li>Beta</li></ul><br>Join: <a href=\"x\">link</a>");
+        v["eventType"] = json!("default");
+        let e = parse_event(&v, "primary").unwrap();
+        assert!(e.attendees[1].organizer && !e.attendees[0].organizer);
+        assert_eq!(e.description.as_deref(), Some("Agenda:\nPricing & plans\nBeta\nJoin: link"));
+        assert_eq!(e.event_type, None, "plain events carry no type");
+        v["eventType"] = json!("focusTime");
+        assert_eq!(parse_event(&v, "primary").unwrap().event_type.as_deref(), Some("focusTime"));
+        assert!(plain_description(&"x".repeat(5000)).chars().count() <= 1501);
+        // old caches (no new fields) still load
+        let old: CalendarEvent = serde_json::from_str(r#"{"id":"a","calendarId":"p","title":"t","start":"2026-11-10","end":"2026-11-11","allDay":true}"#).unwrap();
+        assert!(old.description.is_none() && old.attendees.is_empty());
+    }
+
+    #[test]
+    fn todays_agenda_keeps_real_meetings_only() {
+        let base = parse_event(&raw_event(), "primary").unwrap(); // Meet link, guests, 10:00 IST
+        let mk = |id: &str, f: &dyn Fn(&mut CalendarEvent)| {
+            let mut e = CalendarEvent { id: id.into(), title: id.into(), ..base.clone() };
+            f(&mut e);
+            e
+        };
+        let events = vec![
+            mk("meet", &|_| {}),
+            mk("allday", &|e| {
+                e.all_day = true;
+                e.start = "2026-11-10".into();
+                e.end = "2026-11-11".into();
+            }),
+            mk("declined", &|e| e.declined = true),
+            mk("focus", &|e| e.event_type = Some("focusTime".into())),
+            mk("solo", &|e| {
+                e.join_url = None;
+                e.join_kind = None;
+                e.attendees.retain(|a| a.is_self);
+            }),
+            mk("in-person", &|e| {
+                e.join_url = None;
+                e.join_kind = None;
+                e.start = "2026-11-10T15:00:00+05:30".into();
+                e.end = "2026-11-10T15:30:00+05:30".into();
+            }),
+            mk("solo-zoom", &|e| {
+                e.attendees.retain(|a| a.is_self);
+                e.join_url = Some("https://zoom.us/j/1".into());
+                e.join_kind = Some("zoom".into());
+                e.start = "2026-11-10T16:00:00+05:30".into();
+                e.end = "2026-11-10T16:30:00+05:30".into();
+            }),
+            mk("tomorrow", &|e| {
+                e.start = "2026-11-11T10:00:00+05:30".into();
+                e.end = "2026-11-11T10:30:00+05:30".into();
+            }),
+        ];
+        let now = at("2026-11-10T08:00:00+05:30");
+        let prefs = HashMap::from([("in-person".to_string(), true), ("solo-zoom".to_string(), false)]);
+        let links = HashMap::from([(alert_id(&events[0]), vec!["n1".to_string()])]);
+        let items = agenda_items(&events, &prefs, &links, Some(&alert_id(&events[0])), &now);
+        let ids: Vec<&str> = items.iter().map(|i| i.event.id.as_str()).collect();
+        assert_eq!(ids, vec!["meet", "in-person", "solo-zoom"]);
+        // Meet/Zoom/Teams default on; no link defaults off; the user's choice wins
+        assert!(notes_default(&events[0]) && !notes_default(&events[5]));
+        assert_eq!(items.iter().map(|i| i.take_notes).collect::<Vec<_>>(), vec![true, true, false]);
+        assert_eq!(items[0].note_ids, vec!["n1".to_string()]);
+        assert!(items[0].recording && !items[1].recording);
+        // the UI gets the event fields flat, plus the agenda ones
+        let j = serde_json::to_value(&items[0]).unwrap();
+        assert_eq!(j["title"], "meet");
+        assert_eq!(j["takeNotes"], true);
+        assert_eq!(j["occurrence"], alert_id(&events[0]));
+    }
+
+    #[test]
+    fn morning_brief() {
+        let base = parse_event(&raw_event(), "primary").unwrap();
+        let item = |id: &str, start: &str, end: &str, notes: bool| AgendaItem {
+            event: CalendarEvent { id: id.into(), title: id.into(), start: start.into(), end: end.into(), ..base.clone() },
+            occurrence: id.into(),
+            take_notes: notes,
+            note_ids: vec![],
+            recording: false,
+        };
+        let items = vec![
+            item("Standup", "2026-11-10T09:00:00+05:30", "2026-11-10T09:15:00+05:30", true),
+            item("Design sync", "2026-11-10T10:00:00+05:30", "2026-11-10T10:30:00+05:30", true),
+            item("1:1", "2026-11-10T14:00:00+05:30", "2026-11-10T14:30:00+05:30", false),
+        ];
+        let (t, b) = brief_text(&items, &at("2026-11-10T08:00:00+05:30")).unwrap();
+        assert_eq!(t, "3 meetings today");
+        assert_eq!(b, "09:00 Standup · 10:00 Design sync · 14:00 1:1. Notes on for 2.");
+        // meetings that already ended don't count
+        let (t, _) = brief_text(&items, &at("2026-11-10T11:00:00+05:30")).unwrap();
+        assert_eq!(t, "1 meeting today");
+        assert!(brief_text(&items, &at("2026-11-10T15:00:00+05:30")).is_none());
+        assert!(brief_due(8, "2026-11-10", Some("2026-11-09")));
+        assert!(!brief_due(8, "2026-11-10", Some("2026-11-10")), "once a day");
+        assert!(!brief_due(5, "2026-11-10", None) && !brief_due(13, "2026-11-10", None), "mornings only");
     }
 }

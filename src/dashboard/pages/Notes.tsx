@@ -1,12 +1,15 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { ArrowDown, ListChecks, Mic, Pencil, Plus, Radio, Sparkles, Square, StickyNote, Trash2, Copy, Users } from "lucide-react";
+import { ArrowDown, CalendarDays, ListChecks, Mail, Mic, Pencil, Plus, Radio, Sparkles, Square, StickyNote, Trash2, Copy, Users } from "lucide-react";
+import { gmailComposeUrl, isStructuredNotes, rowForTime, splitTimestamps } from "../../lib/agenda";
+import { parseInline } from "../../lib/markdown";
+import { openLink } from "../../lib/useCalendar";
 import { splitLive } from "../../lib/liveText";
 import { isStopped, markStopped, stopMeetingNow } from "../../lib/meetingStops";
 import { api, on } from "../../lib/api";
 import { formatClock, formatDuration, relativeTime } from "../../lib/format";
-import { EV, type KnownVoice, type MeetingEvent, type MeetingInfo, type MeetingSegment, type NameGuess, type Note } from "../../lib/types";
+import { EV, type FollowupDraft, type KnownVoice, type MeetingEvent, type MeetingEventInfo, type MeetingInfo, type MeetingSegment, type NameGuess, type Note } from "../../lib/types";
 import { useStore, usePick, usePageArg } from "../store";
 import { indicLang, shownName, speakerColor as defaultColor, speakerPalette, speakerStats, splitOwner } from "../../lib/speakers";
 import { deviceWord } from "../../lib/os";
@@ -323,6 +326,7 @@ function TranscriptRows({
             animate={{ opacity: 1, y: 0 }}
             className={clsx("flex gap-3", showWho && i > 0 && "mt-2")}
             data-testid="transcript-row"
+            data-t={s.t}
           >
             <span className={clsx(timeW, "shrink-0 pt-[2px] text-right font-mono text-[11.5px] tabular-nums text-faint")}>{formatClock(s.t)}</span>
             {who && <span className="w-[3px] shrink-0 rounded-full" style={{ background: speakerColor(who), opacity: 0.75 }} aria-hidden />}
@@ -813,6 +817,161 @@ function useSummaryPending(note: Note) {
   return pending;
 }
 
+/** The calendar meeting these notes were taken in (automatic notes / "Take notes"). */
+function EventBadge({ ev }: { ev: MeetingEventInfo }) {
+  const when = new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return (
+    <div data-testid="note-event" className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+      <CalendarDays size={13} className="text-brand-400" />
+      <span>
+        {ev.auto ? "Taken automatically in" : "From"} <b className="font-medium text-[var(--fg)]">{ev.title}</b> · {when}
+      </span>
+      {ev.guests.length > 0 && <span className="text-faint">· with {ev.guests.map((g) => g.name).join(", ")}</span>}
+    </div>
+  );
+}
+
+/** Scroll the transcript to the line a [mm:ss] in the notes points at, and flash it. */
+function jumpToTime(sec: number) {
+  const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-transcript"] [data-t]'));
+  if (!rows.length) return;
+  const row = rows[rowForTime(rows.map((r) => Number(r.dataset.t)), sec)];
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  row.dataset.flash = "1";
+  row.style.background = "rgba(102,206,255,0.14)";
+  row.style.borderRadius = "8px";
+  setTimeout(() => {
+    delete row.dataset.flash;
+    row.style.background = "";
+  }, 1600);
+}
+
+function NotesInline({ text }: { text: string }) {
+  return (
+    <>
+      {splitTimestamps(text).map((p, i) =>
+        p.t === "ts" ? (
+          <button
+            key={i}
+            data-testid="summary-ts"
+            onClick={() => jumpToTime(p.sec)}
+            className="mx-0.5 rounded-md bg-brand-400/10 px-1 font-mono text-[11px] tabular-nums text-brand-600 hover:bg-brand-400/20 dark:text-brand-300"
+            title="Show in the transcript"
+          >
+            {p.v}
+          </button>
+        ) : (
+          parseInline(p.v).map((x, j) =>
+            x.t === "bold" ? (
+              <strong key={`${i}-${j}`} className="font-semibold">
+                {x.v}
+              </strong>
+            ) : (
+              <span key={`${i}-${j}`}>{x.v}</span>
+            ),
+          )
+        ),
+      )}
+    </>
+  );
+}
+
+/** Fathom-style notes: ## sections, ### topics, bullets with who said what and [mm:ss] links. */
+function StructuredNotes({ src }: { src: string }) {
+  const lines = src.split("\n").map((l) => l.trim()).filter(Boolean);
+  return (
+    <div data-testid="structured-notes" className="selectable flex flex-col gap-1 text-[13.5px] leading-relaxed">
+      {lines.map((l, i) => {
+        if (l.startsWith("### "))
+          return (
+            <div key={i} className="mt-1.5 text-[13px] font-semibold">
+              {l.slice(4)}
+            </div>
+          );
+        if (l.startsWith("## "))
+          return (
+            <div key={i} data-testid="notes-section" className={clsx("text-[11.5px] font-semibold uppercase tracking-wider text-muted", i > 0 && "mt-3")}>
+              {l.slice(3)}
+            </div>
+          );
+        if (/^[-*] /.test(l))
+          return (
+            <div key={i} className="flex gap-2 pl-1">
+              <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[var(--fg-faint)]" aria-hidden />
+              <span className="min-w-0">
+                <NotesInline text={l.slice(2)} />
+              </span>
+            </div>
+          );
+        return (
+          <p key={i}>
+            <NotesInline text={l} />
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A follow-up email to the guests, drafted from the notes. Flo never sends it: copy it, or open
+ *  it in Gmail's compose window and send it yourself. */
+function FollowupDraftPanel({ noteId, onToast }: { noteId: string; onToast: (t: { kind: "success" | "info" | "error"; text: string }) => void }) {
+  const [draft, setDraft] = useState<FollowupDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const make = async () => {
+    setBusy(true);
+    try {
+      setDraft(await api.meetingFollowupDraft(noteId));
+    } catch (e) {
+      onToast({ kind: "error", text: `Couldn't draft the email: ${e}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!draft)
+    return (
+      <div className="mt-3">
+        <Button size="sm" icon={<Mail size={13} />} disabled={busy} onClick={make}>
+          {busy ? "Drafting…" : "Draft follow-up email"}
+        </Button>
+      </div>
+    );
+  return (
+    <div data-testid="followup-draft" className="mt-3 rounded-xl border border-[var(--border)] p-3">
+      <div className="mb-1 flex items-center gap-1.5 text-[12px] font-semibold">
+        <Mail size={13} /> Follow-up draft <span className="font-normal text-faint">· not sent</span>
+      </div>
+      <div className="text-[12px] text-muted">To: {draft.to.join(", ") || "(no addresses on the invite)"}</div>
+      <div className="text-[12px] text-muted">Subject: {draft.subject}</div>
+      <textarea
+        aria-label="Follow-up email"
+        value={draft.body}
+        onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+        rows={8}
+        className="mt-2 w-full rounded-lg border border-[var(--border)] bg-[var(--glass)] p-2 text-[12.5px] outline-none"
+      />
+      <div className="mt-2 flex gap-2">
+        <Button
+          size="sm"
+          icon={<Copy size={13} />}
+          onClick={() => {
+            navigator.clipboard?.writeText(`Subject: ${draft.subject}\n\n${draft.body}`);
+            onToast({ kind: "success", text: "Copied the draft" });
+          }}
+        >
+          Copy
+        </Button>
+        <Button size="sm" variant="primary" icon={<Mail size={13} />} onClick={() => openLink(gmailComposeUrl(draft.to, draft.subject, draft.body))}>
+          Open in Gmail
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
+          Discard
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "success" | "info" | "error"; text: string }) => void }) {
   const { go, refreshNotes } = usePick("go", "refreshNotes");
   const writing = useSummaryPending(note);
@@ -857,6 +1016,7 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
                 <CaptureBadge info={info} />
               </div>
             )}
+            {info?.event && <EventBadge ev={info.event} />}
           </div>
           <div className="flex shrink-0 gap-1.5">
             <Button
@@ -888,13 +1048,18 @@ function NoteDetail({ note, onToast }: { note: Note; onToast: (t: { kind: "succe
               <span className="h-2.5 w-3/4 animate-pulse rounded-full bg-[var(--glass-strong,rgba(127,127,127,0.18))]" />
             </div>
           ) : note.summary ? (
-            <p className="text-[13.5px] leading-relaxed selectable">{note.summary}</p>
+            isStructuredNotes(note.summary) ? (
+              <StructuredNotes src={note.summary} />
+            ) : (
+              <p className="text-[13.5px] leading-relaxed selectable">{note.summary}</p>
+            )
           ) : (
             <p data-testid="summary-empty" className="text-[13px] text-faint">
               {note.transcript.length ? "No summary for this meeting. With an AI model set in Settings → AI, Flo writes one when you stop." : "Nothing was said in this meeting."}
             </p>
           )}
         </div>
+        {info?.event && info.event.guests.length > 0 && note.summary && !writing && <FollowupDraftPanel noteId={note.id} onToast={onToast} />}
         {note.actionItems.length > 0 && (
           <div className="mt-4">
             <div className="mb-2 flex items-center gap-1.5 text-[12.5px] font-semibold">

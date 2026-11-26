@@ -1149,6 +1149,36 @@ pub async fn google_refresh_events(st: State<'_, Shared>) -> R<Vec<crate::google
 }
 
 /// The notch meeting card: "dismiss" | "snooze" | "join" | "notes".
+/// Home's "Today": today's meetings with their "Take notes" toggles and linked notes.
+#[tauri::command(async)]
+pub fn calendar_agenda(st: State<Shared>) -> Vec<crate::google::AgendaItem> {
+    if crate::google::load_tokens().is_none() {
+        return vec![];
+    }
+    crate::google::agenda(st.inner())
+}
+
+/// Turn automatic notes on or off for one meeting.
+#[tauri::command(async)]
+pub fn set_event_notes(st: State<Shared>, event_id: String, on: bool) -> Vec<crate::google::AgendaItem> {
+    crate::google::set_event_notes(st.inner(), &event_id, on);
+    crate::google::agenda(st.inner())
+}
+
+/// Take notes now for one of today's meetings (Home's "Take notes now").
+#[tauri::command]
+pub async fn start_event_notes(st: State<'_, Shared>, occurrence: String) -> R<Note> {
+    let st = st.inner().clone();
+    let ev = crate::google::cached_events(&st).into_iter().find(|x| crate::google::alert_id(x) == occurrence).ok_or_else(|| "That meeting is no longer on your calendar".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || meeting::start_for_event(st, &ev, false, 1)).await.map_err(e)?.map_err(e)
+}
+
+/// A follow-up email to the meeting's guests, as a draft (Flo never sends it).
+#[tauri::command]
+pub async fn meeting_followup_draft(st: State<'_, Shared>, note_id: String) -> R<meeting::FollowupDraft> {
+    meeting::followup_draft(st.inner(), &note_id).await.map_err(e)
+}
+
 #[tauri::command]
 pub async fn google_meeting_action(st: State<'_, Shared>, id: String, action: String) -> R<String> {
     crate::google::meeting_action(st.inner(), &id, &action).await.map_err(e)

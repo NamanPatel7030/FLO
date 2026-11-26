@@ -65,6 +65,11 @@ impl SystemTap {
 
     /// Drain everything captured so far, as 16 kHz mono.
     pub fn take_samples(&self) -> Vec<f32> {
+        // the output device can change rate mid-meeting (another app sets it): follow it
+        #[cfg(target_os = "macos")]
+        if let Some(t) = &self.inner {
+            t.follow_rate(&self.buf);
+        }
         let mut b = self.buf.lock();
         let raw = std::mem::take(&mut b.data);
         audio::resample(&raw, b.rate, TARGET_RATE)
@@ -107,6 +112,17 @@ fn push(buf: &Mutex<Buf>, mono: &[f32]) {
 
 /// Downmix `n_buffers` float buffers (interleaved when 1 buffer, planar when several) to mono.
 /// `bufs[i] = (channels_in_buffer, samples)`.
+/// Rate the call audio really arrives at: the capture device's nominal rate when it reports one,
+/// else the tap's declared format.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn capture_rate(tap_rate: f64, device_rate: f64) -> u32 {
+    if device_rate >= 8000.0 {
+        device_rate.round() as u32
+    } else {
+        tap_rate.round() as u32
+    }
+}
+
 pub(crate) fn downmix(bufs: &[(usize, &[f32])]) -> Vec<f32> {
     let Some(&(ch0, first)) = bufs.first() else { return vec![] };
     let ch0 = ch0.max(1);
@@ -586,6 +602,12 @@ mod mac {
                 release(desc);
                 bail!("Couldn't create the call audio device ({st})");
             }
+            // the IOProc delivers at the aggregate's rate (the output device's clock, e.g. 96 kHz
+            // MacBook speakers), not the tap's declared one: taking the tap's 48 kHz made call audio
+            // half speed and twice as long
+            let device_rate: f64 = get(agg_id, b"nsrt", None).unwrap_or(0.0);
+            let rate = super::capture_rate(fmt.sample_rate, device_rate);
+            buf.lock().rate = rate;
 
             let ctx = Box::into_raw(Box::new(Ctx { buf }));
             let mut proc_id: IoProcId = None;
@@ -607,8 +629,23 @@ mod mac {
             if st != 0 {
                 return Err(fail(format!("Couldn't start call audio ({st})"), proc_id));
             }
-            log::info!("system audio tap started: {} Hz, {} ch, excluded own process {own}", fmt.sample_rate, fmt.channels_per_frame);
+            log::info!("system audio tap started: {rate} Hz (tap format {} Hz), {} ch, excluded own process {own}", fmt.sample_rate, fmt.channels_per_frame);
             Ok(Tap { tap_id, agg_id, proc_id, ctx, desc, destroy_tap })
+        }
+
+        /// Keep the buffer's rate in step with the aggregate device's (cheap HAL read, off the IO
+        /// thread: called from the meeting loop).
+        pub fn follow_rate(&self, buf: &Mutex<Buf>) {
+            let Ok(r) = get::<f64>(self.agg_id, b"nsrt", None) else { return };
+            if r < 8000.0 {
+                return;
+            }
+            let r = r.round() as u32;
+            let mut b = buf.lock();
+            if b.rate != r {
+                log::info!("call audio rate changed: {} → {r} Hz", b.rate);
+                b.rate = r;
+            }
         }
 
         pub fn stop(self) {
@@ -650,6 +687,15 @@ mod tests {
         let r = [0.0f32, -1.0];
         assert_eq!(downmix(&[(1, &l), (1, &r)]), vec![0.5, 0.0]);
         assert!(downmix(&[]).is_empty());
+    }
+
+    /// MacBook speakers at 96 kHz clock the tap's aggregate device while the tap says 48 kHz
+    #[test]
+    fn call_audio_rate_is_the_devices_not_the_taps() {
+        assert_eq!(capture_rate(48_000.0, 96_000.0), 96_000);
+        assert_eq!(capture_rate(48_000.0, 44_100.0), 44_100);
+        // the device didn't say: the tap's format
+        assert_eq!(capture_rate(48_000.0, 0.0), 48_000);
     }
 
     #[test]

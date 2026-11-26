@@ -5,6 +5,8 @@ import type {
   AssistantThread,
   AttentionStatus,
   CalendarEvent,
+  AgendaItem,
+  FollowupDraft,
   GoogleCalendar,
   GoogleStatus,
   MeetingAlertAction,
@@ -188,6 +190,13 @@ export const api = {
   googleEvents: () => call<CalendarEvent[]>("google_events").catch(() => [] as CalendarEvent[]),
   googleRefreshEvents: () => call<CalendarEvent[]>("google_refresh_events"),
   googleMeetingAction: (id: string, action: MeetingAlertAction) => call<string>("google_meeting_action", { id, action }),
+  /** today's meetings with "Take notes" toggles and linked notes ([] when not connected) */
+  calendarAgenda: () => call<AgendaItem[]>("calendar_agenda").catch(() => [] as AgendaItem[]),
+  setEventNotes: (eventId: string, on: boolean) => call<AgendaItem[]>("set_event_notes", { eventId, on }),
+  /** start notes now for one of today's meetings (titled and linked to it) */
+  startEventNotes: (occurrence: string) => call<Note>("start_event_notes", { occurrence }),
+  /** a follow-up email to the guests, drafted from the notes (never sent by Flo) */
+  meetingFollowupDraft: (noteId: string) => call<FollowupDraft>("meeting_followup_draft", { noteId }),
   gmailSyncNow: () => call<number>("gmail_sync_now"),
   confirmAction: (id: string, approve: boolean) => call<string>("confirm_action", { id, approve }),
   /** Claude Code permission prompt: allow | deny | terminal (answer it in the terminal instead) */

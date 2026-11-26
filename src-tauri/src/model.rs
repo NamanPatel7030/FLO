@@ -166,11 +166,18 @@ pub struct GoogleSettings {
     pub calendars: Vec<String>,
     /// turn emails that need a reply into to-dos
     pub gmail_todos: bool,
+    /// take notes by themselves for calendar meetings (autonotes.rs): only once the meeting app
+    /// is really in the call, only for events whose "Take notes" is on. Off until the user agrees.
+    pub auto_notes: bool,
+    /// the user read and accepted what automatic notes record (shown once, when first turned on)
+    pub auto_notes_consent: bool,
+    /// a morning notification with today's meetings ("3 meetings today")
+    pub morning_brief: bool,
 }
 
 impl Default for GoogleSettings {
     fn default() -> Self {
-        Self { calendar: true, gmail: true, alert_minutes: 5, alert_solo: false, calendars: vec![], gmail_todos: true }
+        Self { calendar: true, gmail: true, alert_minutes: 5, alert_solo: false, calendars: vec![], gmail_todos: true, auto_notes: false, auto_notes_consent: false, morning_brief: true }
     }
 }
 

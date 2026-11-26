@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn calendar_event_overlapping_the_meeting_gives_the_guests() {
         use crate::google::{CalendarAttendee, CalendarEvent};
-        let a = |n: &str, email: &str, me: bool, r: &str| CalendarAttendee { name: n.into(), email: email.into(), is_self: me, response: r.into() };
+        let a = |n: &str, email: &str, me: bool, r: &str| CalendarAttendee { name: n.into(), email: email.into(), is_self: me, response: r.into(), ..Default::default() };
         let ev = |id: &str, start: &str, end: &str, att: Vec<CalendarAttendee>| CalendarEvent {
             id: id.into(),
             calendar_id: "c".into(),
@@ -783,6 +783,7 @@ mod tests {
             attendees: att,
             declined: false,
             html_link: None,
+            ..Default::default()
         };
         let events = vec![
             ev("Standup", "2026-11-16T09:00:00Z", "2026-11-16T09:15:00Z", vec![a("Sam Lee", "sam@x.com", false, "accepted")]),
